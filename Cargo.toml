@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 tokio = { version = "1.35", features = ["full"] }
-notify = "6.1"
+fanotify-rs = "0.3.1"
 clap = { version = "4.4", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }

@@ -103,51 +103,50 @@ pub fn format_datetime(dt: &DateTime<Utc>) -> String {
     dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
-/// Get process info for a given file path
-pub fn get_process_info(_path: &Path) -> (u32, String, String) {
-    // Try to get current process info as fallback
-    let pid = std::process::id();
+/// Get process info by PID (from fanotify event)
+/// Falls back to file owner for USER when process has already exited
+pub fn get_process_info_by_pid(pid: u32, file_path: &Path) -> (String, String) {
+    let cmd = read_proc_comm(pid).unwrap_or_else(|| "unknown".to_string());
+    let user = read_proc_user(pid)
+        .or_else(|| read_file_owner(file_path))
+        .unwrap_or_else(|| "unknown".to_string());
+    (cmd, user)
+}
 
-    // Try to read process info from /proc
-    if let Ok(cmdline) = std::fs::read_to_string(format!("/proc/{}/cmdline", pid)) {
-        let cmd = cmdline
-            .split('\0')
-            .next()
-            .unwrap_or("unknown")
-            .split('/')
-            .last()
-            .unwrap_or("unknown")
-            .to_string();
+fn read_proc_comm(pid: u32) -> Option<String> {
+    std::fs::read_to_string(format!("/proc/{}/comm", pid))
+        .ok()
+        .map(|s| s.trim().to_string())
+}
 
-        // Try to get user info
-        if let Ok(status) = std::fs::read_to_string(format!("/proc/{}/status", pid)) {
-            for line in status.lines() {
-                if line.starts_with("Uid:") {
-                    let uid_str: String = line
-                        .split_whitespace()
-                        .nth(1)
-                        .unwrap_or("0")
-                        .to_string();
+fn read_proc_user(pid: u32) -> Option<String> {
+    let status = std::fs::read_to_string(format!("/proc/{}/status", pid)).ok()?;
+    let uid: u32 = status.lines()
+        .find(|l| l.starts_with("Uid:"))?
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()?;
+    uid_to_username(uid)
+}
 
-                    // Try to get username
-                    if let Ok(passwd) = std::fs::read_to_string("/etc/passwd") {
-                        for entry in passwd.lines() {
-                            let parts: Vec<&str> = entry.split(':').collect();
-                            if parts.len() >= 3 && parts[2] == uid_str {
-                                return (pid, cmd, parts[0].to_string());
-                            }
-                        }
-                    }
+/// Fallback: read file owner UID from filesystem metadata
+fn read_file_owner(path: &Path) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::metadata(path).ok()?;
+    uid_to_username(metadata.uid())
+}
 
-                    return (pid, cmd, format!("uid:{}", uid_str));
-                }
-            }
+fn uid_to_username(uid: u32) -> Option<String> {
+    let uid_str = uid.to_string();
+    let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
+    for entry in passwd.lines() {
+        let parts: Vec<&str> = entry.split(':').collect();
+        if parts.len() >= 3 && parts[2] == uid_str {
+            return Some(parts[0].to_string());
         }
-
-        return (pid, cmd, "unknown".to_string());
     }
-
-    (pid, "unknown".to_string(), "unknown".to_string())
+    Some(format!("uid:{}", uid_str))
 }
 
 #[cfg(test)]

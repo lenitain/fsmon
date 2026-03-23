@@ -1,17 +1,66 @@
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use chrono::Utc;
-use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use fanotify::low_level::{
+    fanotify_init, fanotify_mark,
+    FAN_CLOEXEC, FAN_CLASS_NOTIF, FAN_NONBLOCK,
+    FAN_REPORT_FID, FAN_REPORT_DIR_FID, FAN_REPORT_NAME,
+    FAN_MARK_ADD, AT_FDCWD,
+    FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE, FAN_MOVED_FROM, FAN_MOVED_TO,
+    FAN_EVENT_ON_CHILD, FAN_ONDIR,
+    O_CLOEXEC, O_RDONLY,
+};
+use std::collections::{HashMap, HashSet};
+use std::ffi::CString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::mpsc;
-use tokio::time::timeout;
 
 use crate::{FileEvent, OutputFormat};
-use crate::utils::get_process_info;
+use crate::utils::get_process_info_by_pid;
+
+// ---- FID 事件解析所需的内核结构体和常量 ----
+
+/// fanotify_event_info_header.info_type
+const FAN_EVENT_INFO_TYPE_FID: u8 = 1;
+const FAN_EVENT_INFO_TYPE_DFID_NAME: u8 = 2;
+const FAN_EVENT_INFO_TYPE_DFID: u8 = 3;
+
+/// fanotify_event_metadata（与内核结构体一致）
+#[repr(C)]
+struct FanMetadata {
+    event_len: u32,
+    vers: u8,
+    reserved: u8,
+    metadata_len: u16,
+    mask: u64,
+    fd: i32,
+    pid: i32,
+}
+
+/// fanotify_event_info_header
+#[repr(C)]
+struct FanInfoHeader {
+    info_type: u8,
+    pad: u8,
+    len: u16,
+}
+
+const META_SIZE: usize = std::mem::size_of::<FanMetadata>();
+const INFO_HDR_SIZE: usize = std::mem::size_of::<FanInfoHeader>();
+const FSID_SIZE: usize = 8;            // __kernel_fsid_t = { i32 val[2]; }
+const FH_HDR_SIZE: usize = 8;          // file_handle: handle_bytes(u32) + handle_type(i32)
+
+/// 从 FID 缓冲区解析出的事件
+struct FidEvent {
+    mask: u64,
+    pid: i32,
+    path: PathBuf,
+}
+
+// ---- Monitor ----
 
 pub struct Monitor {
     paths: Vec<PathBuf>,
@@ -20,6 +69,7 @@ pub struct Monitor {
     exclude: Option<String>,
     output: Option<PathBuf>,
     format: OutputFormat,
+    recursive: bool,
 }
 
 impl Monitor {
@@ -30,42 +80,60 @@ impl Monitor {
         exclude: Option<String>,
         output: Option<PathBuf>,
         format: OutputFormat,
+        recursive: bool,
     ) -> Self {
-        Self {
-            paths,
-            min_size,
-            event_types,
-            exclude,
-            output,
-            format,
-        }
+        Self { paths, min_size, event_types, exclude, output, format, recursive }
     }
 
     pub async fn run(self) -> Result<()> {
-        let (tx, mut rx) = mpsc::channel::<FileEvent>(1000);
+        if unsafe { libc::geteuid() } != 0 {
+            bail!("fanotify 需要 root 权限，请使用 sudo 运行");
+        }
+
         let running = Arc::new(AtomicBool::new(true));
         let r = running.clone();
-
-        // Handle Ctrl+C
         tokio::spawn(async move {
             tokio::signal::ctrl_c().await.ok();
             r.store(false, Ordering::SeqCst);
         });
 
-        // Setup file watcher
-        let mut watcher: RecommendedWatcher = Watcher::new(
-            move |res: Result<Event, notify::Error>| {
-                if let Ok(event) = res {
-                    let _ = tx.try_send(process_event(event));
-                }
-            },
-            Config::default(),
-        )?;
+        // 初始化 fanotify，启用 FID 模式以支持全部目录条目事件
+        let fan_fd = fanotify_init(
+            FAN_CLOEXEC | FAN_NONBLOCK | FAN_CLASS_NOTIF
+                | FAN_REPORT_FID | FAN_REPORT_DIR_FID | FAN_REPORT_NAME,
+            (O_CLOEXEC | O_RDONLY) as u32,
+        ).context("fanotify_init 失败（需要 Linux 5.9+ 内核）")?;
 
-        // Watch all paths
+        // 完整事件掩码
+        let mask = FAN_CLOSE_WRITE
+            | FAN_CREATE | FAN_DELETE
+            | FAN_MOVED_FROM | FAN_MOVED_TO
+            | FAN_EVENT_ON_CHILD | FAN_ONDIR;
+
+        let mut mount_fds = Vec::new();
+
         for path in &self.paths {
-            let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
-            watcher.watch(&canonical, RecursiveMode::Recursive)?;
+            let canonical = if path.exists() {
+                path.canonicalize().unwrap_or_else(|_| path.clone())
+            } else {
+                path.clone()
+            };
+
+            // 标记根目录
+            mark_directory(fan_fd, mask, &canonical)?;
+
+            // 递归标记所有子目录
+            if self.recursive && canonical.is_dir() {
+                mark_recursive(fan_fd, mask, &canonical);
+            }
+
+            // 打开目录 fd，供 open_by_handle_at 解析文件句柄
+            if let Ok(c_path) = CString::new(canonical.to_string_lossy().as_bytes()) {
+                let mfd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
+                if mfd >= 0 {
+                    mount_fds.push(mfd);
+                }
+            }
         }
 
         // Setup output file if specified
@@ -83,21 +151,86 @@ impl Monitor {
         };
 
         println!("Starting file trace monitor...");
-        println!("Monitoring paths: {}", self.paths.iter()
-            .map(|p| p.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", "));
+        println!(
+            "Monitoring paths: {}",
+            self.paths
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         println!("Press Ctrl+C to stop\n");
 
         while running.load(Ordering::SeqCst) {
-            match timeout(Duration::from_millis(100), rx.recv()).await {
-                Ok(Some(event)) => {
-                    if self.should_output(&event) {
-                        self.output_event(&event, &mut output_file).await?;
+            let events = read_fid_events(fan_fd, &mount_fds);
+
+            // 同批事件预处理：
+            // 1. CREATE + CLOSE_WRITE 去重（同一 open(O_CREAT) + close）
+            // 2. MOVED_FROM + MOVED_TO 配对合并为单条 MOVE
+            let mut created_in_batch = HashSet::new();
+            let mut moved_from_by_pid: HashMap<i32, (usize, PathBuf)> = HashMap::new();
+
+            for (i, raw) in events.iter().enumerate() {
+                if raw.mask & FAN_CREATE != 0 {
+                    created_in_batch.insert(raw.path.clone());
+                }
+                if raw.mask & FAN_MOVED_FROM != 0 {
+                    moved_from_by_pid.insert(raw.pid, (i, raw.path.clone()));
+                }
+            }
+
+            // 找出有配对 MOVED_TO 的 MOVED_FROM 索引（这些由 MOVED_TO 合并输出）
+            let mut paired_from_indices = HashSet::new();
+            for raw in &events {
+                if raw.mask & FAN_MOVED_TO != 0 {
+                    if let Some(&(from_idx, _)) = moved_from_by_pid.get(&raw.pid) {
+                        paired_from_indices.insert(from_idx);
                     }
                 }
-                _ => continue,
             }
+
+            // 递归模式：新建子目录或子目录移入时，动态添加 mark
+            if self.recursive {
+                for raw in &events {
+                    let is_dir_create = raw.mask & FAN_CREATE != 0 && raw.mask & FAN_ONDIR != 0;
+                    let is_dir_moved_to = raw.mask & FAN_MOVED_TO != 0 && raw.mask & FAN_ONDIR != 0;
+                    if (is_dir_create || is_dir_moved_to) && raw.path.is_dir() {
+                        let _ = mark_directory(fan_fd, mask, &raw.path);
+                        mark_recursive(fan_fd, mask, &raw.path);
+                    }
+                }
+            }
+
+            for (i, raw) in events.iter().enumerate() {
+                // 跳过已配对的 MOVED_FROM（由对应 MOVED_TO 合并输出）
+                if paired_from_indices.contains(&i) {
+                    continue;
+                }
+
+                // 跳过 CREATE 后紧跟的 CLOSE_WRITE
+                if raw.mask & FAN_CLOSE_WRITE != 0 && created_in_batch.contains(&raw.path) {
+                    continue;
+                }
+
+                // MOVED_TO：附上配对的 MOVED_FROM 源路径
+                let move_from = if raw.mask & FAN_MOVED_TO != 0 {
+                    moved_from_by_pid.get(&raw.pid).map(|(_, path)| path.clone())
+                } else {
+                    None
+                };
+
+                let event = self.build_file_event(raw, move_from);
+                if self.should_output(&event) {
+                    self.output_event(&event, &mut output_file)?;
+                }
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
+
+        // Cleanup
+        unsafe { libc::close(fan_fd); }
+        for mfd in mount_fds {
+            unsafe { libc::close(mfd); }
         }
 
         println!("\nStopping file trace monitor...");
@@ -146,12 +279,12 @@ impl Monitor {
         });
         fs::write(&config_file, serde_json::to_string_pretty(&config)?)?;
 
-        println!("fsmon daemon started (PID: {}), log file: {}",
+        println!(
+            "fsmon daemon started (PID: {}), log file: {}",
             process::id(),
             log_file.display()
         );
 
-        // Run the monitor
         self.run().await?;
 
         // Cleanup
@@ -161,22 +294,41 @@ impl Monitor {
         Ok(())
     }
 
+    fn build_file_event(&self, raw: &FidEvent, move_from: Option<PathBuf>) -> FileEvent {
+        let pid = raw.pid.unsigned_abs();
+        let (cmd, user) = get_process_info_by_pid(pid, &raw.path);
+
+        let event_type = mask_to_event_type(raw.mask);
+
+        let size_change = fs::metadata(&raw.path)
+            .map(|m| m.len() as i64)
+            .unwrap_or(0);
+
+        FileEvent {
+            time: Utc::now(),
+            event_type,
+            path: raw.path.clone(),
+            move_from,
+            pid,
+            cmd,
+            user,
+            size_change,
+        }
+    }
+
     fn should_output(&self, event: &FileEvent) -> bool {
-        // Check event type filter
         if let Some(ref types) = self.event_types {
             if !types.contains(&event.event_type) {
                 return false;
             }
         }
 
-        // Check min size filter
         if let Some(min) = self.min_size {
             if event.size_change.abs() < min {
                 return false;
             }
         }
 
-        // Check exclude pattern
         if let Some(ref exclude) = self.exclude {
             if let Ok(pattern) = regex::Regex::new(&exclude.replace("*", ".*")) {
                 if pattern.is_match(&event.path.to_string_lossy()) {
@@ -188,7 +340,7 @@ impl Monitor {
         true
     }
 
-    async fn output_event(
+    fn output_event(
         &self,
         event: &FileEvent,
         output_file: &mut Option<fs::File>,
@@ -197,8 +349,6 @@ impl Monitor {
             OutputFormat::Human => {
                 let output = event.to_human_string();
                 println!("{}", output);
-
-                // Also write to file if specified
                 if let Some(file) = output_file {
                     writeln!(file, "{}", serde_json::to_string(event)?)?;
                 }
@@ -206,7 +356,6 @@ impl Monitor {
             OutputFormat::Json => {
                 let json = serde_json::to_string(event)?;
                 println!("{}", json);
-
                 if let Some(file) = output_file {
                     writeln!(file, "{}", json)?;
                 }
@@ -223,7 +372,6 @@ impl Monitor {
                     event.size_change
                 );
                 println!("{}", csv);
-
                 if let Some(file) = output_file {
                     writeln!(file, "{}", serde_json::to_string(event)?)?;
                 }
@@ -233,42 +381,203 @@ impl Monitor {
     }
 }
 
-fn process_event(event: Event) -> FileEvent {
-    let event_type = match event.kind {
-        EventKind::Create(_) => "CREATE",
-        EventKind::Modify(notify::event::ModifyKind::Name(_)) => "RENAME",
-        EventKind::Modify(_) => "MODIFY",
-        EventKind::Remove(_) => "DELETE",
-        _ => "UNKNOWN",
-    }.to_string();
+// ---- 事件类型映射 ----
 
-    let path = event.paths.first()
-        .cloned()
-        .unwrap_or_else(|| PathBuf::from("unknown"));
+fn mask_to_event_type(mask: u64) -> String {
+    // MOVE 优先于 DELETE：rename 覆盖已有文件时 mask 同时含 FAN_DELETE | FAN_MOVED_TO
+    if mask & (FAN_MOVED_FROM | FAN_MOVED_TO) != 0 { return "MOVE".to_string(); }
+    if mask & FAN_CREATE != 0 { return "CREATE".to_string(); }
+    if mask & FAN_DELETE != 0 { return "DELETE".to_string(); }
+    if mask & FAN_CLOSE_WRITE != 0 { return "MODIFY".to_string(); }
+    "UNKNOWN".to_string()
+}
 
-    // Get process info
-    let (pid, cmd, user) = get_process_info(&path);
+// ---- FID 事件读取与解析 ----
 
-    // Try to get file size change
-    let size_change = if let Ok(metadata) = fs::metadata(&path) {
-        metadata.len() as i64
-    } else {
-        0
+/// 从 fanotify fd 读取并解析 FID 格式事件
+fn read_fid_events(fan_fd: i32, mount_fds: &[i32]) -> Vec<FidEvent> {
+    let mut buf = vec![0u8; 4096 * 8]; // 32KB
+    let n = unsafe {
+        libc::read(fan_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
     };
 
-    FileEvent {
-        time: Utc::now(),
-        event_type,
-        path,
-        pid,
-        cmd,
-        user,
-        size_change,
+    if n <= 0 {
+        return vec![];
     }
+
+    let n = n as usize;
+    let mut events = Vec::new();
+    let mut offset = 0;
+
+    while offset + META_SIZE <= n {
+        let meta = unsafe { &*(buf.as_ptr().add(offset) as *const FanMetadata) };
+        let event_len = meta.event_len as usize;
+
+        if event_len < META_SIZE || offset + event_len > n {
+            break;
+        }
+
+        // 解析 info records（DFID_NAME / FID）
+        let mut path = PathBuf::new();
+        let mut info_off = offset + meta.metadata_len as usize;
+        let event_end = offset + event_len;
+
+        while info_off + INFO_HDR_SIZE <= event_end {
+            let hdr = unsafe { &*(buf.as_ptr().add(info_off) as *const FanInfoHeader) };
+            let info_len = hdr.len as usize;
+
+            if info_len < INFO_HDR_SIZE || info_off + info_len > event_end {
+                break;
+            }
+
+            match hdr.info_type {
+                FAN_EVENT_INFO_TYPE_DFID_NAME => {
+                    // 目录句柄 + 文件名：优先使用
+                    if let Some(p) = parse_dfid_name(&buf, info_off, info_len, mount_fds) {
+                        path = p;
+                    }
+                }
+                FAN_EVENT_INFO_TYPE_FID | FAN_EVENT_INFO_TYPE_DFID => {
+                    // 文件/目录自身句柄：仅在 DFID_NAME 未成功时使用
+                    if path.as_os_str().is_empty() {
+                        if let Some(p) = parse_fid(&buf, info_off, info_len, mount_fds) {
+                            path = p;
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            info_off += info_len;
+        }
+
+        // FID 模式下 fd 应为 -1，但防御性关闭
+        if meta.fd >= 0 {
+            unsafe { libc::close(meta.fd); }
+        }
+
+        events.push(FidEvent {
+            mask: meta.mask,
+            pid: meta.pid,
+            path,
+        });
+
+        offset += event_len;
+    }
+
+    events
+}
+
+/// 解析 DFID_NAME info record：目录文件句柄 + 子文件名
+///
+/// 内存布局: InfoHeader(4) | fsid(8) | file_handle(8+N) | filename(null结尾,对齐填充)
+fn parse_dfid_name(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[i32]) -> Option<PathBuf> {
+    let fh_off = info_off + INFO_HDR_SIZE + FSID_SIZE;
+    let record_end = info_off + info_len;
+
+    if fh_off + FH_HDR_SIZE > record_end {
+        return None;
+    }
+
+    let handle_bytes = u32::from_ne_bytes(
+        buf[fh_off..fh_off + 4].try_into().ok()?
+    ) as usize;
+    let fh_total = FH_HDR_SIZE + handle_bytes;
+    let name_off = fh_off + fh_total;
+
+    if name_off > record_end {
+        return None;
+    }
+
+    // 提取 null 结尾的文件名（可能有对齐填充）
+    let name_bytes = &buf[name_off..record_end];
+    let name = name_bytes.split(|&b| b == 0).next().unwrap_or(&[]);
+    let filename = std::str::from_utf8(name).ok()?;
+
+    // 解析目录句柄 → 目录路径
+    let dir_path = resolve_file_handle(mount_fds, &buf[fh_off..fh_off + fh_total])?;
+
+    if filename.is_empty() {
+        // 没有文件名，返回目录自身路径
+        Some(dir_path)
+    } else {
+        Some(dir_path.join(filename))
+    }
+}
+
+/// 解析 FID/DFID info record：文件/目录自身的文件句柄
+///
+/// 内存布局: InfoHeader(4) | fsid(8) | file_handle(8+N)
+fn parse_fid(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[i32]) -> Option<PathBuf> {
+    let fh_off = info_off + INFO_HDR_SIZE + FSID_SIZE;
+    let record_end = info_off + info_len;
+
+    if fh_off + FH_HDR_SIZE > record_end {
+        return None;
+    }
+
+    let handle_bytes = u32::from_ne_bytes(
+        buf[fh_off..fh_off + 4].try_into().ok()?
+    ) as usize;
+    let fh_total = FH_HDR_SIZE + handle_bytes;
+
+    if fh_off + fh_total > record_end {
+        return None;
+    }
+
+    resolve_file_handle(mount_fds, &buf[fh_off..fh_off + fh_total])
+}
+
+/// 通过 open_by_handle_at 将内核文件句柄解析为路径
+fn resolve_file_handle(mount_fds: &[i32], fh_data: &[u8]) -> Option<PathBuf> {
+    if fh_data.len() < FH_HDR_SIZE {
+        return None;
+    }
+
+    for &mfd in mount_fds {
+        let fd = unsafe {
+            libc::open_by_handle_at(
+                mfd,
+                fh_data.as_ptr() as *mut libc::file_handle,
+                libc::O_PATH,
+            )
+        };
+
+        if fd >= 0 {
+            let result = fs::read_link(format!("/proc/self/fd/{}", fd));
+            unsafe { libc::close(fd); }
+            if let Ok(p) = result {
+                return Some(p);
+            }
+        }
+    }
+
+    None
 }
 
 fn process_exists(pid: u32) -> bool {
     Path::new(&format!("/proc/{}", pid)).exists()
 }
 
-use std::process;
+// ---- 目录标记 ----
+
+/// 标记单个目录
+fn mark_directory(fan_fd: i32, mask: u64, path: &Path) -> Result<()> {
+    fanotify_mark(fan_fd, FAN_MARK_ADD, mask, AT_FDCWD, path)
+        .with_context(|| format!("fanotify_mark 失败: {}", path.display()))
+}
+
+/// 递归遍历并标记所有子目录（忽略错误，如权限不足的目录）
+fn mark_recursive(fan_fd: i32, mask: u64, dir: &Path) {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let _ = fanotify_mark(fan_fd, FAN_MARK_ADD, mask, AT_FDCWD, path.as_path());
+            mark_recursive(fan_fd, mask, &path);
+        }
+    }
+}
