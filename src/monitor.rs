@@ -58,6 +58,12 @@ struct FidEvent {
     mask: u64,
     pid: i32,
     path: PathBuf,
+    /// DFID_NAME 中的目录句柄键（fsid + file_handle），用于缓存查找
+    dfid_name_handle: Option<Vec<u8>>,
+    /// DFID_NAME 中的文件名
+    dfid_name_filename: Option<String>,
+    /// DFID/FID 记录中的自身句柄键（fsid + file_handle），用于缓存构建
+    self_handle: Option<Vec<u8>>,
 }
 
 // ---- Monitor ----
@@ -161,8 +167,22 @@ impl Monitor {
         );
         println!("Press Ctrl+C to stop\n");
 
+        // 持久目录句柄缓存：handle_key → dir_path
+        // 在启动时预缓存所有已标记目录，用于恢复已删除目录的子文件路径
+        let mut dir_cache: HashMap<Vec<u8>, PathBuf> = HashMap::new();
+        for path in &self.paths {
+            let canonical = if path.exists() {
+                path.canonicalize().unwrap_or_else(|_| path.clone())
+            } else {
+                path.clone()
+            };
+            if canonical.is_dir() {
+                cache_recursive(&mut dir_cache, &canonical);
+            }
+        }
+
         while running.load(Ordering::SeqCst) {
-            let events = read_fid_events(fan_fd, &mount_fds);
+            let events = read_fid_events(fan_fd, &mount_fds, &mut dir_cache);
 
             // 同批事件预处理：
             // 1. CREATE + CLOSE_WRITE 去重（同一 open(O_CREAT) + close）
@@ -189,7 +209,7 @@ impl Monitor {
                 }
             }
 
-            // 递归模式：新建子目录或子目录移入时，动态添加 mark
+            // 递归模式：新建子目录或子目录移入时，动态添加 mark 并更新句柄缓存
             if self.recursive {
                 for raw in &events {
                     let is_dir_create = raw.mask & FAN_CREATE != 0 && raw.mask & FAN_ONDIR != 0;
@@ -197,6 +217,7 @@ impl Monitor {
                     if (is_dir_create || is_dir_moved_to) && raw.path.is_dir() {
                         let _ = mark_directory(fan_fd, mask, &raw.path);
                         mark_recursive(fan_fd, mask, &raw.path);
+                        cache_recursive(&mut dir_cache, &raw.path);
                     }
                 }
             }
@@ -207,8 +228,13 @@ impl Monitor {
                     continue;
                 }
 
-                // 跳过 CREATE 后紧跟的 CLOSE_WRITE
-                if raw.mask & FAN_CLOSE_WRITE != 0 && created_in_batch.contains(&raw.path) {
+                // 跳过 CREATE 后紧跟的纯 CLOSE_WRITE 事件
+                // 注意：内核可能将 CREATE+CLOSE_WRITE 合并为单个事件（mask 同时含两者），
+                // 此时不能跳过，否则 CREATE 也被吞掉
+                if raw.mask & FAN_CLOSE_WRITE != 0
+                    && raw.mask & FAN_CREATE == 0
+                    && created_in_batch.contains(&raw.path)
+                {
                     continue;
                 }
 
@@ -298,7 +324,16 @@ impl Monitor {
         let pid = raw.pid.unsigned_abs();
         let (cmd, user) = get_process_info_by_pid(pid, &raw.path);
 
-        let event_type = mask_to_event_type(raw.mask);
+        let mut event_type = mask_to_event_type(raw.mask);
+
+        // 同目录下的 MOVE 视为 RENAME
+        if event_type == "MOVE" {
+            if let Some(ref from) = move_from {
+                if from.parent() == raw.path.parent() {
+                    event_type = "RENAME".to_string();
+                }
+            }
+        }
 
         let size_change = fs::metadata(&raw.path)
             .map(|m| m.len() as i64)
@@ -395,7 +430,12 @@ fn mask_to_event_type(mask: u64) -> String {
 // ---- FID 事件读取与解析 ----
 
 /// 从 fanotify fd 读取并解析 FID 格式事件
-fn read_fid_events(fan_fd: i32, mount_fds: &[i32]) -> Vec<FidEvent> {
+///
+/// 使用两遍处理 + 持久缓存：
+/// 1. 第一遍：解析所有事件，尝试解析文件句柄
+/// 2. 第二遍：用持久缓存恢复因目录已删除而解析失败的子文件路径
+/// 3. 将新解析的目录信息更新到持久缓存
+fn read_fid_events(fan_fd: i32, mount_fds: &[i32], dir_cache: &mut HashMap<Vec<u8>, PathBuf>) -> Vec<FidEvent> {
     let mut buf = vec![0u8; 4096 * 8]; // 32KB
     let n = unsafe {
         libc::read(fan_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
@@ -409,6 +449,8 @@ fn read_fid_events(fan_fd: i32, mount_fds: &[i32]) -> Vec<FidEvent> {
     let mut events = Vec::new();
     let mut offset = 0;
 
+    // ---- 第一遍：解析事件并提取句柄数据 ----
+
     while offset + META_SIZE <= n {
         let meta = unsafe { &*(buf.as_ptr().add(offset) as *const FanMetadata) };
         let event_len = meta.event_len as usize;
@@ -417,8 +459,11 @@ fn read_fid_events(fan_fd: i32, mount_fds: &[i32]) -> Vec<FidEvent> {
             break;
         }
 
-        // 解析 info records（DFID_NAME / FID）
         let mut path = PathBuf::new();
+        let mut dfid_name_handle: Option<Vec<u8>> = None;
+        let mut dfid_name_filename: Option<String> = None;
+        let mut self_handle: Option<Vec<u8>> = None;
+
         let mut info_off = offset + meta.metadata_len as usize;
         let event_end = offset + event_len;
 
@@ -432,16 +477,21 @@ fn read_fid_events(fan_fd: i32, mount_fds: &[i32]) -> Vec<FidEvent> {
 
             match hdr.info_type {
                 FAN_EVENT_INFO_TYPE_DFID_NAME => {
-                    // 目录句柄 + 文件名：优先使用
-                    if let Some(p) = parse_dfid_name(&buf, info_off, info_len, mount_fds) {
-                        path = p;
+                    if let Some((key, filename, resolved)) = extract_dfid_name(&buf, info_off, info_len, mount_fds) {
+                        dfid_name_handle = Some(key);
+                        dfid_name_filename = Some(filename);
+                        if let Some(p) = resolved {
+                            path = p;
+                        }
                     }
                 }
                 FAN_EVENT_INFO_TYPE_FID | FAN_EVENT_INFO_TYPE_DFID => {
-                    // 文件/目录自身句柄：仅在 DFID_NAME 未成功时使用
-                    if path.as_os_str().is_empty() {
-                        if let Some(p) = parse_fid(&buf, info_off, info_len, mount_fds) {
-                            path = p;
+                    if let Some((key, resolved)) = extract_fid(&buf, info_off, info_len, mount_fds) {
+                        self_handle = Some(key);
+                        if path.as_os_str().is_empty() {
+                            if let Some(p) = resolved {
+                                path = p;
+                            }
                         }
                     }
                 }
@@ -460,19 +510,81 @@ fn read_fid_events(fan_fd: i32, mount_fds: &[i32]) -> Vec<FidEvent> {
             mask: meta.mask,
             pid: meta.pid,
             path,
+            dfid_name_handle,
+            dfid_name_filename,
+            self_handle,
         });
 
         offset += event_len;
     }
 
+    // ---- 第二遍：用持久缓存恢复已删除目录的子文件路径 ----
+    // 先从本批次成功解析的事件更新缓存，再用缓存恢复失败的事件
+    // 迭代直到不再有新的路径被解析（处理多级嵌套删除）
+
+    loop {
+        // 从已成功解析的事件更新持久缓存
+        for ev in events.iter() {
+            if ev.path.as_os_str().is_empty() {
+                continue;
+            }
+
+            // 缓存自身句柄 → 路径
+            if let Some(ref key) = ev.self_handle {
+                dir_cache.entry(key.clone()).or_insert_with(|| ev.path.clone());
+            }
+
+            // 缓存 DFID_NAME 中的目录句柄 → 目录路径
+            if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
+                let dir_path = if !filename.is_empty() {
+                    ev.path.parent().map(|p| p.to_path_buf())
+                } else {
+                    Some(ev.path.clone())
+                };
+                if let Some(dp) = dir_path {
+                    dir_cache.entry(key.clone()).or_insert(dp);
+                }
+            }
+        }
+
+        // 尝试用缓存恢复空路径的事件
+        let mut made_progress = false;
+        for ev in events.iter_mut() {
+            if !ev.path.as_os_str().is_empty() {
+                continue;
+            }
+            if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
+                if let Some(dir_path) = dir_cache.get(key) {
+                    ev.path = if filename.is_empty() {
+                        dir_path.clone()
+                    } else {
+                        dir_path.join(filename)
+                    };
+                    made_progress = true;
+                }
+            }
+        }
+
+        if !made_progress {
+            break;
+        }
+    }
+
     events
 }
 
-/// 解析 DFID_NAME info record：目录文件句柄 + 子文件名
+/// 解析 DFID_NAME info record：提取目录句柄键、文件名、尝试解析的路径
+///
+/// 返回 (handle_key, filename, resolved_path)
+/// handle_key = fsid + file_handle 字节，唯一标识一个目录
+/// 即使 open_by_handle_at 失败（目录已删除），也返回 handle_key 和 filename
 ///
 /// 内存布局: InfoHeader(4) | fsid(8) | file_handle(8+N) | filename(null结尾,对齐填充)
-fn parse_dfid_name(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[i32]) -> Option<PathBuf> {
-    let fh_off = info_off + INFO_HDR_SIZE + FSID_SIZE;
+fn extract_dfid_name(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[i32])
+    -> Option<(Vec<u8>, String, Option<PathBuf>)>
+{
+    let fsid_off = info_off + INFO_HDR_SIZE;
+    let fh_off = fsid_off + FSID_SIZE;
     let record_end = info_off + info_len;
 
     if fh_off + FH_HDR_SIZE > record_end {
@@ -489,27 +601,33 @@ fn parse_dfid_name(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[i3
         return None;
     }
 
-    // 提取 null 结尾的文件名（可能有对齐填充）
+    // 提取 null 结尾的文件名
     let name_bytes = &buf[name_off..record_end];
     let name = name_bytes.split(|&b| b == 0).next().unwrap_or(&[]);
-    let filename = std::str::from_utf8(name).ok()?;
+    let filename = std::str::from_utf8(name).ok()?.to_string();
 
-    // 解析目录句柄 → 目录路径
-    let dir_path = resolve_file_handle(mount_fds, &buf[fh_off..fh_off + fh_total])?;
+    // 缓存键：file_handle 字节（唯一标识该目录 inode，同一文件系统内）
+    let key = buf[fh_off..fh_off + fh_total].to_vec();
 
-    if filename.is_empty() {
-        // 没有文件名，返回目录自身路径
-        Some(dir_path)
-    } else {
-        Some(dir_path.join(filename))
-    }
+    // 尝试解析目录句柄
+    let dir_path = resolve_file_handle(mount_fds, &buf[fh_off..fh_off + fh_total]);
+    let full_path = dir_path.map(|dp| {
+        if filename.is_empty() { dp } else { dp.join(&filename) }
+    });
+
+    Some((key, filename, full_path))
 }
 
-/// 解析 FID/DFID info record：文件/目录自身的文件句柄
+/// 解析 FID/DFID info record：提取自身句柄键和尝试解析的路径
+///
+/// 返回 (handle_key, resolved_path)
 ///
 /// 内存布局: InfoHeader(4) | fsid(8) | file_handle(8+N)
-fn parse_fid(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[i32]) -> Option<PathBuf> {
-    let fh_off = info_off + INFO_HDR_SIZE + FSID_SIZE;
+fn extract_fid(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[i32])
+    -> Option<(Vec<u8>, Option<PathBuf>)>
+{
+    let fsid_off = info_off + INFO_HDR_SIZE;
+    let fh_off = fsid_off + FSID_SIZE;
     let record_end = info_off + info_len;
 
     if fh_off + FH_HDR_SIZE > record_end {
@@ -525,7 +643,10 @@ fn parse_fid(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[i32]) ->
         return None;
     }
 
-    resolve_file_handle(mount_fds, &buf[fh_off..fh_off + fh_total])
+    let key = buf[fh_off..fh_off + fh_total].to_vec();
+    let path = resolve_file_handle(mount_fds, &buf[fh_off..fh_off + fh_total]);
+
+    Some((key, path))
 }
 
 /// 通过 open_by_handle_at 将内核文件句柄解析为路径
@@ -578,6 +699,59 @@ fn mark_recursive(fan_fd: i32, mask: u64, dir: &Path) {
         if path.is_dir() {
             let _ = fanotify_mark(fan_fd, FAN_MARK_ADD, mask, AT_FDCWD, path.as_path());
             mark_recursive(fan_fd, mask, &path);
+        }
+    }
+}
+
+// ---- 目录句柄缓存 ----
+
+/// 通过 name_to_handle_at 获取路径的文件句柄键
+/// 返回的字节与 fanotify FID 事件中的 file_handle 格式相同
+fn path_to_handle_key(path: &Path) -> Option<Vec<u8>> {
+    let c_path = CString::new(path.to_string_lossy().as_bytes()).ok()?;
+    let mut mount_id: libc::c_int = 0;
+    let mut buf = vec![0u8; 128]; // 足够容纳任何文件句柄
+
+    // 设置 handle_bytes 字段为缓冲区容量减去头部
+    let capacity = (buf.len() - FH_HDR_SIZE) as u32;
+    buf[0..4].copy_from_slice(&capacity.to_ne_bytes());
+
+    let ret = unsafe {
+        libc::name_to_handle_at(
+            libc::AT_FDCWD,
+            c_path.as_ptr(),
+            buf.as_mut_ptr() as *mut libc::file_handle,
+            &mut mount_id,
+            0,
+        )
+    };
+
+    if ret != 0 {
+        return None;
+    }
+
+    let handle_bytes = u32::from_ne_bytes(buf[0..4].try_into().ok()?) as usize;
+    Some(buf[0..FH_HDR_SIZE + handle_bytes].to_vec())
+}
+
+/// 将目录路径的句柄键加入缓存
+fn cache_dir_handle(cache: &mut HashMap<Vec<u8>, PathBuf>, path: &Path) {
+    if let Some(key) = path_to_handle_key(path) {
+        cache.insert(key, path.to_path_buf());
+    }
+}
+
+/// 递归缓存目录及其所有子目录的句柄
+fn cache_recursive(cache: &mut HashMap<Vec<u8>, PathBuf>, dir: &Path) {
+    cache_dir_handle(cache, dir);
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            cache_recursive(cache, &path);
         }
     }
 }
