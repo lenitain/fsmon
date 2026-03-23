@@ -2,6 +2,8 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Local, NaiveDateTime, Utc};
 use std::path::Path;
 
+use crate::proc_cache::ProcCache;
+
 /// Parse human-readable size (e.g., "1GB", "100MB", "1024")
 pub fn parse_size(size_str: &str) -> Result<i64> {
     let size_str = size_str.trim().to_uppercase();
@@ -104,8 +106,18 @@ pub fn format_datetime(dt: &DateTime<Utc>) -> String {
 }
 
 /// Get process info by PID (from fanotify event)
-/// Falls back to file owner for USER when process has already exited
-pub fn get_process_info_by_pid(pid: u32, file_path: &Path) -> (String, String) {
+/// Checks proc connector cache first (for short-lived processes),
+/// then falls back to /proc (for long-lived processes),
+/// then falls back to file owner for USER.
+pub fn get_process_info_by_pid(pid: u32, file_path: &Path, proc_cache: Option<&ProcCache>) -> (String, String) {
+    // 优先查 proc connector 缓存（短命进程的唯一来源）
+    if let Some(cache) = proc_cache {
+        if let Some(info) = cache.get(&pid) {
+            return (info.cmd.clone(), info.user.clone());
+        }
+    }
+
+    // 回退到直接读 /proc（长期运行的进程）
     let cmd = read_proc_comm(pid).unwrap_or_else(|| "unknown".to_string());
     let user = read_proc_user(pid)
         .or_else(|| read_file_owner(file_path))

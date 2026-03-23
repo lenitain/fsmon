@@ -11,6 +11,7 @@ mod monitor;
 mod query;
 mod daemon;
 mod utils;
+mod proc_cache;
 
 use monitor::Monitor;
 use query::Query;

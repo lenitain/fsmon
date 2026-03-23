@@ -20,6 +20,7 @@ use std::sync::Arc;
 
 use crate::{FileEvent, OutputFormat};
 use crate::utils::get_process_info_by_pid;
+use crate::proc_cache::{self, ProcCache};
 
 // ---- FID 事件解析所需的内核结构体和常量 ----
 
@@ -76,6 +77,7 @@ pub struct Monitor {
     output: Option<PathBuf>,
     format: OutputFormat,
     recursive: bool,
+    proc_cache: Option<ProcCache>,
 }
 
 impl Monitor {
@@ -88,13 +90,18 @@ impl Monitor {
         format: OutputFormat,
         recursive: bool,
     ) -> Self {
-        Self { paths, min_size, event_types, exclude, output, format, recursive }
+        Self { paths, min_size, event_types, exclude, output, format, recursive, proc_cache: None }
     }
 
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(mut self) -> Result<()> {
         if unsafe { libc::geteuid() } != 0 {
             bail!("fanotify 需要 root 权限，请使用 sudo 运行");
         }
+
+        // 启动 proc connector 监听线程，缓存进程 exec 信息
+        self.proc_cache = Some(proc_cache::start_proc_listener());
+        // 短暂等待，让 listener 完成订阅
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
         let running = Arc::new(AtomicBool::new(true));
         let r = running.clone();
@@ -322,7 +329,7 @@ impl Monitor {
 
     fn build_file_event(&self, raw: &FidEvent, move_from: Option<PathBuf>) -> FileEvent {
         let pid = raw.pid.unsigned_abs();
-        let (cmd, user) = get_process_info_by_pid(pid, &raw.path);
+        let (cmd, user) = get_process_info_by_pid(pid, &raw.path, self.proc_cache.as_ref());
 
         let mut event_type = mask_to_event_type(raw.mask);
 
