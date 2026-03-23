@@ -109,13 +109,13 @@ impl Monitor {
         let pid_file = std::env::var("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("/tmp"))
-            .join("ftrace.pid");
+            .join("fsmon.pid");
 
         if pid_file.exists() {
             let pid_str = fs::read_to_string(&pid_file)?;
             let pid: u32 = pid_str.trim().parse()?;
             if process_exists(pid) {
-                println!("ftrace daemon already running (PID: {})", pid);
+                println!("fsmon daemon already running (PID: {})", pid);
                 return Ok(());
             }
         }
@@ -126,7 +126,7 @@ impl Monitor {
         // Create log directory
         let log_file = self.output.clone().unwrap_or_else(|| {
             dirs::home_dir()
-                .map(|h: PathBuf| h.join(".ftrace").join("history.log"))
+                .map(|h: PathBuf| h.join(".fsmon").join("history.log"))
                 .unwrap_or_else(|| PathBuf::from("history.log"))
         });
 
@@ -138,7 +138,7 @@ impl Monitor {
         let config_file = std::env::var("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("/tmp"))
-            .join("ftrace.json");
+            .join("fsmon.json");
         let config = serde_json::json!({
             "paths": self.paths,
             "log_file": log_file,
@@ -146,7 +146,7 @@ impl Monitor {
         });
         fs::write(&config_file, serde_json::to_string_pretty(&config)?)?;
 
-        println!("ftrace daemon started (PID: {}), log file: {}",
+        println!("fsmon daemon started (PID: {}), log file: {}",
             process::id(),
             log_file.display()
         );

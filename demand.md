@@ -1,4 +1,4 @@
-### 一、工具核心定位（ftrace）
+### 一、工具核心定位（fsmon）
 轻量级、高性能的**系统级文件变更溯源工具**，专注记录文件操作行为（创建/删除/修改等），关联进程/PID/用户信息，支持多维度查询，**无文件复原功能**，仅提供溯源信息。
 
 ### 二、核心命令/参数设计（CLI 版，无 TUI）
@@ -17,7 +17,7 @@
 ### 参数
 | 参数                | 短格式 | 说明                                                                 | 必填 | 默认值       |
 |---------------------|--------|----------------------------------------------------------------------|------|--------------|
-| `PATH`              | -      | 监控的目录/文件路径（支持多个路径，如 `ftrace monitor /var/log /tmp`） | 是   | -            |
+| `PATH`              | -      | 监控的目录/文件路径（支持多个路径，如 `fsmon monitor /var/log /tmp`） | 是   | -            |
 | `--min-size`        | `-s`   | 仅记录大小变化≥指定值的事件（如 `1GB`/`100MB`）                     | 否   | 0（无限制）  |
 | `--types`           | `-t`   | 仅监控指定操作类型（逗号分隔），可选值：CREATE/DELETE/MODIFY/RENAME/SIZE_CHANGE | 否   | 所有类型     |
 | `--exclude`         | `-e`   | 排除监控的路径（支持通配符，如 `*.log`/`/tmp/*`）                   | 否   | 无           |
@@ -28,7 +28,7 @@
 ### 示例 & 输出
 #### 示例1：基础监控（监控 /var/log，输出易读格式）
 ```bash
-ftrace monitor /var/log
+fsmon monitor /var/log
 ```
 #### 输出（human 格式）：
 ```
@@ -39,7 +39,7 @@ ftrace monitor /var/log
 
 #### 示例2：监控 /tmp，仅记录 CREATE/MODIFY 且大小≥100MB 的事件，输出 JSON
 ```bash
-ftrace monitor /tmp --types CREATE,MODIFY --min-size 100MB --format json
+fsmon monitor /tmp --types CREATE,MODIFY --min-size 100MB --format json
 ```
 #### 输出（json 格式）：
 ```json
@@ -47,13 +47,13 @@ ftrace monitor /tmp --types CREATE,MODIFY --min-size 100MB --format json
 {"time":"2024-05-01T14:36:10+08:00","type":"CREATE","path":"/tmp/big_archive.tar","pid":6789,"cmd":"tar","user":"ubuntu","size_change":153600000,"size_change_human":"+150MB"}
 ```
 
-#### 示例3：后台监控 /，排除 /proc/*，日志写入 /var/log/ftrace.log
+#### 示例3：后台监控 /，排除 /proc/*，日志写入 /var/log/fsmon.log
 ```bash
-ftrace monitor / --exclude /proc/* --daemon --output /var/log/ftrace.log
+fsmon monitor / --exclude /proc/* --daemon --output /var/log/fsmon.log
 ```
 #### 输出（终端仅提示守护进程启动，日志写入文件）：
 ```
-ftrace daemon started (PID: 7890), log file: /var/log/ftrace.log
+fsmon daemon started (PID: 7890), log file: /var/log/fsmon.log
 ```
 
 ---
@@ -65,7 +65,7 @@ ftrace daemon started (PID: 7890), log file: /var/log/ftrace.log
 ### 参数
 | 参数                | 短格式 | 说明                                                                 | 必填 | 默认值       |
 |---------------------|--------|----------------------------------------------------------------------|------|--------------|
-| `--log-file`        | `-l`   | 待查询的日志文件路径（若未指定，默认读取 `~/.ftrace/history.log`）   | 否   | ~/.ftrace/history.log |
+| `--log-file`        | `-l`   | 待查询的日志文件路径（若未指定，默认读取 `~/.fsmon/history.log`）   | 否   | ~/.fsmon/history.log |
 | `--since`           | `-S`   | 起始时间（如 `1h`/`2024-05-01 10:00`）                              | 否   | 日志起始时间 |
 | `--until`           | `-U`   | 结束时间（如 `30m`/`2024-05-01 12:00`）                              | 否   | 当前时间     |
 | `--pid`             | `-p`   | 仅查询指定 PID 的事件（支持多个，逗号分隔）                          | 否   | 所有 PID     |
@@ -79,7 +79,7 @@ ftrace daemon started (PID: 7890), log file: /var/log/ftrace.log
 ### 示例 & 输出
 #### 示例1：查询过去1小时内，进程名包含 nginx 的事件
 ```bash
-ftrace query --since 1h --cmd nginx*
+fsmon query --since 1h --cmd nginx*
 ```
 #### 输出（human 格式）：
 ```
@@ -90,7 +90,7 @@ ftrace query --since 1h --cmd nginx*
 
 #### 示例2：查询 2024-05-01 10:00-12:00 期间，root 用户删除的文件，按大小降序排序，输出 CSV
 ```bash
-ftrace query --since "2024-05-01 10:00" --until "2024-05-01 12:00" --user root --types DELETE --sort size --format csv
+fsmon query --since "2024-05-01 10:00" --until "2024-05-01 12:00" --user root --types DELETE --sort size --format csv
 ```
 #### 输出（csv 格式）：
 ```
@@ -102,7 +102,7 @@ time,type,path,pid,cmd,user,size_change,size_change_human
 
 #### 示例3：查询指定日志文件，PID 为 1234 且大小变化≥1GB 的事件
 ```bash
-ftrace query --log-file /var/log/ftrace.log --pid 1234 --min-size 1GB
+fsmon query --log-file /var/log/fsmon.log --pid 1234 --min-size 1GB
 ```
 #### 输出（human 格式）：
 ```
@@ -122,13 +122,13 @@ ftrace query --log-file /var/log/ftrace.log --pid 1234 --min-size 1GB
 ### 示例 & 输出
 #### 示例1：查看状态（human 格式）
 ```bash
-ftrace status
+fsmon status
 ```
 #### 输出：
 ```
-ftrace daemon status: Running (PID: 7890)
+fsmon daemon status: Running (PID: 7890)
 Monitored paths: / (exclude: /proc/*)
-Log file: /var/log/ftrace.log
+Log file: /var/log/fsmon.log
 Start time: 2024-05-01 14:00:00
 Event count: 1258 (today)
 Memory usage: 3.2MB
@@ -136,18 +136,18 @@ Memory usage: 3.2MB
 
 #### 示例2：查看状态（json 格式）
 ```bash
-ftrace status --format json
+fsmon status --format json
 ```
 #### 输出：
 ```json
-{"status":"running","pid":7890,"monitored_paths":["/"],"excluded_paths":["/proc/*"],"log_file":"/var/log/ftrace.log","start_time":"2024-05-01T14:00:00+08:00","event_count_today":1258,"memory_usage":"3.2MB","memory_usage_bytes":3355443}
+{"status":"running","pid":7890,"monitored_paths":["/"],"excluded_paths":["/proc/*"],"log_file":"/var/log/fsmon.log","start_time":"2024-05-01T14:00:00+08:00","event_count_today":1258,"memory_usage":"3.2MB","memory_usage_bytes":3355443}
 ```
 
 ---
 
 ## 4. 辅助命令：`stop`（停止后台监控）
 ### 作用
-停止后台运行的 ftrace 守护进程。
+停止后台运行的 fsmon 守护进程。
 
 ### 参数
 无（可选 `--force` 强制终止）。
@@ -155,20 +155,20 @@ ftrace status --format json
 ### 示例 & 输出
 #### 示例1：停止后台监控
 ```bash
-ftrace stop
+fsmon stop
 ```
 #### 输出：
 ```
-ftrace daemon (PID: 7890) stopped successfully
+fsmon daemon (PID: 7890) stopped successfully
 ```
 
 #### 示例2：强制停止（进程无响应时）
 ```bash
-ftrace stop --force
+fsmon stop --force
 ```
 #### 输出：
 ```
-ftrace daemon (PID: 7890) force stopped
+fsmon daemon (PID: 7890) force stopped
 ```
 
 ---
@@ -180,7 +180,7 @@ ftrace daemon (PID: 7890) force stopped
 ### 参数
 | 参数                | 短格式 | 说明                                                                 | 必填 | 默认值       |
 |---------------------|--------|----------------------------------------------------------------------|------|--------------|
-| `--log-file`        | `-l`   | 待清理的日志文件路径                                                 | 否   | ~/.ftrace/history.log |
+| `--log-file`        | `-l`   | 待清理的日志文件路径                                                 | 否   | ~/.fsmon/history.log |
 | `--keep-days`       | `-k`   | 保留最近 N 天的日志（如 `7` 保留7天）                               | 否   | 30           |
 | `--max-size`        | `-m`   | 日志文件最大大小（超过则清理旧日志，如 `100MB`）                     | 否   | 无限制       |
 | `--dry-run`         | `-n`   | 模拟清理，仅输出要删除的内容（不实际删除）                           | 否   | 实际删除     |
@@ -188,18 +188,18 @@ ftrace daemon (PID: 7890) force stopped
 ### 示例 & 输出
 #### 示例1：清理日志，仅保留最近7天的内容
 ```bash
-ftrace clean --keep-days 7
+fsmon clean --keep-days 7
 ```
 #### 输出：
 ```
-Cleaning /home/user/.ftrace/history.log...
+Cleaning /home/user/.fsmon/history.log...
 Deleted 12589 lines (logs older than 7 days)
 Log file size reduced from 200MB to 45MB
 ```
 
 #### 示例2：模拟清理，日志最大保留 50MB
 ```bash
-ftrace clean --max-size 50MB --dry-run
+fsmon clean --max-size 50MB --dry-run
 ```
 #### 输出：
 ```

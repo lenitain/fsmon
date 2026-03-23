@@ -28,12 +28,12 @@ impl Daemon {
         let pid_file = std::env::var("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("/tmp"))
-            .join("ftrace.pid");
+            .join("fsmon.pid");
 
         let config_file = std::env::var("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("/tmp"))
-            .join("ftrace.json");
+            .join("fsmon.json");
 
         if !pid_file.exists() || !config_file.exists() {
             return Ok(DaemonStatus::Stopped);
@@ -63,7 +63,7 @@ impl Daemon {
             .map(PathBuf::from)
             .unwrap_or_else(|| {
                 dirs::home_dir()
-                    .map(|h: PathBuf| h.join(".ftrace").join("history.log"))
+                    .map(|h: PathBuf| h.join(".fsmon").join("history.log"))
                     .unwrap_or_else(|| PathBuf::from("history.log"))
             });
 
@@ -98,10 +98,10 @@ impl Daemon {
         let pid_file = std::env::var("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("/tmp"))
-            .join("ftrace.pid");
+            .join("fsmon.pid");
 
         if !pid_file.exists() {
-            println!("ftrace daemon is not running");
+            println!("fsmon daemon is not running");
             return Ok(());
         }
 
@@ -109,7 +109,7 @@ impl Daemon {
         let pid: u32 = pid_str.trim().parse()?;
 
         if !Self::process_exists(pid) {
-            println!("ftrace daemon is not running (stale PID file)");
+            println!("fsmon daemon is not running (stale PID file)");
             fs::remove_file(&pid_file)?;
             return Ok(());
         }
@@ -120,12 +120,12 @@ impl Daemon {
 
         if result == 0 {
             if force {
-                println!("ftrace daemon (PID: {}) force stopped", pid);
+                println!("fsmon daemon (PID: {}) force stopped", pid);
             } else {
-                println!("ftrace daemon (PID: {}) stopped successfully", pid);
+                println!("fsmon daemon (PID: {}) stopped successfully", pid);
             }
         } else {
-            eprintln!("Failed to stop ftrace daemon (PID: {})", pid);
+            eprintln!("Failed to stop fsmon daemon (PID: {})", pid);
         }
 
         // Cleanup PID file
@@ -133,7 +133,7 @@ impl Daemon {
         let _ = fs::remove_file(std::env::var("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("/tmp"))
-            .join("ftrace.json"));
+            .join("fsmon.json"));
 
         Ok(())
     }

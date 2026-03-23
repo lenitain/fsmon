@@ -1,8 +1,8 @@
-# ftrace - 学习 Rust 的实战项目
+# fsmon - 学习 Rust 的实战项目
 
 ## 这是什么？
 
-`ftrace` 是一个**文件变更溯源工具**，用 Rust 编写。它的功能是监控文件系统的变化（创建、删除、修改等），并记录是哪个进程触发了这些变化。
+`fsmon` 是一个**文件变更溯源工具**，用 Rust 编写。它的功能是监控文件系统的变化（创建、删除、修改等），并记录是哪个进程触发了这些变化。
 
 简单来说：当你想知道"谁动了我的文件"时，这个工具可以告诉你。
 
@@ -42,16 +42,16 @@ src/
 cargo build --release
 ```
 
-生成的二进制文件在 `./target/release/ftrace`
+生成的二进制文件在 `./target/release/fsmon`
 
 ### 2. 试试基本功能
 
 ```bash
 # 查看帮助
-./target/release/ftrace --help
+./target/release/fsmon --help
 
 # 监控一个目录（开一个新终端执行）
-./target/release/ftrace monitor /tmp
+./target/release/fsmon monitor /tmp
 
 # 在另一个终端创建文件，观察输出
 touch /tmp/test.txt
@@ -71,7 +71,7 @@ touch /tmp/test.txt
 
 ```rust
 #[derive(Parser)]
-#[command(name = "ftrace")]
+#[command(name = "fsmon")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
