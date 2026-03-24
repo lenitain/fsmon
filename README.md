@@ -1,266 +1,272 @@
 # fsmon - File System Monitor
 
-**轻量级高性能文件系统变更追踪工具**
+🌍 **Select Language | 选择语言**
+- [English](README.md)
+- [简体中文](README.zh-CN.md)
 
-fsmon (file system monitor) 是一个实时文件变更监控工具，能够追踪文件系统的变化并记录是哪个进程执行了这些操作。当你需要回答"服务器上谁修改了这个文件？"这个问题时，fsmon 就是你的答案。
+---
 
-## 特性
+**Lightweight High-Performance File System Change Tracking Tool**
 
-- **实时监控**: 默认捕获 8 种核心变更事件（CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF, CLOSE_WRITE, ATTRIB），`--all-events` 开启全部 14 种 fanotify 事件
-- **完整进程追踪**: 通过 Proc Connector 捕获短命进程（touch/rm/mv）的 PID、命令名和用户名
-- **递归监控**: `-r/--recursive` 参数支持递归监控所有子目录，动态跟踪新建子目录
-- **递归删除捕捉**: 递归删除目录时，完整捕获所有子文件的删除事件（包括已删除目录的子文件路径）
-- **高性能**: Rust 编写，内存占用 <5MB，零拷贝事件解析
-- **灵活过滤**: 按时间、大小、进程、事件类型筛选
-- **多种输出**: 人类可读、JSON、CSV 格式
-- **守护进程模式**: 可后台运行，持久化日志
+fsmon (file system monitor) is a real-time file change monitoring tool that tracks filesystem changes and records which process executed them. When you need to answer "Who modified this file on the server?", fsmon is your answer.
 
-## 快速开始
+## Features
 
-### 前置要求
+- **Real-time Monitoring**: Captures 8 core change events by default (CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF, CLOSE_WRITE, ATTRIB), `--all-events` enables all 14 fanotify events
+- **Complete Process Tracking**: Captures PID, command name, and username for short-lived processes (touch/rm/mv) via Proc Connector
+- **Recursive Monitoring**: `-r/--recursive` parameter monitors all subdirectories, dynamically tracking newly created directories
+- **Recursive Deletion Capture**: Completely captures all file deletion events during recursive directory deletion (including paths of files in deleted directories)
+- **High Performance**: Written in Rust, <5MB memory usage, zero-copy event parsing
+- **Flexible Filtering**: Filter by time, size, process, event type
+- **Multiple Output Formats**: Human-readable, JSON, CSV
+- **Daemon Mode**: Run in background with persistent logging
 
-- **操作系统**: Linux 5.9+（需要 fanotify FID 模式支持）
-- **文件系统**: ext4 / XFS / tmpfs（btrfs 部分支持，有竞态窗口）
-- **构建工具**: Rust 工具链（cargo）
+## Quick Start
 
-**检查内核版本**：
+### Prerequisites
+
+- **OS**: Linux 5.9+ (requires fanotify FID mode support)
+- **Filesystem**: ext4 / XFS / tmpfs (btrfs partial support with race window)
+- **Build Tools**: Rust toolchain (cargo)
+
+**Check kernel version**:
 ```bash
-uname -r  # 需要 ≥ 5.9
+uname -r  # requires ≥ 5.9
 ```
 
-**安装 Rust**（如果未安装）：
+**Install Rust** (if not installed):
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source $HOME/.cargo/env
-rustc --version  # 验证安装
+rustc --version  # verify installation
 ```
 
 ---
 
-### 安装方式
+### Installation
 
-#### 方式 1: 从源码编译（推荐）
+#### Method 1: Build from Source (Recommended)
 
 ```bash
-# 1. 克隆仓库
+# 1. Clone repository
 git clone https://github.com/YOUR_USERNAME/fsmon.git
 cd fsmon
 
-# 2. 编译 Release 版本
+# 2. Build Release version
 cargo build --release
 
-# 3. 安装到系统路径（需要 sudo）
+# 3. Install to system path (requires sudo)
 sudo cp target/release/fsmon /usr/local/bin/
 
-# 4. 验证安装
+# 4. Verify installation
 fsmon --help
 ```
 
-#### 方式 2: 使用 cargo install
+#### Method 2: Use cargo install
 
 ```bash
-# 直接从 crates.io 安装
+# Install from crates.io (if published)
 cargo install fsmon
 
-# 或从 Git 安装
+# Or install from Git
 cargo install --git https://github.com/YOUR_USERNAME/fsmon.git
 ```
 
 ---
 
-### 权限配置
+### Permission Configuration
 
-**监控某些目录需要 root 权限**：
+**Root permissions required for monitoring certain directories**:
 
 ```bash
-# 临时使用 sudo
+# Use sudo temporarily
 sudo fsmon monitor /etc
 
-# 或添加当前用户到特定组（可选）
+# Or add current user to specific group (optional)
 sudo usermod -aG systemd-journal $USER
-# 注销重新登录后生效
+# Log out and log back in for changes to take effect
 ```
 
-**Proc Connector 需要 root**（用于获取进程信息）：
+**Proc Connector requires root** (for retrieving process information):
 ```bash
-# 建议始终使用 sudo 运行
+# Recommended to always run with sudo
 sudo fsmon monitor /home
 ```
 
 ---
 
-### 8 个典型场景
+### 8 Typical Scenarios
 
-#### 场景 1: 排查配置文件被谁修改
+#### Scenario 1: Investigate Who Modified Configuration Files
 
 ```bash
-# 监控 /etc 目录的修改事件
+# Monitor /etc directory for modifications
 sudo fsmon monitor /etc --types MODIFY --output /tmp/etc-monitor.log
 
-# 另一个终端执行修改
+# Execute modification in another terminal
 echo "192.168.1.100 newhost" | sudo tee -a /etc/hosts
 
-# 预期输出
+# Expected output
 [2024-05-01 14:30:25] [MODIFY] /etc/hosts (PID: 12345, CMD: tee, USER: root, SIZE: +23B)
 
-# 事后查询
+# Query afterwards
 fsmon query --log-file /tmp/etc-monitor.log --since 1h --types MODIFY
 ```
 
 ---
 
-#### 场景 2: 追踪大文件创建
+#### Scenario 2: Track Large File Creation
 
 ```bash
-# 监控大于 50MB 的文件创建
+# Monitor file creation larger than 50MB
 fsmon monitor /tmp --types CREATE --min-size 50MB --format json
 
-# 触发操作
+# Trigger operation
 dd if=/dev/zero of=/tmp/large_test.bin bs=1M count=100
 
-# 预期输出
+# Expected output
 {"time":"2024-05-01T15:00:00Z","event_type":"CREATE","path":"/tmp/large_test.bin","pid":23456,"cmd":"dd","user":"pilot","size_change":104857600}
 ```
 
 ---
 
-#### 场景 3: 审计删除操作（递归删除完整捕获）
+#### Scenario 3: Audit Deletion Operations (Complete Recursive Deletion Capture)
 
 ```bash
-# 递归监控删除事件
+# Recursively monitor deletion events
 fsmon monitor ~/test-project --types DELETE --recursive --output /tmp/deletes.log
 
-# 触发操作
+# Trigger operation
 rm -rf ~/test-project/build/
 
-# 预期输出（子文件路径不丢失）
+# Expected output (subdirectory file paths preserved)
 [2024-05-01 16:00:00] [DELETE] /home/pilot/test-project/build/output.o (PID: 34567, CMD: rm)
 [2024-05-01 16:00:00] [DELETE] /home/pilot/test-project/build (PID: 34567, CMD: rm)
 ```
 
-**技术亮点**: 通过目录句柄缓存机制，`rm -rf` 递归删除时，子文件和子目录的删除事件都能被完整捕获。
+**Technical Highlight**: Through directory handle caching mechanism, `rm -rf` recursive deletion completely captures deletion events of all files and subdirectories.
 
 ---
 
-#### 场景 4: 监控特定应用（短命进程捕获）
+#### Scenario 4: Monitor Specific Applications (Short-lived Process Capture)
 
 ```bash
-# 递归监控项目目录
+# Recursively monitor project directory
 fsmon monitor ~/myapp --recursive
 
-# 触发操作（touch/rm/mv 等短命进程）
+# Trigger operations (short-lived processes like touch/rm/mv)
 touch new_file.txt
 rm old_config.h
 mv temp.c source/temp.c
 make
 
-# 预期输出（短命进程 CMD 正确显示）
+# Expected output (short-lived process CMD correctly displayed)
 [2024-05-01 17:00:00] [CREATE] /home/pilot/myapp/new_file.txt (PID: 45678, CMD: touch)
 [2024-05-01 17:00:01] [DELETE] /home/pilot/myapp/old_config.h (PID: 45679, CMD: rm)
 [2024-05-01 17:00:02] [MOVED_FROM] /home/pilot/myapp/temp.c (PID: 45680, CMD: mv)
 [2024-05-01 17:00:02] [MOVED_TO] /home/pilot/myapp/source/temp.c (PID: 45680, CMD: mv)
 ```
 
-**技术亮点**: Proc Connector 在进程 `exec()` 瞬间缓存信息，保证 `touch`/`rm`/`mv` 等短命进程的 CMD 准确显示。
+**Technical Highlight**: Proc Connector caches information at process `exec()` instant, ensuring accurate CMD display for short-lived processes like `touch`/`rm`/`mv`.
 
 ---
 
-#### 场景 5: 文件移动审计
+#### Scenario 5: File Move/Rename Audit
 
 ```bash
-# 监控移动事件
+# Monitor move events
 fsmon monitor ~/docs --recursive --types MOVED_FROM,MOVED_TO
 
-# 触发操作
+# Trigger operations
 mv ~/docs/drafts/report.txt ~/docs/drafts/report_v2.txt
 mv ~/docs/drafts/report_v2.txt ~/docs/published/
 
-# 预期输出
+# Expected output
 [2024-05-01 18:00:00] [MOVED_FROM] /home/pilot/docs/drafts/report.txt (PID: 56789, CMD: mv)
 [2024-05-01 18:00:00] [MOVED_TO] /home/pilot/docs/drafts/report_v2.txt (PID: 56789, CMD: mv)
 ```
 
 ---
 
-#### 场景 6: 守护进程长期监控
+#### Scenario 6: Long-term Daemon Monitoring
 
 ```bash
-# 启动守护进程
+# Start daemon
 sudo fsmon monitor /var/log /etc --recursive --daemon --output /var/log/fsmon-audit.log
 
-# 查看状态
+# Check status
 fsmon status
 
-# JSON 格式（便于集成监控系统）
+# JSON format (for integration with monitoring systems)
 fsmon status --format json
 
-# 查询分析
+# Query analysis
 fsmon query --since 24h --cmd nginx
 fsmon query --since 24h --sort size
 
-# 停止守护进程
+# Stop daemon
 fsmon stop
 ```
 
 ---
 
-#### 场景 7: 多条件组合查询
+#### Scenario 7: Multi-condition Combined Queries
 
 ```bash
-# 过去 7 天内，root 或 admin 用户的删除/移动操作
+# Delete/move operations by root or admin users in past 7 days
 fsmon query --since 7d --user root,admin --types DELETE,MOVED_FROM,MOVED_TO --sort time
 
-# 过去 1 小时内，大于 10MB 的创建/修改操作
+# Create/modify operations larger than 10MB in past 1 hour
 fsmon query --since 1h --min-size 10MB --types CREATE,MODIFY --sort size
 
-# 通配符命令匹配
+# Wildcard command matching
 fsmon query --since 24h --cmd "python*"
 fsmon query --since 24h --cmd "nginx*",systemctl
 
-# CSV 导出
+# CSV export
 fsmon query --since 7d --format csv > weekly_audit.csv
 ```
 
 ---
 
-#### 场景 8: 日志清理与空间管理
+#### Scenario 8: Log Cleanup and Space Management
 
 ```bash
-# 预览清理效果（保留 7 天）
+# Preview cleanup effect (keep 7 days)
 fsmon clean --keep-days 7 --dry-run
 
-# 执行清理
+# Execute cleanup
 fsmon clean --keep-days 7
 
-# 同时限制大小
+# Limit size simultaneously
 fsmon clean --keep-days 30 --max-size 100MB
 ```
 
 ---
 
-## 命令参考
+## Command Reference
 
-运行 `fsmon <command> --help` 查看完整参数说明：
+Run `fsmon <command> --help` for full parameter documentation:
 
 ```bash
-fsmon monitor --help    # 实时监控
-fsmon query --help      # 查询历史
-fsmon status --help     # 查看状态
-fsmon stop --help       # 停止守护进程
-fsmon clean --help      # 清理日志
+fsmon monitor --help    # Real-time monitoring
+fsmon query --help      # Query history
+fsmon status --help     # View status
+fsmon stop --help       # Stop daemon
+fsmon clean --help      # Cleanup logs
 ```
 
 ---
 
-## 输出格式示例
+## Output Format Examples
 
-### 人类可读格式
+### Human-readable Format
 
 ```
 [2024-05-01 14:30:25] [MODIFY] /var/log/syslog (PID: 1234, CMD: rsyslogd, USER: syslog, SIZE: +2.5KB)
 ```
 
-### MOVED_FROM / MOVED_TO 事件
+### MOVED_FROM / MOVED_TO Events
 
 ```
 [2024-05-01 14:35:10] [MOVED_FROM] /home/user/old.txt (PID: 5678, CMD: mv, USER: user, SIZE: +0B)
@@ -270,7 +276,7 @@ fsmon clean --help      # 清理日志
 [2024-05-01 14:40:22] [MOVED_TO] /var/data/file.txt (PID: 9012, CMD: mv, USER: root, SIZE: +0B)
 ```
 
-### JSON 格式
+### JSON Format
 
 ```json
 {
@@ -284,150 +290,150 @@ fsmon clean --help      # 清理日志
 }
 ```
 
-### CSV 格式
+### CSV Format
 
 ```csv
 time,event_type,path,pid,cmd,user,size_change
 2024-05-01T14:30:25Z,MODIFY,/var/log/syslog,1234,rsyslogd,syslog,2560
 ```
 
-## 技术架构
+## Technical Architecture
 
-### 核心技术
+### Core Technologies
 
-- **fanotify (FID 模式)**: Linux 内核级文件监控，支持 FAN_REPORT_FID | FAN_REPORT_DIR_FID | FAN_REPORT_NAME，可获取完整事件信息
-- **Proc Connector (Netlink)**: 监听进程 exec() 事件，在进程启动瞬间缓存 PID → (cmd, user) 映射，解决短命进程检测问题
-- **name_to_handle_at**: 预缓存目录文件句柄，实现删除目录时的路径恢复
-- **Rust + Tokio**: 异步运行时，高并发低延迟
+- **fanotify (FID mode)**: Linux kernel-level file monitoring with FAN_REPORT_FID | FAN_REPORT_DIR_FID | FAN_REPORT_NAME support for complete event information
+- **Proc Connector (Netlink)**: Listens to process exec() events, caches PID → (cmd, user) mapping at process startup instant, solving short-lived process detection
+- **name_to_handle_at**: Pre-caches directory file handles for path recovery during directory deletion
+- **Rust + Tokio**: Async runtime with high concurrency and low latency
 
-### 事件类型说明
+### Event Types
 
-默认捕获 8 种核心变更事件，`--all-events` 开启全部 14 种。
+By default captures 8 core change events, `--all-events` enables all 14.
 
-**默认事件（8 种变更事件）：**
+**Default Events (8 Change Events):**
 
-| 事件类型 | fanotify 常量 | 触发条件 |
-|---------|--------------|---------|
-| CLOSE_WRITE | FAN_CLOSE_WRITE | 以写模式打开的文件被关闭（最佳"文件被修改"信号） |
-| ATTRIB | FAN_ATTRIB | 文件元数据被修改（权限、所有者、时间戳等） |
-| CREATE | FAN_CREATE | 文件/目录被创建 |
-| DELETE | FAN_DELETE | 文件/目录被删除 |
-| DELETE_SELF | FAN_DELETE_SELF | 被监控的对象自身被删除 |
-| MOVED_FROM | FAN_MOVED_FROM | 文件从此目录移出 |
-| MOVED_TO | FAN_MOVED_TO | 文件移入此目录 |
-| MOVE_SELF | FAN_MOVE_SELF | 被监控的对象自身被移动 |
+| Event Type | fanotify Constant | Trigger Condition |
+|------------|-------------------|-------------------|
+| CLOSE_WRITE | FAN_CLOSE_WRITE | Write-mode file closed (best "file modified" signal) |
+| ATTRIB | FAN_ATTRIB | File metadata modified (permissions, owner, timestamps, etc.) |
+| CREATE | FAN_CREATE | File/directory created |
+| DELETE | FAN_DELETE | File/directory deleted |
+| DELETE_SELF | FAN_DELETE_SELF | Monitored object itself deleted |
+| MOVED_FROM | FAN_MOVED_FROM | File moved out from this directory |
+| MOVED_TO | FAN_MOVED_TO | File moved into this directory |
+| MOVE_SELF | FAN_MOVE_SELF | Monitored object itself moved |
 
-**--all-events 额外事件（6 种访问/诊断事件）：**
+**--all-events Additional Events (6 Access/Diagnostic Events):**
 
-| 事件类型 | fanotify 常量 | 触发条件 |
-|---------|--------------|---------|
-| ACCESS | FAN_ACCESS | 文件被读取 |
-| MODIFY | FAN_MODIFY | 文件内容被写入（每次 write() 触发，极其嘈杂） |
-| CLOSE_NOWRITE | FAN_CLOSE_NOWRITE | 以只读模式打开的文件/目录被关闭 |
-| OPEN | FAN_OPEN | 文件/目录被打开 |
-| OPEN_EXEC | FAN_OPEN_EXEC | 文件被打开用于执行 |
-| FS_ERROR | FAN_FS_ERROR | 文件系统错误（Linux 5.16+） |
+| Event Type | fanotify Constant | Trigger Condition |
+|------------|-------------------|-------------------|
+| ACCESS | FAN_ACCESS | File read |
+| MODIFY | FAN_MODIFY | File content written (triggers on every write(), very noisy) |
+| CLOSE_NOWRITE | FAN_CLOSE_NOWRITE | Read-only file/directory closed |
+| OPEN | FAN_OPEN | File/directory opened |
+| OPEN_EXEC | FAN_OPEN_EXEC | File opened for execution |
+| FS_ERROR | FAN_FS_ERROR | Filesystem error (Linux 5.16+) |
 
-此外，`FAN_Q_OVERFLOW` 在事件队列溢出时由内核自动投递，fsmon 会输出警告到 stderr。
+Additionally, `FAN_Q_OVERFLOW` is automatically delivered by kernel when event queue overflows; fsmon outputs warning to stderr.
 
-### 短命进程捕获原理
+### Short-lived Process Capture Principle
 
-传统 fanotify 方案无法检测 `touch`/`rm`/`mv` 等短命进程，因为：
-1. 进程执行 → 触发文件操作 → 进程退出
-2. fanotify 事件异步通知，到达时进程已退出
-3. `/proc/{pid}` 已不存在，无法读取 cmd/user
+Traditional fanotify solutions cannot detect short-lived processes like `touch`/`rm`/`mv` because:
+1. Process executes → triggers file operations → process exits
+2. fanotify events are notified asynchronously; process already exited when events arrive
+3. `/proc/{pid}` no longer exists; cannot read cmd/user
 
-**fsmon 的解决方案：**
-1. 启动 Proc Connector 监听线程，订阅 `PROC_EVENT_EXEC`
-2. 进程调用 `exec()` 时立即读取 `/proc/{pid}/comm` 和 UID
-3. 缓存到 `DashMap<u32, ProcInfo>`（线程安全）
-4. fanotify 事件到达时查缓存，保证短命进程信息不丢失
+**fsmon's Solution:**
+1. Start Proc Connector listener thread, subscribe to `PROC_EVENT_EXEC`
+2. Immediately read `/proc/{pid}/comm` and UID when process calls `exec()`
+3. Cache to `DashMap<u32, ProcInfo>` (thread-safe)
+4. Look up cache when fanotify events arrive, ensuring short-lived process information isn't lost
 
-### 递归删除捕捉原理
+### Recursive Deletion Capture Principle
 
-`rm -rf fold/` 时，内核先删除子文件再删除父目录。fanotify FID 模式下：
-1. 子文件事件包含已删除父目录的句柄，`open_by_handle_at()` 失败
-2. 子文件路径无法直接解析
+During `rm -rf fold/`, kernel deletes child files before parent directory. In fanotify FID mode:
+1. Child file events contain handles of already-deleted parent directory; `open_by_handle_at()` fails
+2. Child file paths cannot be directly resolved
 
-**fsmon 的解决方案：**
-1. 启动时用 `name_to_handle_at()` 预缓存所有目录的 handle → path 映射
-2. 收到事件后两遍处理：
-   - 第一遍：尝试解析所有事件，更新成功解析的目录到缓存
-   - 第二遍：用缓存恢复失败事件的父目录路径
-3. 迭代直到所有路径都恢复（支持多级嵌套删除）
+**fsmon's Solution:**
+1. Pre-cache all directories' handle → path mappings using `name_to_handle_at()` at startup
+2. Two-pass processing after receiving events:
+   - First pass: Try to resolve all events, update successfully resolved directories to cache
+   - Second pass: Restore parent directory paths for failed events using cache
+3. Iterate until all paths are recovered (supports multi-level nested deletion)
 
-## 注意事项
+## Notes
 
-1. **权限要求**: 监控某些系统目录可能需要 `sudo`（Proc Connector 也需要 root）
-2. **性能影响**: 监控整个文件系统会产生大量事件，建议使用过滤条件
-3. **日志轮转**: 定期使用 `clean` 命令管理日志大小
-4. **排除路径**: 建议排除 `/proc`, `/sys`, `/dev` 等虚拟文件系统
-5. **内核版本**: 需要 Linux 5.9+（支持 FAN_REPORT_FID | FAN_REPORT_DIR_FID | FAN_REPORT_NAME）
-6. **文件系统兼容性**:
-   - **ext4/XFS/tmpfs**: 完全支持，使用 `FAN_MARK_FILESYSTEM` 模式，无竞态窗口
-   - **btrfs**: 自动回退到 inode mark 模式，递归创建子目录时可能存在竞态窗口（子文件创建事件可能丢失），递归删除正常工作
-   - **OverlayFS**: 部分内核版本可能不兼容 `FAN_MARK_FILESYSTEM`，如遇问题请反馈
-7. **btrfs 用户注意**: 由于 btrfs 子卷的 fsid 与根 superblock 不同，`FAN_MARK_FILESYSTEM` 会返回 EXDEV 错误。fsmon 会自动回退到 inode mark + 动态标记模式，但在快速连续创建目录和文件的场景下，子文件的创建事件可能因竞态窗口而丢失。这是 btrfs 内核限制的固有问题。
+1. **Permission Requirements**: Monitoring certain system directories may require `sudo` (Proc Connector also needs root)
+2. **Performance Impact**: Monitoring entire filesystem generates大量 events; filtering recommended
+3. **Log Rotation**: Regularly use `clean` command to manage log size
+4. **Exclude Paths**: Recommend excluding virtual filesystems like `/proc`, `/sys`, `/dev`
+5. **Kernel Version**: Requires Linux 5.9+ (supports FAN_REPORT_FID | FAN_REPORT_DIR_FID | FAN_REPORT_NAME)
+6. **Filesystem Compatibility**:
+   - **ext4/XFS/tmpfs**: Full support, uses `FAN_MARK_FILESYSTEM` mode, no race window
+   - **btrfs**: Automatically falls back to inode mark mode; race window may exist during recursive directory creation (child file creation events may be lost); recursive deletion works normally
+   - **OverlayFS**: Some kernel versions may be incompatible with `FAN_MARK_FILESYSTEM`; please report issues
+7. **Note for btrfs Users**: Due to btrfs subvolume fsid differing from root superblock, `FAN_MARK_FILESYSTEM` returns EXDEV error. fsmon automatically falls back to inode mark + dynamic marking mode, but child file creation events may be lost due to race windows in scenarios with rapid continuous directory and file creation. This is an inherent limitation of btrfs kernel; recommend running on ext4/XFS for best experience.
 
-   **Bug 复现示例**（btrfs 文件系统）：
+   **Bug Reproduction Example** (btrfs filesystem):
    ```bash
-   # 终端 1：启动监控
+   # Terminal 1: Start monitoring
    sudo fsmon monitor ~/fsmon-test --recursive
    
-   # 终端 2：快速创建目录和文件
+   # Terminal 2: Quickly create directory and files
    mkdir -p ~/fsmon-test/fold
    touch ~/fsmon-test/fold/first.txt ~/fsmon-test/fold/second.txt
    
-   # 预期输出（实际只捕获到目录创建）：
+   # Expected output (only directory creation captured):
    # [2026-03-24 11:08:08] [CREATE] /home/pilot/fsmon-test/fold (PID: 55417, CMD: mkdir, USER: pilot, SIZE_CHANGE: +36B)
-   # ❌ first.txt 和 second.txt 的 CREATE 事件丢失
+   # ❌ first.txt and second.txt CREATE events lost
    ```
 
-   **原因分析**：
+   **Root Cause Analysis**:
    ```
-   时间线（微秒级）：
-   t0:  mkdir fold         → 内核产生 CREATE 事件（排入 fanotify 队列）
-   t1:  touch first.txt    → fold 还未被动态标记 → 事件丢失 ❌
-   t2:  touch second.txt   → fold 还未被动态标记 → 事件丢失 ❌
-   t3:  fsmon 读到 t0 事件  → 开始 mark fold 目录
-   t4:  之后 fold 内的操作  → 正常捕获 ✓
+   Timeline (microseconds):
+   t0:  mkdir fold         → kernel generates CREATE event (queued in fanotify)
+   t1:  touch first.txt    → fold not yet dynamically marked → event lost ❌
+   t2:  touch second.txt   → fold not yet dynamically marked → event lost ❌
+   t3:  fsmon reads t0 event  → starts marking fold directory
+   t4:  operations inside fold afterwards  → captured normally ✓
    ```
 
-   **对比：递归删除无此问题**（因为 `rm -rf` 从内到外删除）：
+   **Comparison: Recursive Deletion Has No Such Issue** (because `rm -rf` deletes inside-out):
    ```bash
-   # 终端 1：启动监控
+   # Terminal 1: Start monitoring
    sudo fsmon monitor ~/fsmon-test --recursive
    
-   # 终端 2：删除目录
+   # Terminal 2: Delete directory
    rm -rf ~/fsmon-test/fold
    
-   # 完整输出（所有事件都被捕获）：
+   # Complete output (all events captured):
    # [2026-03-24 11:10:00] [DELETE] /home/pilot/fsmon-test/fold/first.txt (PID: 55500, CMD: rm, USER: pilot)
    # [2026-03-24 11:10:00] [DELETE] /home/pilot/fsmon-test/fold/second.txt (PID: 55500, CMD: rm, USER: pilot)
    # [2026-03-24 11:10:00] [DELETE] /home/pilot/fsmon-test/fold (PID: 55500, CMD: rm, USER: pilot)
    ```
 
-## 开发计划
+## Roadmap
 
-- [ ] TUI 交互界面
-- [ ] 持久化数据库存储
-- [ ] 告警通知系统（Webhook/邮件）
-- [ ] 容器支持（Docker/Kubernetes）
-- [ ] 网络远程监控（gRPC API）
-- [ ] Windows/macOS 支持（通过其他后端）
+- [ ] TUI interactive interface
+- [ ] Persistent database storage
+- [ ] Alert notification system (Webhook/Email)
+- [ ] Container support (Docker/Kubernetes)
+- [ ] Remote network monitoring (gRPC API)
+- [ ] Windows/macOS support (via alternative backends)
 
-## 技术栈
+## Tech Stack
 
-- **语言**: Rust
-- **核心库**: 
-  - fanotify (Linux 内核接口，通过 libc 调用)
-  - tokio (异步运行时)
-  - dashmap (并发 HashMap)
+- **Language**: Rust
+- **Core Libraries**: 
+  - fanotify (Linux kernel interface, via libc calls)
+  - tokio (async runtime)
+  - dashmap (concurrent HashMap)
   - netlink connector (Proc Connector)
 - **CLI**: clap
-- **序列化**: serde, serde_json, csv
-- **时间**: chrono
+- **Serialization**: serde, serde_json, csv
+- **Time**: chrono
 
-## 许可证
+## License
 
 MIT License
