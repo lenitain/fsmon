@@ -65,13 +65,6 @@ cargo install fsmon
 # 或从 Git 安装
 cargo install --git https://github.com/YOUR_USERNAME/fsmon.git
 ```
-
-#### 方式 3: 直接使用编译产物
-
-```bash
-# 编译后不安装，直接用相对路径运行
-cargo build --release
-./target/release/fsmon monitor /var/log
 ```
 
 ---
@@ -82,13 +75,6 @@ cargo build --release
 
 ```bash
 # 临时使用 sudo
-sudo fsmon monitor /etc
-
-# 或添加当前用户到特定组（可选）
-sudo usermod -aG systemd-journal $USER
-# 注销重新登录后生效
-```
-
 **Proc Connector 需要 root**（用于获取进程信息）：
 ```bash
 # 建议始终使用 sudo 运行
