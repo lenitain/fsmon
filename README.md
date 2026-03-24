@@ -365,7 +365,7 @@ During `rm -rf fold/`, kernel deletes child files before parent directory. In fa
 ## Notes
 
 1. **Permission Requirements**: Monitoring certain system directories may require `sudo` (Proc Connector also needs root)
-2. **Performance Impact**: Monitoring entire filesystem generates大量 events; filtering recommended
+2. **Performance Impact**: Monitoring entire filesystem generates a lot of events; filtering recommended
 3. **Log Rotation**: Regularly use `clean` command to manage log size
 4. **Exclude Paths**: Recommend excluding virtual filesystems like `/proc`, `/sys`, `/dev`
 5. **Kernel Version**: Requires Linux 5.9+ (supports FAN_REPORT_FID | FAN_REPORT_DIR_FID | FAN_REPORT_NAME)
