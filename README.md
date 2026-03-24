@@ -835,7 +835,47 @@ time,event_type,path,pid,cmd,user,size_change
    - **ext4/XFS/tmpfs**: 完全支持，使用 `FAN_MARK_FILESYSTEM` 模式，无竞态窗口
    - **btrfs**: 自动回退到 inode mark 模式，递归创建子目录时可能存在竞态窗口（子文件创建事件可能丢失），递归删除正常工作
    - **OverlayFS**: 部分内核版本可能不兼容 `FAN_MARK_FILESYSTEM`，如遇问题请反馈
-7. **btrfs 用户注意**: 由于 btrfs 子卷的 fsid 与根 superblock 不同，`FAN_MARK_FILESYSTEM` 会返回 EXDEV 错误。fsmon 会自动回退到 inode mark + 动态标记模式，但在快速连续创建目录和文件的场景下（如 `mkdir -p fold && touch fold/file.txt`），子文件的创建事件可能因竞态窗口而丢失。这是 btrfs 内核限制的固有问题，建议在 ext4/XFS 上运行以获得最佳体验。
+7. **btrfs 用户注意**: 由于 btrfs 子卷的 fsid 与根 superblock 不同，`FAN_MARK_FILESYSTEM` 会返回 EXDEV 错误。fsmon 会自动回退到 inode mark + 动态标记模式，但在快速连续创建目录和文件的场景下，子文件的创建事件可能因竞态窗口而丢失。这是 btrfs 内核限制的固有问题，建议在 ext4/XFS 上运行以获得最佳体验。
+
+   **Bug 复现示例**（btrfs 文件系统）：
+   ```bash
+   # 终端 1：启动监控
+   sudo fsmon monitor ~/fsmon-test --recursive
+   
+   # 终端 2：快速创建目录和文件
+   mkdir -p ~/fsmon-test/fold
+   touch ~/fsmon-test/fold/first.txt ~/fsmon-test/fold/second.txt
+   
+   # 预期输出（实际只捕获到目录创建）：
+   # [2026-03-24 11:08:08] [CREATE] /home/pilot/fsmon-test/fold (PID: 55417, CMD: mkdir, USER: pilot, SIZE_CHANGE: +36B)
+   # ❌ first.txt 和 second.txt 的 CREATE 事件丢失
+   ```
+
+   **原因分析**：
+   ```
+   时间线（微秒级）：
+   t0:  mkdir fold         → 内核产生 CREATE 事件（排入 fanotify 队列）
+   t1:  touch first.txt    → fold 还未被动态标记 → 事件丢失 ❌
+   t2:  touch second.txt   → fold 还未被动态标记 → 事件丢失 ❌
+   t3:  fsmon 读到 t0 事件  → 开始 mark fold 目录
+   t4:  之后 fold 内的操作  → 正常捕获 ✓
+   ```
+
+   **对比：递归删除无此问题**（因为 `rm -rf` 从内到外删除）：
+   ```bash
+   # 终端 1：启动监控
+   sudo fsmon monitor ~/fsmon-test --recursive
+   
+   # 终端 2：删除目录
+   rm -rf ~/fsmon-test/fold
+   
+   # 完整输出（所有事件都被捕获）：
+   # [2026-03-24 11:10:00] [DELETE] /home/pilot/fsmon-test/fold/first.txt (PID: 55500, CMD: rm, USER: pilot)
+   # [2026-03-24 11:10:00] [DELETE] /home/pilot/fsmon-test/fold/second.txt (PID: 55500, CMD: rm, USER: pilot)
+   # [2026-03-24 11:10:00] [DELETE] /home/pilot/fsmon-test/fold (PID: 55500, CMD: rm, USER: pilot)
+   ```
+
+   **解决方案**：在 ext4/XFS 文件系统上运行，或使用 `FAN_MARK_FILESYSTEM` 模式的其他文件系统。
 
 ## 开发计划
 
