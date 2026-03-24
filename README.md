@@ -206,18 +206,24 @@ fsmon stop
 
 #### 场景 7: 多条件组合查询
 
+**过去 7 天内，root 或 admin 用户的删除/移动操作：**
 ```bash
-# 过去 7 天内，root 或 admin 用户的删除/移动操作
 fsmon query --since 7d --user root,admin --types DELETE,MOVED_FROM,MOVED_TO --sort time
+```
 
-# 过去 1 小时内，大于 10MB 的创建/修改操作
+**过去 1 小时内，大于 10MB 的创建/修改操作：**
+```bash
 fsmon query --since 1h --min-size 10MB --types CREATE,MODIFY --sort size
+```
 
-# 通配符命令匹配
+**通配符命令匹配：**
+```bash
 fsmon query --since 24h --cmd "python*"
 fsmon query --since 24h --cmd "nginx*",systemctl
+```
 
-# CSV 导出
+**CSV 导出：**
+```bash
 fsmon query --since 7d --format csv > weekly_audit.csv
 ```
 
