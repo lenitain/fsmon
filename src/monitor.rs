@@ -4,7 +4,7 @@ use fanotify::low_level::{
     fanotify_init, fanotify_mark,
     FAN_CLOEXEC, FAN_CLASS_NOTIF, FAN_NONBLOCK,
     FAN_REPORT_FID, FAN_REPORT_DIR_FID, FAN_REPORT_NAME,
-    FAN_MARK_ADD, AT_FDCWD,
+    FAN_MARK_ADD, FAN_MARK_FILESYSTEM, AT_FDCWD,
     FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE, FAN_MOVED_FROM, FAN_MOVED_TO,
     FAN_EVENT_ON_CHILD, FAN_ONDIR,
     O_CLOEXEC, O_RDONLY,
@@ -117,30 +117,58 @@ impl Monitor {
             (O_CLOEXEC | O_RDONLY) as u32,
         ).context("fanotify_init 失败（需要 Linux 5.9+ 内核）")?;
 
-        // 完整事件掩码
+        // 事件掩码（FAN_EVENT_ON_CHILD 用于 inode mark 回退模式）
         let mask = FAN_CLOSE_WRITE
             | FAN_CREATE | FAN_DELETE
             | FAN_MOVED_FROM | FAN_MOVED_TO
             | FAN_EVENT_ON_CHILD | FAN_ONDIR;
 
         let mut mount_fds = Vec::new();
+        let mut canonical_paths = Vec::new();
 
+        // 收集规范路径
         for path in &self.paths {
             let canonical = if path.exists() {
                 path.canonicalize().unwrap_or_else(|_| path.clone())
             } else {
                 path.clone()
             };
+            canonical_paths.push(canonical);
+        }
 
-            // 标记根目录
-            mark_directory(fan_fd, mask, &canonical)?;
-
-            // 递归标记所有子目录
-            if self.recursive && canonical.is_dir() {
-                mark_recursive(fan_fd, mask, &canonical);
+        // 优先尝试 filesystem mark（覆盖整个文件系统，无竞态窗口）
+        // 若遇到 EXDEV（如 btrfs 子卷），回退到 inode mark + 动态标记
+        let use_fs_mark = {
+            let mut ok = true;
+            for canonical in &canonical_paths {
+                match fanotify_mark(
+                    fan_fd, FAN_MARK_ADD | FAN_MARK_FILESYSTEM, mask, AT_FDCWD, canonical,
+                ) {
+                    Ok(()) => {}
+                    Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
+                        ok = false;
+                        break;
+                    }
+                    Err(e) => {
+                        bail!("fanotify_mark 失败: {}: {}", canonical.display(), e);
+                    }
+                }
             }
+            ok
+        };
 
-            // 打开目录 fd，供 open_by_handle_at 解析文件句柄
+        if !use_fs_mark {
+            // inode mark 回退：逐目录标记
+            for canonical in &canonical_paths {
+                mark_directory(fan_fd, mask, canonical)?;
+                if self.recursive && canonical.is_dir() {
+                    mark_recursive(fan_fd, mask, canonical);
+                }
+            }
+        }
+
+        // 打开目录 fd，供 open_by_handle_at 解析文件句柄
+        for canonical in &canonical_paths {
             if let Ok(c_path) = CString::new(canonical.to_string_lossy().as_bytes()) {
                 let mfd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
                 if mfd >= 0 {
@@ -175,16 +203,11 @@ impl Monitor {
         println!("Press Ctrl+C to stop\n");
 
         // 持久目录句柄缓存：handle_key → dir_path
-        // 在启动时预缓存所有已标记目录，用于恢复已删除目录的子文件路径
+        // 在启动时预缓存监控目录，用于恢复已删除目录的子文件路径
         let mut dir_cache: HashMap<Vec<u8>, PathBuf> = HashMap::new();
-        for path in &self.paths {
-            let canonical = if path.exists() {
-                path.canonicalize().unwrap_or_else(|_| path.clone())
-            } else {
-                path.clone()
-            };
+        for canonical in &canonical_paths {
             if canonical.is_dir() {
-                cache_recursive(&mut dir_cache, &canonical);
+                cache_recursive(&mut dir_cache, canonical);
             }
         }
 
@@ -216,8 +239,8 @@ impl Monitor {
                 }
             }
 
-            // 递归模式：新建子目录或子目录移入时，动态添加 mark 并更新句柄缓存
-            if self.recursive {
+            // inode mark 模式：新建子目录或子目录移入时，动态添加 mark 并更新句柄缓存
+            if !use_fs_mark && self.recursive {
                 for raw in &events {
                     let is_dir_create = raw.mask & FAN_CREATE != 0 && raw.mask & FAN_ONDIR != 0;
                     let is_dir_moved_to = raw.mask & FAN_MOVED_TO != 0 && raw.mask & FAN_ONDIR != 0;
@@ -253,6 +276,16 @@ impl Monitor {
                 };
 
                 let event = self.build_file_event(raw, move_from);
+
+                // filesystem mark 模式：用户态路径前缀过滤
+                if use_fs_mark {
+                    let in_scope = self.is_path_in_scope(&event.path, &canonical_paths)
+                        || event.move_from.as_ref().is_some_and(|from| self.is_path_in_scope(from, &canonical_paths));
+                    if !in_scope {
+                        continue;
+                    }
+                }
+
                 if self.should_output(&event) {
                     self.output_event(&event, &mut output_file)?;
                 }
@@ -380,6 +413,30 @@ impl Monitor {
         }
 
         true
+    }
+
+    /// 检查路径是否在监控范围内
+    /// recursive=true：路径以任一监控目录为前缀即可
+    /// recursive=false：路径的父目录恰好是监控目录（即直接子级）
+    fn is_path_in_scope(&self, path: &Path, canonical_paths: &[PathBuf]) -> bool {
+        for watched in canonical_paths {
+            if self.recursive {
+                if path.starts_with(watched) {
+                    return true;
+                }
+            } else {
+                // 非递归：只匹配直接子级或自身
+                if path == watched.as_path() {
+                    return true;
+                }
+                if let Some(parent) = path.parent() {
+                    if parent == watched.as_path() {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     fn output_event(
@@ -687,7 +744,7 @@ fn process_exists(pid: u32) -> bool {
     Path::new(&format!("/proc/{}", pid)).exists()
 }
 
-// ---- 目录标记 ----
+// ---- 目录标记（inode mark 回退模式使用） ----
 
 /// 标记单个目录
 fn mark_directory(fan_fd: i32, mask: u64, path: &Path) -> Result<()> {

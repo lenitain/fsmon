@@ -831,6 +831,11 @@ time,event_type,path,pid,cmd,user,size_change
 3. **日志轮转**: 定期使用 `clean` 命令管理日志大小
 4. **排除路径**: 建议排除 `/proc`, `/sys`, `/dev` 等虚拟文件系统
 5. **内核版本**: 需要 Linux 5.9+（支持 FAN_REPORT_FID | FAN_REPORT_DIR_FID | FAN_REPORT_NAME）
+6. **文件系统兼容性**:
+   - **ext4/XFS/tmpfs**: 完全支持，使用 `FAN_MARK_FILESYSTEM` 模式，无竞态窗口
+   - **btrfs**: 自动回退到 inode mark 模式，递归创建子目录时可能存在竞态窗口（子文件创建事件可能丢失），递归删除正常工作
+   - **OverlayFS**: 部分内核版本可能不兼容 `FAN_MARK_FILESYSTEM`，如遇问题请反馈
+7. **btrfs 用户注意**: 由于 btrfs 子卷的 fsid 与根 superblock 不同，`FAN_MARK_FILESYSTEM` 会返回 EXDEV 错误。fsmon 会自动回退到 inode mark + 动态标记模式，但在快速连续创建目录和文件的场景下（如 `mkdir -p fold && touch fold/file.txt`），子文件的创建事件可能因竞态窗口而丢失。这是 btrfs 内核限制的固有问题，建议在 ext4/XFS 上运行以获得最佳体验。
 
 ## 开发计划
 
