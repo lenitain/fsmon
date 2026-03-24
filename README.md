@@ -302,7 +302,7 @@ time,event_type,path,pid,cmd,user,size_change
    - **ext4/XFS/tmpfs**: 完全支持，使用 `FAN_MARK_FILESYSTEM` 模式，无竞态窗口
    - **btrfs**: 自动回退到 inode mark 模式，递归创建子目录时可能存在竞态窗口（子文件创建事件可能丢失），递归删除正常工作
    - **OverlayFS**: 部分内核版本可能不兼容 `FAN_MARK_FILESYSTEM`，如遇问题请反馈
-7. **btrfs 用户注意**: 由于 btrfs 子卷的 fsid 与根 superblock 不同，`FAN_MARK_FILESYSTEM` 会返回 EXDEV 错误。fsmon 会自动回退到 inode mark + 动态标记模式，但在快速连续创建目录和文件的场景下，子文件的创建事件可能因竞态窗口而丢失。这是 btrfs 内核限制的固有问题，建议在 ext4/XFS 上运行以获得最佳体验。
+7. **btrfs 用户注意**: 由于 btrfs 子卷的 fsid 与根 superblock 不同，`FAN_MARK_FILESYSTEM` 会返回 EXDEV 错误。fsmon 会自动回退到 inode mark + 动态标记模式，但在快速连续创建目录和文件的场景下，子文件的创建事件可能因竞态窗口而丢失。这是 btrfs 内核限制的固有问题。
 
    **Bug 复现示例**（btrfs 文件系统）：
    ```bash
@@ -341,8 +341,6 @@ time,event_type,path,pid,cmd,user,size_change
    # [2026-03-24 11:10:00] [DELETE] /home/pilot/fsmon-test/fold/second.txt (PID: 55500, CMD: rm, USER: pilot)
    # [2026-03-24 11:10:00] [DELETE] /home/pilot/fsmon-test/fold (PID: 55500, CMD: rm, USER: pilot)
    ```
-
-   **解决方案**：在 ext4/XFS 文件系统上运行，或使用 `FAN_MARK_FILESYSTEM` 模式的其他文件系统。
 
 ## 开发计划
 
