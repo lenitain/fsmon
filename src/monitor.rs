@@ -5,11 +5,16 @@ use fanotify::low_level::{
     FAN_CLOEXEC, FAN_CLASS_NOTIF, FAN_NONBLOCK,
     FAN_REPORT_FID, FAN_REPORT_DIR_FID, FAN_REPORT_NAME,
     FAN_MARK_ADD, FAN_MARK_FILESYSTEM, AT_FDCWD,
-    FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE, FAN_MOVED_FROM, FAN_MOVED_TO,
+    FAN_ACCESS, FAN_MODIFY, FAN_ATTRIB,
+    FAN_CLOSE_WRITE, FAN_CLOSE_NOWRITE,
+    FAN_OPEN, FAN_OPEN_EXEC,
+    FAN_CREATE, FAN_DELETE, FAN_DELETE_SELF,
+    FAN_MOVED_FROM, FAN_MOVED_TO, FAN_MOVE_SELF,
+    FAN_Q_OVERFLOW,
     FAN_EVENT_ON_CHILD, FAN_ONDIR,
     O_CLOEXEC, O_RDONLY,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -28,6 +33,10 @@ use crate::proc_cache::{self, ProcCache};
 const FAN_EVENT_INFO_TYPE_FID: u8 = 1;
 const FAN_EVENT_INFO_TYPE_DFID_NAME: u8 = 2;
 const FAN_EVENT_INFO_TYPE_DFID: u8 = 3;
+
+/// FAN_FS_ERROR: 文件系统错误通知 (Linux 5.16+)
+/// fanotify-rs 0.3.1 未导出此常量，手动定义
+const FAN_FS_ERROR: u64 = 0x0000_8000;
 
 /// fanotify_event_metadata（与内核结构体一致）
 #[repr(C)]
@@ -77,6 +86,7 @@ pub struct Monitor {
     output: Option<PathBuf>,
     format: OutputFormat,
     recursive: bool,
+    all_events: bool,
     proc_cache: Option<ProcCache>,
 }
 
@@ -89,8 +99,9 @@ impl Monitor {
         output: Option<PathBuf>,
         format: OutputFormat,
         recursive: bool,
+        all_events: bool,
     ) -> Self {
-        Self { paths, min_size, event_types, exclude, output, format, recursive, proc_cache: None }
+        Self { paths, min_size, event_types, exclude, output, format, recursive, all_events, proc_cache: None }
     }
 
     pub async fn run(mut self) -> Result<()> {
@@ -117,11 +128,23 @@ impl Monitor {
             (O_CLOEXEC | O_RDONLY) as u32,
         ).context("fanotify_init 失败（需要 Linux 5.9+ 内核）")?;
 
-        // 事件掩码（FAN_EVENT_ON_CHILD 用于 inode mark 回退模式）
-        let mask = FAN_CLOSE_WRITE
-            | FAN_CREATE | FAN_DELETE
-            | FAN_MOVED_FROM | FAN_MOVED_TO
-            | FAN_EVENT_ON_CHILD | FAN_ONDIR;
+        // 事件掩码
+        // 默认：8 种核心变更事件
+        // --all-events：全部 14 种 fanotify 通知事件
+        let mask = if self.all_events {
+            FAN_ACCESS | FAN_MODIFY | FAN_ATTRIB
+                | FAN_CLOSE_WRITE | FAN_CLOSE_NOWRITE
+                | FAN_OPEN | FAN_OPEN_EXEC
+                | FAN_CREATE | FAN_DELETE | FAN_DELETE_SELF
+                | FAN_MOVED_FROM | FAN_MOVED_TO | FAN_MOVE_SELF
+                | FAN_FS_ERROR
+                | FAN_EVENT_ON_CHILD | FAN_ONDIR
+        } else {
+            FAN_CLOSE_WRITE | FAN_ATTRIB
+                | FAN_CREATE | FAN_DELETE | FAN_DELETE_SELF
+                | FAN_MOVED_FROM | FAN_MOVED_TO | FAN_MOVE_SELF
+                | FAN_EVENT_ON_CHILD | FAN_ONDIR
+        };
 
         let mut mount_fds = Vec::new();
         let mut canonical_paths = Vec::new();
@@ -214,31 +237,6 @@ impl Monitor {
         while running.load(Ordering::SeqCst) {
             let events = read_fid_events(fan_fd, &mount_fds, &mut dir_cache);
 
-            // 同批事件预处理：
-            // 1. CREATE + CLOSE_WRITE 去重（同一 open(O_CREAT) + close）
-            // 2. MOVED_FROM + MOVED_TO 配对合并为单条 MOVE
-            let mut created_in_batch = HashSet::new();
-            let mut moved_from_by_pid: HashMap<i32, (usize, PathBuf)> = HashMap::new();
-
-            for (i, raw) in events.iter().enumerate() {
-                if raw.mask & FAN_CREATE != 0 {
-                    created_in_batch.insert(raw.path.clone());
-                }
-                if raw.mask & FAN_MOVED_FROM != 0 {
-                    moved_from_by_pid.insert(raw.pid, (i, raw.path.clone()));
-                }
-            }
-
-            // 找出有配对 MOVED_TO 的 MOVED_FROM 索引（这些由 MOVED_TO 合并输出）
-            let mut paired_from_indices = HashSet::new();
-            for raw in &events {
-                if raw.mask & FAN_MOVED_TO != 0 {
-                    if let Some(&(from_idx, _)) = moved_from_by_pid.get(&raw.pid) {
-                        paired_from_indices.insert(from_idx);
-                    }
-                }
-            }
-
             // inode mark 模式：新建子目录或子目录移入时，动态添加 mark 并更新句柄缓存
             if !use_fs_mark && self.recursive {
                 for raw in &events {
@@ -252,42 +250,26 @@ impl Monitor {
                 }
             }
 
-            for (i, raw) in events.iter().enumerate() {
-                // 跳过已配对的 MOVED_FROM（由对应 MOVED_TO 合并输出）
-                if paired_from_indices.contains(&i) {
+            for raw in &events {
+                // FAN_Q_OVERFLOW: 队列溢出警告（内核自动投递，不在订阅掩码中）
+                if raw.mask & FAN_Q_OVERFLOW != 0 {
+                    eprintln!("[WARNING] fanotify queue overflow - some events may have been lost");
                     continue;
                 }
 
-                // 跳过 CREATE 后紧跟的纯 CLOSE_WRITE 事件
-                // 注意：内核可能将 CREATE+CLOSE_WRITE 合并为单个事件（mask 同时含两者），
-                // 此时不能跳过，否则 CREATE 也被吞掉
-                if raw.mask & FAN_CLOSE_WRITE != 0
-                    && raw.mask & FAN_CREATE == 0
-                    && created_in_batch.contains(&raw.path)
-                {
-                    continue;
-                }
+                let event_types = mask_to_event_types(raw.mask);
 
-                // MOVED_TO：附上配对的 MOVED_FROM 源路径
-                let move_from = if raw.mask & FAN_MOVED_TO != 0 {
-                    moved_from_by_pid.get(&raw.pid).map(|(_, path)| path.clone())
-                } else {
-                    None
-                };
+                for event_type in event_types {
+                    let event = self.build_file_event(raw, event_type);
 
-                let event = self.build_file_event(raw, move_from);
-
-                // filesystem mark 模式：用户态路径前缀过滤
-                if use_fs_mark {
-                    let in_scope = self.is_path_in_scope(&event.path, &canonical_paths)
-                        || event.move_from.as_ref().is_some_and(|from| self.is_path_in_scope(from, &canonical_paths));
-                    if !in_scope {
+                    // filesystem mark 模式：用户态路径前缀过滤
+                    if use_fs_mark && !self.is_path_in_scope(&event.path, &canonical_paths) {
                         continue;
                     }
-                }
 
-                if self.should_output(&event) {
-                    self.output_event(&event, &mut output_file)?;
+                    if self.should_output(&event) {
+                        self.output_event(&event, &mut output_file)?;
+                    }
                 }
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -360,20 +342,9 @@ impl Monitor {
         Ok(())
     }
 
-    fn build_file_event(&self, raw: &FidEvent, move_from: Option<PathBuf>) -> FileEvent {
+    fn build_file_event(&self, raw: &FidEvent, event_type: &str) -> FileEvent {
         let pid = raw.pid.unsigned_abs();
         let (cmd, user) = get_process_info_by_pid(pid, &raw.path, self.proc_cache.as_ref());
-
-        let mut event_type = mask_to_event_type(raw.mask);
-
-        // 同目录下的 MOVE 视为 RENAME
-        if event_type == "MOVE" {
-            if let Some(ref from) = move_from {
-                if from.parent() == raw.path.parent() {
-                    event_type = "RENAME".to_string();
-                }
-            }
-        }
 
         let size_change = fs::metadata(&raw.path)
             .map(|m| m.len() as i64)
@@ -381,9 +352,8 @@ impl Monitor {
 
         FileEvent {
             time: Utc::now(),
-            event_type,
+            event_type: event_type.to_string(),
             path: raw.path.clone(),
-            move_from,
             pid,
             cmd,
             user,
@@ -480,15 +450,30 @@ impl Monitor {
     }
 }
 
-// ---- 事件类型映射 ----
+// ---- 事件类型映射（1:1 对应 fanotify 事件位） ----
 
-fn mask_to_event_type(mask: u64) -> String {
-    // MOVE 优先于 DELETE：rename 覆盖已有文件时 mask 同时含 FAN_DELETE | FAN_MOVED_TO
-    if mask & (FAN_MOVED_FROM | FAN_MOVED_TO) != 0 { return "MOVE".to_string(); }
-    if mask & FAN_CREATE != 0 { return "CREATE".to_string(); }
-    if mask & FAN_DELETE != 0 { return "DELETE".to_string(); }
-    if mask & FAN_CLOSE_WRITE != 0 { return "MODIFY".to_string(); }
-    "UNKNOWN".to_string()
+const EVENT_BITS: [(u64, &str); 14] = [
+    (FAN_ACCESS,        "ACCESS"),
+    (FAN_MODIFY,        "MODIFY"),
+    (FAN_CLOSE_WRITE,   "CLOSE_WRITE"),
+    (FAN_CLOSE_NOWRITE, "CLOSE_NOWRITE"),
+    (FAN_OPEN,          "OPEN"),
+    (FAN_OPEN_EXEC,     "OPEN_EXEC"),
+    (FAN_ATTRIB,        "ATTRIB"),
+    (FAN_CREATE,        "CREATE"),
+    (FAN_DELETE,        "DELETE"),
+    (FAN_DELETE_SELF,   "DELETE_SELF"),
+    (FAN_MOVED_FROM,   "MOVED_FROM"),
+    (FAN_MOVED_TO,     "MOVED_TO"),
+    (FAN_MOVE_SELF,    "MOVE_SELF"),
+    (FAN_FS_ERROR,     "FS_ERROR"),
+];
+
+fn mask_to_event_types(mask: u64) -> Vec<&'static str> {
+    EVENT_BITS.iter()
+        .filter(|(bit, _)| mask & bit != 0)
+        .map(|(_, name)| *name)
+        .collect()
 }
 
 // ---- FID 事件读取与解析 ----
