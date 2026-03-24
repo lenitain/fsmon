@@ -66,8 +66,6 @@ cargo install fsmon
 cargo install --git https://github.com/YOUR_USERNAME/fsmon.git
 ```
 
-```
-
 ---
 
 ### 权限配置
