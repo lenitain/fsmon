@@ -59,7 +59,7 @@ fsmon --help
 #### 方式 2: 使用 cargo install
 
 ```bash
-# 直接从 crates.io 安装（如果已发布）
+# 直接从 crates.io 安装
 cargo install fsmon
 
 # 或从 Git 安装
