@@ -27,18 +27,24 @@ use crate::{FileEvent, OutputFormat};
 use crate::utils::get_process_info_by_pid;
 use crate::proc_cache::{self, ProcCache};
 
-// ---- FID 事件解析所需的内核结构体和常量 ----
+fn get_runtime_dir() -> PathBuf {
+    directories::ProjectDirs::from("com", "fsmon", "fsmon")
+        .and_then(|dirs| dirs.runtime_dir().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+}
+
+// ---- FID event parsing required kernel structures and constants ----
 
 /// fanotify_event_info_header.info_type
 const FAN_EVENT_INFO_TYPE_FID: u8 = 1;
 const FAN_EVENT_INFO_TYPE_DFID_NAME: u8 = 2;
 const FAN_EVENT_INFO_TYPE_DFID: u8 = 3;
 
-/// FAN_FS_ERROR: 文件系统错误通知 (Linux 5.16+)
-/// fanotify-rs 0.3.1 未导出此常量，手动定义
+/// FAN_FS_ERROR: filesystem error notification (Linux 5.16+)
+/// fanotify-rs 0.3.1 does not export this constant, manually define
 const FAN_FS_ERROR: u64 = 0x0000_8000;
 
-/// fanotify_event_metadata（与内核结构体一致）
+/// fanotify_event_metadata (matches kernel structure)
 #[repr(C)]
 struct FanMetadata {
     event_len: u32,
@@ -63,16 +69,16 @@ const INFO_HDR_SIZE: usize = std::mem::size_of::<FanInfoHeader>();
 const FSID_SIZE: usize = 8;            // __kernel_fsid_t = { i32 val[2]; }
 const FH_HDR_SIZE: usize = 8;          // file_handle: handle_bytes(u32) + handle_type(i32)
 
-/// 从 FID 缓冲区解析出的事件
+/// Event parsed from FID buffer
 struct FidEvent {
     mask: u64,
     pid: i32,
     path: PathBuf,
-    /// DFID_NAME 中的目录句柄键（fsid + file_handle），用于缓存查找
+    /// DFID_NAME directory handle key (fsid + file_handle), for cache lookup
     dfid_name_handle: Option<Vec<u8>>,
-    /// DFID_NAME 中的文件名
+    /// DFID_NAME filename
     dfid_name_filename: Option<String>,
-    /// DFID/FID 记录中的自身句柄键（fsid + file_handle），用于缓存构建
+    /// Self handle key from DFID/FID record (fsid + file_handle), for cache building
     self_handle: Option<Vec<u8>>,
 }
 
@@ -106,12 +112,12 @@ impl Monitor {
 
     pub async fn run(mut self) -> Result<()> {
         if unsafe { libc::geteuid() } != 0 {
-            bail!("fanotify 需要 root 权限，请使用 sudo 运行");
+            bail!("fanotify requires root privileges, please run with sudo");
         }
 
-        // 启动 proc connector 监听线程，缓存进程 exec 信息
+        // Start proc connector listener thread, cache process exec info
         self.proc_cache = Some(proc_cache::start_proc_listener());
-        // 短暂等待，让 listener 完成订阅
+        // Brief wait for listener to complete subscription
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
         let running = Arc::new(AtomicBool::new(true));
@@ -121,16 +127,16 @@ impl Monitor {
             r.store(false, Ordering::SeqCst);
         });
 
-        // 初始化 fanotify，启用 FID 模式以支持全部目录条目事件
+        // Initialize fanotify, enable FID mode to support all directory entry events
         let fan_fd = fanotify_init(
             FAN_CLOEXEC | FAN_NONBLOCK | FAN_CLASS_NOTIF
                 | FAN_REPORT_FID | FAN_REPORT_DIR_FID | FAN_REPORT_NAME,
             (O_CLOEXEC | O_RDONLY) as u32,
-        ).context("fanotify_init 失败（需要 Linux 5.9+ 内核）")?;
+        ).context("fanotify_init failed (requires Linux 5.9+ kernel)")?;
 
-        // 事件掩码
-        // 默认：8 种核心变更事件
-        // --all-events：全部 14 种 fanotify 通知事件
+        // Event mask
+        // Default: 8 core change events
+        // --all-events: all 14 fanotify notification events
         let mask = if self.all_events {
             FAN_ACCESS | FAN_MODIFY | FAN_ATTRIB
                 | FAN_CLOSE_WRITE | FAN_CLOSE_NOWRITE
@@ -149,7 +155,7 @@ impl Monitor {
         let mut mount_fds = Vec::new();
         let mut canonical_paths = Vec::new();
 
-        // 收集规范路径
+        // Collect canonical paths
         for path in &self.paths {
             let canonical = if path.exists() {
                 path.canonicalize().unwrap_or_else(|_| path.clone())
@@ -159,8 +165,8 @@ impl Monitor {
             canonical_paths.push(canonical);
         }
 
-        // 优先尝试 filesystem mark（覆盖整个文件系统，无竞态窗口）
-        // 若遇到 EXDEV（如 btrfs 子卷），回退到 inode mark + 动态标记
+        // Try filesystem mark first (covers entire filesystem, no race window)
+        // Fall back to inode mark + dynamic marking on EXDEV (e.g., btrfs subvolumes)
         let use_fs_mark = {
             let mut ok = true;
             for canonical in &canonical_paths {
@@ -173,7 +179,7 @@ impl Monitor {
                         break;
                     }
                     Err(e) => {
-                        bail!("fanotify_mark 失败: {}: {}", canonical.display(), e);
+                        bail!("fanotify_mark failed: {}: {}", canonical.display(), e);
                     }
                 }
             }
@@ -181,7 +187,7 @@ impl Monitor {
         };
 
         if !use_fs_mark {
-            // inode mark 回退：逐目录标记
+            // inode mark fallback: mark directories one by one
             for canonical in &canonical_paths {
                 mark_directory(fan_fd, mask, canonical)?;
                 if self.recursive && canonical.is_dir() {
@@ -190,7 +196,7 @@ impl Monitor {
             }
         }
 
-        // 打开目录 fd，供 open_by_handle_at 解析文件句柄
+        // Open directory fds for open_by_handle_at to resolve file handles
         for canonical in &canonical_paths {
             if let Ok(c_path) = CString::new(canonical.to_string_lossy().as_bytes()) {
                 let mfd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
@@ -225,8 +231,8 @@ impl Monitor {
         );
         println!("Press Ctrl+C to stop\n");
 
-        // 持久目录句柄缓存：handle_key → dir_path
-        // 在启动时预缓存监控目录，用于恢复已删除目录的子文件路径
+        // Persistent directory handle cache: handle_key → dir_path
+        // Pre-cache monitored directories at startup, for recovering deleted directory child file paths
         let mut dir_cache: HashMap<Vec<u8>, PathBuf> = HashMap::new();
         for canonical in &canonical_paths {
             if canonical.is_dir() {
@@ -237,7 +243,7 @@ impl Monitor {
         while running.load(Ordering::SeqCst) {
             let events = read_fid_events(fan_fd, &mount_fds, &mut dir_cache);
 
-            // inode mark 模式：新建子目录或子目录移入时，动态添加 mark 并更新句柄缓存
+            // inode mark mode: dynamically add marks and update handle cache when new subdirectories are created or moved in
             if !use_fs_mark && self.recursive {
                 for raw in &events {
                     let is_dir_create = raw.mask & FAN_CREATE != 0 && raw.mask & FAN_ONDIR != 0;
@@ -251,7 +257,7 @@ impl Monitor {
             }
 
             for raw in &events {
-                // FAN_Q_OVERFLOW: 队列溢出警告（内核自动投递，不在订阅掩码中）
+                // FAN_Q_OVERFLOW: queue overflow warning (auto-delivered by kernel, not in subscription mask)
                 if raw.mask & FAN_Q_OVERFLOW != 0 {
                     eprintln!("[WARNING] fanotify queue overflow - some events may have been lost");
                     continue;
@@ -262,7 +268,7 @@ impl Monitor {
                 for event_type in event_types {
                     let event = self.build_file_event(raw, event_type);
 
-                    // filesystem mark 模式：用户态路径前缀过滤
+                    // filesystem mark mode: userspace path prefix filtering
                     if use_fs_mark && !self.is_path_in_scope(&event.path, &canonical_paths) {
                         continue;
                     }
@@ -287,10 +293,7 @@ impl Monitor {
 
     pub async fn run_daemon(self) -> Result<()> {
         // Create PID file
-        let pid_file = std::env::var("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/tmp"))
-            .join("fsmon.pid");
+        let pid_file = get_runtime_dir().join("fsmon.pid");
 
         if pid_file.exists() {
             let pid_str = fs::read_to_string(&pid_file)?;
@@ -316,10 +319,7 @@ impl Monitor {
         }
 
         // Save daemon config
-        let config_file = std::env::var("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/tmp"))
-            .join("fsmon.json");
+        let config_file = get_runtime_dir().join("fsmon.json");
         let config = serde_json::json!({
             "paths": self.paths,
             "log_file": log_file,
@@ -385,9 +385,9 @@ impl Monitor {
         true
     }
 
-    /// 检查路径是否在监控范围内
-    /// recursive=true：路径以任一监控目录为前缀即可
-    /// recursive=false：路径的父目录恰好是监控目录（即直接子级）
+    /// Check if path is within monitoring scope
+    /// recursive=true: path can have any monitored directory as prefix
+    /// recursive=false: path's parent must be exactly the monitored directory (i.e., direct children only)
     fn is_path_in_scope(&self, path: &Path, canonical_paths: &[PathBuf]) -> bool {
         for watched in canonical_paths {
             if self.recursive {
@@ -395,7 +395,7 @@ impl Monitor {
                     return true;
                 }
             } else {
-                // 非递归：只匹配直接子级或自身
+                // Non-recursive: only match direct children or self
                 if path == watched.as_path() {
                     return true;
                 }
@@ -450,7 +450,7 @@ impl Monitor {
     }
 }
 
-// ---- 事件类型映射（1:1 对应 fanotify 事件位） ----
+// ---- Event type mapping (1:1 with fanotify event bits) ----
 
 const EVENT_BITS: [(u64, &str); 14] = [
     (FAN_ACCESS,        "ACCESS"),
@@ -476,14 +476,14 @@ fn mask_to_event_types(mask: u64) -> Vec<&'static str> {
         .collect()
 }
 
-// ---- FID 事件读取与解析 ----
+// ---- FID event reading and parsing ----
 
-/// 从 fanotify fd 读取并解析 FID 格式事件
+/// Read and parse FID format events from fanotify fd
 ///
-/// 使用两遍处理 + 持久缓存：
-/// 1. 第一遍：解析所有事件，尝试解析文件句柄
-/// 2. 第二遍：用持久缓存恢复因目录已删除而解析失败的子文件路径
-/// 3. 将新解析的目录信息更新到持久缓存
+/// Uses two-pass processing + persistent cache:
+/// 1. First pass: Parse all events, try to resolve file handles
+/// 2. Second pass: Use persistent cache to recover child file paths for events that failed due to directory deletion
+/// 3. Update newly resolved directory info to persistent cache
 fn read_fid_events(fan_fd: i32, mount_fds: &[i32], dir_cache: &mut HashMap<Vec<u8>, PathBuf>) -> Vec<FidEvent> {
     let mut buf = vec![0u8; 4096 * 8]; // 32KB
     let n = unsafe {
@@ -498,7 +498,7 @@ fn read_fid_events(fan_fd: i32, mount_fds: &[i32], dir_cache: &mut HashMap<Vec<u
     let mut events = Vec::new();
     let mut offset = 0;
 
-    // ---- 第一遍：解析事件并提取句柄数据 ----
+    // ---- First pass: Parse events and extract handle data ----
 
     while offset + META_SIZE <= n {
         let meta = unsafe { &*(buf.as_ptr().add(offset) as *const FanMetadata) };
@@ -550,7 +550,7 @@ fn read_fid_events(fan_fd: i32, mount_fds: &[i32], dir_cache: &mut HashMap<Vec<u
             info_off += info_len;
         }
 
-        // FID 模式下 fd 应为 -1，但防御性关闭
+        // In FID mode, fd should be -1, but defensively close it
         if meta.fd >= 0 {
             unsafe { libc::close(meta.fd); }
         }
@@ -567,23 +567,23 @@ fn read_fid_events(fan_fd: i32, mount_fds: &[i32], dir_cache: &mut HashMap<Vec<u
         offset += event_len;
     }
 
-    // ---- 第二遍：用持久缓存恢复已删除目录的子文件路径 ----
-    // 先从本批次成功解析的事件更新缓存，再用缓存恢复失败的事件
-    // 迭代直到不再有新的路径被解析（处理多级嵌套删除）
+    // ---- Second pass: Use persistent cache to recover child file paths for deleted directories ----
+    // First update cache from successfully resolved events in this batch, then use cache to recover failed events
+    // Iterate until no new paths are resolved (handles multi-level nested deletion)
 
     loop {
-        // 从已成功解析的事件更新持久缓存
+        // Update persistent cache from successfully resolved events
         for ev in events.iter() {
             if ev.path.as_os_str().is_empty() {
                 continue;
             }
 
-            // 缓存自身句柄 → 路径
+            // Cache self handle → path
             if let Some(ref key) = ev.self_handle {
                 dir_cache.entry(key.clone()).or_insert_with(|| ev.path.clone());
             }
 
-            // 缓存 DFID_NAME 中的目录句柄 → 目录路径
+            // Cache DFID_NAME directory handle → directory path
             if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
                 let dir_path = if !filename.is_empty() {
                     ev.path.parent().map(|p| p.to_path_buf())
@@ -596,7 +596,7 @@ fn read_fid_events(fan_fd: i32, mount_fds: &[i32], dir_cache: &mut HashMap<Vec<u
             }
         }
 
-        // 尝试用缓存恢复空路径的事件
+        // Try to recover empty path events using cache
         let mut made_progress = false;
         for ev in events.iter_mut() {
             if !ev.path.as_os_str().is_empty() {
@@ -622,13 +622,13 @@ fn read_fid_events(fan_fd: i32, mount_fds: &[i32], dir_cache: &mut HashMap<Vec<u
     events
 }
 
-/// 解析 DFID_NAME info record：提取目录句柄键、文件名、尝试解析的路径
+/// Parse DFID_NAME info record: extract directory handle key, filename, and try to resolve path
 ///
-/// 返回 (handle_key, filename, resolved_path)
-/// handle_key = fsid + file_handle 字节，唯一标识一个目录
-/// 即使 open_by_handle_at 失败（目录已删除），也返回 handle_key 和 filename
+/// Returns (handle_key, filename, resolved_path)
+/// handle_key = fsid + file_handle bytes, uniquely identifies a directory
+/// Even if open_by_handle_at fails (directory deleted), still returns handle_key and filename
 ///
-/// 内存布局: InfoHeader(4) | fsid(8) | file_handle(8+N) | filename(null结尾,对齐填充)
+/// Memory layout: InfoHeader(4) | fsid(8) | file_handle(8+N) | filename(null-terminated, padded)
 fn extract_dfid_name(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[i32])
     -> Option<(Vec<u8>, String, Option<PathBuf>)>
 {
@@ -650,15 +650,15 @@ fn extract_dfid_name(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[
         return None;
     }
 
-    // 提取 null 结尾的文件名
+    // Extract null-terminated filename
     let name_bytes = &buf[name_off..record_end];
     let name = name_bytes.split(|&b| b == 0).next().unwrap_or(&[]);
     let filename = std::str::from_utf8(name).ok()?.to_string();
 
-    // 缓存键：file_handle 字节（唯一标识该目录 inode，同一文件系统内）
+    // Cache key: file_handle bytes (uniquely identifies the directory inode within the same filesystem)
     let key = buf[fh_off..fh_off + fh_total].to_vec();
 
-    // 尝试解析目录句柄
+    // Try to resolve directory handle
     let dir_path = resolve_file_handle(mount_fds, &buf[fh_off..fh_off + fh_total]);
     let full_path = dir_path.map(|dp| {
         if filename.is_empty() { dp } else { dp.join(&filename) }
@@ -667,11 +667,11 @@ fn extract_dfid_name(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[
     Some((key, filename, full_path))
 }
 
-/// 解析 FID/DFID info record：提取自身句柄键和尝试解析的路径
+/// Parse FID/DFID info record: extract self handle key and try to resolve path
 ///
-/// 返回 (handle_key, resolved_path)
+/// Returns (handle_key, resolved_path)
 ///
-/// 内存布局: InfoHeader(4) | fsid(8) | file_handle(8+N)
+/// Memory layout: InfoHeader(4) | fsid(8) | file_handle(8+N)
 fn extract_fid(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[i32])
     -> Option<(Vec<u8>, Option<PathBuf>)>
 {
@@ -698,7 +698,7 @@ fn extract_fid(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[i32])
     Some((key, path))
 }
 
-/// 通过 open_by_handle_at 将内核文件句柄解析为路径
+/// Resolve kernel file handle to path via open_by_handle_at
 fn resolve_file_handle(mount_fds: &[i32], fh_data: &[u8]) -> Option<PathBuf> {
     if fh_data.len() < FH_HDR_SIZE {
         return None;
@@ -729,15 +729,15 @@ fn process_exists(pid: u32) -> bool {
     Path::new(&format!("/proc/{}", pid)).exists()
 }
 
-// ---- 目录标记（inode mark 回退模式使用） ----
+// ---- Directory marking (used by inode mark fallback mode) ----
 
-/// 标记单个目录
+/// Mark a single directory
 fn mark_directory(fan_fd: i32, mask: u64, path: &Path) -> Result<()> {
     fanotify_mark(fan_fd, FAN_MARK_ADD, mask, AT_FDCWD, path)
-        .with_context(|| format!("fanotify_mark 失败: {}", path.display()))
+        .with_context(|| format!("fanotify_mark failed: {}", path.display()))
 }
 
-/// 递归遍历并标记所有子目录（忽略错误，如权限不足的目录）
+/// Recursively traverse and mark all subdirectories (ignore errors, e.g., permission denied)
 fn mark_recursive(fan_fd: i32, mask: u64, dir: &Path) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -752,16 +752,15 @@ fn mark_recursive(fan_fd: i32, mask: u64, dir: &Path) {
     }
 }
 
-// ---- 目录句柄缓存 ----
+// ---- Directory Handle Cache ----
 
-/// 通过 name_to_handle_at 获取路径的文件句柄键
-/// 返回的字节与 fanotify FID 事件中的 file_handle 格式相同
+/// Get handle key for a path via name_to_handle_at
+/// Returns bytes matching the file_handle format in fanotify FID events
 fn path_to_handle_key(path: &Path) -> Option<Vec<u8>> {
     let c_path = CString::new(path.to_string_lossy().as_bytes()).ok()?;
     let mut mount_id: libc::c_int = 0;
-    let mut buf = vec![0u8; 128]; // 足够容纳任何文件句柄
+    let mut buf = vec![0u8; 128];
 
-    // 设置 handle_bytes 字段为缓冲区容量减去头部
     let capacity = (buf.len() - FH_HDR_SIZE) as u32;
     buf[0..4].copy_from_slice(&capacity.to_ne_bytes());
 
@@ -783,14 +782,14 @@ fn path_to_handle_key(path: &Path) -> Option<Vec<u8>> {
     Some(buf[0..FH_HDR_SIZE + handle_bytes].to_vec())
 }
 
-/// 将目录路径的句柄键加入缓存
+/// Add directory path handle key to cache
 fn cache_dir_handle(cache: &mut HashMap<Vec<u8>, PathBuf>, path: &Path) {
     if let Some(key) = path_to_handle_key(path) {
         cache.insert(key, path.to_path_buf());
     }
 }
 
-/// 递归缓存目录及其所有子目录的句柄
+/// Recursively cache directory and all subdirectory handles
 fn cache_recursive(cache: &mut HashMap<Vec<u8>, PathBuf>, dir: &Path) {
     cache_dir_handle(cache, dir);
     let entries = match fs::read_dir(dir) {

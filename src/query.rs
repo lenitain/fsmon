@@ -86,7 +86,7 @@ impl Query {
         cmd_regex: Option<Regex>,
     ) -> Result<Vec<FileEvent>> {
         let file = File::open(&self.log_file)
-            .with_context(|| format!("无法打开日志文件: {}", self.log_file.display()))?;
+            .with_context(|| format!("Failed to open log file: {}", self.log_file.display()))?;
         let reader = BufReader::new(file);
 
         let mut events = Vec::new();
@@ -169,7 +169,7 @@ impl Query {
 
     fn output_events(&self, events: &[FileEvent]) -> Result<()> {
         if events.is_empty() {
-            println!("未找到匹配的事件");
+            println!("No matching events found");
             return Ok(());
         }
 
@@ -185,7 +185,7 @@ impl Query {
                 }
             }
             OutputFormat::Csv => {
-                println!("time,type,path,pid,cmd,user,size_change,size_change_human");
+                println!("time,type,path,pid,cmd,user,size_change,size_change_str");
                 for event in events {
                     let size_human = format_size(event.size_change);
                     let size_prefix = if event.size_change >= 0 { "+" } else { "" };

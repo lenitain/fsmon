@@ -4,6 +4,12 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+fn get_runtime_dir() -> PathBuf {
+    directories::ProjectDirs::from("com", "fsmon", "fsmon")
+        .and_then(|dirs| dirs.runtime_dir().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DaemonStatus {
     Running {
@@ -25,15 +31,8 @@ impl Daemon {
     }
 
     pub async fn status(&self) -> Result<DaemonStatus> {
-        let pid_file = std::env::var("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/tmp"))
-            .join("fsmon.pid");
-
-        let config_file = std::env::var("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/tmp"))
-            .join("fsmon.json");
+        let pid_file = get_runtime_dir().join("fsmon.pid");
+        let config_file = get_runtime_dir().join("fsmon.json");
 
         if !pid_file.exists() || !config_file.exists() {
             return Ok(DaemonStatus::Stopped);
@@ -95,10 +94,8 @@ impl Daemon {
     }
 
     pub async fn stop(&self, force: bool) -> Result<()> {
-        let pid_file = std::env::var("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/tmp"))
-            .join("fsmon.pid");
+        let pid_file = get_runtime_dir().join("fsmon.pid");
+        let config_file = get_runtime_dir().join("fsmon.json");
 
         if !pid_file.exists() {
             println!("fsmon daemon is not running");
@@ -130,10 +127,7 @@ impl Daemon {
 
         // Cleanup PID file
         let _ = fs::remove_file(&pid_file);
-        let _ = fs::remove_file(std::env::var("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/tmp"))
-            .join("fsmon.json"));
+        let _ = fs::remove_file(config_file);
 
         Ok(())
     }

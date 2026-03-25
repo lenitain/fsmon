@@ -22,9 +22,9 @@ use utils::{parse_size, format_size, format_datetime};
 #[command(name = "fsmon")]
 #[command(author = "fsmon contributors")]
 #[command(version = "0.1.0")]
-#[command(about = "轻量级、高性能的文件变更溯源工具", long_about = None)]
+#[command(about = "Lightweight high-performance file change tracking tool", long_about = None)]
 #[command(
-    after_help = "使用 'fsmon <COMMAND> --help' 查看命令详细信息\n\n典型场景:\n  fsmon monitor /var/log                     # 基础监控\n  fsmon monitor /etc --types MODIFY         # 排查配置文件修改\n  fsmon monitor / --all-events               # 开启全部 14 种事件\n  fsmon monitor ~/project --recursive       # 递归监控项目\n  fsmon monitor / --daemon -o /var/log/fsmon-audit.log  # 守护进程模式\n  fsmon query --since 1h --cmd nginx         # 查询最近 1 小时 nginx 的操作\n  fsmon status                               # 查看守护进程状态"
+    after_help = "Use 'fsmon <COMMAND> --help' for detailed command info\n\nExamples:\n  fsmon monitor /var/log                     # Basic monitoring\n  fsmon monitor /etc --types MODIFY         # Investigate config file changes\n  fsmon monitor / --all-events               # Enable all 14 event types\n  fsmon monitor ~/project --recursive       # Recursively monitor project\n  fsmon monitor / --daemon -o /var/log/fsmon-audit.log  # Daemon mode\n  fsmon query --since 1h --cmd nginx         # Query nginx operations in last hour\n  fsmon status                               # Check daemon status"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -33,202 +33,202 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    #[command(about = "实时监控文件变更", long_about = LONG_ABOUT_MONITOR)]
+    #[command(about = "Real-time file change monitoring", long_about = LONG_ABOUT_MONITOR)]
     Monitor {
-        /// 监控的目录/文件路径（支持多个）
+        /// Directory/file path to monitor (supports multiple)
         #[arg(value_name = "PATH")]
         paths: Vec<PathBuf>,
 
-        /// 仅记录大小变化≥指定值的事件 (如：100MB, 1GB, 1048576)
+        /// Only record events with size change >= specified value (e.g., 100MB, 1GB, 1048576)
         #[arg(short, long, value_name = "SIZE")]
         min_size: Option<String>,
 
-        /// 仅监控指定操作类型，逗号分隔
+        /// Only monitor specified operation types, comma-separated
         /// (ACCESS, MODIFY, CLOSE_WRITE, CLOSE_NOWRITE, OPEN, OPEN_EXEC,
         ///  ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF, FS_ERROR)
         #[arg(short, long, value_name = "TYPES")]
         types: Option<String>,
 
-        /// 排除监控的路径（支持通配符，如："*.log", "/tmp/*"）
+        /// Paths to exclude from monitoring (supports wildcards, e.g., "*.log", "/tmp/*")
         #[arg(short, long, value_name = "PATTERN")]
         exclude: Option<String>,
 
-        /// 捕获全部 14 种 fanotify 事件（默认只捕获 8 种变更事件）
+        /// Capture all 14 fanotify events (default only captures 8 change events)
         #[arg(long)]
         all_events: bool,
 
-        /// 将监控日志写入指定文件（追加模式）
+        /// Write monitoring log to specified file (append mode)
         #[arg(short, long, value_name = "FILE")]
         output: Option<PathBuf>,
 
-        /// 输出格式 (human, json, csv)
+        /// Output format (human, json, csv)
         #[arg(short, long, value_enum, default_value = "human")]
         format: OutputFormat,
 
-        /// 后台守护进程运行（必须与 --output 配合使用）
+        /// Run as background daemon (must be used with --output)
         #[arg(short, long)]
         daemon: bool,
 
-        /// 递归监控所有子目录
+        /// Recursively monitor all subdirectories
         #[arg(short, long)]
         recursive: bool,
     },
 
-    #[command(about = "查询历史监控日志", long_about = LONG_ABOUT_QUERY)]
+    #[command(about = "Query historical monitoring logs", long_about = LONG_ABOUT_QUERY)]
     Query {
-        /// 待查询的日志文件路径（默认：~/.fsmon/history.log）
+        /// Log file path to query (default: ~/.fsmon/history.log)
         #[arg(short, long, value_name = "FILE")]
         log_file: Option<PathBuf>,
 
-        /// 起始时间：相对时间 (1h, 30m, 7d) 或绝对时间 ("2024-05-01 10:00")
+        /// Start time: relative (1h, 30m, 7d) or absolute ("2024-05-01 10:00")
         #[arg(short = 'S', long, value_name = "TIME")]
         since: Option<String>,
 
-        /// 结束时间：相对时间 (1h, 30m, 7d) 或绝对时间 ("2024-05-01 12:00")
+        /// End time: relative (1h, 30m, 7d) or absolute ("2024-05-01 12:00")
         #[arg(short = 'U', long, value_name = "TIME")]
         until: Option<String>,
 
-        /// 仅查询指定 PID 的事件（支持多个，逗号分隔：1234,5678）
+        /// Only query events for specified PIDs (multiple supported, comma-separated: 1234,5678)
         #[arg(short, long, value_name = "PIDS")]
         pid: Option<String>,
 
-        /// 仅查询指定进程名的事件（支持*通配符：nginx*, python）
+        /// Only query events for specified process name (supports wildcards: nginx*, python)
         #[arg(short, long, value_name = "PATTERN")]
         cmd: Option<String>,
 
-        /// 仅查询指定用户的事件（支持多个，逗号分隔：root,admin）
+        /// Only query events for specified users (multiple supported, comma-separated: root,admin)
         #[arg(short, long, value_name = "USERS")]
         user: Option<String>,
 
-        /// 仅查询指定操作类型
+        /// Only query specified operation types
         /// (ACCESS, MODIFY, CLOSE_WRITE, CLOSE_NOWRITE, OPEN, OPEN_EXEC,
         ///  ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF, FS_ERROR)
         #[arg(short, long, value_name = "TYPES")]
         types: Option<String>,
 
-        /// 仅查询大小变化≥指定值的事件 (如：100MB, 1GB)
+        /// Only query events with size change >= specified value (e.g., 100MB, 1GB)
         #[arg(short, long, value_name = "SIZE")]
         min_size: Option<String>,
 
-        /// 输出格式 (human, json, csv)
+        /// Output format (human, json, csv)
         #[arg(short, long, value_enum, default_value = "human")]
         format: OutputFormat,
 
-        /// 排序方式 (time, size, pid)
+        /// Sort by (time, size, pid)
         #[arg(short = 'r', long, value_enum, default_value = "time")]
         sort: SortBy,
     },
 
-    #[command(about = "查看守护进程运行状态", long_about = LONG_ABOUT_STATUS)]
+    #[command(about = "Check daemon running status", long_about = LONG_ABOUT_STATUS)]
     Status {
-        /// 输出格式 (human, json, csv)
+        /// Output format (human, json, csv)
         #[arg(short, long, value_enum, default_value = "human")]
         format: OutputFormat,
     },
 
-    #[command(about = "停止后台守护进程", long_about = LONG_ABOUT_STOP)]
+    #[command(about = "Stop background daemon", long_about = LONG_ABOUT_STOP)]
     Stop {
-        /// 强制终止（发送 SIGKILL 信号，否则发送 SIGTERM）
+        /// Force terminate (send SIGKILL, otherwise send SIGTERM)
         #[arg(long)]
         force: bool,
     },
 
-    #[command(about = "清理历史日志", long_about = LONG_ABOUT_CLEAN)]
+    #[command(about = "Clean historical logs", long_about = LONG_ABOUT_CLEAN)]
     Clean {
-        /// 待清理的日志文件路径（默认：~/.fsmon/history.log）
+        /// Log file path to clean (default: ~/.fsmon/history.log)
         #[arg(short, long, value_name = "FILE")]
         log_file: Option<PathBuf>,
 
-        /// 保留最近 N 天的日志（默认：30 天）
+        /// Keep logs from last N days (default: 30 days)
         #[arg(short, long, value_name = "DAYS", default_value = "30")]
         keep_days: u32,
 
-        /// 日志文件最大大小（如：100MB, 1GB）
+        /// Maximum log file size (e.g., 100MB, 1GB)
         #[arg(short, long, value_name = "SIZE")]
         max_size: Option<String>,
 
-        /// 模拟清理，显示将删除的内容但不实际删除
+        /// Simulate cleanup, show what would be deleted without actually deleting
         #[arg(short, long)]
         dry_run: bool,
     },
 }
 
-const LONG_ABOUT_MONITOR: &str = r#"监控指定路径的文件系统事件，实时输出 fanotify 原始事件。
+const LONG_ABOUT_MONITOR: &str = r#"Monitor filesystem events on specified paths, output fanotify raw events in real-time.
 
-【事件类型】
-  默认：8 种核心变更事件 (CLOSE_WRITE, ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF)
-  --all-events: 开启全部 14 种 fanotify 事件 (包含 ACCESS, MODIFY, OPEN, OPEN_EXEC, CLOSE_NOWRITE, FS_ERROR)
+[Event Types]
+  Default: 8 core change events (CLOSE_WRITE, ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF)
+  --all-events: Enable all 14 fanotify events (includes ACCESS, MODIFY, OPEN, OPEN_EXEC, CLOSE_NOWRITE, FS_ERROR)
 
-【守护进程模式】
-  --daemon 后台运行，必须与 --output 配合使用
-  fsmon status/stop 查看状态和停止
+[Daemon Mode]
+  --daemon runs in background, must be used with --output
+  fsmon status/stop to check status and stop
 
-【典型场景】
-  fsmon monitor /etc --types MODIFY          # 排查配置文件修改
-  fsmon monitor / --all-events               # 开启全部 14 种事件审计
-  fsmon monitor ~/project --recursive        # 递归监控项目目录
-  fsmon monitor /tmp --min-size 100MB        # 追踪大文件创建
-  fsmon monitor /var/log --format json       # JSON 格式输出
-  fsmon monitor / --daemon -o /var/log/fsmon-audit.log  # 守护进程长期监控"#;
+[Examples]
+  fsmon monitor /etc --types MODIFY          # Investigate config file changes
+  fsmon monitor / --all-events               # Enable all 14 event types
+  fsmon monitor ~/project --recursive        # Recursively monitor project directory
+  fsmon monitor /tmp --min-size 100MB        # Track large file creation
+  fsmon monitor /var/log --format json       # JSON format output
+  fsmon monitor / --daemon -o /var/log/fsmon-audit.log  # Daemon long-term monitoring"#;
 
-const LONG_ABOUT_QUERY: &str = r#"从日志文件中查询历史文件变更事件，支持多种过滤条件和排序方式。
+const LONG_ABOUT_QUERY: &str = r#"Query historical file change events from log files, supports multiple filter conditions and sorting.
 
-【时间过滤】
-  --since   起始时间：相对时间 (1h, 30m, 7d) 或绝对时间 ("2024-05-01 10:00")
-  --until   结束时间
+[Time Filtering]
+  --since   Start time: relative (1h, 30m, 7d) or absolute ("2024-05-01 10:00")
+  --until   End time
   
-【进程过滤】
-  --pid     按进程 ID 过滤（支持多个：1234,5678）
-  --cmd     按进程名过滤（支持*通配符：nginx*, python）
-  --user    按用户名过滤（支持多个：root,admin）
+[Process Filtering]
+  --pid     Filter by process ID (multiple supported: 1234,5678)
+  --cmd     Filter by process name (wildcard support: nginx*, python)
+  --user    Filter by username (multiple supported: root,admin)
 
-【事件过滤】
-  --types     按事件类型过滤 (ACCESS,MODIFY,CREATE,DELETE,...)
-  --min-size  按大小变化过滤 (如：100MB, 1GB)
+[Event Filtering]
+  --types     Filter by event type (ACCESS,MODIFY,CREATE,DELETE,...)
+  --min-size  Filter by size change (e.g., 100MB, 1GB)
 
-【典型场景】
-  fsmon query                              # 查询默认日志 (~/.fsmon/history.log)
-  fsmon query --since 1h                   # 最近 1 小时
-  fsmon query --cmd nginx                  # 只查看 nginx 的操作
-  fsmon query --since 1h --cmd java --types MODIFY --min-size 100MB  # 组合条件
-  fsmon query --format json --sort size    # JSON 输出，按大小排序"#;
+[Examples]
+  fsmon query                              # Query default log (~/.fsmon/history.log)
+  fsmon query --since 1h                   # Last 1 hour
+  fsmon query --cmd nginx                  # Only nginx operations
+  fsmon query --since 1h --cmd java --types MODIFY --min-size 100MB  # Combined filters
+  fsmon query --format json --sort size    # JSON output, sorted by size"#;
 
-const LONG_ABOUT_STATUS: &str = r#"查看 fsmon 守护进程的运行状态。
+const LONG_ABOUT_STATUS: &str = r#"Check fsmon daemon running status.
 
-【输出内容】
-  - 运行状态（Running/Stopped）
-  - 进程 ID（PID）
-  - 监控的路径
-  - 日志文件路径
-  - 启动时间
-  - 事件数量
-  - 内存使用
+[Output Content]
+  - Running status (Running/Stopped)
+  - Process ID (PID)
+  - Monitored paths
+  - Log file path
+  - Start time
+  - Event count
+  - Memory usage
 
-【典型场景】
-  fsmon status                 # 人类可读格式
-  fsmon status --format json  # JSON 格式（便于集成监控系统）"#;
+[Examples]
+  fsmon status                 # Human-readable format
+  fsmon status --format json  # JSON format (for monitoring system integration)"#;
 
-const LONG_ABOUT_STOP: &str = r#"停止 fsmon 守护进程。
+const LONG_ABOUT_STOP: &str = r#"Stop fsmon daemon.
 
-【停止方式】
-  默认：发送 SIGTERM 信号，优雅停止
-  --force: 发送 SIGKILL 信号，强制停止
+[Stop Method]
+  Default: Send SIGTERM signal, graceful stop
+  --force: Send SIGKILL signal, force stop
 
-【典型场景】
-  fsmon stop        # 优雅停止
-  fsmon stop --force  # 强制停止（仅在无响应时使用）"#;
+[Examples]
+  fsmon stop        # Graceful stop
+  fsmon stop --force  # Force stop (only when unresponsive)"#;
 
-const LONG_ABOUT_CLEAN: &str = r#"清理历史日志文件，按时间或大小保留。
+const LONG_ABOUT_CLEAN: &str = r#"Clean historical log files, retain by time or size.
 
-【清理策略】
-  --keep-days   保留最近 N 天的日志（默认：30 天）
-  --max-size    限制日志文件最大大小（如：100MB, 1GB）
-  --dry-run     预览模式，不实际删除
+[Cleanup Strategy]
+  --keep-days   Keep logs from last N days (default: 30 days)
+  --max-size    Limit maximum log file size (e.g., 100MB, 1GB)
+  --dry-run     Preview mode, don't actually delete
 
-【典型场景】
-  fsmon clean --keep-days 7           # 保留 7 天日志
-  fsmon clean --max-size 100MB        # 限制日志≤100MB
-  fsmon clean --keep-days 7 --dry-run # 预览不删除"#;
+[Examples]
+  fsmon clean --keep-days 7           # Keep 7 days of logs
+  fsmon clean --max-size 100MB        # Limit logs to 100MB
+  fsmon clean --keep-days 7 --dry-run # Preview without deleting"#;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum OutputFormat {
@@ -291,7 +291,7 @@ async fn main() -> Result<()> {
             recursive,
         } => {
             if paths.is_empty() {
-                eprintln!("错误: 请指定至少一个监控路径");
+                eprintln!("Error: Please specify at least one monitor path");
                 process::exit(1);
             }
 

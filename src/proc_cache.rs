@@ -1,14 +1,14 @@
-//! Proc Connector 进程缓存
+//! Proc Connector Process Cache
 //!
-//! 通过 Linux netlink proc connector 监听进程 exec 事件，
-//! 在进程执行时立即缓存 PID → (cmd, user) 映射。
-//! 解决 fanotify 事件中短命进程（touch, rm, mv 等）已退出导致
-//! /proc/{pid} 不可读的问题。
+//! Listens to process exec events via Linux netlink proc connector,
+//! caches PID -> (cmd, user) mapping immediately when process executes.
+//! Solves the problem where short-lived processes (touch, rm, mv etc.)
+//! cause /proc/{pid} to be unreadable when fanotify events arrive.
 
 use dashmap::DashMap;
 use std::sync::Arc;
 
-// ---- Netlink / Proc Connector 常量 ----
+// ---- Netlink / Proc Connector Constants ----
 
 const NETLINK_CONNECTOR: libc::c_int = 11;
 const CN_IDX_PROC: u32 = 1;
@@ -20,7 +20,7 @@ const NLMSG_HDR_SIZE: usize = std::mem::size_of::<libc::nlmsghdr>();
 /// cn_msg header: cb_id(8) + seq(4) + ack(4) + len(2) + flags(2)
 const CN_MSG_HDR_SIZE: usize = 20;
 
-// ---- 公开类型 ----
+// ---- Public Types ----
 
 #[derive(Clone, Debug)]
 pub struct ProcInfo {
@@ -30,9 +30,9 @@ pub struct ProcInfo {
 
 pub type ProcCache = Arc<DashMap<u32, ProcInfo>>;
 
-/// 启动 proc connector 监听线程，返回共享缓存。
-/// 在进程 exec() 时立即读取 /proc/{pid} 信息并缓存，
-/// 确保短命进程的信息在 fanotify 事件处理时可用。
+/// Start proc connector listener thread, returns shared cache.
+/// Reads /proc/{pid} info and caches immediately at process exec(),
+/// ensuring short-lived process info is available when fanotify events are processed.
 pub fn start_proc_listener() -> ProcCache {
     let cache: ProcCache = Arc::new(DashMap::new());
     let cache_clone = cache.clone();
@@ -49,7 +49,7 @@ pub fn start_proc_listener() -> ProcCache {
     cache
 }
 
-// ---- 内部实现 ----
+// ---- Internal Implementation ----
 
 fn run_listener(cache: ProcCache) -> anyhow::Result<()> {
     let sock = unsafe {
@@ -66,10 +66,10 @@ fn run_listener(cache: ProcCache) -> anyhow::Result<()> {
         );
     }
 
-    // 确保 sock 在任何退出路径都关闭
+    // Ensure socket is closed on any exit path
     let _guard = SockGuard(sock);
 
-    // 绑定到 proc connector 组
+    // Bind to proc connector group
     let mut addr: libc::sockaddr_nl = unsafe { std::mem::zeroed() };
     addr.nl_family = libc::AF_NETLINK as u16;
     addr.nl_pid = std::process::id();
@@ -89,18 +89,16 @@ fn run_listener(cache: ProcCache) -> anyhow::Result<()> {
         );
     }
 
-    // 订阅进程事件
+    // Subscribe to process events
     send_subscribe(sock)?;
 
-    // 接收循环
+    // Receive loop
     let mut buf = vec![0u8; 4096];
     loop {
-        let n = unsafe {
-            libc::recv(sock, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0)
-        };
+        let n = unsafe { libc::recv(sock, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0) };
 
         if n <= 0 {
-            // socket 关闭或错误 → 退出
+            // Socket closed or error -> exit
             break;
         }
 
@@ -110,7 +108,7 @@ fn run_listener(cache: ProcCache) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 发送 PROC_CN_MCAST_LISTEN 订阅消息
+/// Send PROC_CN_MCAST_LISTEN subscription message
 fn send_subscribe(sock: libc::c_int) -> anyhow::Result<()> {
     let payload_len = CN_MSG_HDR_SIZE + 4; // cn_msg + u32 op
     let total_len = NLMSG_HDR_SIZE + payload_len;
@@ -136,9 +134,7 @@ fn send_subscribe(sock: libc::c_int) -> anyhow::Result<()> {
     let data = cn + CN_MSG_HDR_SIZE;
     msg[data..data + 4].copy_from_slice(&PROC_CN_MCAST_LISTEN.to_ne_bytes());
 
-    let ret = unsafe {
-        libc::send(sock, msg.as_ptr() as *const libc::c_void, msg.len(), 0)
-    };
+    let ret = unsafe { libc::send(sock, msg.as_ptr() as *const libc::c_void, msg.len(), 0) };
     if ret < 0 {
         anyhow::bail!(
             "send(PROC_CN_MCAST_LISTEN): {}",
@@ -149,35 +145,31 @@ fn send_subscribe(sock: libc::c_int) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 解析 netlink 消息，提取 EXEC 事件中的进程信息
+/// Parse netlink message, extract process info from EXEC events
 fn handle_message(buf: &[u8], cache: &ProcCache) {
-    // 最小长度：nlmsghdr + cn_msg header + proc_event header (what + cpu + timestamp)
+    // Minimum length: nlmsghdr + cn_msg header + proc_event header (what + cpu + timestamp)
     let min_len = NLMSG_HDR_SIZE + CN_MSG_HDR_SIZE + 16;
     if buf.len() < min_len {
         return;
     }
 
-    // proc_event 起始偏移
+    // proc_event offset
     let ev_off = NLMSG_HDR_SIZE + CN_MSG_HDR_SIZE;
 
     // proc_event.what
-    let what = u32::from_ne_bytes(
-        buf[ev_off..ev_off + 4].try_into().unwrap_or([0; 4]),
-    );
+    let what = u32::from_ne_bytes(buf[ev_off..ev_off + 4].try_into().unwrap_or([0; 4]));
 
     if what == PROC_EVENT_EXEC {
         // exec event_data: { process_pid: i32, process_tgid: i32 }
-        // 位于 proc_event 偏移 16（跳过 what(4) + cpu(4) + timestamp_ns(8)）
+        // At proc_event offset 16 (skip what(4) + cpu(4) + timestamp_ns(8))
         let data_off = ev_off + 16;
         if data_off + 8 > buf.len() {
             return;
         }
 
-        let pid = u32::from_ne_bytes(
-            buf[data_off..data_off + 4].try_into().unwrap_or([0; 4]),
-        );
+        let pid = u32::from_ne_bytes(buf[data_off..data_off + 4].try_into().unwrap_or([0; 4]));
 
-        // 进程刚 exec()，/proc/{pid} 此时一定存在
+        // Process just exec()'d, /proc/{pid} must exist
         let cmd = std::fs::read_to_string(format!("/proc/{}/comm", pid))
             .ok()
             .map(|s| s.trim().to_string())
@@ -213,10 +205,12 @@ fn uid_to_username(uid: u32) -> Option<String> {
     Some(format!("uid:{}", uid_str))
 }
 
-/// RAII guard 确保 socket 关闭
+/// RAII guard to ensure socket is closed
 struct SockGuard(libc::c_int);
 impl Drop for SockGuard {
     fn drop(&mut self) {
-        unsafe { libc::close(self.0); }
+        unsafe {
+            libc::close(self.0);
+        }
     }
 }
