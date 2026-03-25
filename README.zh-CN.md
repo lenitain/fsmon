@@ -73,37 +73,6 @@ sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 
 ---
 
-### 权限配置
-
-**监控某些目录需要 root 权限**：
-
-```bash
-# 临时使用 sudo
-sudo fsmon monitor /etc
-
-# 或添加当前用户到特定组（可选）
-sudo usermod -aG systemd-journal $USER
-# 注销重新登录后生效
-```
-
-**Proc Connector 需要 root**（用于获取进程信息）：
-```bash
-# 建议始终使用 sudo 运行
-sudo fsmon monitor /home
-```
-
-**注意**：如果你将 fsmon 安装到自定义路径（如 `~/.cargo/bin` 或项目目录），`sudo` 将找不到它，因为 `sudo` 会重置 PATH。解决方案：先将 fsmon 安装到系统路径：
-
-```bash
-# 一次性安装到系统路径
-sudo cp /path/to/fsmon /usr/local/bin/
-
-# 现在 sudo 可以找到 fsmon
-sudo fsmon monitor /home
-```
-
----
-
 ### 8 个典型场景
 
 #### 场景 1: 排查配置文件被谁修改

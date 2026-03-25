@@ -73,37 +73,6 @@ sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 
 ---
 
-### Permission Configuration
-
-**Root permissions required for monitoring certain directories**:
-
-```bash
-# Use sudo temporarily
-sudo fsmon monitor /etc
-
-# Or add current user to specific group (optional)
-sudo usermod -aG systemd-journal $USER
-# Log out and log back in for changes to take effect
-```
-
-**Proc Connector requires root** (for retrieving process information):
-```bash
-# Recommended to always run with sudo
-sudo fsmon monitor /home
-```
-
-**Note**: If you installed fsmon to a custom path (e.g., `~/.cargo/bin` or project directory), `sudo` will not find it because `sudo` resets the PATH. Solution: install to a system path first:
-
-```bash
-# Install to system path (one-time setup)
-sudo cp /path/to/fsmon /usr/local/bin/
-
-# Now sudo can find fsmon
-sudo fsmon monitor /home
-```
-
----
-
 ### 8 Typical Scenarios
 
 #### Scenario 1: Investigate Who Modified Configuration Files
