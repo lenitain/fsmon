@@ -67,7 +67,6 @@ cargo install --git https://github.com/lenitain/fsmon.git
 ```
 
 **可选 - 复制到系统路径以便 sudo 使用**：
-
 ```bash
 sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 ```

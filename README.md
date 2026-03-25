@@ -66,14 +66,9 @@ cargo install fsmon
 cargo install --git https://github.com/lenitain/fsmon.git
 ```
 
-
 **Optional - copy to system path for sudo usage**:
-
 ```bash
 sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
-```
-
-```bash
 ```
 
 ---
