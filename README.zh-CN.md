@@ -66,13 +66,6 @@ cargo install fsmon
 cargo install --git https://github.com/lenitain/fsmon.git
 ```
 
-**安装后**（建议 - 加到 PATH）：
-
-```bash
-# bash: export PATH="$HOME/.cargo/bin:$PATH"
-# fish: fish_add_path $HOME/.cargo/bin
-```
-
 **可选 - 复制到系统路径以便 sudo 使用**：
 
 ```bash
