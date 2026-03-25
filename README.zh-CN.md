@@ -49,7 +49,7 @@ rustc --version  # 验证安装
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/YOUR_USERNAME/fsmon.git
+git clone https://github.com/lenitain/fsmon.git
 cd fsmon
 
 # 2. 编译 Release 版本
@@ -69,7 +69,7 @@ fsmon --help
 cargo install fsmon
 
 # 或从 Git 安装
-cargo install --git https://github.com/YOUR_USERNAME/fsmon.git
+cargo install --git https://github.com/lenitain/fsmon.git
 ```
 
 ---

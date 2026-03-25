@@ -49,7 +49,7 @@ rustc --version  # verify installation
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/YOUR_USERNAME/fsmon.git
+git clone https://github.com/lenitain/fsmon.git
 cd fsmon
 
 # 2. Build Release version
@@ -65,11 +65,11 @@ fsmon --help
 #### Method 2: Use cargo install
 
 ```bash
-# Install from crates.io (if published)
+# Install from crates.io 
 cargo install fsmon
 
 # Or install from Git
-cargo install --git https://github.com/YOUR_USERNAME/fsmon.git
+cargo install --git https://github.com/lenitain/fsmon.git
 ```
 
 ---
