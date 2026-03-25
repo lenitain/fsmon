@@ -52,17 +52,11 @@ rustc --version  # 验证安装
 git clone https://github.com/lenitain/fsmon.git
 cd fsmon
 
-# 2. 编译 Release 版本
-cargo build --release
-
-# 3. 安装到系统路径（需要 sudo）
-sudo cp target/release/fsmon /usr/local/bin/
-
-# 4. 验证安装
-fsmon --help
+# 2. 直接从源码安装
+cargo install --path .
 ```
 
-#### 方式 2: 使用 cargo install
+#### 方式 2: 从 crates.io 安装
 
 ```bash
 # 直接从 crates.io 安装
@@ -70,6 +64,19 @@ cargo install fsmon
 
 # 或从 Git 安装
 cargo install --git https://github.com/lenitain/fsmon.git
+```
+
+**安装后**（建议 - 加到 PATH）：
+
+```bash
+# bash: export PATH="$HOME/.cargo/bin:$PATH"
+# fish: fish_add_path $HOME/.cargo/bin
+```
+
+**可选 - 复制到系统路径以便 sudo 使用**：
+
+```bash
+sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 ```
 
 ---
@@ -90,6 +97,16 @@ sudo usermod -aG systemd-journal $USER
 **Proc Connector 需要 root**（用于获取进程信息）：
 ```bash
 # 建议始终使用 sudo 运行
+sudo fsmon monitor /home
+```
+
+**注意**：如果你将 fsmon 安装到自定义路径（如 `~/.cargo/bin` 或项目目录），`sudo` 将找不到它，因为 `sudo` 会重置 PATH。解决方案：先将 fsmon 安装到系统路径：
+
+```bash
+# 一次性安装到系统路径
+sudo cp /path/to/fsmon /usr/local/bin/
+
+# 现在 sudo 可以找到 fsmon
 sudo fsmon monitor /home
 ```
 

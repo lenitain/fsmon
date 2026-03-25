@@ -52,17 +52,11 @@ rustc --version  # verify installation
 git clone https://github.com/lenitain/fsmon.git
 cd fsmon
 
-# 2. Build Release version
-cargo build --release
-
-# 3. Install to system path (requires sudo)
-sudo cp target/release/fsmon /usr/local/bin/
-
-# 4. Verify installation
-fsmon --help
+# 2. Install directly from source
+cargo install --path .
 ```
 
-#### Method 2: Use cargo install
+#### Method 2: Install from crates.io
 
 ```bash
 # Install from crates.io 
@@ -70,6 +64,19 @@ cargo install fsmon
 
 # Or install from Git
 cargo install --git https://github.com/lenitain/fsmon.git
+```
+
+**After installation** (recommended - add to PATH):
+
+```bash
+# bash: export PATH="$HOME/.cargo/bin:$PATH"
+# fish: fish_add_path $HOME/.cargo/bin
+```
+
+**Optional - copy to system path for sudo usage**:
+
+```bash
+sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 ```
 
 ---
@@ -90,6 +97,16 @@ sudo usermod -aG systemd-journal $USER
 **Proc Connector requires root** (for retrieving process information):
 ```bash
 # Recommended to always run with sudo
+sudo fsmon monitor /home
+```
+
+**Note**: If you installed fsmon to a custom path (e.g., `~/.cargo/bin` or project directory), `sudo` will not find it because `sudo` resets the PATH. Solution: install to a system path first:
+
+```bash
+# Install to system path (one-time setup)
+sudo cp /path/to/fsmon /usr/local/bin/
+
+# Now sudo can find fsmon
 sudo fsmon monitor /home
 ```
 
