@@ -9,7 +9,7 @@ documentation = "https://docs.rs/fsmon"
 repository = "https://github.com/lenitain/fsmon"
 readme = "README.md"
 keywords = ["filesystem", "monitor", "linux", "fanotify"]
-categories = ["filesystem", "monitoring"]
+categories = ["filesystem", "command-line-utilities"]
 
 include = [
     "Cargo.toml",
