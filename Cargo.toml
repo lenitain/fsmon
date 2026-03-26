@@ -2,6 +2,15 @@
 name = "fsmon"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+license-file = "LICENSE"
+description = "Lightweight High-Performance File System Change Tracking Tool"
+homepage = "https://github.com/lenitain/fsmon"
+documentation = "https://docs.rs/fsmon"
+repository = "https://github.com/lenitain/fsmon"
+readme = "README.md"
+keywords = ["filesystem", "monitor", "linux", "fanotify"]
+categories = ["filesystem", "monitoring"]
 
 [dependencies]
 tokio = { version = "1.35", features = ["full"] }
