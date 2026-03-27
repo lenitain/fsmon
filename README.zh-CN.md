@@ -62,6 +62,11 @@ cargo install --path .
 cargo install fsmon
 ```
 
+**注意：复制到系统路径以便 sudo 使用：**
+```bash
+sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
+```
+
 ### 基础用法
 
 ```bash

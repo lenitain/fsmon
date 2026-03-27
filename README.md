@@ -62,6 +62,11 @@ cargo install --path .
 cargo install fsmon
 ```
 
+**Important: Copy to system path for sudo usage:**
+```bash
+sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
+```
+
 ### Basic Usage
 
 ```bash
