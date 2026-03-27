@@ -48,6 +48,7 @@ uname -r  # requires ≥ 5.9
 
 # Install Rust if needed
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
 ```
 
 ### Installation
