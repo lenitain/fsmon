@@ -223,7 +223,7 @@ impl Monitor {
         println!("Starting file trace monitor...");
         println!(
             "Monitoring paths: {}",
-            self.paths
+            canonical_paths
                 .iter()
                 .map(|p| p.display().to_string())
                 .collect::<Vec<_>>()
