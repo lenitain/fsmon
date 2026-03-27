@@ -10,7 +10,7 @@
 [![Crates.io](https://img.shields.io/crates/v/fsmon)](https://crates.io/crates/fsmon)
 
 <div align="center">
-<img width="1200" alt="fsmon demo" src="https://raw.githubusercontent.com/lenitain/fsmon/main/docs/fsmon-demo.png" />
+<img width="1200" alt="fsmon demo" src="https://github.com/lenitain/fsmon/raw/main/images/fsmon.png" />
 </div>
 
 ## Features
