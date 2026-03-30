@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 
@@ -470,74 +470,117 @@ async fn clean_logs(
     }
 
     let cutoff_time = Utc::now() - chrono::Duration::days(keep_days as i64);
-    let file = fs::File::open(log_file)?;
-    let reader = BufReader::new(file);
-
-    let mut kept_lines = Vec::new();
-    let mut deleted_count = 0;
-
-    for line in reader.lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        // Try to parse as JSON to get timestamp
-        let should_keep = if let Ok(event) = serde_json::from_str::<FileEvent>(&line) {
-            event.time >= cutoff_time
-        } else {
-            // If can't parse, keep the line
-            true
-        };
-
-        if should_keep {
-            kept_lines.push(line);
-        } else {
-            deleted_count += 1;
-        }
-    }
-
-    // Apply max_size limit if specified
-    let mut final_lines = kept_lines;
-    if let Some(max_bytes) = max_size {
-        let total_size: usize = final_lines.iter().map(|l| l.len() + 1).sum();
-        if total_size > max_bytes as usize {
-            let mut current_size = 0;
-            let mut keep_count = 0;
-            for (i, line) in final_lines.iter().enumerate().rev() {
-                current_size += line.len() + 1;
-                if current_size > max_bytes as usize {
-                    keep_count = final_lines.len() - i - 1;
-                    break;
-                }
-            }
-            deleted_count += final_lines.len() - keep_count;
-            final_lines = final_lines.split_off(final_lines.len() - keep_count);
-        }
-    }
-
     let original_size = fs::metadata(log_file)?.len();
 
+    // Pass 1: Stream filter by time, write to temp file
+    let temp_file = log_file.with_extension("tmp");
+    let mut time_deleted = 0;
+    let mut kept_bytes: usize = 0;
+
+    {
+        let file = fs::File::open(log_file)?;
+        let reader = BufReader::new(file);
+        let mut writer = fs::File::create(&temp_file)?;
+
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let should_keep = if let Ok(event) = serde_json::from_str::<FileEvent>(&line) {
+                event.time >= cutoff_time
+            } else {
+                true
+            };
+
+            if should_keep {
+                writeln!(writer, "{}", line)?;
+                kept_bytes += line.len() + 1;
+            } else {
+                time_deleted += 1;
+            }
+        }
+    }
+
+    // Pass 2: Truncate from tail if exceeds max_size
+    let max_bytes = max_size.unwrap_or(i64::MAX) as usize;
+    let size_deleted = if kept_bytes > max_bytes {
+        let trim_start = find_tail_offset(&temp_file, max_bytes)?;
+        let dropped = count_lines(&temp_file, trim_start)?;
+        truncate_from_start(&temp_file, trim_start)?;
+        kept_bytes -= trim_start;
+        dropped
+    } else {
+        0
+    };
+
+    let total_deleted = time_deleted + size_deleted;
+
     if dry_run {
-        println!("Dry run: Would delete {} lines", deleted_count);
+        let _ = fs::remove_file(temp_file);
+        println!("Dry run: Would delete {} lines", total_deleted);
         println!("No changes made (--dry-run enabled)");
     } else {
-        let temp_file = log_file.with_extension("tmp");
-        let mut file = fs::File::create(&temp_file)?;
-        for line in &final_lines {
-            writeln!(file, "{}", line)?;
-        }
         fs::rename(&temp_file, log_file)?;
-
-        let new_size = fs::metadata(log_file)?.len();
         println!("Cleaning {}...", log_file.display());
-        println!("Deleted {} lines (logs older than {} days)", deleted_count, keep_days);
+        println!("Deleted {} lines (logs older than {} days)", total_deleted, keep_days);
         println!(
             "Log file size reduced from {} to {}",
             format_size(original_size as i64),
-            format_size(new_size as i64)
+            format_size(kept_bytes as i64)
         );
     }
 
     Ok(())
+}
+
+/// Find byte offset from file end that contains at most max_bytes
+fn find_tail_offset(path: &Path, max_bytes: usize) -> Result<usize> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut f = fs::File::open(path)?;
+    let file_len = f.metadata()?.len() as usize;
+
+    if file_len <= max_bytes {
+        return Ok(0);
+    }
+
+    let read_start = (file_len - max_bytes).saturating_sub(4096);
+    f.seek(SeekFrom::Start(read_start as u64))?;
+
+    let mut buf = vec![0u8; file_len - read_start];
+    f.read_exact(&mut buf)?;
+
+    let first_newline = buf.iter().position(|&b| b == b'\n').map(|p| p + 1).unwrap_or(0);
+    Ok(read_start + first_newline)
+}
+
+/// Keep only bytes from offset to end
+fn truncate_from_start(path: &Path, offset: usize) -> Result<()> {
+    if offset == 0 {
+        return Ok(());
+    }
+
+    let content = {
+        let mut f = fs::File::open(path)?;
+        f.seek(std::io::SeekFrom::Start(offset as u64))?;
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf)?;
+        buf
+    };
+
+    let mut f = fs::File::create(path)?;
+    f.write_all(&content)?;
+    Ok(())
+}
+
+/// Count lines in first `upto` bytes of file
+fn count_lines(path: &Path, upto: usize) -> Result<usize> {
+    use std::io::Read;
+
+    let mut f = fs::File::open(path)?;
+    let mut buf = vec![0u8; upto];
+    f.read_exact(&mut buf)?;
+    Ok(buf.iter().filter(|&&b| b == b'\n').count())
 }
