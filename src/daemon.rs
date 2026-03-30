@@ -2,6 +2,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 fn get_runtime_dir() -> PathBuf {
@@ -74,8 +75,9 @@ impl Daemon {
 
         // Count events in log file
         let event_count = if log_file.exists() {
-            let content = fs::read_to_string(&log_file).unwrap_or_default();
-            content.lines().filter(|l| !l.is_empty()).count() as u64
+            fs::File::open(&log_file)
+                .map(|f| BufReader::new(f).lines().filter_map(Result::ok).filter(|l| !l.is_empty()).count() as u64)
+                .unwrap_or(0)
         } else {
             0
         };
