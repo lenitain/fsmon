@@ -88,7 +88,7 @@ pub struct Monitor {
     paths: Vec<PathBuf>,
     min_size: Option<i64>,
     event_types: Option<Vec<String>>,
-    exclude: Option<String>,
+    exclude_regex: Option<regex::Regex>,
     output: Option<PathBuf>,
     format: OutputFormat,
     recursive: bool,
@@ -107,7 +107,9 @@ impl Monitor {
         recursive: bool,
         all_events: bool,
     ) -> Self {
-        Self { paths, min_size, event_types, exclude, output, format, recursive, all_events, proc_cache: None }
+        let exclude_regex = exclude
+            .map(|p| regex::Regex::new(&p.replace("*", ".*")).expect("invalid exclude pattern"));
+        Self { paths, min_size, event_types, exclude_regex, output, format, recursive, all_events, proc_cache: None }
     }
 
     pub async fn run(mut self) -> Result<()> {
@@ -374,11 +376,9 @@ impl Monitor {
             }
         }
 
-        if let Some(ref exclude) = self.exclude {
-            if let Ok(pattern) = regex::Regex::new(&exclude.replace("*", ".*")) {
-                if pattern.is_match(&event.path.to_string_lossy()) {
-                    return false;
-                }
+        if let Some(ref regex) = self.exclude_regex {
+            if regex.is_match(&event.path.to_string_lossy()) {
+                return false;
             }
         }
 
