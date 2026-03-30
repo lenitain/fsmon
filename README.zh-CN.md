@@ -73,7 +73,7 @@ sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 sudo fsmon monitor /etc --types MODIFY
 
 # 递归监控
-fsmon monitor ~/myproject --recursive
+sudo fsmon monitor ~/myproject --recursive
 
 # 守护进程模式长期审计
 sudo fsmon monitor /var/log /etc --recursive --daemon --output /var/log/fsmon-audit.log
@@ -104,7 +104,7 @@ fsmon query --log-file /tmp/etc-monitor.log --since 1h --types MODIFY
 
 ```bash
 # 监控大于 50MB 的文件创建
-fsmon monitor /tmp --types CREATE --min-size 50MB --format json
+sudo fsmon monitor /tmp --types CREATE --min-size 50MB --format json
 
 # 触发
 dd if=/dev/zero of=/tmp/large_test.bin bs=1M count=100
@@ -114,14 +114,14 @@ dd if=/dev/zero of=/tmp/large_test.bin bs=1M count=100
 
 ```bash
 # 捕获完整的递归删除
-fsmon monitor ~/test-project --types DELETE --recursive --output /tmp/deletes.log
+sudo fsmon monitor ~/test-project --types DELETE --recursive --output /tmp/deletes.log
 
 # 触发
 rm -rf ~/test-project/build/
 
 # 输出显示每个被删除的文件（包括子目录中的）
-[2024-05-01 16:00:00] [DELETE] /home/pilot/test-project/build/output.o (PID: 34567, CMD: rm)
-[2024-05-01 16:00:00] [DELETE] /home/pilot/test-project/build (PID: 34567, CMD: rm)
+[2026-01-15 16:00:00] [DELETE] /home/pilot/test-project/build/output.o (PID: 34567, CMD: rm)
+[2026-01-15 16:00:00] [DELETE] /home/pilot/test-project/build (PID: 34567, CMD: rm)
 ```
 
 ## 命令参考
@@ -171,4 +171,4 @@ fsmon clean --help      # 清理旧日志
 
 ## 许可证
 
-MIT License
+[MIT License](./LICENSE)

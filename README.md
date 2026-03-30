@@ -73,7 +73,7 @@ sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 sudo fsmon monitor /etc --types MODIFY
 
 # Monitor with recursive watching
-fsmon monitor ~/myproject --recursive
+sudo fsmon monitor ~/myproject --recursive
 
 # Run as daemon for long-term auditing
 sudo fsmon monitor /var/log /etc --recursive --daemon --output /var/log/fsmon-audit.log
@@ -104,7 +104,7 @@ fsmon query --log-file /tmp/etc-monitor.log --since 1h --types MODIFY
 
 ```bash
 # Watch for files larger than 50MB
-fsmon monitor /tmp --types CREATE --min-size 50MB --format json
+sudo fsmon monitor /tmp --types CREATE --min-size 50MB --format json
 
 # Trigger
 dd if=/dev/zero of=/tmp/large_test.bin bs=1M count=100
@@ -114,14 +114,14 @@ dd if=/dev/zero of=/tmp/large_test.bin bs=1M count=100
 
 ```bash
 # Capture complete recursive deletion
-fsmon monitor ~/test-project --types DELETE --recursive --output /tmp/deletes.log
+sudo fsmon monitor ~/test-project --types DELETE --recursive --output /tmp/deletes.log
 
 # Trigger
 rm -rf ~/test-project/build/
 
 # Output shows every file deleted (even in subdirectories)
-[2024-05-01 16:00:00] [DELETE] /home/pilot/test-project/build/output.o (PID: 34567, CMD: rm)
-[2024-05-01 16:00:00] [DELETE] /home/pilot/test-project/build (PID: 34567, CMD: rm)
+[2026-01-15 16:00:00] [DELETE] /home/pilot/test-project/build/output.o (PID: 34567, CMD: rm)
+[2026-01-15 16:00:00] [DELETE] /home/pilot/test-project/build (PID: 34567, CMD: rm)
 ```
 
 ## Command Reference
@@ -171,4 +171,4 @@ Default captures 8 core events. Use `--all-events` for all 14.
 
 ## License
 
-MIT License
+[MIT License](./LICENSE)
