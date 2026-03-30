@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::{FileEvent, OutputFormat};
-use crate::utils::get_process_info_by_pid;
+use crate::utils::{get_process_info_by_pid, process_exists};
 use crate::proc_cache::{self, ProcCache};
 
 fn get_runtime_dir() -> PathBuf {
@@ -725,10 +725,6 @@ fn resolve_file_handle(mount_fds: &[i32], fh_data: &[u8]) -> Option<PathBuf> {
     }
 
     None
-}
-
-fn process_exists(pid: u32) -> bool {
-    Path::new(&format!("/proc/{}", pid)).exists()
 }
 
 // ---- Directory marking (used by inode mark fallback mode) ----

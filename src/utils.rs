@@ -189,6 +189,31 @@ pub fn uid_to_username(uid: u32) -> Option<String> {
     uid_passwd_map().get(&uid).cloned()
 }
 
+pub fn process_exists(pid: u32) -> bool {
+    // /proc/ + max 10-digit pid = 16 bytes, all on stack
+    let mut buf = [0u8; 16];
+    let prefix = b"/proc/";
+    buf[..prefix.len()].copy_from_slice(prefix);
+    let mut n = prefix.len();
+    let mut p = pid;
+    let start = n;
+    // Write digits in reverse, then reverse in place
+    if p == 0 {
+        buf[n] = b'0';
+        n += 1;
+    } else {
+        while p > 0 {
+            buf[n] = b'0' + (p % 10) as u8;
+            p /= 10;
+            n += 1;
+        }
+        buf[start..n].reverse();
+    }
+    // SAFETY: all bytes are ASCII
+    let s = unsafe { std::str::from_utf8_unchecked(&buf[..n]) };
+    Path::new(s).exists()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

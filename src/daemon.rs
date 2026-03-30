@@ -5,6 +5,8 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
+use crate::utils::process_exists;
+
 fn get_runtime_dir() -> PathBuf {
     directories::ProjectDirs::from("com", "fsmon", "fsmon")
         .and_then(|dirs| dirs.runtime_dir().map(|p| p.to_path_buf()))
@@ -43,7 +45,7 @@ impl Daemon {
         let pid: u32 = pid_str.trim().parse()?;
 
         // Check if process exists
-        if !Self::process_exists(pid) {
+        if !process_exists(pid) {
             return Ok(DaemonStatus::Stopped);
         }
 
@@ -107,7 +109,7 @@ impl Daemon {
         let pid_str = fs::read_to_string(&pid_file)?;
         let pid: u32 = pid_str.trim().parse()?;
 
-        if !Self::process_exists(pid) {
+        if !process_exists(pid) {
             println!("fsmon daemon is not running (stale PID file)");
             fs::remove_file(&pid_file)?;
             return Ok(());
@@ -132,10 +134,6 @@ impl Daemon {
         let _ = fs::remove_file(config_file);
 
         Ok(())
-    }
-
-    fn process_exists(pid: u32) -> bool {
-        std::path::Path::new(&format!("/proc/{}", pid)).exists()
     }
 
     fn get_memory_usage(pid: u32) -> Result<u64> {
