@@ -14,6 +14,7 @@ use fanotify::low_level::{
     FAN_EVENT_ON_CHILD, FAN_ONDIR,
     O_CLOEXEC, O_RDONLY,
 };
+use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs::{self, OpenOptions};
@@ -469,7 +470,7 @@ const EVENT_BITS: [(u64, &str); 14] = [
     (FAN_FS_ERROR,     "FS_ERROR"),
 ];
 
-fn mask_to_event_types(mask: u64) -> Vec<&'static str> {
+fn mask_to_event_types(mask: u64) -> SmallVec<[&'static str; 8]> {
     EVENT_BITS.iter()
         .filter(|(bit, _)| mask & bit != 0)
         .map(|(_, name)| *name)
