@@ -8,8 +8,6 @@
 - [English](./README.md)
 - [简体中文](./README.zh-CN.md)
 
-[![Release](https://img.shields.io/github/v/release/lenitain/fsmon)](https://github.com/lenitain/fsmon/releases)
-[![Build](https://img.shields.io/github/actions/workflow/status/lenitain/fsmon/ci.yml?branch=main)](https://github.com/lenitain/fsmon/actions)
 [![License](https://img.shields.io/github/license/lenitain/fsmon)](./LICENSE)
 [![Crates.io](https://img.shields.io/crates/v/fsmon)](https://crates.io/crates/fsmon)
 
