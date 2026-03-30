@@ -243,8 +243,10 @@ impl Monitor {
             }
         }
 
+        let mut buf = vec![0u8; 4096 * 8]; // 32KB, reused across loop iterations
+
         while running.load(Ordering::SeqCst) {
-            let events = read_fid_events(fan_fd, &mount_fds, &mut dir_cache);
+            let events = read_fid_events(fan_fd, &mount_fds, &mut dir_cache, &mut buf);
 
             // inode mark mode: dynamically add marks and update handle cache when new subdirectories are created or moved in
             if !use_fs_mark && self.recursive {
@@ -485,8 +487,7 @@ fn mask_to_event_types(mask: u64) -> SmallVec<[&'static str; 8]> {
 /// 1. First pass: Parse all events, try to resolve file handles
 /// 2. Second pass: Use persistent cache to recover child file paths for events that failed due to directory deletion
 /// 3. Update newly resolved directory info to persistent cache
-fn read_fid_events(fan_fd: i32, mount_fds: &[i32], dir_cache: &mut HashMap<Vec<u8>, PathBuf>) -> Vec<FidEvent> {
-    let mut buf = vec![0u8; 4096 * 8]; // 32KB
+fn read_fid_events(fan_fd: i32, mount_fds: &[i32], dir_cache: &mut HashMap<Vec<u8>, PathBuf>, buf: &mut Vec<u8>) -> Vec<FidEvent> {
     let n = unsafe {
         libc::read(fan_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
     };
