@@ -379,7 +379,7 @@ async fn main() -> Result<()> {
         }
         Commands::Status { format } => {
             let daemon = Daemon::new();
-            let status = daemon.status().await?;
+            let status = daemon.status()?;
 
             match format {
                 OutputFormat::Human => {
@@ -433,7 +433,7 @@ async fn main() -> Result<()> {
         }
         Commands::Stop { force } => {
             let daemon = Daemon::new();
-            daemon.stop(force).await?;
+            daemon.stop(force)?;
         }
         Commands::Clean {
             log_file,

@@ -33,7 +33,7 @@ impl Daemon {
         Self
     }
 
-    pub async fn status(&self) -> Result<DaemonStatus> {
+    pub fn status(&self) -> Result<DaemonStatus> {
         let pid_file = get_runtime_dir().join("fsmon.pid");
         let config_file = get_runtime_dir().join("fsmon.json");
 
@@ -78,7 +78,13 @@ impl Daemon {
         // Count events in log file
         let event_count = if log_file.exists() {
             fs::File::open(&log_file)
-                .map(|f| BufReader::new(f).lines().filter_map(Result::ok).filter(|l| !l.is_empty()).count() as u64)
+                .map(|f| {
+                    BufReader::new(f)
+                        .lines()
+                        .filter_map(Result::ok)
+                        .filter(|l| !l.is_empty())
+                        .count() as u64
+                })
                 .unwrap_or(0)
         } else {
             0
@@ -97,7 +103,7 @@ impl Daemon {
         })
     }
 
-    pub async fn stop(&self, force: bool) -> Result<()> {
+    pub fn stop(&self, force: bool) -> Result<()> {
         let pid_file = get_runtime_dir().join("fsmon.pid");
         let config_file = get_runtime_dir().join("fsmon.json");
 
