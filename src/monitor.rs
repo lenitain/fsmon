@@ -28,6 +28,9 @@ use crate::{FileEvent, OutputFormat};
 use crate::utils::{get_process_info_by_pid, process_exists};
 use crate::proc_cache::{self, ProcCache};
 
+/// Handle key type: fsid + file_handle bytes, stack-allocated if ≤128 bytes
+type HandleKey = SmallVec<[u8; 128]>;
+
 fn get_runtime_dir() -> PathBuf {
     directories::ProjectDirs::from("com", "fsmon", "fsmon")
         .and_then(|dirs| dirs.runtime_dir().map(|p| p.to_path_buf()))
@@ -76,11 +79,11 @@ struct FidEvent {
     pid: i32,
     path: PathBuf,
     /// DFID_NAME directory handle key (fsid + file_handle), for cache lookup
-    dfid_name_handle: Option<Vec<u8>>,
+    dfid_name_handle: Option<HandleKey>,
     /// DFID_NAME filename
     dfid_name_filename: Option<String>,
     /// Self handle key from DFID/FID record (fsid + file_handle), for cache building
-    self_handle: Option<Vec<u8>>,
+    self_handle: Option<HandleKey>,
 }
 
 // ---- Monitor ----
@@ -236,7 +239,7 @@ impl Monitor {
 
         // Persistent directory handle cache: handle_key → dir_path
         // Pre-cache monitored directories at startup, for recovering deleted directory child file paths
-        let mut dir_cache: HashMap<Vec<u8>, PathBuf> = HashMap::new();
+        let mut dir_cache: HashMap<HandleKey, PathBuf> = HashMap::new();
         for canonical in &canonical_paths {
             if canonical.is_dir() {
                 cache_recursive(&mut dir_cache, canonical);
@@ -487,7 +490,7 @@ fn mask_to_event_types(mask: u64) -> SmallVec<[&'static str; 8]> {
 /// 1. First pass: Parse all events, try to resolve file handles
 /// 2. Second pass: Use persistent cache to recover child file paths for events that failed due to directory deletion
 /// 3. Update newly resolved directory info to persistent cache
-fn read_fid_events(fan_fd: i32, mount_fds: &[i32], dir_cache: &mut HashMap<Vec<u8>, PathBuf>, buf: &mut Vec<u8>) -> Vec<FidEvent> {
+fn read_fid_events(fan_fd: i32, mount_fds: &[i32], dir_cache: &mut HashMap<HandleKey, PathBuf>, buf: &mut Vec<u8>) -> Vec<FidEvent> {
     let n = unsafe {
         libc::read(fan_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
     };
@@ -511,9 +514,9 @@ fn read_fid_events(fan_fd: i32, mount_fds: &[i32], dir_cache: &mut HashMap<Vec<u
         }
 
         let mut path = PathBuf::new();
-        let mut dfid_name_handle: Option<Vec<u8>> = None;
+        let mut dfid_name_handle: Option<HandleKey> = None;
         let mut dfid_name_filename: Option<String> = None;
-        let mut self_handle: Option<Vec<u8>> = None;
+        let mut self_handle: Option<HandleKey> = None;
 
         let mut info_off = offset + meta.metadata_len as usize;
         let event_end = offset + event_len;
@@ -632,7 +635,7 @@ fn read_fid_events(fan_fd: i32, mount_fds: &[i32], dir_cache: &mut HashMap<Vec<u
 ///
 /// Memory layout: InfoHeader(4) | fsid(8) | file_handle(8+N) | filename(null-terminated, padded)
 fn extract_dfid_name(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[i32])
-    -> Option<(Vec<u8>, String, Option<PathBuf>)>
+    -> Option<(HandleKey, String, Option<PathBuf>)>
 {
     let fsid_off = info_off + INFO_HDR_SIZE;
     let fh_off = fsid_off + FSID_SIZE;
@@ -658,7 +661,7 @@ fn extract_dfid_name(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[
     let filename = std::str::from_utf8(name).ok()?.to_string();
 
     // Cache key: file_handle bytes (uniquely identifies the directory inode within the same filesystem)
-    let key = buf[fh_off..fh_off + fh_total].to_vec();
+    let key = HandleKey::from_slice(&buf[fh_off..fh_off + fh_total]);
 
     // Try to resolve directory handle
     let dir_path = resolve_file_handle(mount_fds, &buf[fh_off..fh_off + fh_total]);
@@ -675,7 +678,7 @@ fn extract_dfid_name(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[
 ///
 /// Memory layout: InfoHeader(4) | fsid(8) | file_handle(8+N)
 fn extract_fid(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[i32])
-    -> Option<(Vec<u8>, Option<PathBuf>)>
+    -> Option<(HandleKey, Option<PathBuf>)>
 {
     let fsid_off = info_off + INFO_HDR_SIZE;
     let fh_off = fsid_off + FSID_SIZE;
@@ -694,7 +697,7 @@ fn extract_fid(buf: &[u8], info_off: usize, info_len: usize, mount_fds: &[i32])
         return None;
     }
 
-    let key = buf[fh_off..fh_off + fh_total].to_vec();
+    let key = HandleKey::from_slice(&buf[fh_off..fh_off + fh_total]);
     let path = resolve_file_handle(mount_fds, &buf[fh_off..fh_off + fh_total]);
 
     Some((key, path))
@@ -754,7 +757,7 @@ fn mark_recursive(fan_fd: i32, mask: u64, dir: &Path) {
 
 /// Get handle key for a path via name_to_handle_at
 /// Returns bytes matching the file_handle format in fanotify FID events
-fn path_to_handle_key(path: &Path) -> Option<Vec<u8>> {
+fn path_to_handle_key(path: &Path) -> Option<HandleKey> {
     let c_path = CString::new(path.to_string_lossy().as_bytes()).ok()?;
     let mut mount_id: libc::c_int = 0;
     let mut buf = vec![0u8; 128];
@@ -777,18 +780,18 @@ fn path_to_handle_key(path: &Path) -> Option<Vec<u8>> {
     }
 
     let handle_bytes = u32::from_ne_bytes(buf[0..4].try_into().ok()?) as usize;
-    Some(buf[0..FH_HDR_SIZE + handle_bytes].to_vec())
+    Some(HandleKey::from_slice(&buf[0..FH_HDR_SIZE + handle_bytes]))
 }
 
 /// Add directory path handle key to cache
-fn cache_dir_handle(cache: &mut HashMap<Vec<u8>, PathBuf>, path: &Path) {
+fn cache_dir_handle(cache: &mut HashMap<HandleKey, PathBuf>, path: &Path) {
     if let Some(key) = path_to_handle_key(path) {
         cache.insert(key, path.to_path_buf());
     }
 }
 
 /// Recursively cache directory and all subdirectory handles
-fn cache_recursive(cache: &mut HashMap<Vec<u8>, PathBuf>, dir: &Path) {
+fn cache_recursive(cache: &mut HashMap<HandleKey, PathBuf>, dir: &Path) {
     cache_dir_handle(cache, dir);
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
