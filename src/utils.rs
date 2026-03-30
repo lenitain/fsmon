@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Local, NaiveDateTime, Utc};
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use crate::proc_cache::ProcCache;
 
@@ -162,16 +164,29 @@ fn read_file_owner(path: &Path) -> Option<String> {
     uid_to_username(metadata.uid())
 }
 
-fn uid_to_username(uid: u32) -> Option<String> {
-    let uid_str = uid.to_string();
-    let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
-    for entry in passwd.lines() {
-        let parts: Vec<&str> = entry.split(':').collect();
-        if parts.len() >= 3 && parts[2] == uid_str {
-            return Some(parts[0].to_string());
+fn uid_passwd_map() -> &'static HashMap<u32, String> {
+    static MAP: OnceLock<HashMap<u32, String>> = OnceLock::new();
+    MAP.get_or_init(|| {
+        let mut map = HashMap::new();
+        if let Ok(passwd) = std::fs::read_to_string("/etc/passwd") {
+            for entry in passwd.lines() {
+                let mut parts = entry.splitn(4, ':');
+                let name = parts.next();
+                let _shell = parts.next(); // password field
+                let uid_str = parts.next();
+                if let (Some(name), Some(uid_str)) = (name, uid_str) {
+                    if let Ok(uid) = uid_str.parse::<u32>() {
+                        map.insert(uid, name.to_string());
+                    }
+                }
+            }
         }
-    }
-    Some(format!("uid:{}", uid_str))
+        map
+    })
+}
+
+pub fn uid_to_username(uid: u32) -> Option<String> {
+    uid_passwd_map().get(&uid).cloned()
 }
 
 #[cfg(test)]

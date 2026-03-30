@@ -8,6 +8,8 @@
 use dashmap::DashMap;
 use std::sync::Arc;
 
+use crate::utils::uid_to_username;
+
 // ---- Netlink / Proc Connector Constants ----
 
 const NETLINK_CONNECTOR: libc::c_int = 11;
@@ -191,18 +193,6 @@ fn read_proc_uid(pid: u32) -> Option<String> {
         .parse()
         .ok()?;
     uid_to_username(uid)
-}
-
-fn uid_to_username(uid: u32) -> Option<String> {
-    let uid_str = uid.to_string();
-    let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
-    for entry in passwd.lines() {
-        let parts: Vec<&str> = entry.split(':').collect();
-        if parts.len() >= 3 && parts[2] == uid_str {
-            return Some(parts[0].to_string());
-        }
-    }
-    Some(format!("uid:{}", uid_str))
 }
 
 /// RAII guard to ensure socket is closed
