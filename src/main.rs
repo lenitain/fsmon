@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Seek, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 
@@ -480,7 +480,8 @@ async fn clean_logs(
     {
         let file = fs::File::open(log_file)?;
         let reader = BufReader::new(file);
-        let mut writer = fs::File::create(&temp_file)?;
+        let writer = fs::File::create(&temp_file)?;
+        let mut writer = BufWriter::new(writer);
 
         for line in reader.lines() {
             let line = line?;
