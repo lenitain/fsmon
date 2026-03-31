@@ -8,7 +8,6 @@
 - [简体中文](./README.zh-CN.md)
 - [English](./README.md)
 
-[![License](https://img.shields.io/github/license/lenitain/fsmon)](./LICENSE)
 [![Crates.io](https://img.shields.io/crates/v/fsmon)](https://crates.io/crates/fsmon)
 
 <div align="center">
