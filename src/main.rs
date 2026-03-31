@@ -9,13 +9,12 @@ use std::process;
 
 mod monitor;
 mod query;
-mod daemon;
+mod systemd;
 mod utils;
 mod proc_cache;
 
 use monitor::Monitor;
 use query::Query;
-use daemon::{Daemon, DaemonStatus};
 use utils::{parse_size, format_size, format_datetime};
 
 #[derive(Parser)]
@@ -24,7 +23,7 @@ use utils::{parse_size, format_size, format_datetime};
 #[command(version = "0.1.0")]
 #[command(about = "Lightweight high-performance file change tracking tool", long_about = None)]
 #[command(
-    after_help = "Use 'fsmon <COMMAND> --help' for detailed command info\n\nExamples:\n  fsmon monitor /var/log                     # Basic monitoring\n  fsmon monitor /etc --types MODIFY         # Investigate config file changes\n  fsmon monitor / --all-events               # Enable all 14 event types\n  fsmon monitor ~/project --recursive       # Recursively monitor project\n  fsmon monitor / --daemon -o /var/log/fsmon-audit.log  # Daemon mode\n  fsmon query --since 1h --cmd nginx         # Query nginx operations in last hour\n  fsmon status                               # Check daemon status"
+    after_help = "Use 'fsmon <COMMAND> --help' for detailed command info\n\nExamples:\n  fsmon monitor /var/log                     # Basic monitoring\n  fsmon monitor /etc --types MODIFY         # Investigate config file changes\n  fsmon monitor / --all-events               # Enable all 14 event types\n  fsmon monitor ~/project --recursive       # Recursively monitor project\n  fsmon install /var/log -o /var/log/fsmon.log  # Install systemd service\n  fsmon query --since 1h --cmd nginx         # Query nginx operations in last hour\n  fsmon status                               # Check service status"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -64,10 +63,6 @@ enum Commands {
         /// Output format (human, json, csv)
         #[arg(short, long, value_enum, default_value = "human")]
         format: OutputFormat,
-
-        /// Run as background daemon (must be used with --output)
-        #[arg(short, long)]
-        daemon: bool,
 
         /// Recursively monitor all subdirectories
         #[arg(short, long)]
@@ -119,19 +114,28 @@ enum Commands {
         sort: SortBy,
     },
 
-    #[command(about = "Check daemon running status", long_about = LONG_ABOUT_STATUS)]
-    Status {
-        /// Output format (human, json, csv)
-        #[arg(short, long, value_enum, default_value = "human")]
-        format: OutputFormat,
+    #[command(about = "Check systemd service status", long_about = LONG_ABOUT_STATUS)]
+    Status,
+
+    #[command(about = "Stop systemd service", long_about = LONG_ABOUT_STOP)]
+    Stop,
+
+    #[command(about = "Start systemd service", long_about = LONG_ABOUT_START)]
+    Start,
+
+    #[command(about = "Install systemd service", long_about = LONG_ABOUT_INSTALL)]
+    Install {
+        /// Directory/file path to monitor (supports multiple)
+        #[arg(value_name = "PATH")]
+        paths: Vec<PathBuf>,
+
+        /// Write monitoring log to specified file
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
     },
 
-    #[command(about = "Stop background daemon", long_about = LONG_ABOUT_STOP)]
-    Stop {
-        /// Force terminate (send SIGKILL, otherwise send SIGTERM)
-        #[arg(long)]
-        force: bool,
-    },
+    #[command(about = "Uninstall systemd service", long_about = LONG_ABOUT_UNINSTALL)]
+    Uninstall,
 
     #[command(about = "Clean historical logs", long_about = LONG_ABOUT_CLEAN)]
     Clean {
@@ -159,17 +163,16 @@ const LONG_ABOUT_MONITOR: &str = r#"Monitor filesystem events on specified paths
   Default: 8 core change events (CLOSE_WRITE, ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF)
   --all-events: Enable all 14 fanotify events (includes ACCESS, MODIFY, OPEN, OPEN_EXEC, CLOSE_NOWRITE, FS_ERROR)
 
-[Daemon Mode]
-  --daemon runs in background, must be used with --output
-  fsmon status/stop to check status and stop
+[Systemd Service]
+  Use 'fsmon install' to set up systemd service for long-term monitoring
+  fsmon status/stop/start to manage service
 
 [Examples]
   fsmon monitor /etc --types MODIFY          # Investigate config file changes
   fsmon monitor / --all-events               # Enable all 14 event types
   fsmon monitor ~/project --recursive        # Recursively monitor project directory
   fsmon monitor /tmp --min-size 100MB        # Track large file creation
-  fsmon monitor /var/log --format json       # JSON format output
-  fsmon monitor / --daemon -o /var/log/fsmon-audit.log  # Daemon long-term monitoring"#;
+  fsmon monitor /var/log --format json       # JSON format output"#;
 
 const LONG_ABOUT_QUERY: &str = r#"Query historical file change events from log files, supports multiple filter conditions and sorting.
 
@@ -193,30 +196,45 @@ const LONG_ABOUT_QUERY: &str = r#"Query historical file change events from log f
   fsmon query --since 1h --cmd java --types MODIFY --min-size 100MB  # Combined filters
   fsmon query --format json --sort size    # JSON output, sorted by size"#;
 
-const LONG_ABOUT_STATUS: &str = r#"Check fsmon daemon running status.
+const LONG_ABOUT_STATUS: &str = r#"Check fsmon systemd service status.
 
 [Output Content]
-  - Running status (Running/Stopped)
-  - Process ID (PID)
-  - Monitored paths
-  - Log file path
-  - Start time
-  - Event count
-  - Memory usage
+  - Service status (active/inactive/failed)
+  - Use 'systemctl status fsmon' for detailed information
 
 [Examples]
-  fsmon status                 # Human-readable format
-  fsmon status --format json  # JSON format (for monitoring system integration)"#;
+  fsmon status"#;
 
-const LONG_ABOUT_STOP: &str = r#"Stop fsmon daemon.
-
-[Stop Method]
-  Default: Send SIGTERM signal, graceful stop
-  --force: Send SIGKILL signal, force stop
+const LONG_ABOUT_STOP: &str = r#"Stop fsmon systemd service.
 
 [Examples]
-  fsmon stop        # Graceful stop
-  fsmon stop --force  # Force stop (only when unresponsive)"#;
+  fsmon stop"#;
+
+const LONG_ABOUT_START: &str = r#"Start fsmon systemd service.
+
+[Examples]
+  fsmon start"#;
+
+const LONG_ABOUT_INSTALL: &str = r#"Install fsmon as a systemd service.
+
+[Service Configuration]
+  - Creates /etc/systemd/system/fsmon.service
+  - Configures auto-restart on failure
+  - Logs to systemd journal
+
+[Examples]
+  fsmon install /var/log -o /var/log/fsmon.log    # Monitor /var/log
+  fsmon install /etc /var/log                      # Monitor multiple paths"#;
+
+const LONG_ABOUT_UNINSTALL: &str = r#"Uninstall fsmon systemd service.
+
+[Actions]
+  - Stops service if running
+  - Disables service
+  - Removes service file
+
+[Examples]
+  fsmon uninstall"#;
 
 const LONG_ABOUT_CLEAN: &str = r#"Clean historical log files, retain by time or size.
 
@@ -287,7 +305,6 @@ async fn main() -> Result<()> {
             all_events,
             output,
             format,
-            daemon,
             recursive,
         } => {
             if paths.is_empty() {
@@ -316,11 +333,7 @@ async fn main() -> Result<()> {
                 all_events,
             );
 
-            if daemon {
-                monitor.run_daemon().await?;
-            } else {
-                monitor.run().await?;
-            }
+            monitor.run().await?;
         }
         Commands::Query {
             log_file,
@@ -377,63 +390,25 @@ async fn main() -> Result<()> {
 
             query.execute().await?;
         }
-        Commands::Status { format } => {
-            let daemon = Daemon::new();
-            let status = daemon.status()?;
-
-            match format {
-                OutputFormat::Human => {
-                    match status {
-                        DaemonStatus::Running { pid, paths, log_file, start_time, event_count, memory_usage } => {
-                            let paths_str = paths
-                                .iter()
-                                .map(|p| p.display().to_string())
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                            println!("fsmon daemon status: Running (PID: {})", pid);
-                            println!("Monitored paths: {}", paths_str);
-                            println!("Log file: {}", log_file.display());
-                            println!("Start time: {}", format_datetime(&start_time));
-                            println!("Event count: {}", event_count);
-                            println!("Memory usage: {:.1}MB", memory_usage as f64 / 1024.0 / 1024.0);
-                        }
-                        DaemonStatus::Stopped => {
-                            println!("fsmon daemon status: Stopped");
-                        }
-                    }
-                }
-                OutputFormat::Json => {
-                    println!("{}", serde_json::to_string_pretty(&status)?);
-                }
-                OutputFormat::Csv => {
-                    println!("status,pid,monitored_paths,log_file,start_time,event_count,memory_usage");
-                    match status {
-                        DaemonStatus::Running { pid, paths, log_file, start_time, event_count, memory_usage } => {
-                            let paths_str = paths
-                                .iter()
-                                .map(|p| p.display().to_string())
-                                .collect::<Vec<_>>()
-                                .join(";");
-                            println!(
-                                "running,{},\"{}\",\"{}\",\"{}\",{},{}",
-                                pid,
-                                paths_str,
-                                log_file.display(),
-                                start_time.to_rfc3339(),
-                                event_count,
-                                memory_usage
-                            );
-                        }
-                        DaemonStatus::Stopped => {
-                            println!("stopped,,,,,,");
-                        }
-                    }
-                }
-            }
+        Commands::Status => {
+            let status = systemd::status()?;
+            println!("fsmon service: {}", status);
         }
-        Commands::Stop { force } => {
-            let daemon = Daemon::new();
-            daemon.stop(force)?;
+        Commands::Stop => {
+            systemd::stop()?;
+        }
+        Commands::Start => {
+            systemd::start()?;
+        }
+        Commands::Install { paths, output } => {
+            if paths.is_empty() {
+                eprintln!("Error: Please specify at least one monitor path");
+                process::exit(1);
+            }
+            systemd::install(&paths, output.as_ref())?;
+        }
+        Commands::Uninstall => {
+            systemd::uninstall()?;
         }
         Commands::Clean {
             log_file,

@@ -20,22 +20,15 @@ use std::ffi::CString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::{FileEvent, OutputFormat};
-use crate::utils::{get_process_info_by_pid, process_exists};
+use crate::utils::get_process_info_by_pid;
 use crate::proc_cache::{self, ProcCache};
 
 /// Handle key type: fsid + file_handle bytes, stack-allocated if ≤128 bytes
 type HandleKey = SmallVec<[u8; 128]>;
-
-fn get_runtime_dir() -> PathBuf {
-    directories::ProjectDirs::from("com", "fsmon", "fsmon")
-        .and_then(|dirs| dirs.runtime_dir().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-}
 
 // ---- FID event parsing required kernel structures and constants ----
 
@@ -101,6 +94,7 @@ pub struct Monitor {
 }
 
 impl Monitor {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         paths: Vec<PathBuf>,
         min_size: Option<i64>,
@@ -299,57 +293,6 @@ impl Monitor {
         Ok(())
     }
 
-    pub async fn run_daemon(self) -> Result<()> {
-        // Create PID file
-        let pid_file = get_runtime_dir().join("fsmon.pid");
-
-        if pid_file.exists() {
-            let pid_str = fs::read_to_string(&pid_file)?;
-            let pid: u32 = pid_str.trim().parse()?;
-            if process_exists(pid) {
-                println!("fsmon daemon already running (PID: {})", pid);
-                return Ok(());
-            }
-        }
-
-        // Write PID file
-        fs::write(&pid_file, process::id().to_string())?;
-
-        // Create log directory
-        let log_file = self.output.clone().unwrap_or_else(|| {
-            dirs::home_dir()
-                .map(|h: PathBuf| h.join(".fsmon").join("history.log"))
-                .unwrap_or_else(|| PathBuf::from("history.log"))
-        });
-
-        if let Some(parent) = log_file.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        // Save daemon config
-        let config_file = get_runtime_dir().join("fsmon.json");
-        let config = serde_json::json!({
-            "paths": self.paths,
-            "log_file": log_file,
-            "start_time": Utc::now().to_rfc3339(),
-        });
-        fs::write(&config_file, serde_json::to_string_pretty(&config)?)?;
-
-        println!(
-            "fsmon daemon started (PID: {}), log file: {}",
-            process::id(),
-            log_file.display()
-        );
-
-        self.run().await?;
-
-        // Cleanup
-        let _ = fs::remove_file(&pid_file);
-        let _ = fs::remove_file(&config_file);
-
-        Ok(())
-    }
-
     fn build_file_event(&self, raw: &FidEvent, event_type: &str) -> FileEvent {
         let pid = raw.pid.unsigned_abs();
         let (cmd, user) = get_process_info_by_pid(pid, &raw.path, self.proc_cache.as_ref());
@@ -370,22 +313,19 @@ impl Monitor {
     }
 
     fn should_output(&self, event: &FileEvent) -> bool {
-        if let Some(ref types) = self.event_types {
-            if !types.contains(&event.event_type) {
-                return false;
-            }
+        if let Some(ref types) = self.event_types
+            && !types.contains(&event.event_type) {
+            return false;
         }
 
-        if let Some(min) = self.min_size {
-            if event.size_change.abs() < min {
-                return false;
-            }
+        if let Some(min) = self.min_size
+            && event.size_change.abs() < min {
+            return false;
         }
 
-        if let Some(ref regex) = self.exclude_regex {
-            if regex.is_match(&event.path.to_string_lossy()) {
-                return false;
-            }
+        if let Some(ref regex) = self.exclude_regex
+            && regex.is_match(&event.path.to_string_lossy()) {
+            return false;
         }
 
         true
@@ -405,10 +345,9 @@ impl Monitor {
                 if path == watched.as_path() {
                     return true;
                 }
-                if let Some(parent) = path.parent() {
-                    if parent == watched.as_path() {
-                        return true;
-                    }
+                if let Some(parent) = path.parent()
+                    && parent == watched.as_path() {
+                    return true;
                 }
             }
         }
@@ -531,7 +470,7 @@ fn read_fid_events(fan_fd: i32, mount_fds: &[i32], dir_cache: &mut HashMap<Handl
 
             match hdr.info_type {
                 FAN_EVENT_INFO_TYPE_DFID_NAME => {
-                    if let Some((key, filename, resolved)) = extract_dfid_name(&buf, info_off, info_len, mount_fds) {
+                    if let Some((key, filename, resolved)) = extract_dfid_name(buf, info_off, info_len, mount_fds) {
                         dfid_name_handle = Some(key);
                         dfid_name_filename = Some(filename);
                         if let Some(p) = resolved {
@@ -540,12 +479,11 @@ fn read_fid_events(fan_fd: i32, mount_fds: &[i32], dir_cache: &mut HashMap<Handl
                     }
                 }
                 FAN_EVENT_INFO_TYPE_FID | FAN_EVENT_INFO_TYPE_DFID => {
-                    if let Some((key, resolved)) = extract_fid(&buf, info_off, info_len, mount_fds) {
+                    if let Some((key, resolved)) = extract_fid(buf, info_off, info_len, mount_fds) {
                         self_handle = Some(key);
-                        if path.as_os_str().is_empty() {
-                            if let Some(p) = resolved {
-                                path = p;
-                            }
+                        if path.as_os_str().is_empty()
+                            && let Some(p) = resolved {
+                            path = p;
                         }
                     }
                 }
@@ -607,15 +545,14 @@ fn read_fid_events(fan_fd: i32, mount_fds: &[i32], dir_cache: &mut HashMap<Handl
             if !ev.path.as_os_str().is_empty() {
                 continue;
             }
-            if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
-                if let Some(dir_path) = dir_cache.get(key) {
-                    ev.path = if filename.is_empty() {
-                        dir_path.clone()
-                    } else {
-                        dir_path.join(filename)
-                    };
-                    made_progress = true;
-                }
+            if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename)
+                && let Some(dir_path) = dir_cache.get(key) {
+                ev.path = if filename.is_empty() {
+                    dir_path.clone()
+                } else {
+                    dir_path.join(filename)
+                };
+                made_progress = true;
             }
         }
 
