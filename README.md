@@ -168,3 +168,7 @@ Default captures 8 core events. Use `--all-events` for all 14.
 | CLOSE_NOWRITE | Read-only file closed |
 | FS_ERROR | Filesystem error (Linux 5.16+)
 
+## License
+
+[MIT License](./LICENSE)
+
