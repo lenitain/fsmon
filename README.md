@@ -8,7 +8,6 @@
 - [English](./README.md)
 - [简体中文](./README.zh-CN.md)
 
-[![License](https://img.shields.io/github/license/lenitain/fsmon)](./LICENSE)
 [![Crates.io](https://img.shields.io/crates/v/fsmon)](https://crates.io/crates/fsmon)
 
 <div align="center">
@@ -169,6 +168,3 @@ Default captures 8 core events. Use `--all-events` for all 14.
 | CLOSE_NOWRITE | Read-only file closed |
 | FS_ERROR | Filesystem error (Linux 5.16+)
 
-## License
-
-[MIT License](./LICENSE)
