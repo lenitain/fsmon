@@ -23,7 +23,7 @@
 - **高性能**: Rust 编写，内存占用 <5MB，零拷贝事件解析
 - **灵活过滤**: 支持按时间、大小、进程、用户和事件类型过滤
 - **多种格式**: 人类可读、JSON、CSV 三种输出格式
-- **守护进程模式**: 后台运行，持久化日志，支持长期审计
+- **Systemd 服务**: 安装为 systemd 服务，支持自动重启，适合长期审计
 
 ## 为什么选择 fsmon
 
@@ -74,13 +74,13 @@ sudo fsmon monitor /etc --types MODIFY
 # 递归监控
 sudo fsmon monitor ~/myproject --recursive
 
-# 守护进程模式长期审计
-sudo fsmon monitor /var/log /etc --recursive --daemon --output /var/log/fsmon-audit.log
+# 安装为 systemd 服务，长期审计
+sudo fsmon install /var/log /etc -o /var/log/fsmon-audit.log
 
 # 查询历史事件
 fsmon query --since 1h --cmd nginx
 
-# 查看守护进程状态
+# 查看服务状态
 fsmon status
 ```
 
@@ -128,8 +128,11 @@ rm -rf ~/test-project/build/
 ```bash
 fsmon monitor --help    # 实时监控
 fsmon query --help      # 查询历史日志
-fsmon status --help     # 查看守护进程状态
-fsmon stop --help       # 停止守护进程
+fsmon status            # 查看 systemd 服务状态
+fsmon stop              # 停止 systemd 服务
+fsmon start             # 启动 systemd 服务
+fsmon install --help    # 安装 systemd 服务
+fsmon uninstall         # 卸载 systemd 服务
 fsmon clean --help      # 清理旧日志
 ```
 

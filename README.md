@@ -23,7 +23,7 @@
 - **High Performance**: Written in Rust, <5MB memory footprint, zero-copy event parsing
 - **Flexible Filtering**: Filter by time, size, process, user, and event type
 - **Multiple Formats**: Human-readable, JSON, and CSV output
-- **Daemon Mode**: Run in background with persistent logging for long-term auditing
+- **Systemd Service**: Install as systemd service for long-term auditing with auto-restart
 
 ## Why fsmon
 
@@ -74,13 +74,13 @@ sudo fsmon monitor /etc --types MODIFY
 # Monitor with recursive watching
 sudo fsmon monitor ~/myproject --recursive
 
-# Run as daemon for long-term auditing
-sudo fsmon monitor /var/log /etc --recursive --daemon --output /var/log/fsmon-audit.log
+# Install as systemd service for long-term auditing
+sudo fsmon install /var/log /etc -o /var/log/fsmon-audit.log
 
 # Query historical events
 fsmon query --since 1h --cmd nginx
 
-# Check daemon status
+# Check service status
 fsmon status
 ```
 
@@ -128,8 +128,11 @@ rm -rf ~/test-project/build/
 ```bash
 fsmon monitor --help    # Real-time monitoring
 fsmon query --help      # Query history logs
-fsmon status --help     # Check daemon status
-fsmon stop --help       # Stop daemon
+fsmon status            # Check systemd service status
+fsmon stop              # Stop systemd service
+fsmon start             # Start systemd service
+fsmon install --help    # Install systemd service
+fsmon uninstall         # Uninstall systemd service
 fsmon clean --help      # Cleanup old logs
 ```
 
