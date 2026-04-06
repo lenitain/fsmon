@@ -1,6 +1,6 @@
 [package]
 name = "fsmon"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT"
 description = "Lightweight High-Performance File System Change Tracking Tool"
@@ -10,6 +10,7 @@ repository = "https://github.com/lenitain/fsmon"
 readme = "README.md"
 keywords = ["filesystem", "monitor", "linux", "fanotify"]
 categories = ["filesystem", "command-line-utilities"]
+authors = ["lenitain <xt.zhu@qq.com>"]
 
 include = [
     "Cargo.toml",
