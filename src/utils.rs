@@ -125,10 +125,9 @@ pub fn get_process_info_by_pid(
     proc_cache: Option<&ProcCache>,
 ) -> (String, String) {
     // Check proc connector cache first (only source for short-lived processes)
-    if let Some(cache) = proc_cache {
-        if let Some(info) = cache.get(&pid) {
-            return (info.cmd.clone(), info.user.clone());
-        }
+    if let Some(cache) = proc_cache
+        && let Some(info) = cache.get(&pid) {
+        return (info.cmd.clone(), info.user.clone());
     }
 
     // Fallback to reading /proc directly (for long-lived processes)
@@ -174,10 +173,9 @@ fn uid_passwd_map() -> &'static HashMap<u32, String> {
                 let name = parts.next();
                 let _shell = parts.next(); // password field
                 let uid_str = parts.next();
-                if let (Some(name), Some(uid_str)) = (name, uid_str) {
-                    if let Ok(uid) = uid_str.parse::<u32>() {
-                        map.insert(uid, name.to_string());
-                    }
+                if let (Some(name), Some(uid_str)) = (name, uid_str)
+                    && let Ok(uid) = uid_str.parse::<u32>() {
+                    map.insert(uid, name.to_string());
                 }
             }
         }
@@ -187,31 +185,6 @@ fn uid_passwd_map() -> &'static HashMap<u32, String> {
 
 pub fn uid_to_username(uid: u32) -> Option<String> {
     uid_passwd_map().get(&uid).cloned()
-}
-
-pub fn process_exists(pid: u32) -> bool {
-    // /proc/ + max 10-digit pid = 16 bytes, all on stack
-    let mut buf = [0u8; 16];
-    let prefix = b"/proc/";
-    buf[..prefix.len()].copy_from_slice(prefix);
-    let mut n = prefix.len();
-    let mut p = pid;
-    let start = n;
-    // Write digits in reverse, then reverse in place
-    if p == 0 {
-        buf[n] = b'0';
-        n += 1;
-    } else {
-        while p > 0 {
-            buf[n] = b'0' + (p % 10) as u8;
-            p /= 10;
-            n += 1;
-        }
-        buf[start..n].reverse();
-    }
-    // SAFETY: all bytes are ASCII
-    let s = unsafe { std::str::from_utf8_unchecked(&buf[..n]) };
-    Path::new(s).exists()
 }
 
 #[cfg(test)]

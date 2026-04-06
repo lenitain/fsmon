@@ -22,6 +22,7 @@ pub struct Query {
 }
 
 impl Query {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         log_file: PathBuf,
         since: Option<String>,
@@ -104,46 +105,39 @@ impl Query {
             };
 
             // Apply filters
-            if let Some(ref since) = since_time {
-                if event.time < *since {
-                    continue;
-                }
+            if let Some(ref since) = since_time
+                && event.time < *since {
+                continue;
             }
 
-            if let Some(ref until) = until_time {
-                if event.time > *until {
-                    continue;
-                }
+            if let Some(ref until) = until_time
+                && event.time > *until {
+                continue;
             }
 
-            if let Some(ref pids) = self.pids {
-                if !pids.contains(&event.pid) {
-                    continue;
-                }
+            if let Some(ref pids) = self.pids
+                && !pids.contains(&event.pid) {
+                continue;
             }
 
-            if let Some(ref regex) = cmd_regex {
-                if !regex.is_match(&event.cmd) {
-                    continue;
-                }
+            if let Some(ref regex) = cmd_regex
+                && !regex.is_match(&event.cmd) {
+                continue;
             }
 
-            if let Some(ref users) = self.users {
-                if !users.contains(&event.user) {
-                    continue;
-                }
+            if let Some(ref users) = self.users
+                && !users.contains(&event.user) {
+                continue;
             }
 
-            if let Some(ref types) = self.event_types {
-                if !types.contains(&event.event_type) {
-                    continue;
-                }
+            if let Some(ref types) = self.event_types
+                && !types.contains(&event.event_type) {
+                continue;
             }
 
-            if let Some(min) = self.min_size {
-                if event.size_change.abs() < min {
-                    continue;
-                }
+            if let Some(min) = self.min_size
+                && event.size_change.abs() < min {
+                continue;
             }
 
             events.push(event);
