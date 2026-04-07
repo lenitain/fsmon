@@ -204,3 +204,164 @@ impl Drop for SockGuard {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_proc_cache_insert_and_get() {
+        let cache: ProcCache = Arc::new(DashMap::new());
+        cache.insert(
+            12345,
+            ProcInfo {
+                cmd: "test_process".to_string(),
+                user: "testuser".to_string(),
+            },
+        );
+
+        let info = cache.get(&12345);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.cmd, "test_process");
+        assert_eq!(info.user, "testuser");
+    }
+
+    #[test]
+    fn test_proc_cache_missing_pid() {
+        let cache: ProcCache = Arc::new(DashMap::new());
+        assert!(cache.get(&99999).is_none());
+    }
+
+    #[test]
+    fn test_proc_cache_overwrite() {
+        let cache: ProcCache = Arc::new(DashMap::new());
+        cache.insert(
+            1,
+            ProcInfo {
+                cmd: "old".into(),
+                user: "a".into(),
+            },
+        );
+        cache.insert(
+            1,
+            ProcInfo {
+                cmd: "new".into(),
+                user: "b".into(),
+            },
+        );
+
+        let info = cache.get(&1).unwrap();
+        assert_eq!(info.cmd, "new");
+        assert_eq!(info.user, "b");
+    }
+
+    #[test]
+    fn test_proc_cache_concurrent_access() {
+        use std::thread;
+
+        let cache: ProcCache = Arc::new(DashMap::new());
+        let mut handles = vec![];
+
+        for i in 0..10 {
+            let cache_clone = cache.clone();
+            handles.push(thread::spawn(move || {
+                for j in 0..100 {
+                    let pid = (i * 100 + j) as u32;
+                    cache_clone.insert(
+                        pid,
+                        ProcInfo {
+                            cmd: format!("proc_{}", pid),
+                            user: "test".into(),
+                        },
+                    );
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        assert_eq!(cache.len(), 1000);
+    }
+
+    // ---- Integration tests (require sudo) ----
+
+    #[test]
+    #[ignore]
+    fn test_netlink_socket_create() {
+        let sock = unsafe {
+            libc::socket(
+                libc::PF_NETLINK,
+                libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
+                NETLINK_CONNECTOR,
+            )
+        };
+        assert!(
+            sock >= 0,
+            "Should be able to create NETLINK_CONNECTOR socket with root"
+        );
+        unsafe {
+            libc::close(sock);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_netlink_bind() {
+        let sock = unsafe {
+            libc::socket(
+                libc::PF_NETLINK,
+                libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
+                NETLINK_CONNECTOR,
+            )
+        };
+        assert!(sock >= 0);
+
+        let mut addr: libc::sockaddr_nl = unsafe { std::mem::zeroed() };
+        addr.nl_family = libc::AF_NETLINK as u16;
+        addr.nl_pid = std::process::id();
+        addr.nl_groups = CN_IDX_PROC;
+
+        let ret = unsafe {
+            libc::bind(
+                sock,
+                &addr as *const _ as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t,
+            )
+        };
+        assert_eq!(ret, 0, "Should be able to bind to proc connector with root");
+
+        unsafe {
+            libc::close(sock);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_proc_listener_receives_events() {
+        let cache = start_proc_listener();
+
+        // Spawn a short-lived process that will trigger PROC_EVENT_EXEC
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // Create a subprocess
+        let mut child = std::process::Command::new("echo")
+            .arg("test")
+            .spawn()
+            .unwrap();
+        child.wait().unwrap();
+
+        // Wait for event to be cached
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        // The proc connector should have captured the exec event for our process
+        // Note: due to timing, this might not always capture the exact pid,
+        // but it should have captured some events
+        assert!(
+            !cache.is_empty(),
+            "Proc cache should have received some events"
+        );
+    }
+}

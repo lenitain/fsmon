@@ -946,4 +946,155 @@ mod tests {
             size_change: size,
         }
     }
+
+    // ---- Integration tests (require sudo) ----
+
+    #[test]
+    #[ignore]
+    fn test_fanotify_init() {
+        let fd = fanotify_init(
+            FAN_CLOEXEC | FAN_NONBLOCK | FAN_CLASS_NOTIF
+                | FAN_REPORT_FID | FAN_REPORT_DIR_FID | FAN_REPORT_NAME,
+            (O_CLOEXEC | O_RDONLY) as u32,
+        );
+        assert!(fd.is_ok(), "fanotify_init should succeed with root");
+        unsafe { libc::close(fd.unwrap()); }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_fanotify_mark_directory() {
+        let test_dir = std::env::temp_dir().join("fsmon_test_mark");
+        std::fs::create_dir_all(&test_dir).unwrap();
+
+        let fd = fanotify_init(
+            FAN_CLOEXEC | FAN_NONBLOCK | FAN_CLASS_NOTIF
+                | FAN_REPORT_FID | FAN_REPORT_DIR_FID | FAN_REPORT_NAME,
+            (O_CLOEXEC | O_RDONLY) as u32,
+        ).unwrap();
+
+        let mask = FAN_CREATE | FAN_DELETE | FAN_CLOSE_WRITE;
+        let result = fanotify_mark(fd, FAN_MARK_ADD | FAN_MARK_FILESYSTEM, mask, AT_FDCWD, &test_dir);
+        assert!(result.is_ok(), "fanotify_mark should succeed on existing directory");
+
+        unsafe { libc::close(fd); }
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_fanotify_mark_nonexistent_path() {
+        let fd = fanotify_init(
+            FAN_CLOEXEC | FAN_NONBLOCK | FAN_CLASS_NOTIF
+                | FAN_REPORT_FID | FAN_REPORT_DIR_FID | FAN_REPORT_NAME,
+            (O_CLOEXEC | O_RDONLY) as u32,
+        ).unwrap();
+
+        let mask = FAN_CREATE;
+        let result = fanotify_mark(fd, FAN_MARK_ADD, mask, AT_FDCWD, Path::new("/nonexistent_path_12345"));
+        assert!(result.is_err(), "fanotify_mark should fail on nonexistent path");
+
+        unsafe { libc::close(fd); }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_monitor_run_captures_events() {
+        use std::io::Write;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let test_dir = std::env::temp_dir().join("fsmon_test_events");
+        std::fs::create_dir_all(&test_dir).unwrap();
+        let test_dir_for_cleanup = test_dir.clone();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+        let test_dir_clone = test_dir.clone();
+
+        // Run monitor in background for a short time
+        let handle = rt.spawn(async move {
+            // Initialize fanotify
+            let fd = fanotify_init(
+                FAN_CLOEXEC | FAN_NONBLOCK | FAN_CLASS_NOTIF
+                    | FAN_REPORT_FID | FAN_REPORT_DIR_FID | FAN_REPORT_NAME,
+                (O_CLOEXEC | O_RDONLY) as u32,
+            ).unwrap();
+
+            let mask = FAN_CREATE | FAN_CLOSE_WRITE | FAN_EVENT_ON_CHILD | FAN_ONDIR;
+            fanotify_mark(fd, FAN_MARK_ADD | FAN_MARK_FILESYSTEM, mask, AT_FDCWD, &test_dir_clone).unwrap();
+
+            // Read events for 200ms
+            let mut buf = vec![0u8; 4096];
+            let start = std::time::Instant::now();
+            while start.elapsed() < std::time::Duration::from_millis(200) {
+                let n = unsafe {
+                    libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
+                };
+                if n > 0 {
+                    counter_clone.fetch_add(1, Ordering::SeqCst);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+
+            unsafe { libc::close(fd); }
+        });
+
+        // Give monitor time to start
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Create some files to trigger events
+        for i in 0..3 {
+            let path = test_dir.join(format!("test_{}.txt", i));
+            let mut f = std::fs::File::create(&path).unwrap();
+            writeln!(f, "content {}", i).unwrap();
+        }
+
+        // Wait for monitor to finish
+        rt.block_on(handle).unwrap();
+
+        let events_captured = counter.load(Ordering::SeqCst);
+        assert!(events_captured > 0, "Should capture at least some events, got {}", events_captured);
+
+        let _ = std::fs::remove_dir_all(&test_dir_for_cleanup);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_resolve_file_handle() {
+        let test_dir = std::env::temp_dir().join("fsmon_test_handle");
+        let test_file = test_dir.join("test.txt");
+        std::fs::create_dir_all(&test_dir).unwrap();
+        std::fs::write(&test_file, "hello").unwrap();
+
+        // Open directory fd for handle resolution
+        let dir_c = std::ffi::CString::new(test_dir.to_string_lossy().as_bytes()).unwrap();
+        let mfd = unsafe { libc::open(dir_c.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
+        assert!(mfd >= 0, "Should be able to open directory");
+
+        // Get file handle using name_to_handle_at
+        let file_c = std::ffi::CString::new(test_file.to_string_lossy().as_bytes()).unwrap();
+        let mut mount_id: libc::c_int = 0;
+        let mut fh_buf = vec![0u8; 128];
+        let capacity = (fh_buf.len() - 8) as u32;
+        fh_buf[0..4].copy_from_slice(&capacity.to_ne_bytes());
+
+        let ret = unsafe {
+            libc::name_to_handle_at(
+                libc::AT_FDCWD,
+                file_c.as_ptr(),
+                fh_buf.as_mut_ptr() as *mut libc::file_handle,
+                &mut mount_id,
+                0,
+            )
+        };
+        assert_eq!(ret, 0, "name_to_handle_at should succeed");
+
+        // Resolve handle back to path
+        let resolved = resolve_file_handle(&[mfd], &fh_buf);
+        assert!(resolved.is_some(), "Should resolve file handle to path");
+
+        unsafe { libc::close(mfd); }
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
 }
