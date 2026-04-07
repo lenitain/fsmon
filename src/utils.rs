@@ -190,6 +190,7 @@ pub fn uid_to_username(uid: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{Datelike, Timelike, TimeZone};
 
     #[test]
     fn test_parse_size() {
@@ -201,10 +202,156 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_size_edge_cases() {
+        // Case insensitive
+        assert_eq!(parse_size("1kb").unwrap(), 1024);
+        assert_eq!(parse_size("1Kb").unwrap(), 1024);
+        // With whitespace
+        assert_eq!(parse_size("  1KB  ").unwrap(), 1024);
+        // Decimal
+        assert_eq!(parse_size("1.5KB").unwrap(), 1536);
+        // Zero
+        assert_eq!(parse_size("0").unwrap(), 0);
+        assert_eq!(parse_size("0B").unwrap(), 0);
+        // TB
+        assert_eq!(parse_size("1TB").unwrap(), 1024i64 * 1024 * 1024 * 1024);
+        // Short unit
+        assert_eq!(parse_size("1K").unwrap(), 1024);
+        assert_eq!(parse_size("1M").unwrap(), 1024 * 1024);
+        assert_eq!(parse_size("1G").unwrap(), 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_parse_size_invalid() {
+        assert!(parse_size("1XB").is_err());
+        assert!(parse_size("abc").is_err());
+    }
+
+    #[test]
     fn test_format_size() {
         assert_eq!(format_size(100), "100B");
         assert_eq!(format_size(1024), "1.0KB");
         assert_eq!(format_size(1024 * 1024), "1.0MB");
         assert_eq!(format_size(-1024), "-1.0KB");
+    }
+
+    #[test]
+    fn test_format_size_edge_cases() {
+        assert_eq!(format_size(0), "0B");
+        assert_eq!(format_size(-0), "0B");
+        assert_eq!(format_size(1024 * 1024 * 1024), "1.0GB");
+        assert_eq!(format_size(-1024 * 1024), "-1.0MB");
+        assert_eq!(format_size(500), "500B");
+        assert_eq!(format_size(-500), "-500B");
+    }
+
+    #[test]
+    fn test_parse_time_relative_hours() {
+        let now = Utc::now();
+        let parsed = parse_time("1h").unwrap();
+        let diff = now - parsed;
+        assert!(diff >= Duration::minutes(59));
+        assert!(diff <= Duration::minutes(61));
+    }
+
+    #[test]
+    fn test_parse_time_relative_minutes() {
+        let now = Utc::now();
+        let parsed = parse_time("30m").unwrap();
+        let diff = now - parsed;
+        assert!(diff >= Duration::minutes(29));
+        assert!(diff <= Duration::minutes(31));
+    }
+
+    #[test]
+    fn test_parse_time_relative_days() {
+        let now = Utc::now();
+        let parsed = parse_time("7d").unwrap();
+        let diff = now - parsed;
+        assert!(diff >= Duration::hours(167));
+        assert!(diff <= Duration::hours(169));
+    }
+
+    #[test]
+    fn test_parse_time_relative_seconds() {
+        let now = Utc::now();
+        let parsed = parse_time("30s").unwrap();
+        let diff = now - parsed;
+        assert!(diff >= Duration::seconds(29));
+        assert!(diff <= Duration::seconds(31));
+    }
+
+    #[test]
+    fn test_parse_time_relative_hr_min_suffix() {
+        let now = Utc::now();
+        let parsed = parse_time("2hr").unwrap();
+        let diff = now - parsed;
+        assert!(diff >= Duration::minutes(119));
+        assert!(diff <= Duration::minutes(121));
+
+        let parsed = parse_time("15min").unwrap();
+        let diff = now - parsed;
+        assert!(diff >= Duration::minutes(14));
+        assert!(diff <= Duration::minutes(16));
+    }
+
+    #[test]
+    fn test_parse_time_absolute_datetime() {
+        let parsed = parse_time("2024-05-01 10:00").unwrap();
+        assert_eq!(parsed.year(), 2024);
+        assert_eq!(parsed.month(), 5);
+        assert_eq!(parsed.day(), 1);
+        assert_eq!(parsed.hour(), 10);
+        assert_eq!(parsed.minute(), 0);
+    }
+
+    #[test]
+    fn test_parse_time_absolute_with_seconds() {
+        let parsed = parse_time("2024-12-25 15:30:45").unwrap();
+        assert_eq!(parsed.year(), 2024);
+        assert_eq!(parsed.month(), 12);
+        assert_eq!(parsed.day(), 25);
+        assert_eq!(parsed.hour(), 15);
+        assert_eq!(parsed.minute(), 30);
+        assert_eq!(parsed.second(), 45);
+    }
+
+    #[test]
+    fn test_parse_time_absolute_date_only() {
+        let parsed = parse_time("2024-01-15").unwrap();
+        assert_eq!(parsed.year(), 2024);
+        assert_eq!(parsed.month(), 1);
+        assert_eq!(parsed.day(), 15);
+        assert_eq!(parsed.hour(), 0);
+        assert_eq!(parsed.minute(), 0);
+    }
+
+    #[test]
+    fn test_parse_time_invalid() {
+        assert!(parse_time("invalid").is_err());
+        assert!(parse_time("2024-13-01 10:00").is_err());
+        assert!(parse_time("abc").is_err());
+    }
+
+    #[test]
+    fn test_format_datetime() {
+        let dt = Utc.with_ymd_and_hms(2024, 5, 1, 10, 30, 45).unwrap();
+        let formatted = format_datetime(&dt);
+        // Output depends on local timezone, just check it's non-empty and contains date parts
+        assert!(!formatted.is_empty());
+        assert!(formatted.contains("2024"));
+    }
+
+    #[test]
+    fn test_parse_size_roundtrip() {
+        // parse_size -> format_size should be consistent for round numbers
+        let sizes = vec![0, 1024, 1024 * 1024, 1024 * 1024 * 1024];
+        for s in sizes {
+            let formatted = format_size(s);
+            let parsed = parse_size(&formatted).unwrap() as f64;
+            // Allow small floating point differences
+            assert!((parsed - s as f64).abs() < s as f64 * 0.01 + 1.0,
+                "roundtrip failed for {}: format={}, parse={}", s, formatted, parsed);
+        }
     }
 }

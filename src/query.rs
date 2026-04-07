@@ -202,3 +202,308 @@ impl Query {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn make_event(time: DateTime<Utc>, size: i64, pid: u32) -> FileEvent {
+        FileEvent {
+            time,
+            event_type: "CREATE".to_string(),
+            path: PathBuf::from("/tmp/test"),
+            pid,
+            cmd: "test".to_string(),
+            user: "root".to_string(),
+            size_change: size,
+        }
+    }
+
+    fn make_query(sort: SortBy) -> Query {
+        Query::new(
+            PathBuf::from("/dev/null"),
+            None, None, None, None, None, None, None,
+            OutputFormat::Human,
+            sort,
+        )
+    }
+
+    #[test]
+    fn test_sort_events_by_time() {
+        let t1 = Utc.with_ymd_and_hms(2024, 1, 1, 10, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2024, 1, 1, 9, 0, 0).unwrap();
+        let t3 = Utc.with_ymd_and_hms(2024, 1, 1, 11, 0, 0).unwrap();
+
+        let events = vec![
+            make_event(t1, 100, 1),
+            make_event(t2, 200, 2),
+            make_event(t3, 50, 3),
+        ];
+
+        let q = make_query(SortBy::Time);
+        let sorted = q.sort_events(events);
+        assert_eq!(sorted[0].time, t2);
+        assert_eq!(sorted[1].time, t1);
+        assert_eq!(sorted[2].time, t3);
+    }
+
+    #[test]
+    fn test_sort_events_by_size() {
+        let t = Utc::now();
+        let events = vec![
+            make_event(t, 100, 1),
+            make_event(t, -5000, 2),
+            make_event(t, 1000, 3),
+        ];
+
+        let q = make_query(SortBy::Size);
+        let sorted = q.sort_events(events);
+        // Sort by absolute size descending
+        assert_eq!(sorted[0].size_change.abs(), 5000);
+        assert_eq!(sorted[1].size_change.abs(), 1000);
+        assert_eq!(sorted[2].size_change.abs(), 100);
+    }
+
+    #[test]
+    fn test_sort_events_by_pid() {
+        let t = Utc::now();
+        let events = vec![
+            make_event(t, 100, 300),
+            make_event(t, 200, 100),
+            make_event(t, 50, 200),
+        ];
+
+        let q = make_query(SortBy::Pid);
+        let sorted = q.sort_events(events);
+        assert_eq!(sorted[0].pid, 100);
+        assert_eq!(sorted[1].pid, 200);
+        assert_eq!(sorted[2].pid, 300);
+    }
+
+    #[test]
+    fn test_sort_events_empty() {
+        let q = make_query(SortBy::Time);
+        let sorted = q.sort_events(vec![]);
+        assert!(sorted.is_empty());
+    }
+
+    #[test]
+    fn test_sort_events_single() {
+        let t = Utc::now();
+        let events = vec![make_event(t, 42, 1)];
+        let q = make_query(SortBy::Size);
+        let sorted = q.sort_events(events);
+        assert_eq!(sorted.len(), 1);
+        assert_eq!(sorted[0].size_change, 42);
+    }
+
+    #[test]
+    fn test_read_events_with_pid_filter() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("fsmon_test_pid");
+        std::fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("test.log");
+
+        let e1 = FileEvent {
+            time: Utc::now(),
+            event_type: "CREATE".into(),
+            path: PathBuf::from("/tmp/a"),
+            pid: 100,
+            cmd: "test".into(),
+            user: "root".into(),
+            size_change: 0,
+        };
+        let e2 = FileEvent {
+            time: Utc::now(),
+            event_type: "DELETE".into(),
+            path: PathBuf::from("/tmp/b"),
+            pid: 200,
+            cmd: "test".into(),
+            user: "root".into(),
+            size_change: 0,
+        };
+
+        let mut f = std::fs::File::create(&log_path).unwrap();
+        writeln!(f, "{}", serde_json::to_string(&e1).unwrap()).unwrap();
+        writeln!(f, "{}", serde_json::to_string(&e2).unwrap()).unwrap();
+
+        let q = Query::new(
+            log_path.clone(),
+            None, None,
+            Some(vec![100]),
+            None, None, None, None,
+            OutputFormat::Human,
+            SortBy::Time,
+        );
+
+        let events = q.read_events(None, None, None).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].pid, 100);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_read_events_with_type_filter() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("fsmon_test_type");
+        std::fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("test.log");
+
+        let e1 = FileEvent {
+            time: Utc::now(),
+            event_type: "CREATE".into(),
+            path: PathBuf::from("/tmp/a"),
+            pid: 1,
+            cmd: "test".into(),
+            user: "root".into(),
+            size_change: 0,
+        };
+        let e2 = FileEvent {
+            time: Utc::now(),
+            event_type: "MODIFY".into(),
+            path: PathBuf::from("/tmp/b"),
+            pid: 1,
+            cmd: "test".into(),
+            user: "root".into(),
+            size_change: 0,
+        };
+
+        let mut f = std::fs::File::create(&log_path).unwrap();
+        writeln!(f, "{}", serde_json::to_string(&e1).unwrap()).unwrap();
+        writeln!(f, "{}", serde_json::to_string(&e2).unwrap()).unwrap();
+
+        let q = Query::new(
+            log_path.clone(),
+            None, None, None, None, None,
+            Some(vec!["CREATE".into()]),
+            None,
+            OutputFormat::Human,
+            SortBy::Time,
+        );
+
+        let events = q.read_events(None, None, None).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "CREATE");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_read_events_with_min_size_filter() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("fsmon_test_size");
+        std::fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("test.log");
+
+        let e1 = FileEvent {
+            time: Utc::now(),
+            event_type: "CREATE".into(),
+            path: PathBuf::from("/tmp/a"),
+            pid: 1,
+            cmd: "test".into(),
+            user: "root".into(),
+            size_change: 500,
+        };
+        let e2 = FileEvent {
+            time: Utc::now(),
+            event_type: "CREATE".into(),
+            path: PathBuf::from("/tmp/b"),
+            pid: 1,
+            cmd: "test".into(),
+            user: "root".into(),
+            size_change: 50,
+        };
+
+        let mut f = std::fs::File::create(&log_path).unwrap();
+        writeln!(f, "{}", serde_json::to_string(&e1).unwrap()).unwrap();
+        writeln!(f, "{}", serde_json::to_string(&e2).unwrap()).unwrap();
+
+        let q = Query::new(
+            log_path.clone(),
+            None, None, None, None, None, None,
+            Some(100),
+            OutputFormat::Human,
+            SortBy::Time,
+        );
+
+        let events = q.read_events(None, None, None).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].size_change, 500);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_read_events_with_time_filter() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("fsmon_test_time");
+        std::fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("test.log");
+
+        let t1 = Utc.with_ymd_and_hms(2024, 1, 1, 10, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
+
+        let e1 = FileEvent {
+            time: t1,
+            event_type: "CREATE".into(),
+            path: PathBuf::from("/tmp/a"),
+            pid: 1,
+            cmd: "test".into(),
+            user: "root".into(),
+            size_change: 0,
+        };
+        let e2 = FileEvent {
+            time: t2,
+            event_type: "CREATE".into(),
+            path: PathBuf::from("/tmp/b"),
+            pid: 1,
+            cmd: "test".into(),
+            user: "root".into(),
+            size_change: 0,
+        };
+
+        let mut f = std::fs::File::create(&log_path).unwrap();
+        writeln!(f, "{}", serde_json::to_string(&e1).unwrap()).unwrap();
+        writeln!(f, "{}", serde_json::to_string(&e2).unwrap()).unwrap();
+
+        let since = Utc.with_ymd_and_hms(2024, 1, 1, 11, 0, 0).unwrap();
+        let q = Query::new(
+            log_path.clone(),
+            None, None, None, None, None, None, None,
+            OutputFormat::Human,
+            SortBy::Time,
+        );
+
+        let events = q.read_events(Some(since), None, None).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].time, t2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_read_events_skips_invalid_json() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("fsmon_test_invalid");
+        std::fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("test.log");
+
+        let mut f = std::fs::File::create(&log_path).unwrap();
+        writeln!(f, "invalid json line").unwrap();
+        writeln!(f, "{{}}").unwrap();
+
+        let q = Query::new(
+            log_path.clone(),
+            None, None, None, None, None, None, None,
+            OutputFormat::Human,
+            SortBy::Time,
+        );
+
+        let events = q.read_events(None, None, None).unwrap();
+        assert!(events.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

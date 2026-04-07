@@ -560,3 +560,216 @@ fn count_lines(path: &Path, upto: usize) -> Result<usize> {
     f.read_exact(&mut buf)?;
     Ok(buf.iter().filter(|&&b| b == b'\n').count())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn create_test_file(dir: &Path, name: &str, content: &str) -> PathBuf {
+        let path = dir.join(name);
+        let mut f = fs::File::create(&path).unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_count_lines_basic() {
+        let dir = std::env::temp_dir().join("fsmon_test_count");
+        fs::create_dir_all(&dir).unwrap();
+        let path = create_test_file(&dir, "test.log", "line1\nline2\nline3\n");
+
+        assert_eq!(count_lines(&path, 6).unwrap(), 1); // "line1\n"
+        assert_eq!(count_lines(&path, 12).unwrap(), 2); // "line1\nline2\n"
+        assert_eq!(count_lines(&path, 18).unwrap(), 3); // all
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_count_lines_empty() {
+        let dir = std::env::temp_dir().join("fsmon_test_count_empty");
+        fs::create_dir_all(&dir).unwrap();
+        let path = create_test_file(&dir, "test.log", "");
+
+        assert_eq!(count_lines(&path, 0).unwrap(), 0);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_count_lines_no_trailing_newline() {
+        let dir = std::env::temp_dir().join("fsmon_test_count_no_nl");
+        fs::create_dir_all(&dir).unwrap();
+        let path = create_test_file(&dir, "test.log", "line1\nline2");
+
+        // Read only the first part (line1\n) - 6 bytes
+        assert_eq!(count_lines(&path, 6).unwrap(), 1);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_tail_offset_small_file() {
+        let dir = std::env::temp_dir().join("fsmon_test_tail_small");
+        fs::create_dir_all(&dir).unwrap();
+        let path = create_test_file(&dir, "test.log", "short\n");
+
+        // File smaller than max_bytes, offset should be 0
+        assert_eq!(find_tail_offset(&path, 1000).unwrap(), 0);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_tail_offset_large_file() {
+        let dir = std::env::temp_dir().join("fsmon_test_tail_large");
+        fs::create_dir_all(&dir).unwrap();
+
+        // Create a file with known content - make it large enough
+        // so that the 4096 subtraction doesn't bring read_start to 0
+        let line = "aaa\n";
+        let content = line.repeat(2000); // 8000 bytes
+        let path = create_test_file(&dir, "test.log", &content);
+
+        // max_bytes = 512, file is 8000 bytes
+        // read_start = (8000 - 512).saturating_sub(4096) = 3392
+        // Should find a newline at or after offset 3392
+        let offset = find_tail_offset(&path, 512).unwrap();
+        assert!(offset > 0, "offset should be > 0 for large file");
+        assert!(offset <= 8000, "offset should be within file");
+
+        // Verify the tail starts at a newline boundary
+        let full = fs::read_to_string(&path).unwrap();
+        if offset > 0 {
+            assert_eq!(full.as_bytes()[offset - 1], b'\n',
+                "tail should start right after a newline");
+        }
+        // Verify tail is non-empty and within expected bounds
+        assert!(offset < content.len());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_clean_logs_by_time() {
+        let dir = std::env::temp_dir().join("fsmon_test_clean_time");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("test.log");
+
+        // Create events: one old, one new
+        let old_event = FileEvent {
+            time: Utc::now() - chrono::Duration::days(60),
+            event_type: "CREATE".into(),
+            path: PathBuf::from("/tmp/old"),
+            pid: 1,
+            cmd: "test".into(),
+            user: "root".into(),
+            size_change: 0,
+        };
+        let new_event = FileEvent {
+            time: Utc::now(),
+            event_type: "CREATE".into(),
+            path: PathBuf::from("/tmp/new"),
+            pid: 1,
+            cmd: "test".into(),
+            user: "root".into(),
+            size_change: 0,
+        };
+
+        {
+            let mut f = fs::File::create(&log_path).unwrap();
+            writeln!(f, "{}", serde_json::to_string(&old_event).unwrap()).unwrap();
+            writeln!(f, "{}", serde_json::to_string(&new_event).unwrap()).unwrap();
+        }
+
+        // Clean: keep 30 days
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(clean_logs(&log_path, 30, None, false)).unwrap();
+
+        // Verify only new event remains
+        let content = fs::read_to_string(&log_path).unwrap();
+        let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 1);
+        let remaining: FileEvent = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(remaining.path, PathBuf::from("/tmp/new"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_clean_logs_dry_run() {
+        let dir = std::env::temp_dir().join("fsmon_test_clean_dryrun");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("test.log");
+
+        let old_event = FileEvent {
+            time: Utc::now() - chrono::Duration::days(60),
+            event_type: "CREATE".into(),
+            path: PathBuf::from("/tmp/old"),
+            pid: 1,
+            cmd: "test".into(),
+            user: "root".into(),
+            size_change: 0,
+        };
+
+        {
+            let mut f = fs::File::create(&log_path).unwrap();
+            writeln!(f, "{}", serde_json::to_string(&old_event).unwrap()).unwrap();
+        }
+
+        let original_content = fs::read_to_string(&log_path).unwrap();
+
+        // Dry run should not modify file
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(clean_logs(&log_path, 30, None, true)).unwrap();
+
+        let after_content = fs::read_to_string(&log_path).unwrap();
+        assert_eq!(original_content, after_content);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_clean_logs_nonexistent_file() {
+        let path = PathBuf::from("/tmp/fsmon_nonexistent_test.log");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        // Should not error on missing file
+        assert!(rt.block_on(clean_logs(&path, 30, None, false)).is_ok());
+    }
+
+    #[test]
+    fn test_clean_logs_by_size() {
+        let dir = std::env::temp_dir().join("fsmon_test_clean_size");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("test.log");
+
+        // Create multiple events to exceed size limit
+        {
+            let mut f = fs::File::create(&log_path).unwrap();
+            for i in 0..100 {
+                let event = FileEvent {
+                    time: Utc::now(),
+                    event_type: "CREATE".into(),
+                    path: PathBuf::from(format!("/tmp/file{}", i)),
+                    pid: 1,
+                    cmd: "test".into(),
+                    user: "root".into(),
+                    size_change: 0,
+                };
+                writeln!(f, "{}", serde_json::to_string(&event).unwrap()).unwrap();
+            }
+        }
+
+        let original_size = fs::metadata(&log_path).unwrap().len();
+
+        // Clean with small max_size to force truncation
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(clean_logs(&log_path, 0, Some(500), false)).unwrap();
+
+        let new_size = fs::metadata(&log_path).unwrap().len();
+        assert!(new_size < original_size);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
