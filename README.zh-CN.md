@@ -138,10 +138,10 @@ fsmon clean --help      # 清理旧日志
 
 ## 技术架构
 
-- **fanotify (FID 模式)**: Linux 内核级文件监控
-- **Proc Connector**: 在进程 `exec()` 时缓存进程信息，确保准确归因
-- **name_to_handle_at**: 目录句柄缓存，实现完整的删除追踪
-- **Rust + Tokio**: 异步运行时，高并发低延迟
+- **fanotify (FID 模式)**: Linux 内核主动推送文件事件到队列，用户态通过非阻塞 `read()` 消费。无需轮询探测，事件即时送达。
+- **Proc Connector**: 后台线程在进程 `exec()` 时缓存信息，确保短命进程的准确归因。
+- **name_to_handle_at + 目录缓存**: 解析文件句柄为路径，缓存目录句柄以恢复 `rm -rf` 删除期间的文件路径。
+- **Rust + Tokio**: 单线程 reactor 循环（`while running` + 10ms sleep）+ 异步 Ctrl+C 信号处理。极简并发 — 高效优先。
 
 ### 事件类型
 

@@ -138,10 +138,10 @@ fsmon clean --help      # Cleanup old logs
 
 ## Technical Architecture
 
-- **fanotify (FID mode)**: Linux kernel-level file monitoring
-- **Proc Connector**: Caches process info at `exec()` time for accurate attribution
-- **name_to_handle_at**: Directory handle caching for complete deletion tracking
-- **Rust + Tokio**: Async runtime with high concurrency
+- **fanotify (FID mode)**: Linux kernel pushes file events to a queue; user space consumes via non-blocking `read()`. No polling needed — events are delivered immediately.
+- **Proc Connector**: Background thread caches process info at `exec()` time for accurate attribution of short-lived processes.
+- **name_to_handle_at + dir cache**: Resolves file handles to paths, caches directory handles to recover paths of deleted files during `rm -rf`.
+- **Rust + Tokio**: Single-threaded reactor loop (`while running` + 10ms sleep) with async Ctrl+C signal handling. Minimal concurrency — high efficiency instead.
 
 ### Event Types
 
