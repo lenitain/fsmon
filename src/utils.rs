@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Duration, Local, NaiveDateTime, Utc};
 use std::collections::HashMap;
 use std::path::Path;
@@ -126,7 +126,8 @@ pub fn get_process_info_by_pid(
 ) -> (String, String) {
     // Check proc connector cache first (only source for short-lived processes)
     if let Some(cache) = proc_cache
-        && let Some(info) = cache.get(&pid) {
+        && let Some(info) = cache.get(&pid)
+    {
         return (info.cmd.clone(), info.user.clone());
     }
 
@@ -174,7 +175,8 @@ fn uid_passwd_map() -> &'static HashMap<u32, String> {
                 let _shell = parts.next(); // password field
                 let uid_str = parts.next();
                 if let (Some(name), Some(uid_str)) = (name, uid_str)
-                    && let Ok(uid) = uid_str.parse::<u32>() {
+                    && let Ok(uid) = uid_str.parse::<u32>()
+                {
                     map.insert(uid, name.to_string());
                 }
             }
@@ -190,7 +192,7 @@ pub fn uid_to_username(uid: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Datelike, Timelike, TimeZone};
+    use chrono::{Datelike, TimeZone, Timelike};
 
     #[test]
     fn test_parse_size() {
@@ -350,8 +352,13 @@ mod tests {
             let formatted = format_size(s);
             let parsed = parse_size(&formatted).unwrap() as f64;
             // Allow small floating point differences
-            assert!((parsed - s as f64).abs() < s as f64 * 0.01 + 1.0,
-                "roundtrip failed for {}: format={}, parse={}", s, formatted, parsed);
+            assert!(
+                (parsed - s as f64).abs() < s as f64 * 0.01 + 1.0,
+                "roundtrip failed for {}: format={}, parse={}",
+                s,
+                formatted,
+                parsed
+            );
         }
     }
 }

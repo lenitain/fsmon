@@ -5,8 +5,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
-use crate::{FileEvent, OutputFormat, SortBy};
 use crate::utils::{format_size, parse_time};
+use crate::{FileEvent, OutputFormat, SortBy};
 
 pub struct Query {
     log_file: PathBuf,
@@ -51,25 +51,19 @@ impl Query {
 
     pub async fn execute(&self) -> Result<()> {
         // Parse time filters
-        let since_time = self.since.as_ref()
-            .map(|s| parse_time(s))
-            .transpose()?;
+        let since_time = self.since.as_ref().map(|s| parse_time(s)).transpose()?;
 
-        let until_time = self.until.as_ref()
-            .map(|s| parse_time(s))
-            .transpose()?;
+        let until_time = self.until.as_ref().map(|s| parse_time(s)).transpose()?;
 
         // Compile cmd regex if specified
-        let cmd_regex = self.cmd.as_ref()
+        let cmd_regex = self
+            .cmd
+            .as_ref()
             .map(|c| Regex::new(&c.replace("*", ".*")))
             .transpose()?;
 
         // Read and filter events
-        let events = self.read_events(
-            since_time,
-            until_time,
-            cmd_regex,
-        )?;
+        let events = self.read_events(since_time, until_time, cmd_regex)?;
 
         // Sort events
         let sorted_events = self.sort_events(events);
@@ -106,37 +100,44 @@ impl Query {
 
             // Apply filters
             if let Some(ref since) = since_time
-                && event.time < *since {
+                && event.time < *since
+            {
                 continue;
             }
 
             if let Some(ref until) = until_time
-                && event.time > *until {
+                && event.time > *until
+            {
                 continue;
             }
 
             if let Some(ref pids) = self.pids
-                && !pids.contains(&event.pid) {
+                && !pids.contains(&event.pid)
+            {
                 continue;
             }
 
             if let Some(ref regex) = cmd_regex
-                && !regex.is_match(&event.cmd) {
+                && !regex.is_match(&event.cmd)
+            {
                 continue;
             }
 
             if let Some(ref users) = self.users
-                && !users.contains(&event.user) {
+                && !users.contains(&event.user)
+            {
                 continue;
             }
 
             if let Some(ref types) = self.event_types
-                && !types.contains(&event.event_type) {
+                && !types.contains(&event.event_type)
+            {
                 continue;
             }
 
             if let Some(min) = self.min_size
-                && event.size_change.abs() < min {
+                && event.size_change.abs() < min
+            {
                 continue;
             }
 
@@ -223,7 +224,13 @@ mod tests {
     fn make_query(sort: SortBy) -> Query {
         Query::new(
             PathBuf::from("/dev/null"),
-            None, None, None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             OutputFormat::Human,
             sort,
         )
@@ -330,9 +337,13 @@ mod tests {
 
         let q = Query::new(
             log_path.clone(),
-            None, None,
+            None,
+            None,
             Some(vec![100]),
-            None, None, None, None,
+            None,
+            None,
+            None,
+            None,
             OutputFormat::Human,
             SortBy::Time,
         );
@@ -376,7 +387,11 @@ mod tests {
 
         let q = Query::new(
             log_path.clone(),
-            None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
             Some(vec!["CREATE".into()]),
             None,
             OutputFormat::Human,
@@ -422,7 +437,12 @@ mod tests {
 
         let q = Query::new(
             log_path.clone(),
-            None, None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             Some(100),
             OutputFormat::Human,
             SortBy::Time,
@@ -471,7 +491,13 @@ mod tests {
         let since = Utc.with_ymd_and_hms(2024, 1, 1, 11, 0, 0).unwrap();
         let q = Query::new(
             log_path.clone(),
-            None, None, None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             OutputFormat::Human,
             SortBy::Time,
         );
@@ -496,7 +522,13 @@ mod tests {
 
         let q = Query::new(
             log_path.clone(),
-            None, None, None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             OutputFormat::Human,
             SortBy::Time,
         );

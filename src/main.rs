@@ -8,14 +8,14 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 mod monitor;
+mod proc_cache;
 mod query;
 mod systemd;
 mod utils;
-mod proc_cache;
 
 use monitor::Monitor;
 use query::Query;
-use utils::{parse_size, format_size, format_datetime};
+use utils::{format_datetime, format_size, parse_size};
 
 #[derive(Parser)]
 #[command(name = "fsmon")]
@@ -312,9 +312,7 @@ async fn main() -> Result<()> {
                 process::exit(1);
             }
 
-            let min_size_bytes = min_size
-                .map(|s| parse_size(&s))
-                .transpose()?;
+            let min_size_bytes = min_size.map(|s| parse_size(&s)).transpose()?;
 
             let event_types = types.map(|t| {
                 t.split(',')
@@ -353,9 +351,7 @@ async fn main() -> Result<()> {
                     .unwrap_or_else(|| PathBuf::from("history.log"))
             });
 
-            let min_size_bytes = min_size
-                .map(|s| parse_size(&s))
-                .transpose()?;
+            let min_size_bytes = min_size.map(|s| parse_size(&s)).transpose()?;
 
             let pids = pid.map(|p| {
                 p.split(',')
@@ -422,9 +418,7 @@ async fn main() -> Result<()> {
                     .unwrap_or_else(|| PathBuf::from("history.log"))
             });
 
-            let max_size_bytes = max_size
-                .map(|s| parse_size(&s))
-                .transpose()?;
+            let max_size_bytes = max_size.map(|s| parse_size(&s)).transpose()?;
 
             clean_logs(&log_file, keep_days, max_size_bytes, dry_run).await?;
         }
@@ -500,7 +494,10 @@ async fn clean_logs(
     } else {
         fs::rename(&temp_file, log_file)?;
         println!("Cleaning {}...", log_file.display());
-        println!("Deleted {} lines (logs older than {} days)", total_deleted, keep_days);
+        println!(
+            "Deleted {} lines (logs older than {} days)",
+            total_deleted, keep_days
+        );
         println!(
             "Log file size reduced from {} to {}",
             format_size(original_size as i64),
@@ -528,7 +525,11 @@ fn find_tail_offset(path: &Path, max_bytes: usize) -> Result<usize> {
     let mut buf = vec![0u8; file_len - read_start];
     f.read_exact(&mut buf)?;
 
-    let first_newline = buf.iter().position(|&b| b == b'\n').map(|p| p + 1).unwrap_or(0);
+    let first_newline = buf
+        .iter()
+        .position(|&b| b == b'\n')
+        .map(|p| p + 1)
+        .unwrap_or(0);
     Ok(read_start + first_newline)
 }
 
@@ -642,8 +643,11 @@ mod tests {
         // Verify the tail starts at a newline boundary
         let full = fs::read_to_string(&path).unwrap();
         if offset > 0 {
-            assert_eq!(full.as_bytes()[offset - 1], b'\n',
-                "tail should start right after a newline");
+            assert_eq!(
+                full.as_bytes()[offset - 1],
+                b'\n',
+                "tail should start right after a newline"
+            );
         }
         // Verify tail is non-empty and within expected bounds
         assert!(offset < content.len());
@@ -765,7 +769,8 @@ mod tests {
 
         // Clean with small max_size to force truncation
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(clean_logs(&log_path, 0, Some(500), false)).unwrap();
+        rt.block_on(clean_logs(&log_path, 0, Some(500), false))
+            .unwrap();
 
         let new_size = fs::metadata(&log_path).unwrap().len();
         assert!(new_size < original_size);
