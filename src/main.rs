@@ -20,7 +20,7 @@ use utils::{format_datetime, format_size, parse_size};
 #[derive(Parser)]
 #[command(name = "fsmon")]
 #[command(author = "fsmon contributors")]
-#[command(version = "0.1.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Lightweight high-performance file change tracking tool", long_about = None)]
 #[command(
     after_help = "Use 'fsmon <COMMAND> --help' for detailed command info\n\nExamples:\n  fsmon monitor /var/log                     # Basic monitoring\n  fsmon monitor /etc --types MODIFY         # Investigate config file changes\n  fsmon monitor / --all-events               # Enable all 14 event types\n  fsmon monitor ~/project --recursive       # Recursively monitor project\n  fsmon install /var/log -o /var/log/fsmon.log  # Install systemd service\n  fsmon query --since 1h --cmd nginx         # Query nginx operations in last hour\n  fsmon status                               # Check service status"
