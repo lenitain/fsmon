@@ -60,13 +60,13 @@ cargo install --path .
 cargo install fsmon
 ```
 
-**Important: Copy to system path for sudo usage:**
+**Important: Fanotify requires root privileges:**
 ```bash
 # Method 1: Copy to /usr/local/bin (recommended)
 sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 
 # Method 2: Use full path directly
-sudo ~/.cargo/bin/fsmon monitor /etc
+sudo ~/.cargo/bin/fsmon monitor ... 
 ```
 
 ### Basic Usage
