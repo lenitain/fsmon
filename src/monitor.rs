@@ -115,13 +115,11 @@ impl Monitor {
 
     pub async fn run(mut self) -> Result<()> {
         if unsafe { libc::geteuid() } != 0 {
-            let hint = if let Ok(exe) = std::env::current_exe() {
-                if exe.to_string_lossy().contains(".cargo/bin") {
-                    "\n\nHint: It looks like fsmon was installed via cargo install (~/.cargo/bin).\n\
+            let hint = if let Ok(path_env) = std::env::var("PATH") {
+                if path_env.contains(".cargo/bin") {
+                    "\n\nHint: It looks like fsmon was installed via cargo install.\n\
                     sudo cannot find it because ~/.cargo/bin is not in sudo's secure_path.\n\
-                    Please either:\n\
-                      1. Copy to system path: sudo cp ~/.cargo/bin/fsmon /usr/local/bin/\n\
-                      2. Or use full path: sudo ~/.cargo/bin/fsmon monitor ..."
+                    Please copy to system path: sudo cp ~/.cargo/bin/fsmon /usr/local/bin/"
                 } else {
                     ""
                 }
