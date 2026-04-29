@@ -62,7 +62,11 @@ cargo install fsmon
 
 **注意：复制到系统路径以便 sudo 使用：**
 ```bash
+# 方法1：复制到 /usr/local/bin（推荐）
 sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
+
+# 方法2：直接使用完整路径
+sudo ~/.cargo/bin/fsmon monitor /etc
 ```
 
 ### 基础用法
