@@ -60,7 +60,7 @@ cargo install --path .
 cargo install fsmon
 ```
 
-**注意：Fanotify需要管理员权限：**
+**注意：Fanotify需要管理员权限**
 ```bash
 # 方法1：复制到 /usr/local/bin（推荐）
 sudo cp ~/.cargo/bin/fsmon /usr/local/bin/

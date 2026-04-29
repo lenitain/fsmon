@@ -129,7 +129,10 @@ impl Monitor {
                 ""
             };
 
-            bail!("fanotify requires root privileges, please run with sudo{}", hint);
+            bail!(
+                "fanotify requires root privileges, please run with sudo{}",
+                hint
+            );
         }
 
         // Start proc connector listener thread, cache process exec info
