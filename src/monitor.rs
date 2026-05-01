@@ -276,11 +276,17 @@ impl Monitor {
         );
 
         // Persistent directory handle cache: handle_key → dir_path
-        // Lazy caching: only cache root directories at startup, subdirectories cached on demand
+        // Pre-cache directory handles at startup so DELETE/DELETE_SELF events
+        // for pre-existing directories can recover paths via the cache.
+        // In recursive mode, cache all subdirectories; otherwise only root dirs.
         let mut dir_cache: HashMap<HandleKey, PathBuf> = HashMap::new();
         for canonical in &canonical_paths {
             if canonical.is_dir() {
-                cache_dir_handle(&mut dir_cache, canonical);
+                if self.recursive {
+                    cache_recursive(&mut dir_cache, canonical);
+                } else {
+                    cache_dir_handle(&mut dir_cache, canonical);
+                }
             }
         }
 
