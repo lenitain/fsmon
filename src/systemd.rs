@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -10,7 +11,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/fsmon monitor %i
+ExecStart=EXEC_START_PLACEHOLDER
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -45,8 +46,14 @@ pub fn install(monitor_paths: &[PathBuf], log_file: Option<&PathBuf>) -> Result<
         );
     }
 
-    // Build ExecStart arguments
-    let mut exec_args = vec!["monitor".to_string()];
+    // Detect current binary path
+    let exe_path = env::current_exe()
+        .context("Failed to detect current executable path")?
+        .canonicalize()
+        .context("Failed to resolve executable path")?;
+
+    // Build ExecStart command
+    let mut exec_args = vec![exe_path.display().to_string(), "monitor".to_string()];
     for path in monitor_paths {
         exec_args.push(path.display().to_string());
     }
@@ -55,8 +62,9 @@ pub fn install(monitor_paths: &[PathBuf], log_file: Option<&PathBuf>) -> Result<
         exec_args.push(log.display().to_string());
     }
 
-    // Generate service file
-    let service_content = SERVICE_TEMPLATE.replace("%i", &exec_args.join(" "));
+    // Generate service file with detected binary path
+    let exec_start = exec_args.join(" ");
+    let service_content = SERVICE_TEMPLATE.replace("EXEC_START_PLACEHOLDER", &exec_start);
     fs::write(&service_file, &service_content)
         .with_context(|| format!("Failed to write service file to {}", service_file.display()))?;
 
@@ -67,6 +75,7 @@ pub fn install(monitor_paths: &[PathBuf], log_file: Option<&PathBuf>) -> Result<
         .context("Failed to reload systemd daemon")?;
 
     println!("Service installed to {}", service_file.display());
+    println!("Binary path: {}", exe_path.display());
     println!("To start: systemctl start {}", SERVICE_NAME);
     println!("To enable on boot: systemctl enable {}", SERVICE_NAME);
     Ok(())

@@ -6,15 +6,17 @@
 - Clippy 无警告（R1 已修复）
 - P2 已完成：非 CREATE/MODIFY/CLOSE_WRITE 事件跳过 metadata syscall
 - R5 已完成：fsmon.toml 配置文件支持
+- H1 已完成：systemd 服务模板二进制路径动态检测
 
 ## 硬编码清理
 
 全项目扫描发现约 20 处有修改价值的硬编码，分类如下：
 
-### H1 [高] systemd 服务模板二进制路径 ✅ 可配置化
+### H1 [高] systemd 服务模板二进制路径 ✅ 已完成
 `systemd.rs:7-28` — `ExecStart=/usr/local/bin/fsmon monitor %i`
 - 二进制实际位置可能不同（`~/.cargo/bin/fsmon`, `/usr/bin/fsmon` 等）
 - 安装时未检测 `current_exe()` 自动填充
+- **修改**: 使用 `std::env::current_exe()` 在 `install` 时动态检测二进制路径
 
 ### H2 [中] 默认日志路径重复定义 ✅ 提取常量
 `main.rs:438-439` 和 `main.rs:527-528` — `~/.fsmon/history.log`
