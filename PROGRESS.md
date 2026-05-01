@@ -40,6 +40,7 @@
 ### P3 [中] 日志查询不做二进制搜索 ✅ 已修复
 `query.rs:89-145` — 每次 `fsmon query` 全量扫描 JSON 日志文件。日志文件数百 MB 时查询慢。
 **修复**: 利用日志文件按时间有序写入，对时间范围查询做二分搜索。`seek_and_parse_time` 定位字节偏移处的时间戳；`find_offset_for_time` 和 `find_end_offset_for_time` 分别二分查找起止偏移；`expand_offset_backward` 向前扩展 50 行以覆盖轻微乱序。无时间过滤时回退全量扫描。11 项新测试覆盖边界情况（空前、全前、全后、单条、组合过滤、大文件）。
+**后续修复**: (1) `scan_back` 缓冲区从 256 增至 4096 字节，避免长 JSON 行导致错位；(2) `expand_offset_backward` 从 O(offset) 全文件扫描改为有界窗口扫描，大文件性能从 ~10GB 读取降至 ~25KB。新增 3 项测试覆盖长行、少行、大行场景。68 测试全绿。
 
 ### P4 [低] `find_tail_offset` + `truncate_from_start` 内存开销大
 `main.rs:515-553` — 读取整个文件尾部到内存再重写。max_size=100MB 时读取 100MB 到内存。
