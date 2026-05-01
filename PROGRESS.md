@@ -46,9 +46,9 @@
 `main.rs` — `truncate_from_start` 读取整个文件尾部到内存再重写。max_size=100MB 时读取 100MB 到内存。
 **修复**: `truncate_from_start` 改为流式读写：8KB 缓冲区分块读取源文件 offset 后的内容，写入同目录临时文件 `.fsmon_trunc_tmp`，然后原子 rename 覆盖原文件。`find_tail_offset` 已有界（max_bytes + 4096），无需修改。
 
-### P5 [低] 监控循环固定 10ms sleep
+### P5 [低] 监控循环固定 10ms sleep ✅ 已修复
 `monitor.rs:322` — 无事件时也等 10ms。FAN_NONBLOCK 模式下可用 epoll 实现零延迟唤醒。
-**修复**: 用 `tokio::io::unix::AsyncFd` 包装 fan_fd，事件驱动。
+**修复**: 用 `tokio::io::unix::AsyncFd` 包装 fan_fd，事件驱动。使用 `tokio::select!` 同时等待 fd 可读和 Ctrl+C 信号，确保进程可被信号终止。
 
 ### P6 [中] `file_size_cache` 无限增长（B2 后续）✅ 已修复
 `monitor.rs:36` — `HashMap<PathBuf, u64>` 仅 DELETE/DELETE_SELF/MOVED_FROM 时移除条目。文件被打开、写入、重命名后条目永久累积，长时间监控 `/` 时内存缓慢泄漏。
@@ -104,7 +104,8 @@
 | P3 | 性能 | P2 减少 metadata syscall | 中 |
 | P3 | 性能 | P3 日志索引查询 | 大 |
 | P4 | 性能 | P4 内存优化 ✅ | 中 |
+| P4 | 性能 | P5 epoll 事件驱动 ✅ | 中 |
 | P4 | 性能 | P6 file_size_cache 无限增长 | 中 |
 | P4 | 质量 | R5-R8 增强 | 小-中 |
 
-**下一步建议**: 处理 P5 epoll 事件驱动 或 R5-R8 增强。
+**下一步建议**: 处理 R5-R8 增强。
