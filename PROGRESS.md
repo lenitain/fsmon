@@ -24,9 +24,9 @@
 
 ## 2. 性能优化
 
-### P1 [高] 启动时递归缓存整个目录树句柄
+### P1 [高] 启动时递归缓存整个目录树句柄 ✅ 已修复
 `monitor.rs:275-280` — `cache_recursive` 对每个监控路径递归遍历所有子目录做 `name_to_handle_at`。监控 `/` 时会遍历数百万目录，耗时分钟级，内存爆炸。
-**修复**: 懒加载按需缓存，只在 `read_fid_events` 解析失败时补充缓存。
+**修复**: 懒加载按需缓存，启动时只缓存监控根目录，子目录通过事件驱动增量缓存（CREATE/MOVED_TO 时 cache_recursive）。
 
 ### P2 [中] 每次事件调用 `fs::metadata` syscall
 `monitor.rs:343` — 每个 fanotify 事件都做一次 `stat` 系统调用，高频场景下（>10K events/s）开销显著。

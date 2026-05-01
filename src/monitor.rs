@@ -276,11 +276,11 @@ impl Monitor {
         );
 
         // Persistent directory handle cache: handle_key → dir_path
-        // Pre-cache monitored directories at startup, for recovering deleted directory child file paths
+        // Lazy caching: only cache root directories at startup, subdirectories cached on demand
         let mut dir_cache: HashMap<HandleKey, PathBuf> = HashMap::new();
         for canonical in &canonical_paths {
             if canonical.is_dir() {
-                cache_recursive(&mut dir_cache, canonical);
+                cache_dir_handle(&mut dir_cache, canonical);
             }
         }
 
