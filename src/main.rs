@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::str::FromStr;
 
+mod config;
 mod dir_cache;
 mod fid_parser;
 mod monitor;
@@ -18,6 +19,7 @@ mod query;
 mod systemd;
 mod utils;
 
+use config::Config;
 use monitor::Monitor;
 use query::Query;
 use utils::{format_datetime, format_size, parse_size};
@@ -384,6 +386,7 @@ impl FileEvent {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let config = Config::load()?;
 
     match cli.command {
         Commands::Monitor {
@@ -396,10 +399,25 @@ async fn main() -> Result<()> {
             format,
             recursive,
         } => {
+            let config = config.monitor.unwrap_or_default();
+
+            let paths = if paths.is_empty() {
+                config.paths.unwrap_or_default()
+            } else {
+                paths
+            };
+
             if paths.is_empty() {
                 eprintln!("Error: Please specify at least one monitor path");
                 process::exit(1);
             }
+
+            let min_size = min_size.or(config.min_size);
+            let types = types.or(config.types);
+            let exclude = exclude.or(config.exclude);
+            let all_events = all_events || config.all_events.unwrap_or(false);
+            let output = output.or(config.output);
+            let recursive = recursive || config.recursive.unwrap_or(false);
 
             let min_size_bytes = min_size.map(|s| parse_size(&s)).transpose()?;
 
@@ -440,11 +458,21 @@ async fn main() -> Result<()> {
             format,
             sort,
         } => {
-            let log_file = log_file.unwrap_or_else(|| {
+            let config = config.query.unwrap_or_default();
+
+            let log_file = log_file.or(config.log_file).unwrap_or_else(|| {
                 dirs::home_dir()
                     .map(|h: PathBuf| h.join(".fsmon").join("history.log"))
                     .unwrap_or_else(|| PathBuf::from("history.log"))
             });
+
+            let since = since.or(config.since);
+            let until = until.or(config.until);
+            let pid = pid.or(config.pid);
+            let cmd = cmd.or(config.cmd);
+            let user = user.or(config.user);
+            let types = types.or(config.types);
+            let min_size = min_size.or(config.min_size);
 
             let min_size_bytes = min_size.map(|s| parse_size(&s)).transpose()?;
 
@@ -513,11 +541,21 @@ async fn main() -> Result<()> {
             max_size,
             dry_run,
         } => {
-            let log_file = log_file.unwrap_or_else(|| {
+            let config = config.clean.unwrap_or_default();
+
+            let log_file = log_file.or(config.log_file).unwrap_or_else(|| {
                 dirs::home_dir()
                     .map(|h: PathBuf| h.join(".fsmon").join("history.log"))
                     .unwrap_or_else(|| PathBuf::from("history.log"))
             });
+
+            let keep_days = if keep_days == 30 {
+                config.keep_days.unwrap_or(30)
+            } else {
+                keep_days
+            };
+
+            let max_size = max_size.or(config.max_size);
 
             let max_size_bytes = max_size.map(|s| parse_size(&s)).transpose()?;
 
