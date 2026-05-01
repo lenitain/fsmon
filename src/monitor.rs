@@ -13,8 +13,6 @@ use std::fs::{self, OpenOptions};
 use std::num::NonZeroUsize;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use lru::LruCache;
 use tokio::io::unix::AsyncFd;
@@ -119,13 +117,6 @@ impl Monitor {
         self.proc_cache = Some(proc_cache::start_proc_listener());
         // Brief wait for listener to complete subscription
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-        let running = Arc::new(AtomicBool::new(true));
-        let r = running.clone();
-        tokio::spawn(async move {
-            tokio::signal::ctrl_c().await.ok();
-            r.store(false, Ordering::SeqCst);
-        });
 
         // Initialize fanotify, enable FID mode to support all directory entry events
         let fan_fd = fanotify_init(
@@ -267,54 +258,57 @@ impl Monitor {
 
         let mut buf = vec![0u8; 4096 * 8]; // 32KB, reused across loop iterations
 
-        let async_fd = AsyncFd::new(FanFd(fan_fd))
-            .context("failed to register fanotify fd with tokio")?;
+        let async_fd =
+            AsyncFd::new(FanFd(fan_fd)).context("failed to register fanotify fd with tokio")?;
 
-        while running.load(Ordering::SeqCst) {
-            // Wait for the fd to become readable (epoll-backed, zero-delay wakeup)
-            let mut guard = async_fd.readable().await?;
+        loop {
+            tokio::select! {
+                result = async_fd.readable() => {
+                    let mut guard = result?;
 
-            let events = fid_parser::read_fid_events(fan_fd, &mount_fds, &mut dir_cache, &mut buf);
+                    let events = fid_parser::read_fid_events(fan_fd, &mount_fds, &mut dir_cache, &mut buf);
 
-            if events.is_empty() {
-                // No events actually available — clear readiness and re-wait
-                guard.clear_ready();
-                continue;
-            }
-
-            // inode mark mode: dynamically add marks and update handle cache when new subdirectories are created or moved in
-            if !use_fs_mark && self.recursive {
-                for raw in &events {
-                    let is_dir_create = raw.mask & FAN_CREATE != 0 && raw.mask & FAN_ONDIR != 0;
-                    let is_dir_moved_to = raw.mask & FAN_MOVED_TO != 0 && raw.mask & FAN_ONDIR != 0;
-                    if (is_dir_create || is_dir_moved_to) && raw.path.is_dir() {
-                        let _ = mark_directory(fan_fd, mask, &raw.path);
-                        mark_recursive(fan_fd, mask, &raw.path);
-                        dir_cache::cache_recursive(&mut dir_cache, &raw.path);
-                    }
-                }
-            }
-
-            for raw in &events {
-                // FAN_Q_OVERFLOW: queue overflow warning (auto-delivered by kernel, not in subscription mask)
-                if raw.mask & FAN_Q_OVERFLOW != 0 {
-                    eprintln!("[WARNING] fanotify queue overflow - some events may have been lost");
-                    continue;
-                }
-
-                let event_types = fid_parser::mask_to_event_types(raw.mask);
-
-                for event_type in event_types {
-                    let event = self.build_file_event(raw, event_type);
-
-                    // filesystem mark mode: userspace path prefix filtering
-                    if use_fs_mark && !self.is_path_in_scope(&event.path, &canonical_paths) {
+                    if events.is_empty() {
+                        guard.clear_ready();
                         continue;
                     }
 
-                    if self.should_output(&event) {
-                        output::output_event(&event, self.format, &mut output_file)?;
+                    // inode mark mode: dynamically add marks and update handle cache
+                    if !use_fs_mark && self.recursive {
+                        for raw in &events {
+                            let is_dir_create = raw.mask & FAN_CREATE != 0 && raw.mask & FAN_ONDIR != 0;
+                            let is_dir_moved_to = raw.mask & FAN_MOVED_TO != 0 && raw.mask & FAN_ONDIR != 0;
+                            if (is_dir_create || is_dir_moved_to) && raw.path.is_dir() {
+                                let _ = mark_directory(fan_fd, mask, &raw.path);
+                                mark_recursive(fan_fd, mask, &raw.path);
+                                dir_cache::cache_recursive(&mut dir_cache, &raw.path);
+                            }
+                        }
                     }
+
+                    for raw in &events {
+                        if raw.mask & FAN_Q_OVERFLOW != 0 {
+                            eprintln!("[WARNING] fanotify queue overflow - some events may have been lost");
+                            continue;
+                        }
+
+                        let event_types = fid_parser::mask_to_event_types(raw.mask);
+
+                        for event_type in event_types {
+                            let event = self.build_file_event(raw, event_type);
+
+                            if use_fs_mark && !self.is_path_in_scope(&event.path, &canonical_paths) {
+                                continue;
+                            }
+
+                            if self.should_output(&event) {
+                                output::output_event(&event, self.format, &mut output_file)?;
+                            }
+                        }
+                    }
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    break;
                 }
             }
         }
@@ -436,6 +430,7 @@ fn mark_recursive(fan_fd: i32, mask: u64, dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn test_should_output_no_filters() {
