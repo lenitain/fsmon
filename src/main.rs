@@ -68,8 +68,8 @@ enum Commands {
         output: Option<PathBuf>,
 
         /// Output format (human, json, csv)
-        #[arg(short, long, value_enum, default_value = "human")]
-        format: OutputFormat,
+        #[arg(short, long, value_enum)]
+        format: Option<OutputFormat>,
 
         /// Recursively monitor all subdirectories
         #[arg(short, long)]
@@ -113,12 +113,12 @@ enum Commands {
         min_size: Option<String>,
 
         /// Output format (human, json, csv)
-        #[arg(short, long, value_enum, default_value = "human")]
-        format: OutputFormat,
+        #[arg(short, long, value_enum)]
+        format: Option<OutputFormat>,
 
         /// Sort by (time, size, pid)
-        #[arg(short = 'r', long, value_enum, default_value = "time")]
-        sort: SortBy,
+        #[arg(short = 'r', long, value_enum)]
+        sort: Option<SortBy>,
     },
 
     #[command(about = "Check systemd service status", long_about = LONG_ABOUT_STATUS)]
@@ -418,6 +418,9 @@ async fn main() -> Result<()> {
             let all_events = all_events || config.all_events.unwrap_or(false);
             let output = output.or(config.output);
             let recursive = recursive || config.recursive.unwrap_or(false);
+            let format = format
+                .or(config.format.as_deref().and_then(parse_output_format))
+                .unwrap_or(OutputFormat::Human);
 
             let min_size_bytes = min_size.map(|s| parse_size(&s)).transpose()?;
 
@@ -473,6 +476,12 @@ async fn main() -> Result<()> {
             let user = user.or(config.user);
             let types = types.or(config.types);
             let min_size = min_size.or(config.min_size);
+            let format = format
+                .or(config.format.as_deref().and_then(parse_output_format))
+                .unwrap_or(OutputFormat::Human);
+            let sort = sort
+                .or(config.sort.as_deref().and_then(parse_sort_by))
+                .unwrap_or(SortBy::Time);
 
             let min_size_bytes = min_size.map(|s| parse_size(&s)).transpose()?;
 
@@ -560,6 +569,24 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn parse_output_format(s: &str) -> Option<OutputFormat> {
+    match s.to_lowercase().as_str() {
+        "human" => Some(OutputFormat::Human),
+        "json" => Some(OutputFormat::Json),
+        "csv" => Some(OutputFormat::Csv),
+        _ => None,
+    }
+}
+
+fn parse_sort_by(s: &str) -> Option<SortBy> {
+    match s.to_lowercase().as_str() {
+        "time" => Some(SortBy::Time),
+        "size" => Some(SortBy::Size),
+        "pid" => Some(SortBy::Pid),
+        _ => None,
+    }
 }
 
 async fn clean_logs(
