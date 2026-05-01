@@ -3,7 +3,8 @@
 ## 当前状态
 
 - 编译通过，53 单元测试全绿，8 集成测试 `#[ignore]`
-- Clippy 3 个 `sort_by` → `sort_by_key` 警告
+- Clippy 无警告（R1 已修复）
+- P2 已完成：非 CREATE/MODIFY/CLOSE_WRITE 事件跳过 metadata syscall
 
 ---
 
@@ -47,6 +48,10 @@
 ### P5 [低] 监控循环固定 10ms sleep
 `monitor.rs:322` — 无事件时也等 10ms。FAN_NONBLOCK 模式下可用 epoll 实现零延迟唤醒。
 **修复**: 用 `tokio::io::unix::AsyncFd` 包装 fan_fd，事件驱动。
+
+### P6 [中] `file_size_cache` 无限增长（B2 后续）
+`monitor.rs:36` — `HashMap<PathBuf, u64>` 仅 DELETE/DELETE_SELF/MOVED_FROM 时移除条目。文件被打开、写入、重命名后条目永久累积，长时间监控 `/` 时内存缓慢泄漏。
+**修复**: 添加容量上限（LRU）、定期清理，或接受并记录边界。
 
 ---
 
@@ -98,6 +103,7 @@
 | P3 | 性能 | P2 减少 metadata syscall | 中 |
 | P3 | 性能 | P3 日志索引查询 | 大 |
 | P4 | 性能 | P4+P5 内存/延迟优化 | 中 |
+| P4 | 性能 | P6 file_size_cache 无限增长 | 中 |
 | P4 | 质量 | R5-R8 增强 | 小-中 |
 
-**下一步建议**: 处理 R2 monitor.rs 拆分（大复杂度，将 fid_parser/dir_cache/output 拆分为独立模块）。
+**下一步建议**: 处理 P6 `file_size_cache` 无限增长（B2 后续）。
