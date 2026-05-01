@@ -59,6 +59,7 @@ pub struct Monitor {
     all_events: bool,
     proc_cache: Option<ProcCache>,
     file_size_cache: LruCache<PathBuf, u64>,
+    buffer_size: usize,
 }
 
 impl Monitor {
@@ -72,12 +73,14 @@ impl Monitor {
         format: OutputFormat,
         recursive: bool,
         all_events: bool,
+        buffer_size: Option<usize>,
     ) -> Self {
         let exclude_regex = exclude.map(|p| {
             let escaped = regex::escape(&p);
             let pattern = escaped.replace("\\*", ".*");
             regex::Regex::new(&pattern).expect("invalid exclude pattern")
         });
+        let buffer_size = buffer_size.unwrap_or(4096 * 8); // Default 32KB
         Self {
             paths,
             min_size,
@@ -89,6 +92,7 @@ impl Monitor {
             all_events,
             proc_cache: None,
             file_size_cache: LruCache::new(NonZeroUsize::new(FILE_SIZE_CACHE_CAP).unwrap()),
+            buffer_size,
         }
     }
 
@@ -274,7 +278,7 @@ impl Monitor {
             }
         }
 
-        let mut buf = vec![0u8; 4096 * 8]; // 32KB, reused across loop iterations
+        let mut buf = vec![0u8; self.buffer_size];
 
         let async_fd =
             AsyncFd::new(FanFd(fan_fd)).context("failed to register fanotify fd with tokio")?;
@@ -461,6 +465,7 @@ mod tests {
             OutputFormat::Human,
             false,
             false,
+            None,
         );
         let event = make_event("/tmp/test.txt", EventType::Create, 1000, 1024);
         assert!(m.should_output(&event));
@@ -477,6 +482,7 @@ mod tests {
             OutputFormat::Human,
             false,
             false,
+            None,
         );
         assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, 0)));
         assert!(m.should_output(&make_event("/tmp/a", EventType::Delete, 1, 0)));
@@ -494,6 +500,7 @@ mod tests {
             OutputFormat::Human,
             false,
             false,
+            None,
         );
         assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, 2000)));
         assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, -2000)));
@@ -514,6 +521,7 @@ mod tests {
             OutputFormat::Human,
             false,
             false,
+            None,
         );
         // /tmp/test.tmp matches (ends with .tmp)
         assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
@@ -534,6 +542,7 @@ mod tests {
             OutputFormat::Human,
             false,
             false,
+            None,
         );
         assert!(m.should_output(&make_event("/tmp/test.txt", EventType::Create, 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
@@ -553,6 +562,7 @@ mod tests {
             OutputFormat::Human,
             false,
             false,
+            None,
         );
         // Passes all filters
         assert!(m.should_output(&make_event("/tmp/data", EventType::Create, 1, 200)));
@@ -575,6 +585,7 @@ mod tests {
             OutputFormat::Human,
             true,
             false,
+            None,
         );
         let watched = vec![PathBuf::from("/tmp")];
         assert!(m.is_path_in_scope(Path::new("/tmp"), &watched));
@@ -595,6 +606,7 @@ mod tests {
             OutputFormat::Human,
             false,
             false,
+            None,
         );
         let watched = vec![PathBuf::from("/tmp")];
         // Self matches
@@ -618,6 +630,7 @@ mod tests {
             OutputFormat::Human,
             true,
             false,
+            None,
         );
         let watched = vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")];
         assert!(m.is_path_in_scope(Path::new("/tmp/file"), &watched));

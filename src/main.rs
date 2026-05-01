@@ -422,6 +422,7 @@ async fn main() -> Result<()> {
                 format,
                 recursive,
                 all_events,
+                None, // buffer_size: will be added in H6
             );
 
             monitor.run().await?;
