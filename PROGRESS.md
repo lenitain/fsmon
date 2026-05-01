@@ -49,9 +49,9 @@
 `monitor.rs:322` — 无事件时也等 10ms。FAN_NONBLOCK 模式下可用 epoll 实现零延迟唤醒。
 **修复**: 用 `tokio::io::unix::AsyncFd` 包装 fan_fd，事件驱动。
 
-### P6 [中] `file_size_cache` 无限增长（B2 后续）
+### P6 [中] `file_size_cache` 无限增长（B2 后续）✅ 已修复
 `monitor.rs:36` — `HashMap<PathBuf, u64>` 仅 DELETE/DELETE_SELF/MOVED_FROM 时移除条目。文件被打开、写入、重命名后条目永久累积，长时间监控 `/` 时内存缓慢泄漏。
-**修复**: 添加容量上限（LRU）、定期清理，或接受并记录边界。
+**修复**: 用 `lru::LruCache`（容量 10000）替换 `HashMap`。`put`/`pop` 替代 `insert`/`remove`，LRU 淘汰最久未访问条目。
 
 ---
 
@@ -106,4 +106,4 @@
 | P4 | 性能 | P6 file_size_cache 无限增长 | 中 |
 | P4 | 质量 | R5-R8 增强 | 小-中 |
 
-**下一步建议**: 处理 P6 `file_size_cache` 无限增长（B2 后续）。
+**下一步建议**: 处理 P3 日志索引查询 或 P4/P5 内存/延迟优化。

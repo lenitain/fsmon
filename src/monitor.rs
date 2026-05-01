@@ -7,7 +7,9 @@ use fanotify::low_level::{
     FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC, FAN_Q_OVERFLOW, FAN_REPORT_DIR_FID, FAN_REPORT_FID,
     FAN_REPORT_NAME, O_CLOEXEC, O_RDONLY, fanotify_init, fanotify_mark,
 };
+use lru::LruCache;
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::ffi::CString;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -33,7 +35,7 @@ pub struct Monitor {
     recursive: bool,
     all_events: bool,
     proc_cache: Option<ProcCache>,
-    file_size_cache: HashMap<PathBuf, u64>,
+    file_size_cache: LruCache<PathBuf, u64>,
 }
 
 impl Monitor {
@@ -63,7 +65,7 @@ impl Monitor {
             recursive,
             all_events,
             proc_cache: None,
-            file_size_cache: HashMap::new(),
+            file_size_cache: LruCache::new(NonZeroUsize::new(10_000).unwrap()),
         }
     }
 
@@ -304,12 +306,12 @@ impl Monitor {
             // For CREATE/MODIFY/CLOSE_WRITE: get actual size and cache it
             EventType::Create | EventType::Modify | EventType::CloseWrite => {
                 let size = fs::metadata(&raw.path).map(|m| m.len()).unwrap_or(0);
-                self.file_size_cache.insert(raw.path.clone(), size);
+                self.file_size_cache.put(raw.path.clone(), size);
                 size as i64
             }
             // For DELETE/DELETE_SELF/MOVED_FROM: use cached size (file already gone)
             EventType::Delete | EventType::DeleteSelf | EventType::MovedFrom => {
-                self.file_size_cache.remove(&raw.path).unwrap_or(0) as i64
+                self.file_size_cache.pop(&raw.path).unwrap_or(0) as i64
             }
             // For other events (OPEN, ACCESS, ATTRIB, etc.): use cached size if available
             _ => self.file_size_cache.get(&raw.path).map_or(0, |&s| s as i64),
@@ -573,6 +575,32 @@ mod tests {
         assert!(m.is_path_in_scope(Path::new("/tmp/file"), &watched));
         assert!(m.is_path_in_scope(Path::new("/var/log/syslog"), &watched));
         assert!(!m.is_path_in_scope(Path::new("/etc/passwd"), &watched));
+    }
+
+    #[test]
+    fn test_file_size_cache_eviction() {
+        use lru::LruCache;
+        use std::num::NonZeroUsize;
+
+        let mut cache = LruCache::new(NonZeroUsize::new(3).unwrap());
+
+        cache.put(PathBuf::from("/a"), 100);
+        cache.put(PathBuf::from("/b"), 200);
+        cache.put(PathBuf::from("/c"), 300);
+        assert_eq!(cache.len(), 3);
+
+        // Inserting a 4th entry evicts the least recently used (/a)
+        cache.put(PathBuf::from("/d"), 400);
+        assert_eq!(cache.len(), 3);
+        assert!(cache.get(&PathBuf::from("/a")).is_none());
+        assert_eq!(cache.get(&PathBuf::from("/b")), Some(&200));
+        assert_eq!(cache.get(&PathBuf::from("/d")), Some(&400));
+
+        // Accessing /b promotes it; inserting /e evicts /c (now LRU)
+        cache.get(&PathBuf::from("/b"));
+        cache.put(PathBuf::from("/e"), 500);
+        assert!(cache.get(&PathBuf::from("/c")).is_none());
+        assert_eq!(cache.get(&PathBuf::from("/b")), Some(&200));
     }
 
     fn make_event(path: &str, event_type: EventType, pid: u32, size: i64) -> FileEvent {

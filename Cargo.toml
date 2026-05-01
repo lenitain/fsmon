@@ -34,6 +34,7 @@ libc = "0.2"
 anyhow = "1.0"
 directories = "5.0"
 dirs = "5.0"
+lru = "0.12"
 regex = "1.10"
 smallvec = "1.15.1"
 
