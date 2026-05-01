@@ -86,8 +86,9 @@
 `utils.rs:167-186` — 长时间运行的用户增删不体现。
 **提议**: 可配置刷新间隔，或监听 `/etc/passwd` inotify 事件。
 
-### R8 [低] `OutputFormat::Csv` 日志文件仍存储 JSON
-`monitor.rs:418-433` — 终端显示 CSV，但 `output_file` 始终写 JSON。文档一致（日志统一 JSON），但可提醒。
+### R8 [低] `OutputFormat::Csv` 日志文件仍存储 JSON ✅ 已修复
+`output.rs` — 终端显示 CSV/Human/Json，但 `output_file` 始终写 JSON。格式不统一。
+**修复**: CSV 和 Json 格式终端与日志文件统一；Human 格式日志仍写 JSON（非结构化不可逆）。新增 `FileEvent::to_csv_string()`/`from_csv_str()` 使用 `csv` crate 正确处理带逗号字段。新增 `parse_log_line()` 自动检测 JSON/CSV 格式解析。`query.rs` 和 `main.rs` clean_logs 逻辑统一使用 `parse_log_line`。
 
 ---
 

@@ -25,19 +25,10 @@ pub fn output_event(
             }
         }
         OutputFormat::Csv => {
-            let csv = format!(
-                "{},{},{},{},{},{},{}",
-                event.time.to_rfc3339(),
-                event.event_type,
-                event.path.display(),
-                event.pid,
-                event.cmd,
-                event.user,
-                event.size_change
-            );
-            println!("{}", csv);
+            let csv_line = event.to_csv_string();
+            println!("{}", csv_line);
             if let Some(file) = output_file {
-                writeln!(file, "{}", serde_json::to_string(event)?)?;
+                writeln!(file, "{}", csv_line)?;
             }
         }
     }

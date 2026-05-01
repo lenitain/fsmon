@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::PathBuf;
 
 use crate::utils::{format_size, parse_time};
-use crate::{EventType, FileEvent, OutputFormat, SortBy};
+use crate::{EventType, FileEvent, OutputFormat, SortBy, parse_log_line};
 
 pub struct Query {
     log_file: PathBuf,
@@ -127,9 +127,9 @@ impl Query {
                 continue;
             }
 
-            let event: FileEvent = match serde_json::from_str(line_str) {
-                Ok(e) => e,
-                Err(_) => continue,
+            let event: FileEvent = match parse_log_line(line_str) {
+                Some(e) => e,
+                None => continue,
             };
 
             // Time filtering is already narrowed by binary search, but apply
@@ -224,7 +224,7 @@ impl Query {
             return None;
         }
 
-        let event: FileEvent = serde_json::from_str(line).ok()?;
+        let event: FileEvent = parse_log_line(line)?;
         Some((event.time, line_start))
     }
 

@@ -381,6 +381,66 @@ impl FileEvent {
             size_str
         )
     }
+
+    pub fn to_csv_string(&self) -> String {
+        use csv::WriterBuilder;
+        let mut wtr = WriterBuilder::new().has_headers(false).from_writer(vec![]);
+        wtr.write_record([
+            self.time.to_rfc3339(),
+            self.event_type.to_string(),
+            self.path.display().to_string(),
+            self.pid.to_string(),
+            self.cmd.clone(),
+            self.user.clone(),
+            self.size_change.to_string(),
+        ])
+        .expect("csv write failed");
+        String::from_utf8(wtr.into_inner().expect("csv flush failed"))
+            .expect("csv not utf8")
+            .trim()
+            .to_string()
+    }
+
+    pub fn from_csv_str(s: &str) -> Option<Self> {
+        use csv::ReaderBuilder;
+        let mut rdr = ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(s.as_bytes());
+        let record = rdr.records().next()?.ok()?;
+        if record.len() < 7 {
+            return None;
+        }
+        let time = DateTime::parse_from_rfc3339(&record[0])
+            .ok()?
+            .with_timezone(&Utc);
+        let event_type: EventType = record[1].parse().ok()?;
+        let path = PathBuf::from(&record[2]);
+        let pid: u32 = record[3].parse().ok()?;
+        let cmd = record[4].to_string();
+        let user = record[5].to_string();
+        let size_change: i64 = record[6].parse().ok()?;
+        Some(FileEvent {
+            time,
+            event_type,
+            path,
+            pid,
+            cmd,
+            user,
+            size_change,
+        })
+    }
+}
+
+pub fn parse_log_line(line: &str) -> Option<FileEvent> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.starts_with('{') {
+        serde_json::from_str(trimmed).ok()
+    } else {
+        FileEvent::from_csv_str(trimmed)
+    }
 }
 
 #[tokio::main]
@@ -620,7 +680,7 @@ async fn clean_logs(
                 continue;
             }
 
-            let should_keep = if let Ok(event) = serde_json::from_str::<FileEvent>(&line) {
+            let should_keep = if let Some(event) = parse_log_line(&line) {
                 event.time >= cutoff_time
             } else {
                 true
