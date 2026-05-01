@@ -9,7 +9,7 @@
 
 ## 1. Bug
 
-### B1 [高] proc_cache `EINTR` 信号中断导致监听线程退出
+### B1 [高] proc_cache `EINTR` 信号中断导致监听线程退出 ✅ 已修复
 `proc_cache.rs:100` — `libc::recv` 返回 `-1(errno=EINTR)` 时，循环直接 `break`，proc connector 线程死亡。短生命周期进程缓存失效，直到重启。
 **修复**: 对 `EINTR` 做 `continue` 重试；检查 `errno` 区分致命错误。
 
@@ -48,7 +48,7 @@
 
 ## 3. 代码质量与设计改进
 
-### R1 [中] clippy 修复
+### R1 [中] clippy 修复 ✅ 已修复
 `query.rs:153,156,159` — `sort_by` 改为 `sort_by_key`，共 3 处。
 
 ### R2 [中] `monitor.rs` 文件过大 (1253 行)
@@ -94,4 +94,4 @@
 | P4 | 性能 | P4+P5 内存/延迟优化 | 中 |
 | P4 | 质量 | R5-R8 增强 | 小-中 |
 
-**下一步建议**: 先修 B1 + R1（最小改动），再做 B2 + R4，然后处理 P1 性能瓶颈。
+**下一步建议**: 先做 B2 + R4，然后处理 P1 性能瓶颈。
