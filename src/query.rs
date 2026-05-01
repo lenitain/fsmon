@@ -194,7 +194,10 @@ impl Query {
     ) -> Option<(DateTime<Utc>, u64)> {
         // Seek backward to find the start of the line containing `offset`.
         // Read a small chunk before `offset` and scan backward for a newline.
-        let scan_back = 256u64;
+        // 4096 bytes handles most JSON log lines; if a line is longer, the
+        // binary search may land inside the previous line but will still
+        // converge correctly because timestamps are monotonically increasing.
+        let scan_back = 4096u64;
         let read_start = offset.saturating_sub(scan_back);
 
         reader.seek(SeekFrom::Start(read_start)).ok()?;
@@ -302,6 +305,9 @@ impl Query {
     /// Expand a byte offset backward by up to `max_lines` lines to catch
     /// minor out-of-order entries near the boundary.
     /// Returns the byte offset of the line that is `max_lines` before `offset`.
+    ///
+    /// Instead of scanning from file start (O(offset)), scans a bounded
+    /// window before `offset`. Doubles the window size on retry if needed.
     fn expand_offset_backward(
         &self,
         reader: &mut BufReader<File>,
@@ -312,10 +318,85 @@ impl Query {
             return Ok(offset);
         }
 
-        // Read from start up to offset, tracking the last max_lines line positions
+        let file_len = reader.get_ref().metadata()?.len();
+        if offset >= file_len {
+            // offset is at or past EOF; scan the whole file
+            return self.expand_offset_backward_from_start(reader, file_len, max_lines);
+        }
+
+        // Start with a reasonable window: 512 bytes per line on average.
+        // Retry with larger windows if we don't find enough lines.
+        let mut buf_size: u64 = (max_lines as u64).saturating_mul(512).max(4096);
+
+        loop {
+            let scan_start = offset.saturating_sub(buf_size);
+
+            reader.seek(SeekFrom::Start(scan_start))?;
+            let mut ring_buf = vec![0u64; max_lines];
+            let mut ring_idx = 0usize;
+            let mut ring_count = 0usize;
+            let mut pos = scan_start;
+
+            // If not starting at file start, skip the partial first line
+            if scan_start > 0 {
+                let mut discard = Vec::new();
+                let bytes = reader.read_until(b'\n', &mut discard)?;
+                if bytes == 0 {
+                    // Empty region — fall back to reading from start
+                    return self.expand_offset_backward_from_start(reader, offset, max_lines);
+                }
+                pos += bytes as u64;
+            }
+
+            loop {
+                if pos >= offset {
+                    break;
+                }
+                let mut line = Vec::new();
+                let bytes_read = reader.read_until(b'\n', &mut line)?;
+                if bytes_read == 0 {
+                    break;
+                }
+                ring_buf[ring_idx % max_lines] = pos;
+                ring_idx += 1;
+                ring_count += 1;
+                pos += bytes_read as u64;
+            }
+
+            if ring_count >= max_lines {
+                // Found enough lines; return the earliest of the last max_lines
+                return Ok(ring_buf[ring_idx % max_lines]);
+            }
+
+            if scan_start == 0 {
+                // Already scanning from file start and still not enough lines
+                if ring_count == 0 {
+                    return Ok(0);
+                }
+                return Ok(ring_buf[0]);
+            }
+
+            // Not enough lines in this window — double and retry
+            let new_buf_size = buf_size.saturating_mul(2);
+            if new_buf_size >= offset {
+                // Will cover from file start on next iteration; just do it directly
+                return self.expand_offset_backward_from_start(reader, offset, max_lines);
+            }
+            buf_size = new_buf_size;
+        }
+    }
+
+    /// Fallback: scan from file start up to `offset`, tracking the last
+    /// `max_lines` line start positions.
+    fn expand_offset_backward_from_start(
+        &self,
+        reader: &mut BufReader<File>,
+        offset: u64,
+        max_lines: usize,
+    ) -> Result<u64> {
         reader.seek(SeekFrom::Start(0))?;
         let mut ring_buf = vec![0u64; max_lines];
-        let mut ring_idx = 0;
+        let mut ring_idx = 0usize;
         let mut ring_count = 0usize;
         let mut pos = 0u64;
 
@@ -338,7 +419,6 @@ impl Query {
             return Ok(0);
         }
 
-        // The earliest line position among the last max_lines
         let start_idx = if ring_count >= max_lines {
             ring_idx % max_lines
         } else {
@@ -1093,5 +1173,143 @@ mod tests {
         assert!(events[0].time >= since);
 
         let _ = std::fs::remove_dir_all(log_path.parent().unwrap());
+    }
+
+    #[test]
+    fn test_binary_search_long_lines() {
+        // Lines > 4096 bytes must not break seek_and_parse_time
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("fsmon_test_bin_long_lines");
+        std::fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("test.log");
+
+        let base = Utc.with_ymd_and_hms(2024, 6, 1, 0, 0, 0).unwrap();
+        let long_path = format!("/tmp/{}", "a".repeat(5000));
+        let mut f = std::fs::File::create(&log_path).unwrap();
+        for i in 0..100 {
+            let t = base + chrono::Duration::minutes(i);
+            let e = FileEvent {
+                time: t,
+                event_type: EventType::Create,
+                path: PathBuf::from(&long_path),
+                pid: (i as u32) + 1,
+                cmd: "test".into(),
+                user: "root".into(),
+                size_change: 0,
+            };
+            writeln!(f, "{}", serde_json::to_string(&e).unwrap()).unwrap();
+        }
+
+        let q = Query::new(
+            log_path.clone(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            OutputFormat::Human,
+            SortBy::Time,
+        );
+
+        let since = base + chrono::Duration::minutes(50);
+        let events = q.read_events(Some(since), None, None).unwrap();
+        assert_eq!(events.len(), 50);
+        assert!(events[0].time >= since);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_expand_offset_backward_few_lines() {
+        // File with fewer lines than max_lines — must still work correctly
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("fsmon_test_expand_few");
+        std::fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("test.log");
+
+        let base = Utc.with_ymd_and_hms(2024, 6, 1, 0, 0, 0).unwrap();
+        let mut f = std::fs::File::create(&log_path).unwrap();
+        for i in 0..5 {
+            let t = base + chrono::Duration::minutes(i);
+            let e = FileEvent {
+                time: t,
+                event_type: EventType::Create,
+                path: PathBuf::from(format!("/tmp/file{}", i)),
+                pid: (i as u32) + 1,
+                cmd: "test".into(),
+                user: "root".into(),
+                size_change: 0,
+            };
+            writeln!(f, "{}", serde_json::to_string(&e).unwrap()).unwrap();
+        }
+
+        let q = Query::new(
+            log_path.clone(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            OutputFormat::Human,
+            SortBy::Time,
+        );
+
+        // since before all events — expand_backward with max_lines=50 should
+        // return offset 0 even though file only has 5 lines
+        let before_all = base - chrono::Duration::hours(1);
+        let events = q.read_events(Some(before_all), None, None).unwrap();
+        assert_eq!(events.len(), 5);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_expand_offset_backward_large_lines() {
+        // File with long lines where bounded scanning must still find enough lines
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("fsmon_test_expand_large");
+        std::fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("test.log");
+
+        let base = Utc.with_ymd_and_hms(2024, 6, 1, 0, 0, 0).unwrap();
+        let long_cmd = "x".repeat(10000);
+        let mut f = std::fs::File::create(&log_path).unwrap();
+        for i in 0..100 {
+            let t = base + chrono::Duration::minutes(i);
+            let e = FileEvent {
+                time: t,
+                event_type: EventType::Create,
+                path: PathBuf::from(format!("/tmp/file{}", i)),
+                pid: (i as u32) + 1,
+                cmd: long_cmd.clone(),
+                user: "root".into(),
+                size_change: 0,
+            };
+            writeln!(f, "{}", serde_json::to_string(&e).unwrap()).unwrap();
+        }
+
+        let q = Query::new(
+            log_path.clone(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            OutputFormat::Human,
+            SortBy::Time,
+        );
+
+        let since = base + chrono::Duration::minutes(50);
+        let events = q.read_events(Some(since), None, None).unwrap();
+        assert_eq!(events.len(), 50);
+        assert!(events[0].time >= since);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
