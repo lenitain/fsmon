@@ -19,10 +19,10 @@ StandardError=journal
 
 # Security hardening
 NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/var/log
-PrivateTmp=yes
+ProtectSystem={PROTECT_SYSTEM}
+ProtectHome={PROTECT_HOME}
+ReadWritePaths={READ_WRITE_PATHS}
+PrivateTmp={PRIVATE_TMP}
 
 [Install]
 WantedBy=multi-user.target
@@ -32,7 +32,15 @@ fn get_service_file_path() -> PathBuf {
     PathBuf::from("/etc/systemd/system").join(format!("{}.service", SERVICE_NAME))
 }
 
-pub fn install(monitor_paths: &[PathBuf], log_file: Option<&PathBuf>, force: bool) -> Result<()> {
+pub fn install(
+    monitor_paths: &[PathBuf],
+    log_file: Option<&PathBuf>,
+    force: bool,
+    protect_system: Option<&str>,
+    protect_home: Option<&str>,
+    read_write_paths: Option<&[String]>,
+    private_tmp: Option<&str>,
+) -> Result<()> {
     // Check if running as root
     if !is_root() {
         bail!("Installation requires root privileges. Please run with sudo.");
@@ -68,9 +76,21 @@ pub fn install(monitor_paths: &[PathBuf], log_file: Option<&PathBuf>, force: boo
         exec_args.push(log.display().to_string());
     }
 
-    // Generate service file with detected binary path
+    // Generate service file with detected binary path and security options
     let exec_start = exec_args.join(" ");
-    let service_content = SERVICE_TEMPLATE.replace("EXEC_START_PLACEHOLDER", &exec_start);
+    let protect_system = protect_system.unwrap_or("strict");
+    let protect_home = protect_home.unwrap_or("read-only");
+    let read_write_paths = read_write_paths
+        .map(|v| v.join(","))
+        .unwrap_or_else(|| "/var/log".to_string());
+    let private_tmp = private_tmp.unwrap_or("yes");
+
+    let service_content = SERVICE_TEMPLATE
+        .replace("EXEC_START_PLACEHOLDER", &exec_start)
+        .replace("{PROTECT_SYSTEM}", protect_system)
+        .replace("{PROTECT_HOME}", protect_home)
+        .replace("{READ_WRITE_PATHS}", &read_write_paths)
+        .replace("{PRIVATE_TMP}", private_tmp);
     fs::write(&service_file, &service_content)
         .with_context(|| format!("Failed to write service file to {}", service_file.display()))?;
 

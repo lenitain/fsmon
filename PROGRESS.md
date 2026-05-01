@@ -54,9 +54,11 @@
 `utils.rs:167-186` — `/etc/passwd` 初次加载后静态缓存，运行时新增用户不体现
 - **提议**: 可配置刷新间隔或 inotify 监听
 
-### H9 [低] systemd 安全加固策略硬编码
+### H9 [低] systemd 安全加固策略可配置 ✅  CLI + 配置文件(已完成)
 `systemd.rs:20-23` — `ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths=/var/log`, `PrivateTmp=yes`
-- 某些场景需要放宽约束（如监控 `/home` 时 `ProtectHome` 应设为 `false`）
+- 支持 `--protect-system` / `--protect-home` / `--read-write-paths` / `--private-tmp` CLI 参数
+- 支持 `[install]` 配置文件节: `protect_system`, `protect_home`, `read_write_paths`, `private_tmp`
+- 优先级: CLI > 配置文件 > 硬编码默认值
 
 ### H10 [低] Cargo.toml 元数据占位符
 - `version = "0.1.4"`（发布前需更新）

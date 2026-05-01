@@ -8,6 +8,7 @@ pub struct Config {
     pub monitor: Option<MonitorConfig>,
     pub query: Option<QueryConfig>,
     pub clean: Option<CleanConfig>,
+    pub install: Option<InstallConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -42,6 +43,18 @@ pub struct CleanConfig {
     pub log_file: Option<PathBuf>,
     pub keep_days: Option<u32>,
     pub max_size: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct InstallConfig {
+    #[serde(default)]
+    pub protect_system: Option<String>,
+    #[serde(default)]
+    pub protect_home: Option<String>,
+    #[serde(default)]
+    pub read_write_paths: Option<Vec<String>>,
+    #[serde(default)]
+    pub private_tmp: Option<String>,
 }
 
 impl Config {
@@ -215,5 +228,41 @@ types = "MODIFY"
         let cli_types: Option<String> = None;
         let merged_types = cli_types.or(monitor.types.clone());
         assert_eq!(merged_types.as_deref(), Some("MODIFY"));
+    }
+
+    #[test]
+    fn test_install_config() {
+        let toml_content = r#"
+[install]
+protect_system = "false"
+protect_home = "false"
+read_write_paths = ["/var/log", "/tmp"]
+private_tmp = "no"
+"#;
+
+        let config: Config = toml::from_str(toml_content).unwrap();
+        let install = config.install.unwrap();
+        assert_eq!(install.protect_system.as_deref(), Some("false"));
+        assert_eq!(install.protect_home.as_deref(), Some("false"));
+        assert_eq!(
+            install.read_write_paths.unwrap(),
+            vec!["/var/log".to_string(), "/tmp".to_string()]
+        );
+        assert_eq!(install.private_tmp.as_deref(), Some("no"));
+    }
+
+    #[test]
+    fn test_install_config_partial() {
+        let toml_content = r#"
+[install]
+protect_system = "false"
+"#;
+
+        let config: Config = toml::from_str(toml_content).unwrap();
+        let install = config.install.unwrap();
+        assert_eq!(install.protect_system.as_deref(), Some("false"));
+        assert!(install.protect_home.is_none());
+        assert!(install.read_write_paths.is_none());
+        assert!(install.private_tmp.is_none());
     }
 }

@@ -147,6 +147,22 @@ enum Commands {
         /// Force overwrite existing service file
         #[arg(short, long)]
         force: bool,
+
+        /// ProtectSystem value (default: strict)
+        #[arg(long, value_name = "VALUE")]
+        protect_system: Option<String>,
+
+        /// ProtectHome value (default: read-only)
+        #[arg(long, value_name = "VALUE")]
+        protect_home: Option<String>,
+
+        /// ReadWritePaths value (supports multiple, default: /var/log)
+        #[arg(long, value_name = "PATH")]
+        read_write_paths: Vec<String>,
+
+        /// PrivateTmp value (default: yes)
+        #[arg(long, value_name = "VALUE")]
+        private_tmp: Option<String>,
     },
 
     #[command(about = help::about(HelpTopic::Uninstall), long_about = help::long_about(HelpTopic::Uninstall))]
@@ -517,12 +533,33 @@ async fn main() -> Result<()> {
             paths,
             output,
             force,
+            protect_system,
+            protect_home,
+            read_write_paths,
+            private_tmp,
         } => {
             if paths.is_empty() {
                 eprintln!("Error: Please specify at least one monitor path");
                 process::exit(1);
             }
-            systemd::install(&paths, output.as_ref(), force)?;
+            let install_cfg = config.install.as_ref();
+            let ps = protect_system
+                .as_deref()
+                .or(install_cfg.and_then(|c| c.protect_system.as_deref()));
+            let ph = protect_home
+                .as_deref()
+                .or(install_cfg.and_then(|c| c.protect_home.as_deref()));
+            let pt = private_tmp
+                .as_deref()
+                .or(install_cfg.and_then(|c| c.private_tmp.as_deref()));
+            let rwp: Option<&[String]> = if read_write_paths.is_empty() {
+                install_cfg
+                    .and_then(|c| c.read_write_paths.as_ref())
+                    .map(|v| v.as_slice())
+            } else {
+                Some(read_write_paths.as_slice())
+            };
+            systemd::install(&paths, output.as_ref(), force, ps, ph, rwp, pt)?;
         }
         Commands::Uninstall => {
             systemd::uninstall()?;
