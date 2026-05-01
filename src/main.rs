@@ -424,7 +424,7 @@ async fn main() -> Result<()> {
                 recursive,
                 all_events,
                 buffer_size,
-            );
+            )?;
 
             monitor.run().await?;
         }

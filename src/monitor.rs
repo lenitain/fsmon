@@ -74,14 +74,22 @@ impl Monitor {
         recursive: bool,
         all_events: bool,
         buffer_size: Option<usize>,
-    ) -> Self {
+    ) -> Result<Self> {
         let exclude_regex = exclude.map(|p| {
             let escaped = regex::escape(&p);
             let pattern = escaped.replace("\\*", ".*");
             regex::Regex::new(&pattern).expect("invalid exclude pattern")
         });
         let buffer_size = buffer_size.unwrap_or(4096 * 8); // Default 32KB
-        Self {
+
+        if buffer_size < 4096 {
+            bail!("buffer_size must be at least 4096 bytes (4KB)");
+        }
+        if buffer_size > 1024 * 1024 {
+            bail!("buffer_size must not exceed 1048576 bytes (1MB)");
+        }
+
+        Ok(Self {
             paths,
             min_size,
             event_types,
@@ -93,7 +101,7 @@ impl Monitor {
             proc_cache: None,
             file_size_cache: LruCache::new(NonZeroUsize::new(FILE_SIZE_CACHE_CAP).unwrap()),
             buffer_size,
-        }
+        })
     }
 
     pub async fn run(mut self) -> Result<()> {
@@ -466,7 +474,8 @@ mod tests {
             false,
             false,
             None,
-        );
+        )
+        .unwrap();
         let event = make_event("/tmp/test.txt", EventType::Create, 1000, 1024);
         assert!(m.should_output(&event));
     }
@@ -483,7 +492,8 @@ mod tests {
             false,
             false,
             None,
-        );
+        )
+        .unwrap();
         assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, 0)));
         assert!(m.should_output(&make_event("/tmp/a", EventType::Delete, 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/a", EventType::Modify, 1, 0)));
@@ -501,7 +511,8 @@ mod tests {
             false,
             false,
             None,
-        );
+        )
+        .unwrap();
         assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, 2000)));
         assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, -2000)));
         assert!(!m.should_output(&make_event("/tmp/a", EventType::Create, 1, 500)));
@@ -522,7 +533,8 @@ mod tests {
             false,
             false,
             None,
-        );
+        )
+        .unwrap();
         // /tmp/test.tmp matches (ends with .tmp)
         assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/foo.tmp", EventType::Delete, 1, 0)));
@@ -543,7 +555,8 @@ mod tests {
             false,
             false,
             None,
-        );
+        )
+        .unwrap();
         assert!(m.should_output(&make_event("/tmp/test.txt", EventType::Create, 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
         assert!(m.should_output(&make_event("/tmp/foo.tmp", EventType::Delete, 1, 0)));
@@ -563,7 +576,8 @@ mod tests {
             false,
             false,
             None,
-        );
+        )
+        .unwrap();
         // Passes all filters
         assert!(m.should_output(&make_event("/tmp/data", EventType::Create, 1, 200)));
         // Wrong type
@@ -586,7 +600,8 @@ mod tests {
             true,
             false,
             None,
-        );
+        )
+        .unwrap();
         let watched = vec![PathBuf::from("/tmp")];
         assert!(m.is_path_in_scope(Path::new("/tmp"), &watched));
         assert!(m.is_path_in_scope(Path::new("/tmp/sub"), &watched));
@@ -607,7 +622,8 @@ mod tests {
             false,
             false,
             None,
-        );
+        )
+        .unwrap();
         let watched = vec![PathBuf::from("/tmp")];
         // Self matches
         assert!(m.is_path_in_scope(Path::new("/tmp"), &watched));
@@ -631,7 +647,8 @@ mod tests {
             true,
             false,
             None,
-        );
+        )
+        .unwrap();
         let watched = vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")];
         assert!(m.is_path_in_scope(Path::new("/tmp/file"), &watched));
         assert!(m.is_path_in_scope(Path::new("/var/log/syslog"), &watched));
@@ -662,6 +679,53 @@ mod tests {
         cache.put(PathBuf::from("/e"), 500);
         assert!(cache.get(&PathBuf::from("/c")).is_none());
         assert_eq!(cache.get(&PathBuf::from("/b")), Some(&200));
+    }
+
+    #[test]
+    fn test_monitor_buffer_size_validation() {
+        // Test minimum buffer size
+        let result = Monitor::new(
+            vec![PathBuf::from("/tmp")],
+            None,
+            None,
+            None,
+            None,
+            OutputFormat::Human,
+            false,
+            false,
+            Some(1024),
+        );
+        assert!(result.is_err());
+        assert!(result.err().unwrap().to_string().contains("at least 4096"));
+
+        // Test maximum buffer size
+        let result = Monitor::new(
+            vec![PathBuf::from("/tmp")],
+            None,
+            None,
+            None,
+            None,
+            OutputFormat::Human,
+            false,
+            false,
+            Some(2 * 1024 * 1024),
+        );
+        assert!(result.is_err());
+        assert!(result.err().unwrap().to_string().contains("not exceed"));
+
+        // Test valid buffer size
+        let result = Monitor::new(
+            vec![PathBuf::from("/tmp")],
+            None,
+            None,
+            None,
+            None,
+            OutputFormat::Human,
+            false,
+            false,
+            Some(65536),
+        );
+        assert!(result.is_ok());
     }
 
     fn make_event(path: &str, event_type: EventType, pid: u32, size: i64) -> FileEvent {
