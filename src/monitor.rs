@@ -11,11 +11,13 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs::{self, OpenOptions};
 use std::num::NonZeroUsize;
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use lru::LruCache;
+use tokio::io::unix::AsyncFd;
 
 use crate::dir_cache;
 use crate::fid_parser::{self, FAN_FS_ERROR, HandleKey};
@@ -23,6 +25,25 @@ use crate::output;
 use crate::proc_cache::{self, ProcCache};
 use crate::utils::get_process_info_by_pid;
 use crate::{EventType, FileEvent, OutputFormat};
+
+// ---- FanFd wrapper for AsyncFd ----
+
+/// Newtype wrapper around a raw fanotify file descriptor.
+/// Implements `AsRawFd` and `AsFd` so it can be used with `AsyncFd`.
+struct FanFd(RawFd);
+
+impl AsRawFd for FanFd {
+    fn as_raw_fd(&self) -> RawFd {
+        self.0
+    }
+}
+
+impl AsFd for FanFd {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        // SAFETY: the fd is valid for the lifetime of the Monitor
+        unsafe { BorrowedFd::borrow_raw(self.0) }
+    }
+}
 
 // ---- Monitor ----
 
@@ -246,8 +267,20 @@ impl Monitor {
 
         let mut buf = vec![0u8; 4096 * 8]; // 32KB, reused across loop iterations
 
+        let async_fd = AsyncFd::new(FanFd(fan_fd))
+            .context("failed to register fanotify fd with tokio")?;
+
         while running.load(Ordering::SeqCst) {
+            // Wait for the fd to become readable (epoll-backed, zero-delay wakeup)
+            let mut guard = async_fd.readable().await?;
+
             let events = fid_parser::read_fid_events(fan_fd, &mount_fds, &mut dir_cache, &mut buf);
+
+            if events.is_empty() {
+                // No events actually available — clear readiness and re-wait
+                guard.clear_ready();
+                continue;
+            }
 
             // inode mark mode: dynamically add marks and update handle cache when new subdirectories are created or moved in
             if !use_fs_mark && self.recursive {
@@ -284,7 +317,6 @@ impl Monitor {
                     }
                 }
             }
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         }
 
         // Cleanup
