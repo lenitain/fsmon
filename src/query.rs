@@ -150,13 +150,13 @@ impl Query {
     fn sort_events(&self, mut events: Vec<FileEvent>) -> Vec<FileEvent> {
         match self.sort {
             SortBy::Time => {
-                events.sort_by(|a, b| a.time.cmp(&b.time));
+                events.sort_by_key(|a| a.time);
             }
             SortBy::Size => {
-                events.sort_by(|a, b| b.size_change.abs().cmp(&a.size_change.abs()));
+                events.sort_by_key(|b| std::cmp::Reverse(b.size_change.abs()));
             }
             SortBy::Pid => {
-                events.sort_by(|a, b| a.pid.cmp(&b.pid));
+                events.sort_by_key(|a| a.pid);
             }
         }
         events

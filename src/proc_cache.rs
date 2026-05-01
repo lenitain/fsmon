@@ -99,8 +99,16 @@ fn run_listener(cache: ProcCache) -> anyhow::Result<()> {
     loop {
         let n = unsafe { libc::recv(sock, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0) };
 
-        if n <= 0 {
-            // Socket closed or error -> exit
+        if n < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            // Other errors -> exit
+            break;
+        }
+        if n == 0 {
+            // Socket closed
             break;
         }
 
