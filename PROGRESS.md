@@ -1,5 +1,9 @@
 # PROGRESS.md — fsmon 全面审查与规划
 
+## README Update
+
+- R10 ✅ README 更新: 反映完整项目架构（新增模块、proc connector、FID 解析器、配置系统、二分查询等）
+
 ## 当前状态
 
 - 编译通过，72 单元测试全绿，7 集成测试 `#[ignore]`

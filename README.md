@@ -2,7 +2,7 @@
   <samp>fsmon</samp>
 </h1>
 
-<h3 align="center">Real-time file system change monitoring with process attribution.</h3>
+<h3 align="center">Real-time Linux filesystem change monitoring with process attribution.</h3>
 
 🌍 **Select Language | 选择语言**
 - [English](./README.md)
@@ -16,14 +16,16 @@
 
 ## Features
 
-- **Real-time Monitoring**: Captures 8 core fanotify events (CREATE, DELETE, CLOSE_WRITE, ATTRIB, etc.)
+- **Real-time Monitoring**: Captures 14 fanotify events (default: 8 core change events, `--all-events` for all 14)
 - **Process Attribution**: Tracks PID, command name, and user for every file change — even short-lived processes like `touch`, `rm`, `mv`
 - **Recursive Monitoring**: Watch entire directory trees with automatic tracking of newly created subdirectories
-- **Complete Deletion Capture**: No more missing events during `rm -rf` — captures every file deleted in recursive operations
-- **High Performance**: Written in Rust, <5MB memory footprint, zero-copy event parsing
-- **Flexible Filtering**: Filter by time, size, process, user, and event type
+- **Complete Deletion Capture**: Captures every file deleted during `rm -rf` via persistent directory handle cache
+- **High Performance**: Rust + Tokio, <5MB memory footprint, zero-copy FID event parsing, binary-search log querying
+- **Flexible Filtering**: Filter by time, size, process, user, event type, and exclude patterns (wildcards)
 - **Multiple Formats**: Human-readable, JSON, and CSV output
-- **Systemd Service**: Install as systemd service for long-term auditing with auto-restart
+- **TOML Configuration**: Persistent config at `~/.fsmon/config.toml` or `/etc/fsmon/config.toml`
+- **Log Management**: Time-based and size-based log rotation with dry-run preview
+- **Systemd Service**: Install as systemd service with configurable security hardening
 
 ## Why fsmon
 
@@ -78,11 +80,17 @@ sudo fsmon monitor /etc --types MODIFY
 # Monitor with recursive watching
 sudo fsmon monitor ~/myproject --recursive
 
+# Exclude patterns
+sudo fsmon monitor /var/log --exclude "*.log"
+
 # Install as systemd service for long-term auditing
 sudo fsmon install /var/log /etc -o /var/log/fsmon-audit.log
 
 # Query historical events
 fsmon query --since 1h --cmd nginx
+
+# Clean old logs (dry-run preview)
+fsmon clean --keep-days 7 --dry-run
 
 # Check service status
 fsmon status
@@ -127,25 +135,104 @@ rm -rf ~/test-project/build/
 [2026-01-15 16:00:00] [DELETE] /home/pilot/test-project/build (PID: 34567, CMD: rm)
 ```
 
+### Filter with Combined Criteria
+
+```bash
+# Query nginx operations in last hour, sorted by file size
+fsmon query --since 1h --cmd nginx* --sort size
+
+# Monitor only CREATE and DELETE events, exclude temp files
+sudo fsmon monitor /var/www --types CREATE,DELETE --exclude "*.tmp"
+```
+
 ## Command Reference
 
 ```bash
-fsmon monitor --help    # Real-time monitoring
-fsmon query --help      # Query history logs
+fsmon monitor --help    # Real-time monitoring with fanotify
+fsmon query --help      # Query history logs with filters and sorting
+fsmon clean --help      # Cleanup old logs by time or size
 fsmon status            # Check systemd service status
 fsmon stop              # Stop systemd service
 fsmon start             # Start systemd service
-fsmon install --help    # Install systemd service
+fsmon install --help    # Install systemd service (auto-detects binary path)
 fsmon uninstall         # Uninstall systemd service
-fsmon clean --help      # Cleanup old logs
 ```
+
+## Configuration
+
+fsmon supports TOML configuration files at `~/.fsmon/config.toml` or `/etc/fsmon/config.toml`:
+
+```toml
+[monitor]
+paths = ["/var/log", "/tmp"]
+min_size = "100MB"
+types = "MODIFY,CREATE"
+exclude = "*.tmp"
+all_events = true
+output = "/var/log/fsmon.log"
+format = "json"
+recursive = true
+buffer_size = 65536
+
+[query]
+log_file = "/var/log/fsmon.log"
+since = "1h"
+format = "json"
+sort = "size"
+
+[clean]
+keep_days = 7
+max_size = "500MB"
+
+[install]
+protect_system = "false"
+protect_home = "false"
+read_write_paths = ["/var/log", "/tmp"]
+private_tmp = "no"
+```
+
+CLI flags override config file values.
 
 ## Technical Architecture
 
-- **fanotify (FID mode)**: Linux kernel pushes file events to a queue; user space consumes via non-blocking `read()`. No polling needed — events are delivered immediately.
-- **Proc Connector**: Background thread caches process info at `exec()` time for accurate attribution of short-lived processes.
-- **name_to_handle_at + dir cache**: Resolves file handles to paths, caches directory handles to recover paths of deleted files during `rm -rf`.
-- **Rust + Tokio**: Single-threaded reactor loop (`while running` + 10ms sleep) with async Ctrl+C signal handling. Minimal concurrency — high efficiency instead.
+### Modules
+
+| Module | Description |
+|--------|-------------|
+| `main.rs` | CLI entry point with clap derive, `FileEvent` struct, log cleaning engine |
+| `monitor.rs` | Core fanotify monitoring loop, scope filtering, file size tracking (LRU) |
+| `fid_parser.rs` | Low-level FID mode event parsing, two-pass path recovery |
+| `dir_cache.rs` | Directory handle caching via `name_to_handle_at` for deleted file path resolution |
+| `proc_cache.rs` | Netlink proc connector listener — captures short-lived process info at `exec()` |
+| `query.rs` | Log file querying with binary search optimization and combined filters |
+| `config.rs` | TOML-based persistent configuration |
+| `systemd.rs` | Systemd service lifecycle (install, uninstall, status, start, stop) |
+| `output.rs` | Event output formatting (human, JSON, CSV) |
+| `utils.rs` | Size/time parsing, process info helpers, UID lookup |
+| `help.rs` | Centralized help text for all commands |
+
+### Data Flow
+
+```
+Linux Kernel (fanotify)
+    → FID events pushed to queue
+    → tokio::select reads events asynchronously
+    → fid_parser parses FID records (two-pass: resolve + cache recover)
+    → Monitor filters (type, size, exclude, scope)
+    → output formats (human/json/csv) → stdout + optional file
+```
+
+- **fanotify (FID mode + FAN_REPORT_NAME)**: Kernel pushes file events with directory file handles and filenames. No polling — events delivered immediately via non-blocking read.
+- **Proc Connector**: Background thread subscribes to netlink `PROC_EVENT_EXEC` notifications, caching every process's `(pid, cmd, user)` at the instant it execs. This ensures short-lived processes (`touch`, `rm`, `mv`) are attributable even after they exit.
+- **FID Parser + Dir Cache**: Two-pass event processing: (1) resolve file handles via `open_by_handle_at`, (2) use persistent directory handle cache to recover paths for events where the parent directory was already deleted. Handles multi-level nested `rm -rf` scenarios.
+- **Binary Search Query**: `fsmon query` uses binary search on approximately time-sorted log files, narrowing the scan range to O(log N) seek operations. Combined with `expand_offset_backward` to catch minor out-of-order entries.
+- **Rust + Tokio**: Single-threaded async loop (`tokio::select` between fanotify fd and Ctrl+C signal). Background thread for proc connector. No complex concurrency — high efficiency instead.
+
+### Event Mask Strategy
+
+fsmon uses a two-tier marking strategy:
+1. **FAN_MARK_FILESYSTEM** (preferred): Marks the entire mount point covering the target path — no race window for newly created files. Falls back if `EXDEV` (btrfs subvolumes).
+2. **Inode mark fallback**: Marks individual directories one by one, with recursive traversal for `--recursive` mode. Dynamically marks newly created directories in real-time.
 
 ### Event Types
 
@@ -173,9 +260,8 @@ Default captures 8 core events. Use `--all-events` for all 14.
 | OPEN | File/directory opened |
 | OPEN_EXEC | File opened for execution |
 | CLOSE_NOWRITE | Read-only file closed |
-| FS_ERROR | Filesystem error (Linux 5.16+)
+| FS_ERROR | Filesystem error (Linux 5.16+) |
 
 ## License
 
 [MIT License](./LICENSE)
-

@@ -2,7 +2,7 @@
   <samp>fsmon</samp>
 </h1>
 
-<h3 align="center">实时文件系统变更监控工具，精准追溯进程操作。</h3>
+<h3 align="center">实时 Linux 文件系统变更监控，精准追溯进程操作。</h3>
 
 🌍 **选择语言 | Language**
 - [简体中文](./README.zh-CN.md)
@@ -16,14 +16,16 @@
 
 ## 特性
 
-- **实时监控**: 默认捕获 8 种核心 fanotify 事件（CREATE、DELETE、CLOSE_WRITE、ATTRIB 等）
+- **实时监控**: 默认捕获 8 种核心 fanotify 事件，`--all-events` 开启全部 14 种
 - **进程追溯**: 追踪每个文件变更的 PID、命令名和用户 — 即使是 `touch`、`rm`、`mv` 等短命进程
 - **递归监控**: 监控整个目录树，自动追踪新建的子目录
-- **完整删除捕获**: 再也不怕 `rm -rf` 丢失事件 — 递归删除中的每个文件都能被捕获
-- **高性能**: Rust 编写，内存占用 <5MB，零拷贝事件解析
-- **灵活过滤**: 支持按时间、大小、进程、用户和事件类型过滤
+- **完整删除捕获**: 通过持久化目录句柄缓存，完整捕获 `rm -rf` 递归删除中的每个文件
+- **高性能**: Rust + Tokio 编写，内存占用 <5MB，零拷贝 FID 事件解析，二分查找日志查询
+- **灵活过滤**: 支持按时间、大小、进程、用户、事件类型和排除模式（通配符）过滤
 - **多种格式**: 人类可读、JSON、CSV 三种输出格式
-- **Systemd 服务**: 安装为 systemd 服务，支持自动重启，适合长期审计
+- **TOML 配置**: 持久化配置文件，支持 `~/.fsmon/config.toml` 或 `/etc/fsmon/config.toml`
+- **日志管理**: 基于时间和大小的日志轮转，支持预览模式
+- **Systemd 服务**: 安装为 systemd 服务，安全加固可配置
 
 ## 为什么选择 fsmon
 
@@ -78,11 +80,17 @@ sudo fsmon monitor /etc --types MODIFY
 # 递归监控
 sudo fsmon monitor ~/myproject --recursive
 
+# 排除模式
+sudo fsmon monitor /var/log --exclude "*.log"
+
 # 安装为 systemd 服务，长期审计
 sudo fsmon install /var/log /etc -o /var/log/fsmon-audit.log
 
 # 查询历史事件
 fsmon query --since 1h --cmd nginx
+
+# 预览清理旧日志
+fsmon clean --keep-days 7 --dry-run
 
 # 查看服务状态
 fsmon status
@@ -127,25 +135,104 @@ rm -rf ~/test-project/build/
 [2026-01-15 16:00:00] [DELETE] /home/pilot/test-project/build (PID: 34567, CMD: rm)
 ```
 
+### 组合过滤查询
+
+```bash
+# 查询最近 1 小时 nginx 的操作，按文件大小排序
+fsmon query --since 1h --cmd nginx* --sort size
+
+# 仅监控 CREATE 和 DELETE 事件，排除临时文件
+sudo fsmon monitor /var/www --types CREATE,DELETE --exclude "*.tmp"
+```
+
 ## 命令参考
 
 ```bash
-fsmon monitor --help    # 实时监控
-fsmon query --help      # 查询历史日志
+fsmon monitor --help    # 实时监控（fanotify）
+fsmon query --help      # 查询历史日志（支持过滤和排序）
+fsmon clean --help      # 按时间或大小清理旧日志
 fsmon status            # 查看 systemd 服务状态
 fsmon stop              # 停止 systemd 服务
 fsmon start             # 启动 systemd 服务
-fsmon install --help    # 安装 systemd 服务
+fsmon install --help    # 安装 systemd 服务（自动检测二进制路径）
 fsmon uninstall         # 卸载 systemd 服务
-fsmon clean --help      # 清理旧日志
 ```
+
+## 配置文件
+
+fsmon 支持 TOML 配置文件，路径为 `~/.fsmon/config.toml` 或 `/etc/fsmon/config.toml`：
+
+```toml
+[monitor]
+paths = ["/var/log", "/tmp"]
+min_size = "100MB"
+types = "MODIFY,CREATE"
+exclude = "*.tmp"
+all_events = true
+output = "/var/log/fsmon.log"
+format = "json"
+recursive = true
+buffer_size = 65536
+
+[query]
+log_file = "/var/log/fsmon.log"
+since = "1h"
+format = "json"
+sort = "size"
+
+[clean]
+keep_days = 7
+max_size = "500MB"
+
+[install]
+protect_system = "false"
+protect_home = "false"
+read_write_paths = ["/var/log", "/tmp"]
+private_tmp = "no"
+```
+
+CLI 参数优先级高于配置文件。
 
 ## 技术架构
 
-- **fanotify (FID 模式)**: Linux 内核主动推送文件事件到队列，用户态通过非阻塞 `read()` 消费。无需轮询探测，事件即时送达。
-- **Proc Connector**: 后台线程在进程 `exec()` 时缓存信息，确保短命进程的准确归因。
-- **name_to_handle_at + 目录缓存**: 解析文件句柄为路径，缓存目录句柄以恢复 `rm -rf` 删除期间的文件路径。
-- **Rust + Tokio**: 单线程 reactor 循环（`while running` + 10ms sleep）+ 异步 Ctrl+C 信号处理。极简并发 — 高效优先。
+### 模块
+
+| 模块 | 说明 |
+|------|------|
+| `main.rs` | CLI 入口，clap 命令定义，`FileEvent` 结构体，日志清理引擎 |
+| `monitor.rs` | 核心 fanotify 监控循环，作用域过滤，LRU 文件大小追踪 |
+| `fid_parser.rs` | 底层 FID 模式事件解析，两阶段路径恢复 |
+| `dir_cache.rs` | 基于 `name_to_handle_at` 的目录句柄缓存，恢复已删除文件路径 |
+| `proc_cache.rs` | Netlink proc connector 监听器 — 在进程 `exec()` 时捕获短命进程信息 |
+| `query.rs` | 日志文件查询，二分查找优化，多条件组合过滤 |
+| `config.rs` | TOML 持久化配置管理 |
+| `systemd.rs` | Systemd 服务生命周期管理（安装、卸载、状态、启停） |
+| `output.rs` | 事件输出格式化（人类可读、JSON、CSV） |
+| `utils.rs` | 大小/时间解析、进程信息获取、UID 查询 |
+| `help.rs` | 所有命令的集中帮助文本 |
+
+### 数据流
+
+```
+Linux Kernel (fanotify)
+    → FID 事件推入队列
+    → tokio::select 异步读取事件
+    → fid_parser 解析 FID 记录（两阶段：解析 + 缓存恢复）
+    → Monitor 过滤（类型、大小、排除模式、作用域）
+    → output 格式化（human/json/csv）→ stdout + 可选文件
+```
+
+- **fanotify (FID 模式 + FAN_REPORT_NAME)**：内核推送文件事件时携带目录文件句柄和文件名。无需轮询，事件通过非阻塞 read 即时送达。
+- **Proc Connector**：后台线程订阅 netlink `PROC_EVENT_EXEC` 通知，在每个进程 exec 时缓存 `(pid, cmd, user)`。确保短命进程（`touch`、`rm`、`mv`）即使退出后也能被归因。
+- **FID 解析器 + 目录缓存**：两阶段事件处理：(1) 通过 `open_by_handle_at` 解析文件句柄，(2) 使用持久化目录句柄缓存恢复父目录已被删除的事件路径。处理多层嵌套的 `rm -rf` 场景。
+- **二分查找查询**：`fsmon query` 在大致按时间排序的日志文件上使用二分查找，将扫描范围缩小到 O(log N) 次 seek。配合 `expand_offset_backward` 处理边界附近的轻微乱序。
+- **Rust + Tokio**：单线程异步循环（`tokio::select` 在 fanotify fd 和 Ctrl+C 信号之间）。proc connector 使用独立后台线程。无需复杂并发 — 高效优先。
+
+### 事件挂载策略
+
+fsmon 使用两级挂载策略：
+1. **FAN_MARK_FILESYSTEM**（首选）：标记目标路径所在的整个挂载点 — 新建文件无竞态窗口。若遇到 `EXDEV`（btrfs 子卷）则降级。
+2. **Inode 标记降级**：逐个标记目录，`--recursive` 模式下递归遍历。实时动态标记新建的目录。
 
 ### 事件类型
 
