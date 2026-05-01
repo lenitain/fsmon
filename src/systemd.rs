@@ -32,7 +32,7 @@ fn get_service_file_path() -> PathBuf {
     PathBuf::from("/etc/systemd/system").join(format!("{}.service", SERVICE_NAME))
 }
 
-pub fn install(monitor_paths: &[PathBuf], log_file: Option<&PathBuf>) -> Result<()> {
+pub fn install(monitor_paths: &[PathBuf], log_file: Option<&PathBuf>, force: bool) -> Result<()> {
     // Check if running as root
     if !is_root() {
         bail!("Installation requires root privileges. Please run with sudo.");
@@ -40,10 +40,16 @@ pub fn install(monitor_paths: &[PathBuf], log_file: Option<&PathBuf>) -> Result<
 
     let service_file = get_service_file_path();
     if service_file.exists() {
-        bail!(
-            "Service already installed at {}. Use 'uninstall' first.",
-            service_file.display()
-        );
+        if force {
+            // Force mode: uninstall existing service first
+            println!("Service already exists, force mode enabled. Reinstalling...");
+            uninstall_inner()?;
+        } else {
+            bail!(
+                "Service already installed at {}. Use 'uninstall' first or '--force' to overwrite.",
+                service_file.display()
+            );
+        }
     }
 
     // Detect current binary path
@@ -86,9 +92,12 @@ pub fn uninstall() -> Result<()> {
         bail!("Uninstallation requires root privileges. Please run with sudo.");
     }
 
+    uninstall_inner()
+}
+
+fn uninstall_inner() -> Result<()> {
     let service_file = get_service_file_path();
     if !service_file.exists() {
-        println!("Service not installed");
         return Ok(());
     }
 

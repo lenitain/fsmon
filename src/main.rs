@@ -140,6 +140,10 @@ enum Commands {
         /// Write monitoring log to specified file
         #[arg(short, long, value_name = "FILE")]
         output: Option<PathBuf>,
+
+        /// Force overwrite existing service file
+        #[arg(short, long)]
+        force: bool,
     },
 
     #[command(about = help::about(HelpTopic::Uninstall), long_about = help::long_about(HelpTopic::Uninstall))]
@@ -504,12 +508,12 @@ async fn main() -> Result<()> {
         Commands::Start => {
             systemd::start()?;
         }
-        Commands::Install { paths, output } => {
+        Commands::Install { paths, output, force } => {
             if paths.is_empty() {
                 eprintln!("Error: Please specify at least one monitor path");
                 process::exit(1);
             }
-            systemd::install(&paths, output.as_ref())?;
+            systemd::install(&paths, output.as_ref(), force)?;
         }
         Commands::Uninstall => {
             systemd::uninstall()?;
