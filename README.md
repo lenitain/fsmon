@@ -38,7 +38,7 @@ Traditional file monitoring tools give you events without context — fsmon brid
 ### Prerequisites
 
 - **OS**: Linux 5.9+ (requires fanotify FID mode)
-- **Filesystem**: ext4, XFS, tmpfs (btrfs partial support)
+- **Tested Filesystems**: ext4, XFS, tmpfs, btrfs (Note: Linux 6.8+ recommended for full recursive operation support of btrfs) 
 - **Build**: Rust toolchain (`cargo`)
 
 ```bash

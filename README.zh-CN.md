@@ -38,7 +38,7 @@
 ### 前置要求
 
 - **操作系统**: Linux 5.9+（需要 fanotify FID 模式）
-- **文件系统**: ext4、XFS、tmpfs（btrfs 部分支持）
+- **已测试的文件系统**: ext4、XFS、tmpfs、btrfs （注：推荐 Linux 6.8+ 内核以获得btrfs递归操作的完整支持）
 - **构建工具**: Rust 工具链（`cargo`）
 
 ```bash
