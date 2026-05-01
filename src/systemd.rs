@@ -81,7 +81,7 @@ pub fn install(
     let protect_system = protect_system.unwrap_or("strict");
     let protect_home = protect_home.unwrap_or("read-only");
     let read_write_paths = read_write_paths
-        .map(|v| v.join(","))
+        .map(|v| v.join(" "))
         .unwrap_or_else(|| "/var/log".to_string());
     let private_tmp = private_tmp.unwrap_or("yes");
 

@@ -47,13 +47,9 @@ pub struct CleanConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InstallConfig {
-    #[serde(default)]
     pub protect_system: Option<String>,
-    #[serde(default)]
     pub protect_home: Option<String>,
-    #[serde(default)]
     pub read_write_paths: Option<Vec<String>>,
-    #[serde(default)]
     pub private_tmp: Option<String>,
 }
 
@@ -101,6 +97,7 @@ mod tests {
         assert!(config.monitor.is_none());
         assert!(config.query.is_none());
         assert!(config.clean.is_none());
+        assert!(config.install.is_none());
     }
 
     #[test]

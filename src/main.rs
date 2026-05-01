@@ -543,23 +543,23 @@ async fn main() -> Result<()> {
                 process::exit(1);
             }
             let install_cfg = config.install.as_ref();
-            let ps = protect_system
+            let protect_system = protect_system
                 .as_deref()
                 .or(install_cfg.and_then(|c| c.protect_system.as_deref()));
-            let ph = protect_home
+            let protect_home = protect_home
                 .as_deref()
                 .or(install_cfg.and_then(|c| c.protect_home.as_deref()));
-            let pt = private_tmp
+            let private_tmp = private_tmp
                 .as_deref()
                 .or(install_cfg.and_then(|c| c.private_tmp.as_deref()));
-            let rwp: Option<&[String]> = if read_write_paths.is_empty() {
+            let read_write_paths: Option<&[String]> = if read_write_paths.is_empty() {
                 install_cfg
                     .and_then(|c| c.read_write_paths.as_ref())
                     .map(|v| v.as_slice())
             } else {
                 Some(read_write_paths.as_slice())
             };
-            systemd::install(&paths, output.as_ref(), force, ps, ph, rwp, pt)?;
+            systemd::install(&paths, output.as_ref(), force, protect_system, protect_home, read_write_paths, private_tmp)?;
         }
         Commands::Uninstall => {
             systemd::uninstall()?;
