@@ -1,10 +1,10 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
-use std::io::{BufRead, BufReader, BufWriter, Read, Seek, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::str::FromStr;
@@ -640,13 +640,18 @@ fn truncate_from_start(path: &Path, offset: usize) -> Result<()> {
         return Ok(());
     }
 
+    let file_len = fs::metadata(path)?.len() as usize;
+    if offset >= file_len {
+        bail!("offset {} >= file size {}", offset, file_len);
+    }
+
     let dir = path.parent().unwrap_or(Path::new("."));
     let tmp_path = dir.join(".fsmon_trunc_tmp");
 
-    {
+    let result = (|| -> Result<()> {
         let mut tmp = fs::File::create_new(&tmp_path)?;
         let mut src = fs::File::open(path)?;
-        src.seek(std::io::SeekFrom::Start(offset as u64))?;
+        src.seek(SeekFrom::Start(offset as u64))?;
 
         let mut buf = vec![0u8; 8192];
         loop {
@@ -656,7 +661,12 @@ fn truncate_from_start(path: &Path, offset: usize) -> Result<()> {
             }
             tmp.write_all(&buf[..n])?;
         }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
     }
+    result?;
 
     fs::rename(&tmp_path, path)?;
     Ok(())
