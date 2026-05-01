@@ -84,6 +84,7 @@ pub struct Monitor {
     recursive: bool,
     all_events: bool,
     proc_cache: Option<ProcCache>,
+    file_size_cache: HashMap<PathBuf, u64>,
 }
 
 impl Monitor {
@@ -110,6 +111,7 @@ impl Monitor {
             recursive,
             all_events,
             proc_cache: None,
+            file_size_cache: HashMap::new(),
         }
     }
 
@@ -336,11 +338,24 @@ impl Monitor {
         Ok(())
     }
 
-    fn build_file_event(&self, raw: &FidEvent, event_type: &str) -> FileEvent {
+    fn build_file_event(&mut self, raw: &FidEvent, event_type: &str) -> FileEvent {
         let pid = raw.pid.unsigned_abs();
         let (cmd, user) = get_process_info_by_pid(pid, &raw.path, self.proc_cache.as_ref());
 
-        let size_change = fs::metadata(&raw.path).map(|m| m.len() as i64).unwrap_or(0);
+        let size_change = match event_type {
+            // For CREATE/MODIFY/CLOSE_WRITE: get actual size and cache it
+            "CREATE" | "MODIFY" | "CLOSE_WRITE" => {
+                let size = fs::metadata(&raw.path).map(|m| m.len()).unwrap_or(0);
+                self.file_size_cache.insert(raw.path.clone(), size);
+                size as i64
+            }
+            // For DELETE/DELETE_SELF/MOVED_FROM: use cached size (file already gone)
+            "DELETE" | "DELETE_SELF" | "MOVED_FROM" => {
+                self.file_size_cache.remove(&raw.path).unwrap_or(0) as i64
+            }
+            // For other events: get actual size
+            _ => fs::metadata(&raw.path).map(|m| m.len() as i64).unwrap_or(0),
+        };
 
         FileEvent {
             time: Utc::now(),

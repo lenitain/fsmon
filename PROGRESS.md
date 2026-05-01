@@ -13,9 +13,9 @@
 `proc_cache.rs:100` — `libc::recv` 返回 `-1(errno=EINTR)` 时，循环直接 `break`，proc connector 线程死亡。短生命周期进程缓存失效，直到重启。
 **修复**: 对 `EINTR` 做 `continue` 重试；检查 `errno` 区分致命错误。
 
-### B2 [中] DELETE/DELETE_SELF 事件 `size_change` 恒为 0
+### B2 [中] DELETE/DELETE_SELF 事件 `size_change` 恒为 0 ✅ 已修复
 `monitor.rs:343` — 文件已删除后 `fs::metadata` 失败返回 `unwrap_or(0)`，无法记录删除前大小。
-**修复**: 利用 fanotify FID metadata 无文件大小信息，此限制需文档化。可选项：在 MODIFY/CREATE 事件时缓存文件大小，DELETE 时使用缓存值。
+**修复**: 添加 `file_size_cache: HashMap<PathBuf, u64>` 缓存文件大小。CREATE/MODIFY/CLOSE_WRITE 事件时缓存实际大小，DELETE/DELETE_SELF/MOVED_FROM 事件时使用缓存值。
 
 ### B3 [中] 包含 `keep_days=0` 清理时 `chrono::Duration::days(0)` 会返回 0 天正常
 当前代码 `keep_days: u32` 从 CLI 接收，默认 30 天。传 0 表示"保留 0 天"即清空。当前逻辑正确。
