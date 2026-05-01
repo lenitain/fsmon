@@ -37,9 +37,9 @@
 `monitor.rs:343` — 每个 fanotify 事件都做一次 `stat` 系统调用，高频场景下（>10K events/s）开销显著。
 **修复**: 对非 CREATE/MODIFY/CLOSE_WRITE 事件，跳过 metadata 读取，改用缓存值或 0。DELETE/DELETE_SELF/MOVED_FROM 从缓存移除并返回缓存值；其他事件（OPEN, ACCESS, ATTRIB 等）直接读缓存，无缓存返回 0。
 
-### P3 [中] 日志查询不做二进制搜索
+### P3 [中] 日志查询不做二进制搜索 ✅ 已修复
 `query.rs:89-145` — 每次 `fsmon query` 全量扫描 JSON 日志文件。日志文件数百 MB 时查询慢。
-**修复**: 维护时间索引文件；或利用日志文件按时间有序写入，做二分搜索。
+**修复**: 利用日志文件按时间有序写入，对时间范围查询做二分搜索。`seek_and_parse_time` 定位字节偏移处的时间戳；`find_offset_for_time` 和 `find_end_offset_for_time` 分别二分查找起止偏移；`expand_offset_backward` 向前扩展 50 行以覆盖轻微乱序。无时间过滤时回退全量扫描。11 项新测试覆盖边界情况（空前、全前、全后、单条、组合过滤、大文件）。
 
 ### P4 [低] `find_tail_offset` + `truncate_from_start` 内存开销大
 `main.rs:515-553` — 读取整个文件尾部到内存再重写。max_size=100MB 时读取 100MB 到内存。

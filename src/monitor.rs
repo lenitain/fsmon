@@ -9,8 +9,8 @@ use fanotify::low_level::{
 };
 use std::collections::HashMap;
 use std::ffi::CString;
-use std::num::NonZeroUsize;
 use std::fs::{self, OpenOptions};
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
