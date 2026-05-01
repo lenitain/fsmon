@@ -9,6 +9,7 @@
 - H1 已完成：systemd 服务模板二进制路径动态检测
 - H3/H4/H7 已完成：magic number 提取常量
 - H5 已完成：proc connector 启动等待改为就绪信号 + 退避轮询
+- H6 已完成：fanotify 缓冲区大小可配置
 
 ## 硬编码清理
 
@@ -39,7 +40,7 @@
 - `proc_cache.rs`: `start_proc_listener()` 返回 `(ProcCache, Arc<AtomicBool>)`，订阅成功后置 `ready=true`
 - `monitor.rs`: 退避轮询（1ms→2ms→4ms→…→50ms cap），2s 超时 bail 报错
 
-### H6 [低] fanotify 读取缓冲区大小硬编码
+### H6 [低] fanotify 读取缓冲区大小硬编码 ✅ 可配置(已完成)
 `monitor.rs:259` — `4096 * 8` (32KB)
 - 高频场景需要更大缓冲区减少 read 次数
 - 低频场景浪费内存
@@ -68,7 +69,7 @@
 | P1 | 硬编码 | H2 默认日志路径重复定义 | 极小 |
 | P2 | 硬编码 | H3-H4,H7 magic number 提取常量 ✅ | 小 |
 | P2 | 硬编码 | H5 proc connector 就绪信号 ✅ | 小 |
-| P2 | 硬编码 | H6 fanotify 缓冲区大小 | 小 |
+| P2 | 硬编码 | H6 fanotify 缓冲区大小 ✅ | 小 |
 | P3 | 硬编码 | H8 uid_passwd_map 刷新 | 中 |
 | P3 | 硬编码 | H9 systemd 安全加固可配置 | 中 |
 | P4 | 硬编码 | H10-H11 元数据/CI 分支 | 极小 |
