@@ -12,14 +12,14 @@
 
 全项目扫描发现约 20 处有修改价值的硬编码，分类如下：
 
-### H1 [高] systemd 服务模板二进制路径 ✅ 已完成
+### H1 [高] systemd 服务模板二进制路径 ✅ 动态生成(已完成)
 `systemd.rs:7-28` — `ExecStart=/usr/local/bin/fsmon monitor %i`
 - 二进制实际位置可能不同（`~/.cargo/bin/fsmon`, `/usr/bin/fsmon` 等）
 - 安装时未检测 `current_exe()` 自动填充
 - **修改**: 使用 `std::env::current_exe()` 在 `install` 时动态检测二进制路径
 - **新增**: `--force` 选项支持覆盖已存在的 service 文件
 
-### H2 [中] 默认日志路径重复定义 ✅ 提取常量
+### H2 [中] 默认日志路径重复定义 ✅ 提取常量(已完成)
 `main.rs:438-439` 和 `main.rs:527-528` — `~/.fsmon/history.log`
 - `query clean` 和 `clean` 命令各自独立写死默认路径
 - 应提取为 `const DEFAULT_LOG_PATH: &str`
