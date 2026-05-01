@@ -8,6 +8,7 @@
 - R5 已完成：fsmon.toml 配置文件支持
 - H1 已完成：systemd 服务模板二进制路径动态检测
 - H3/H4/H7 已完成：magic number 提取常量
+- H5 已完成：proc connector 启动等待改为就绪信号 + 退避轮询
 
 ## 硬编码清理
 
@@ -33,10 +34,10 @@
 `monitor.rs:48` — `FILE_SIZE_CACHE_CAP = 10_000`
 - 已确认为命名常量，无需修改
 
-### H5 [低] proc connector 启动等待时间硬编码
-`monitor.rs:119` — `Duration::from_millis(50)`
-- 低配机器可能需要更长，高配可更短
-- 可改为带重试的等待模式（如忙等 + 退避）
+### H5 [低] proc connector 启动等待时间硬编码 ✅ 就绪信号+退避轮询(已完成)
+`monitor.rs:119` — `Duration::from_millis(50)` → `AtomicBool` ready flag + exponential backoff poll
+- `proc_cache.rs`: `start_proc_listener()` 返回 `(ProcCache, Arc<AtomicBool>)`，订阅成功后置 `ready=true`
+- `monitor.rs`: 退避轮询（1ms→2ms→4ms→…→50ms cap），2s 超时 bail 报错
 
 ### H6 [低] fanotify 读取缓冲区大小硬编码
 `monitor.rs:259` — `4096 * 8` (32KB)
@@ -65,7 +66,9 @@
 |--------|------|----|-----------|
 | P0 | 硬编码 | H1 systemd 服务模板二进制路径 | 小 |
 | P1 | 硬编码 | H2 默认日志路径重复定义 | 极小 |
-| P2 | 硬编码 | H3-H7 magic number 提取常量 ✅ | 小 |
+| P2 | 硬编码 | H3-H4,H7 magic number 提取常量 ✅ | 小 |
+| P2 | 硬编码 | H5 proc connector 就绪信号 ✅ | 小 |
+| P2 | 硬编码 | H6 fanotify 缓冲区大小 | 小 |
 | P3 | 硬编码 | H8 uid_passwd_map 刷新 | 中 |
 | P3 | 硬编码 | H9 systemd 安全加固可配置 | 中 |
 | P4 | 硬编码 | H10-H11 元数据/CI 分支 | 极小 |

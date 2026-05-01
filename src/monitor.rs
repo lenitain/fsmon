@@ -46,6 +46,7 @@ impl AsFd for FanFd {
 // ---- Monitor ----
 
 const FILE_SIZE_CACHE_CAP: usize = 10_000;
+const PROC_CONNECTOR_TIMEOUT_SECS: u64 = 2;
 
 pub struct Monitor {
     paths: Vec<PathBuf>,
@@ -114,9 +115,26 @@ impl Monitor {
         }
 
         // Start proc connector listener thread, cache process exec info
-        self.proc_cache = Some(proc_cache::start_proc_listener());
-        // Brief wait for listener to complete subscription
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        let (proc_cache, proc_ready) = proc_cache::start_proc_listener();
+        self.proc_cache = Some(proc_cache);
+
+        // Wait for proc connector subscription to complete (poll with backoff)
+        let deadline = tokio::time::Instant::now()
+            + tokio::time::Duration::from_secs(PROC_CONNECTOR_TIMEOUT_SECS);
+        let mut poll_interval = tokio::time::Duration::from_millis(1);
+        loop {
+            if proc_ready.load(std::sync::atomic::Ordering::Acquire) {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                bail!(
+                    "proc connector subscription timed out after {}s",
+                    PROC_CONNECTOR_TIMEOUT_SECS
+                );
+            }
+            tokio::time::sleep(poll_interval).await;
+            poll_interval = (poll_interval * 2).min(tokio::time::Duration::from_millis(50));
+        }
 
         // Initialize fanotify, enable FID mode to support all directory entry events
         let fan_fd = fanotify_init(

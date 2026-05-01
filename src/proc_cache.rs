@@ -7,6 +7,7 @@
 
 use dashmap::DashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::utils::uid_to_username;
 
@@ -33,28 +34,30 @@ pub struct ProcInfo {
 
 pub type ProcCache = Arc<DashMap<u32, ProcInfo>>;
 
-/// Start proc connector listener thread, returns shared cache.
-/// Reads /proc/{pid} info and caches immediately at process exec(),
-/// ensuring short-lived process info is available when fanotify events are processed.
-pub fn start_proc_listener() -> ProcCache {
+/// Start proc connector listener thread, returns shared cache and a readiness flag.
+/// The flag is set to `true` once netlink subscription succeeds, so callers can
+/// avoid a fixed sleep and instead poll the flag with a timeout.
+pub fn start_proc_listener() -> (ProcCache, Arc<AtomicBool>) {
     let cache: ProcCache = Arc::new(DashMap::new());
     let cache_clone = cache.clone();
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready_clone = ready.clone();
 
     std::thread::Builder::new()
         .name("proc-connector".into())
         .spawn(move || {
-            if let Err(e) = run_listener(cache_clone) {
+            if let Err(e) = run_listener(cache_clone, ready_clone) {
                 eprintln!("proc connector listener failed: {}", e);
             }
         })
         .ok();
 
-    cache
+    (cache, ready)
 }
 
 // ---- Internal Implementation ----
 
-fn run_listener(cache: ProcCache) -> anyhow::Result<()> {
+fn run_listener(cache: ProcCache, ready: Arc<AtomicBool>) -> anyhow::Result<()> {
     let sock = unsafe {
         libc::socket(
             libc::PF_NETLINK,
@@ -94,6 +97,9 @@ fn run_listener(cache: ProcCache) -> anyhow::Result<()> {
 
     // Subscribe to process events
     send_subscribe(sock)?;
+
+    // Signal readiness: subscription complete, safe to process fanotify events
+    ready.store(true, Ordering::Release);
 
     // Receive loop
     let mut buf = vec![0u8; NETLINK_RECV_BUF_SIZE];
@@ -350,7 +356,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_proc_listener_receives_events() {
-        let cache = start_proc_listener();
+        let (cache, _ready) = start_proc_listener();
 
         // Spawn a short-lived process that will trigger PROC_EVENT_EXEC
         std::thread::sleep(std::time::Duration::from_millis(100));
