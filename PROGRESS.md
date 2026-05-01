@@ -61,9 +61,6 @@
 - `authors = ["lenitain <xt.zhu@qq.com>"]`
 - `homepage` / `repository` / `documentation` URL
 
-### H11 [低] CI 分支名硬编码
-`.github/workflows/rust.yml:5,7` — `branches: [ "main" ]`
-
 | 优先级 | 类别 | 项 | 预估复杂度 |
 |--------|------|----|-----------|
 | P0 | 硬编码 | H1 systemd 服务模板二进制路径 | 小 |
