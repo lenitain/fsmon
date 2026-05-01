@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -45,19 +45,20 @@ pub struct CleanConfig {
 
 impl Config {
     pub fn load() -> Result<Self> {
-        let config_path = Self::find_config_file();
-        match config_path {
-            Some(path) => {
-                let content = fs::read_to_string(&path).map_err(|e| {
-                    anyhow::anyhow!("Failed to read config {}: {}", path.display(), e)
-                })?;
-                let config: Config = toml::from_str(&content).map_err(|e| {
-                    anyhow::anyhow!("Invalid TOML in {}: {}", path.display(), e)
-                })?;
-                Ok(config)
-            }
+        match Self::find_config_file() {
+            Some(path) => Self::load_from_path(&path),
             None => Ok(Config::default()),
         }
+    }
+
+    pub fn load_from_path(path: &Path) -> Result<Self> {
+        let content = fs::read_to_string(path).map_err(|e| {
+            anyhow::anyhow!("Failed to read config {}: {}", path.display(), e)
+        })?;
+        let config: Config = toml::from_str(&content).map_err(|e| {
+            anyhow::anyhow!("Invalid TOML in {}: {}", path.display(), e)
+        })?;
+        Ok(config)
     }
 
     fn find_config_file() -> Option<PathBuf> {
@@ -121,8 +122,7 @@ max_size = "500MB"
         let mut file = fs::File::create(&config_path).unwrap();
         file.write_all(toml_content.as_bytes()).unwrap();
 
-        let content = fs::read_to_string(&config_path).unwrap();
-        let config: Config = toml::from_str(&content).unwrap();
+        let config = Config::load_from_path(&config_path).unwrap();
 
         let monitor = config.monitor.unwrap();
         assert_eq!(monitor.paths.unwrap().len(), 2);
@@ -153,14 +153,15 @@ max_size = "500MB"
         fs::create_dir_all(&dir).unwrap();
         let config_path = dir.join("config.toml");
 
-        let invalid_toml = "this is not valid toml [[[";
+        let invalid_toml = "this is not valid toml [[[[";
 
         let mut file = fs::File::create(&config_path).unwrap();
         file.write_all(invalid_toml.as_bytes()).unwrap();
 
-        let content = fs::read_to_string(&config_path).unwrap();
-        let result: std::result::Result<Config, _> = toml::from_str(&content);
+        let result = Config::load_from_path(&config_path);
         assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Invalid TOML"), "error should mention invalid TOML: {err_msg}");
 
         let _ = fs::remove_dir_all(&dir);
     }

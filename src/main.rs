@@ -151,8 +151,8 @@ enum Commands {
         log_file: Option<PathBuf>,
 
         /// Keep logs from last N days (default: 30 days)
-        #[arg(short, long, value_name = "DAYS", default_value = "30")]
-        keep_days: u32,
+        #[arg(short, long, value_name = "DAYS")]
+        keep_days: Option<u32>,
 
         /// Maximum log file size (e.g., 100MB, 1GB)
         #[arg(short, long, value_name = "SIZE")]
@@ -549,11 +549,7 @@ async fn main() -> Result<()> {
                     .unwrap_or_else(|| PathBuf::from("history.log"))
             });
 
-            let keep_days = if keep_days == 30 {
-                config.keep_days.unwrap_or(30)
-            } else {
-                keep_days
-            };
+            let keep_days = keep_days.or(config.keep_days).unwrap_or(30);
 
             let max_size = max_size.or(config.max_size);
 
