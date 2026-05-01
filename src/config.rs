@@ -20,6 +20,7 @@ pub struct MonitorConfig {
     pub output: Option<PathBuf>,
     pub format: Option<String>,
     pub recursive: Option<bool>,
+    pub buffer_size: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -163,6 +164,27 @@ max_size = "500MB"
             err_msg.contains("Invalid TOML"),
             "error should mention invalid TOML: {err_msg}"
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_config_load_buffer_size() {
+        let dir = std::env::temp_dir().join("fsmon_test_config_buffer_size");
+        fs::create_dir_all(&dir).unwrap();
+        let config_path = dir.join("config.toml");
+
+        let toml_content = r#"
+[monitor]
+buffer_size = 65536
+"#;
+
+        let mut file = fs::File::create(&config_path).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = Config::load_from_path(&config_path).unwrap();
+        let monitor = config.monitor.unwrap();
+        assert_eq!(monitor.buffer_size.unwrap(), 65536);
 
         let _ = fs::remove_dir_all(&dir);
     }
