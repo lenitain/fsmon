@@ -27,7 +27,8 @@ pub const fn about(topic: HelpTopic) -> &'static str {
 pub const fn long_about(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::Root => "",
-        HelpTopic::Monitor => r#"Monitor filesystem events on specified paths, output fanotify raw events in real-time.
+        HelpTopic::Monitor => {
+            r#"Monitor filesystem events on specified paths, output fanotify raw events in real-time.
 
 [Event Types]
   Default: 8 core change events (CLOSE_WRITE, ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF)
@@ -42,8 +43,10 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
   fsmon monitor / --all-events               # Enable all 14 event types
   fsmon monitor ~/project --recursive        # Recursively monitor project directory
   fsmon monitor /tmp --min-size 100MB        # Track large file creation
-  fsmon monitor /var/log --format json       # JSON format output"#,
-        HelpTopic::Query => r#"Query historical file change events from log files, supports multiple filter conditions and sorting.
+  fsmon monitor /var/log --format json       # JSON format output"#
+        }
+        HelpTopic::Query => {
+            r#"Query historical file change events from log files, supports multiple filter conditions and sorting.
 
 [Time Filtering]
   --since   Start time: relative (1h, 30m, 7d) or absolute ("2024-05-01 10:00")
@@ -63,24 +66,32 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
   fsmon query --since 1h                   # Last 1 hour
   fsmon query --cmd nginx                  # Only nginx operations
   fsmon query --since 1h --cmd java --types MODIFY --min-size 100MB  # Combined filters
-  fsmon query --format json --sort size    # JSON output, sorted by size"#,
-        HelpTopic::Status => r#"Check fsmon systemd service status.
+  fsmon query --format json --sort size    # JSON output, sorted by size"#
+        }
+        HelpTopic::Status => {
+            r#"Check fsmon systemd service status.
 
 [Output Content]
   - Service status (active/inactive/failed)
   - Use 'systemctl status fsmon' for detailed information
 
 [Examples]
-  fsmon status"#,
-        HelpTopic::Stop => r#"Stop fsmon systemd service.
+  fsmon status"#
+        }
+        HelpTopic::Stop => {
+            r#"Stop fsmon systemd service.
 
 [Examples]
-  fsmon stop"#,
-        HelpTopic::Start => r#"Start fsmon systemd service.
+  fsmon stop"#
+        }
+        HelpTopic::Start => {
+            r#"Start fsmon systemd service.
 
 [Examples]
-  fsmon start"#,
-        HelpTopic::Install => r#"Install fsmon as a systemd service.
+  fsmon start"#
+        }
+        HelpTopic::Install => {
+            r#"Install fsmon as a systemd service.
 
 [Service Configuration]
   - Creates /etc/systemd/system/fsmon.service
@@ -89,8 +100,10 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
 
 [Examples]
   fsmon install /var/log -o /var/log/fsmon.log    # Monitor /var/log
-  fsmon install /etc /var/log                      # Monitor multiple paths"#,
-        HelpTopic::Uninstall => r#"Uninstall fsmon systemd service.
+  fsmon install /etc /var/log                      # Monitor multiple paths"#
+        }
+        HelpTopic::Uninstall => {
+            r#"Uninstall fsmon systemd service.
 
 [Actions]
   - Stops service if running
@@ -98,8 +111,10 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
   - Removes service file
 
 [Examples]
-  fsmon uninstall"#,
-        HelpTopic::Clean => r#"Clean historical log files, retain by time or size.
+  fsmon uninstall"#
+        }
+        HelpTopic::Clean => {
+            r#"Clean historical log files, retain by time or size.
 
 [Cleanup Strategy]
   --keep-days   Keep logs from last N days (default: 30 days)
@@ -109,7 +124,8 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
 [Examples]
   fsmon clean --keep-days 7           # Keep 7 days of logs
   fsmon clean --max-size 100MB        # Limit logs to 100MB
-  fsmon clean --keep-days 7 --dry-run # Preview without deleting"#,
+  fsmon clean --keep-days 7 --dry-run # Preview without deleting"#
+        }
     }
 }
 

@@ -22,6 +22,8 @@ mod utils;
 
 use help::HelpTopic;
 
+const DEFAULT_LOG_PATH: &str = ".fsmon/history.log";
+
 use config::Config;
 use monitor::Monitor;
 use query::Query;
@@ -439,8 +441,8 @@ async fn main() -> Result<()> {
 
             let log_file = log_file.or(config.log_file).unwrap_or_else(|| {
                 dirs::home_dir()
-                    .map(|h: PathBuf| h.join(".fsmon").join("history.log"))
-                    .unwrap_or_else(|| PathBuf::from("history.log"))
+                    .map(|h: PathBuf| h.join(DEFAULT_LOG_PATH))
+                    .unwrap_or_else(|| PathBuf::from(DEFAULT_LOG_PATH))
             });
 
             let since = since.or(config.since);
@@ -508,7 +510,11 @@ async fn main() -> Result<()> {
         Commands::Start => {
             systemd::start()?;
         }
-        Commands::Install { paths, output, force } => {
+        Commands::Install {
+            paths,
+            output,
+            force,
+        } => {
             if paths.is_empty() {
                 eprintln!("Error: Please specify at least one monitor path");
                 process::exit(1);
@@ -528,8 +534,8 @@ async fn main() -> Result<()> {
 
             let log_file = log_file.or(config.log_file).unwrap_or_else(|| {
                 dirs::home_dir()
-                    .map(|h: PathBuf| h.join(".fsmon").join("history.log"))
-                    .unwrap_or_else(|| PathBuf::from("history.log"))
+                    .map(|h: PathBuf| h.join(DEFAULT_LOG_PATH))
+                    .unwrap_or_else(|| PathBuf::from(DEFAULT_LOG_PATH))
             });
 
             let keep_days = keep_days.or(config.keep_days).unwrap_or(30);

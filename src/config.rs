@@ -52,12 +52,10 @@ impl Config {
     }
 
     pub fn load_from_path(path: &Path) -> Result<Self> {
-        let content = fs::read_to_string(path).map_err(|e| {
-            anyhow::anyhow!("Failed to read config {}: {}", path.display(), e)
-        })?;
-        let config: Config = toml::from_str(&content).map_err(|e| {
-            anyhow::anyhow!("Invalid TOML in {}: {}", path.display(), e)
-        })?;
+        let content = fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read config {}: {}", path.display(), e))?;
+        let config: Config = toml::from_str(&content)
+            .map_err(|e| anyhow::anyhow!("Invalid TOML in {}: {}", path.display(), e))?;
         Ok(config)
     }
 
@@ -161,7 +159,10 @@ max_size = "500MB"
         let result = Config::load_from_path(&config_path);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("Invalid TOML"), "error should mention invalid TOML: {err_msg}");
+        assert!(
+            err_msg.contains("Invalid TOML"),
+            "error should mention invalid TOML: {err_msg}"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -178,7 +179,10 @@ types = "MODIFY"
         let config: Config = toml::from_str(toml_content).unwrap();
         let monitor = config.monitor.as_ref().unwrap();
 
-        assert_eq!(monitor.paths.as_ref().unwrap(), &vec![PathBuf::from("/var/log")]);
+        assert_eq!(
+            monitor.paths.as_ref().unwrap(),
+            &vec![PathBuf::from("/var/log")]
+        );
         assert_eq!(monitor.min_size.as_deref(), Some("100MB"));
         assert_eq!(monitor.types.as_deref(), Some("MODIFY"));
 
