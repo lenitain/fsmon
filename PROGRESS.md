@@ -57,9 +57,9 @@
 ### R3 [中] 事件类型用字符串比较
 `event_types: Option<Vec<String>>` — 字符串比较易手误。应使用 `enum EventType` 枚举 + `FromStr`/`Display`。
 
-### R4 [中] 排除模式 glob → regex 转换不安全
+### R4 [中] 排除模式 glob → regex 转换不安全 ✅ 已修复
 `monitor.rs:102` — `"*.tmp".replace("*", ".*")` 不转义正则元字符。`test.tmp` 中的 `.` 会匹配任意字符。路径含正则元字符时行为异常。
-**修复**: 用 `regex::escape` 前处理，或用 `glob::Pattern` crate。
+**修复**: 用 `regex::escape` 前处理，再将 `\*` 替换为 `.*`，`\?` 替换为 `.`。
 
 ### R5 [低] 无配置文件支持
 所有配置通过 CLI 参数传入。systemd 服务切到长时间运行后，调整参数需要重新 `install`。
@@ -86,7 +86,7 @@
 | P0 | Bug | B2 DELETE size_change | 中 |
 | P0 | 质量 | R1 clippy 修复 | 极小 |
 | P1 | 性能 | P1 树缓存懒加载 | 大 |
-| P1 | 质量 | R4 glob → regex | 小 |
+| P1 | 质量 | R4 glob → regex ✅ | 小 |
 | P2 | 质量 | R3 EventType 枚举 | 中 |
 | P2 | 质量 | R2 monitor.rs 拆分 | 大 |
 | P3 | 性能 | P2 减少 metadata syscall | 中 |
@@ -94,4 +94,4 @@
 | P4 | 性能 | P4+P5 内存/延迟优化 | 中 |
 | P4 | 质量 | R5-R8 增强 | 小-中 |
 
-**下一步建议**: 先做 B2 + R4，然后处理 P1 性能瓶颈。
+**下一步建议**: 处理 P1 性能瓶颈（树缓存懒加载）。

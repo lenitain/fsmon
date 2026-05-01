@@ -99,8 +99,11 @@ impl Monitor {
         recursive: bool,
         all_events: bool,
     ) -> Self {
-        let exclude_regex = exclude
-            .map(|p| regex::Regex::new(&p.replace("*", ".*")).expect("invalid exclude pattern"));
+        let exclude_regex = exclude.map(|p| {
+            let escaped = regex::escape(&p);
+            let pattern = escaped.replace("\\*", ".*");
+            regex::Regex::new(&pattern).expect("invalid exclude pattern")
+        });
         Self {
             paths,
             min_size,
@@ -948,12 +951,12 @@ mod tests {
 
     #[test]
     fn test_should_output_exclude_exact_pattern() {
-        // Use a more specific pattern that won't accidentally match
+        // Pattern "test.tmp" should match literally, not regex "test.tmp"
         let m = Monitor::new(
             vec![PathBuf::from("/tmp")],
             None,
             None,
-            Some("test\\.tmp".into()),
+            Some("test.tmp".into()),
             None,
             OutputFormat::Human,
             false,
@@ -962,6 +965,8 @@ mod tests {
         assert!(m.should_output(&make_event("/tmp/test.txt", "CREATE", 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/test.tmp", "CREATE", 1, 0)));
         assert!(m.should_output(&make_event("/tmp/foo.tmp", "DELETE", 1, 0)));
+        // Should not match "testXtmp" because dot is escaped
+        assert!(m.should_output(&make_event("/tmp/testXtmp", "CREATE", 1, 0)));
     }
 
     #[test]
