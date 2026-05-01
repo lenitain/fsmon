@@ -7,14 +7,15 @@ use fanotify::low_level::{
     FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC, FAN_Q_OVERFLOW, FAN_REPORT_DIR_FID, FAN_REPORT_FID,
     FAN_REPORT_NAME, O_CLOEXEC, O_RDONLY, fanotify_init, fanotify_mark,
 };
-use lru::LruCache;
 use std::collections::HashMap;
-use std::num::NonZeroUsize;
 use std::ffi::CString;
+use std::num::NonZeroUsize;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use lru::LruCache;
 
 use crate::dir_cache;
 use crate::fid_parser::{self, FAN_FS_ERROR, HandleKey};
@@ -24,6 +25,8 @@ use crate::utils::get_process_info_by_pid;
 use crate::{EventType, FileEvent, OutputFormat};
 
 // ---- Monitor ----
+
+const FILE_SIZE_CACHE_CAP: usize = 10_000;
 
 pub struct Monitor {
     paths: Vec<PathBuf>,
@@ -65,7 +68,7 @@ impl Monitor {
             recursive,
             all_events,
             proc_cache: None,
-            file_size_cache: LruCache::new(NonZeroUsize::new(10_000).unwrap()),
+            file_size_cache: LruCache::new(NonZeroUsize::new(FILE_SIZE_CACHE_CAP).unwrap()),
         }
     }
 
