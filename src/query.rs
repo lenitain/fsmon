@@ -8,6 +8,9 @@ use std::path::PathBuf;
 use crate::utils::{format_size, parse_time};
 use crate::{EventType, FileEvent, OutputFormat, SortBy, parse_log_line};
 
+const SCAN_BACK_BYTES: u64 = 4096;
+const BYTES_PER_LINE: u64 = 512;
+
 pub struct Query {
     log_file: PathBuf,
     since: Option<String>,
@@ -197,7 +200,7 @@ impl Query {
         // 4096 bytes handles most JSON log lines; if a line is longer, the
         // binary search may land inside the previous line but will still
         // converge correctly because timestamps are monotonically increasing.
-        let scan_back = 4096u64;
+        let scan_back = SCAN_BACK_BYTES;
         let read_start = offset.saturating_sub(scan_back);
 
         reader.seek(SeekFrom::Start(read_start)).ok()?;
@@ -326,7 +329,9 @@ impl Query {
 
         // Start with a reasonable window: 512 bytes per line on average.
         // Retry with larger windows if we don't find enough lines.
-        let mut buf_size: u64 = (max_lines as u64).saturating_mul(512).max(4096);
+        let mut buf_size: u64 = (max_lines as u64)
+            .saturating_mul(BYTES_PER_LINE)
+            .max(SCAN_BACK_BYTES);
 
         loop {
             let scan_start = offset.saturating_sub(buf_size);

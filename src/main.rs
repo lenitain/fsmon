@@ -23,6 +23,7 @@ mod utils;
 use help::HelpTopic;
 
 const DEFAULT_LOG_PATH: &str = ".fsmon/history.log";
+const DEFAULT_KEEP_DAYS: u32 = 30;
 
 use config::Config;
 use monitor::Monitor;
@@ -538,7 +539,7 @@ async fn main() -> Result<()> {
                     .unwrap_or_else(|| PathBuf::from(DEFAULT_LOG_PATH))
             });
 
-            let keep_days = keep_days.or(config.keep_days).unwrap_or(30);
+            let keep_days = keep_days.or(config.keep_days).unwrap_or(DEFAULT_KEEP_DAYS);
 
             let max_size = max_size.or(config.max_size);
 

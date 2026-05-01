@@ -17,6 +17,7 @@ const CN_IDX_PROC: u32 = 1;
 const CN_VAL_PROC: u32 = 1;
 const PROC_CN_MCAST_LISTEN: u32 = 1;
 const PROC_EVENT_EXEC: u32 = 0x00000002;
+const NETLINK_RECV_BUF_SIZE: usize = 4096;
 
 const NLMSG_HDR_SIZE: usize = std::mem::size_of::<libc::nlmsghdr>();
 /// cn_msg header: cb_id(8) + seq(4) + ack(4) + len(2) + flags(2)
@@ -95,7 +96,7 @@ fn run_listener(cache: ProcCache) -> anyhow::Result<()> {
     send_subscribe(sock)?;
 
     // Receive loop
-    let mut buf = vec![0u8; 4096];
+    let mut buf = vec![0u8; NETLINK_RECV_BUF_SIZE];
     loop {
         let n = unsafe { libc::recv(sock, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0) };
 
