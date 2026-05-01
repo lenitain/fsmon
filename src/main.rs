@@ -9,7 +9,10 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::str::FromStr;
 
+mod dir_cache;
+mod fid_parser;
 mod monitor;
+mod output;
 mod proc_cache;
 mod query;
 mod systemd;

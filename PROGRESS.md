@@ -55,8 +55,9 @@
 ### R1 [中] clippy 修复 ✅ 已修复
 `query.rs:153,156,159` — `sort_by` 改为 `sort_by_key`，共 3 处。
 
-### R2 [中] `monitor.rs` 文件过大 (1253 行)
+### R2 [中] `monitor.rs` 文件过大 (1253→579行) ✅ 已修复
 拆分：`fid_parser.rs`（FID 事件解析）、`dir_cache.rs`（目录句柄缓存）、`output.rs`（事件格式化输出）。
+**修复**: 将 FID 事件解析逻辑移至 `fid_parser.rs`（含 `HandleKey`、`FidEvent`、`read_fid_events`、`extract_dfid_name`、`extract_fid`、`resolve_file_handle`、`mask_to_event_types`）；目录句柄缓存移至 `dir_cache.rs`（`path_to_handle_key`、`cache_dir_handle`、`cache_recursive`）；事件格式化输出移至 `output.rs`（`output_event` 自由函数）。`monitor.rs` 仅保留 `Monitor` 结构体及其方法和目录标记辅助函数。53 测试全绿，clippy 无警告。
 
 ### R3 [中] 事件类型用字符串比较 ✅ 已修复
 `event_types: Option<Vec<String>>` — 字符串比较易手误。应使用 `enum EventType` 枚举 + `FromStr`/`Display`。
