@@ -1,18 +1,31 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::fs;
-use std::io::{BufRead, BufReader, BufWriter, Read, Seek, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process;
+use std::str::FromStr;
 
+mod config;
+mod dir_cache;
+mod fid_parser;
+mod help;
 mod monitor;
+mod output;
 mod proc_cache;
 mod query;
 mod systemd;
 mod utils;
 
+use help::HelpTopic;
+
+const DEFAULT_LOG_PATH: &str = ".fsmon/history.log";
+const DEFAULT_KEEP_DAYS: u32 = 30;
+
+use config::Config;
 use monitor::Monitor;
 use query::Query;
 use utils::{format_datetime, format_size, parse_size};
@@ -21,10 +34,8 @@ use utils::{format_datetime, format_size, parse_size};
 #[command(name = "fsmon")]
 #[command(author = "fsmon contributors")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
-#[command(about = "Lightweight high-performance file change tracking tool", long_about = None)]
-#[command(
-    after_help = "Use 'fsmon <COMMAND> --help' for detailed command info\n\nExamples:\n  fsmon monitor /var/log                     # Basic monitoring\n  fsmon monitor /etc --types MODIFY         # Investigate config file changes\n  fsmon monitor / --all-events               # Enable all 14 event types\n  fsmon monitor ~/project --recursive       # Recursively monitor project\n  fsmon install /var/log -o /var/log/fsmon.log  # Install systemd service\n  fsmon query --since 1h --cmd nginx         # Query nginx operations in last hour\n  fsmon status                               # Check service status"
-)]
+#[command(about = help::about(HelpTopic::Root), long_about = None)]
+#[command(after_help = help::after_help())]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -32,7 +43,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    #[command(about = "Real-time file change monitoring", long_about = LONG_ABOUT_MONITOR)]
+    #[command(about = help::about(HelpTopic::Monitor), long_about = help::long_about(HelpTopic::Monitor))]
     Monitor {
         /// Directory/file path to monitor (supports multiple)
         #[arg(value_name = "PATH")]
@@ -61,15 +72,15 @@ enum Commands {
         output: Option<PathBuf>,
 
         /// Output format (human, json, csv)
-        #[arg(short, long, value_enum, default_value = "human")]
-        format: OutputFormat,
+        #[arg(short, long, value_enum)]
+        format: Option<OutputFormat>,
 
         /// Recursively monitor all subdirectories
         #[arg(short, long)]
         recursive: bool,
     },
 
-    #[command(about = "Query historical monitoring logs", long_about = LONG_ABOUT_QUERY)]
+    #[command(about = help::about(HelpTopic::Query), long_about = help::long_about(HelpTopic::Query))]
     Query {
         /// Log file path to query (default: ~/.fsmon/history.log)
         #[arg(short, long, value_name = "FILE")]
@@ -106,24 +117,24 @@ enum Commands {
         min_size: Option<String>,
 
         /// Output format (human, json, csv)
-        #[arg(short, long, value_enum, default_value = "human")]
-        format: OutputFormat,
+        #[arg(short, long, value_enum)]
+        format: Option<OutputFormat>,
 
         /// Sort by (time, size, pid)
-        #[arg(short = 'r', long, value_enum, default_value = "time")]
-        sort: SortBy,
+        #[arg(short = 'r', long, value_enum)]
+        sort: Option<SortBy>,
     },
 
-    #[command(about = "Check systemd service status", long_about = LONG_ABOUT_STATUS)]
+    #[command(about = help::about(HelpTopic::Status), long_about = help::long_about(HelpTopic::Status))]
     Status,
 
-    #[command(about = "Stop systemd service", long_about = LONG_ABOUT_STOP)]
+    #[command(about = help::about(HelpTopic::Stop), long_about = help::long_about(HelpTopic::Stop))]
     Stop,
 
-    #[command(about = "Start systemd service", long_about = LONG_ABOUT_START)]
+    #[command(about = help::about(HelpTopic::Start), long_about = help::long_about(HelpTopic::Start))]
     Start,
 
-    #[command(about = "Install systemd service", long_about = LONG_ABOUT_INSTALL)]
+    #[command(about = help::about(HelpTopic::Install), long_about = help::long_about(HelpTopic::Install))]
     Install {
         /// Directory/file path to monitor (supports multiple)
         #[arg(value_name = "PATH")]
@@ -132,20 +143,40 @@ enum Commands {
         /// Write monitoring log to specified file
         #[arg(short, long, value_name = "FILE")]
         output: Option<PathBuf>,
+
+        /// Force overwrite existing service file
+        #[arg(short, long)]
+        force: bool,
+
+        /// ProtectSystem value (default: strict)
+        #[arg(long, value_name = "VALUE")]
+        protect_system: Option<String>,
+
+        /// ProtectHome value (default: read-only)
+        #[arg(long, value_name = "VALUE")]
+        protect_home: Option<String>,
+
+        /// ReadWritePaths value (supports multiple, default: /var/log)
+        #[arg(long, value_name = "PATH")]
+        read_write_paths: Vec<String>,
+
+        /// PrivateTmp value (default: yes)
+        #[arg(long, value_name = "VALUE")]
+        private_tmp: Option<String>,
     },
 
-    #[command(about = "Uninstall systemd service", long_about = LONG_ABOUT_UNINSTALL)]
+    #[command(about = help::about(HelpTopic::Uninstall), long_about = help::long_about(HelpTopic::Uninstall))]
     Uninstall,
 
-    #[command(about = "Clean historical logs", long_about = LONG_ABOUT_CLEAN)]
+    #[command(about = help::about(HelpTopic::Clean), long_about = help::long_about(HelpTopic::Clean))]
     Clean {
         /// Log file path to clean (default: ~/.fsmon/history.log)
         #[arg(short, long, value_name = "FILE")]
         log_file: Option<PathBuf>,
 
         /// Keep logs from last N days (default: 30 days)
-        #[arg(short, long, value_name = "DAYS", default_value = "30")]
-        keep_days: u32,
+        #[arg(short, long, value_name = "DAYS")]
+        keep_days: Option<u32>,
 
         /// Maximum log file size (e.g., 100MB, 1GB)
         #[arg(short, long, value_name = "SIZE")]
@@ -156,97 +187,6 @@ enum Commands {
         dry_run: bool,
     },
 }
-
-const LONG_ABOUT_MONITOR: &str = r#"Monitor filesystem events on specified paths, output fanotify raw events in real-time.
-
-[Event Types]
-  Default: 8 core change events (CLOSE_WRITE, ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF)
-  --all-events: Enable all 14 fanotify events (includes ACCESS, MODIFY, OPEN, OPEN_EXEC, CLOSE_NOWRITE, FS_ERROR)
-
-[Systemd Service]
-  Use 'fsmon install' to set up systemd service for long-term monitoring
-  fsmon status/stop/start to manage service
-
-[Examples]
-  fsmon monitor /etc --types MODIFY          # Investigate config file changes
-  fsmon monitor / --all-events               # Enable all 14 event types
-  fsmon monitor ~/project --recursive        # Recursively monitor project directory
-  fsmon monitor /tmp --min-size 100MB        # Track large file creation
-  fsmon monitor /var/log --format json       # JSON format output"#;
-
-const LONG_ABOUT_QUERY: &str = r#"Query historical file change events from log files, supports multiple filter conditions and sorting.
-
-[Time Filtering]
-  --since   Start time: relative (1h, 30m, 7d) or absolute ("2024-05-01 10:00")
-  --until   End time
-  
-[Process Filtering]
-  --pid     Filter by process ID (multiple supported: 1234,5678)
-  --cmd     Filter by process name (wildcard support: nginx*, python)
-  --user    Filter by username (multiple supported: root,admin)
-
-[Event Filtering]
-  --types     Filter by event type (ACCESS,MODIFY,CREATE,DELETE,...)
-  --min-size  Filter by size change (e.g., 100MB, 1GB)
-
-[Examples]
-  fsmon query                              # Query default log (~/.fsmon/history.log)
-  fsmon query --since 1h                   # Last 1 hour
-  fsmon query --cmd nginx                  # Only nginx operations
-  fsmon query --since 1h --cmd java --types MODIFY --min-size 100MB  # Combined filters
-  fsmon query --format json --sort size    # JSON output, sorted by size"#;
-
-const LONG_ABOUT_STATUS: &str = r#"Check fsmon systemd service status.
-
-[Output Content]
-  - Service status (active/inactive/failed)
-  - Use 'systemctl status fsmon' for detailed information
-
-[Examples]
-  fsmon status"#;
-
-const LONG_ABOUT_STOP: &str = r#"Stop fsmon systemd service.
-
-[Examples]
-  fsmon stop"#;
-
-const LONG_ABOUT_START: &str = r#"Start fsmon systemd service.
-
-[Examples]
-  fsmon start"#;
-
-const LONG_ABOUT_INSTALL: &str = r#"Install fsmon as a systemd service.
-
-[Service Configuration]
-  - Creates /etc/systemd/system/fsmon.service
-  - Configures auto-restart on failure
-  - Logs to systemd journal
-
-[Examples]
-  fsmon install /var/log -o /var/log/fsmon.log    # Monitor /var/log
-  fsmon install /etc /var/log                      # Monitor multiple paths"#;
-
-const LONG_ABOUT_UNINSTALL: &str = r#"Uninstall fsmon systemd service.
-
-[Actions]
-  - Stops service if running
-  - Disables service
-  - Removes service file
-
-[Examples]
-  fsmon uninstall"#;
-
-const LONG_ABOUT_CLEAN: &str = r#"Clean historical log files, retain by time or size.
-
-[Cleanup Strategy]
-  --keep-days   Keep logs from last N days (default: 30 days)
-  --max-size    Limit maximum log file size (e.g., 100MB, 1GB)
-  --dry-run     Preview mode, don't actually delete
-
-[Examples]
-  fsmon clean --keep-days 7           # Keep 7 days of logs
-  fsmon clean --max-size 100MB        # Limit logs to 100MB
-  fsmon clean --keep-days 7 --dry-run # Preview without deleting"#;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum OutputFormat {
@@ -262,10 +202,94 @@ pub enum SortBy {
     Pid,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum EventType {
+    Access,
+    Modify,
+    CloseWrite,
+    CloseNowrite,
+    Open,
+    OpenExec,
+    Attrib,
+    Create,
+    Delete,
+    DeleteSelf,
+    MovedFrom,
+    MovedTo,
+    MoveSelf,
+    FsError,
+}
+
+impl EventType {
+    pub const ALL: &'static [EventType] = &[
+        EventType::Access,
+        EventType::Modify,
+        EventType::CloseWrite,
+        EventType::CloseNowrite,
+        EventType::Open,
+        EventType::OpenExec,
+        EventType::Attrib,
+        EventType::Create,
+        EventType::Delete,
+        EventType::DeleteSelf,
+        EventType::MovedFrom,
+        EventType::MovedTo,
+        EventType::MoveSelf,
+        EventType::FsError,
+    ];
+}
+
+impl fmt::Display for EventType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            EventType::Access => "ACCESS",
+            EventType::Modify => "MODIFY",
+            EventType::CloseWrite => "CLOSE_WRITE",
+            EventType::CloseNowrite => "CLOSE_NOWRITE",
+            EventType::Open => "OPEN",
+            EventType::OpenExec => "OPEN_EXEC",
+            EventType::Attrib => "ATTRIB",
+            EventType::Create => "CREATE",
+            EventType::Delete => "DELETE",
+            EventType::DeleteSelf => "DELETE_SELF",
+            EventType::MovedFrom => "MOVED_FROM",
+            EventType::MovedTo => "MOVED_TO",
+            EventType::MoveSelf => "MOVE_SELF",
+            EventType::FsError => "FS_ERROR",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl FromStr for EventType {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_uppercase().as_str() {
+            "ACCESS" => Ok(EventType::Access),
+            "MODIFY" => Ok(EventType::Modify),
+            "CLOSE_WRITE" => Ok(EventType::CloseWrite),
+            "CLOSE_NOWRITE" => Ok(EventType::CloseNowrite),
+            "OPEN" => Ok(EventType::Open),
+            "OPEN_EXEC" => Ok(EventType::OpenExec),
+            "ATTRIB" => Ok(EventType::Attrib),
+            "CREATE" => Ok(EventType::Create),
+            "DELETE" => Ok(EventType::Delete),
+            "DELETE_SELF" => Ok(EventType::DeleteSelf),
+            "MOVED_FROM" => Ok(EventType::MovedFrom),
+            "MOVED_TO" => Ok(EventType::MovedTo),
+            "MOVE_SELF" => Ok(EventType::MoveSelf),
+            "FS_ERROR" => Ok(EventType::FsError),
+            _ => Err(format!("Unknown event type: {}", s)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEvent {
     pub time: DateTime<Utc>,
-    pub event_type: String,
+    pub event_type: EventType,
     pub path: PathBuf,
     pub pid: u32,
     pub cmd: String,
@@ -290,11 +314,72 @@ impl FileEvent {
             size_str
         )
     }
+
+    pub fn to_csv_string(&self) -> String {
+        use csv::WriterBuilder;
+        let mut wtr = WriterBuilder::new().has_headers(false).from_writer(vec![]);
+        wtr.write_record([
+            self.time.to_rfc3339(),
+            self.event_type.to_string(),
+            self.path.display().to_string(),
+            self.pid.to_string(),
+            self.cmd.clone(),
+            self.user.clone(),
+            self.size_change.to_string(),
+        ])
+        .expect("csv write failed");
+        String::from_utf8(wtr.into_inner().expect("csv flush failed"))
+            .expect("csv not utf8")
+            .trim()
+            .to_string()
+    }
+
+    pub fn from_csv_str(s: &str) -> Option<Self> {
+        use csv::ReaderBuilder;
+        let mut rdr = ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(s.as_bytes());
+        let record = rdr.records().next()?.ok()?;
+        if record.len() < 7 {
+            return None;
+        }
+        let time = DateTime::parse_from_rfc3339(&record[0])
+            .ok()?
+            .with_timezone(&Utc);
+        let event_type: EventType = record[1].parse().ok()?;
+        let path = PathBuf::from(&record[2]);
+        let pid: u32 = record[3].parse().ok()?;
+        let cmd = record[4].to_string();
+        let user = record[5].to_string();
+        let size_change: i64 = record[6].parse().ok()?;
+        Some(FileEvent {
+            time,
+            event_type,
+            path,
+            pid,
+            cmd,
+            user,
+            size_change,
+        })
+    }
+}
+
+pub fn parse_log_line(line: &str) -> Option<FileEvent> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.starts_with('{') {
+        serde_json::from_str(trimmed).ok()
+    } else {
+        FileEvent::from_csv_str(trimmed)
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let config = Config::load()?;
 
     match cli.command {
         Commands::Monitor {
@@ -307,18 +392,43 @@ async fn main() -> Result<()> {
             format,
             recursive,
         } => {
+            let config = config.monitor.unwrap_or_default();
+
+            let paths = if paths.is_empty() {
+                config.paths.unwrap_or_default()
+            } else {
+                paths
+            };
+
             if paths.is_empty() {
                 eprintln!("Error: Please specify at least one monitor path");
                 process::exit(1);
             }
 
+            let min_size = min_size.or(config.min_size);
+            let types = types.or(config.types);
+            let exclude = exclude.or(config.exclude);
+            let all_events = all_events || config.all_events.unwrap_or(false);
+            let output = output.or(config.output);
+            let recursive = recursive || config.recursive.unwrap_or(false);
+            let buffer_size = config.buffer_size;
+            let format = format
+                .or(config.format.as_deref().and_then(parse_output_format))
+                .unwrap_or(OutputFormat::Human);
+
             let min_size_bytes = min_size.map(|s| parse_size(&s)).transpose()?;
 
-            let event_types = types.map(|t| {
-                t.split(',')
-                    .map(|s| s.trim().to_uppercase())
-                    .collect::<Vec<_>>()
-            });
+            let event_types = types
+                .map(|t| {
+                    t.split(',')
+                        .map(|s| {
+                            s.trim()
+                                .parse::<EventType>()
+                                .map_err(|e| anyhow::anyhow!(e))
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })
+                .transpose()?;
 
             let monitor = Monitor::new(
                 paths,
@@ -329,7 +439,8 @@ async fn main() -> Result<()> {
                 format,
                 recursive,
                 all_events,
-            );
+                buffer_size,
+            )?;
 
             monitor.run().await?;
         }
@@ -345,11 +456,27 @@ async fn main() -> Result<()> {
             format,
             sort,
         } => {
-            let log_file = log_file.unwrap_or_else(|| {
+            let config = config.query.unwrap_or_default();
+
+            let log_file = log_file.or(config.log_file).unwrap_or_else(|| {
                 dirs::home_dir()
-                    .map(|h: PathBuf| h.join(".fsmon").join("history.log"))
-                    .unwrap_or_else(|| PathBuf::from("history.log"))
+                    .map(|h: PathBuf| h.join(DEFAULT_LOG_PATH))
+                    .unwrap_or_else(|| PathBuf::from(DEFAULT_LOG_PATH))
             });
+
+            let since = since.or(config.since);
+            let until = until.or(config.until);
+            let pid = pid.or(config.pid);
+            let cmd = cmd.or(config.cmd);
+            let user = user.or(config.user);
+            let types = types.or(config.types);
+            let min_size = min_size.or(config.min_size);
+            let format = format
+                .or(config.format.as_deref().and_then(parse_output_format))
+                .unwrap_or(OutputFormat::Human);
+            let sort = sort
+                .or(config.sort.as_deref().and_then(parse_sort_by))
+                .unwrap_or(SortBy::Time);
 
             let min_size_bytes = min_size.map(|s| parse_size(&s)).transpose()?;
 
@@ -365,11 +492,17 @@ async fn main() -> Result<()> {
                     .collect::<Vec<_>>()
             });
 
-            let event_types = types.map(|t| {
-                t.split(',')
-                    .map(|s| s.trim().to_uppercase())
-                    .collect::<Vec<_>>()
-            });
+            let event_types = types
+                .map(|t| {
+                    t.split(',')
+                        .map(|s| {
+                            s.trim()
+                                .parse::<EventType>()
+                                .map_err(|e| anyhow::anyhow!(e))
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })
+                .transpose()?;
 
             let query = Query::new(
                 log_file,
@@ -396,12 +529,37 @@ async fn main() -> Result<()> {
         Commands::Start => {
             systemd::start()?;
         }
-        Commands::Install { paths, output } => {
+        Commands::Install {
+            paths,
+            output,
+            force,
+            protect_system,
+            protect_home,
+            read_write_paths,
+            private_tmp,
+        } => {
             if paths.is_empty() {
                 eprintln!("Error: Please specify at least one monitor path");
                 process::exit(1);
             }
-            systemd::install(&paths, output.as_ref())?;
+            let install_cfg = config.install.as_ref();
+            let protect_system = protect_system
+                .as_deref()
+                .or(install_cfg.and_then(|c| c.protect_system.as_deref()));
+            let protect_home = protect_home
+                .as_deref()
+                .or(install_cfg.and_then(|c| c.protect_home.as_deref()));
+            let private_tmp = private_tmp
+                .as_deref()
+                .or(install_cfg.and_then(|c| c.private_tmp.as_deref()));
+            let read_write_paths: Option<&[String]> = if read_write_paths.is_empty() {
+                install_cfg
+                    .and_then(|c| c.read_write_paths.as_ref())
+                    .map(|v| v.as_slice())
+            } else {
+                Some(read_write_paths.as_slice())
+            };
+            systemd::install(&paths, output.as_ref(), force, protect_system, protect_home, read_write_paths, private_tmp)?;
         }
         Commands::Uninstall => {
             systemd::uninstall()?;
@@ -412,11 +570,17 @@ async fn main() -> Result<()> {
             max_size,
             dry_run,
         } => {
-            let log_file = log_file.unwrap_or_else(|| {
+            let config = config.clean.unwrap_or_default();
+
+            let log_file = log_file.or(config.log_file).unwrap_or_else(|| {
                 dirs::home_dir()
-                    .map(|h: PathBuf| h.join(".fsmon").join("history.log"))
-                    .unwrap_or_else(|| PathBuf::from("history.log"))
+                    .map(|h: PathBuf| h.join(DEFAULT_LOG_PATH))
+                    .unwrap_or_else(|| PathBuf::from(DEFAULT_LOG_PATH))
             });
+
+            let keep_days = keep_days.or(config.keep_days).unwrap_or(DEFAULT_KEEP_DAYS);
+
+            let max_size = max_size.or(config.max_size);
 
             let max_size_bytes = max_size.map(|s| parse_size(&s)).transpose()?;
 
@@ -425,6 +589,24 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn parse_output_format(s: &str) -> Option<OutputFormat> {
+    match s.to_lowercase().as_str() {
+        "human" => Some(OutputFormat::Human),
+        "json" => Some(OutputFormat::Json),
+        "csv" => Some(OutputFormat::Csv),
+        _ => None,
+    }
+}
+
+fn parse_sort_by(s: &str) -> Option<SortBy> {
+    match s.to_lowercase().as_str() {
+        "time" => Some(SortBy::Time),
+        "size" => Some(SortBy::Size),
+        "pid" => Some(SortBy::Pid),
+        _ => None,
+    }
 }
 
 async fn clean_logs(
@@ -458,7 +640,7 @@ async fn clean_logs(
                 continue;
             }
 
-            let should_keep = if let Ok(event) = serde_json::from_str::<FileEvent>(&line) {
+            let should_keep = if let Some(event) = parse_log_line(&line) {
                 event.time >= cutoff_time
             } else {
                 true
@@ -533,22 +715,41 @@ fn find_tail_offset(path: &Path, max_bytes: usize) -> Result<usize> {
     Ok(read_start + first_newline)
 }
 
-/// Keep only bytes from offset to end
+/// Keep only bytes from offset to end, streaming via temp file
 fn truncate_from_start(path: &Path, offset: usize) -> Result<()> {
     if offset == 0 {
         return Ok(());
     }
 
-    let content = {
-        let mut f = fs::File::open(path)?;
-        f.seek(std::io::SeekFrom::Start(offset as u64))?;
-        let mut buf = Vec::new();
-        f.read_to_end(&mut buf)?;
-        buf
-    };
+    let file_len = fs::metadata(path)?.len() as usize;
+    if offset >= file_len {
+        bail!("offset {} >= file size {}", offset, file_len);
+    }
 
-    let mut f = fs::File::create(path)?;
-    f.write_all(&content)?;
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let tmp_path = dir.join(".fsmon_trunc_tmp");
+
+    let result = (|| -> Result<()> {
+        let mut tmp = fs::File::create_new(&tmp_path)?;
+        let mut src = fs::File::open(path)?;
+        src.seek(SeekFrom::Start(offset as u64))?;
+
+        let mut buf = vec![0u8; 8192];
+        loop {
+            let n = src.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            tmp.write_all(&buf[..n])?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result?;
+
+    fs::rename(&tmp_path, path)?;
     Ok(())
 }
 
@@ -664,7 +865,7 @@ mod tests {
         // Create events: one old, one new
         let old_event = FileEvent {
             time: Utc::now() - chrono::Duration::days(60),
-            event_type: "CREATE".into(),
+            event_type: EventType::Create,
             path: PathBuf::from("/tmp/old"),
             pid: 1,
             cmd: "test".into(),
@@ -673,7 +874,7 @@ mod tests {
         };
         let new_event = FileEvent {
             time: Utc::now(),
-            event_type: "CREATE".into(),
+            event_type: EventType::Create,
             path: PathBuf::from("/tmp/new"),
             pid: 1,
             cmd: "test".into(),
@@ -709,7 +910,7 @@ mod tests {
 
         let old_event = FileEvent {
             time: Utc::now() - chrono::Duration::days(60),
-            event_type: "CREATE".into(),
+            event_type: EventType::Create,
             path: PathBuf::from("/tmp/old"),
             pid: 1,
             cmd: "test".into(),
@@ -754,7 +955,7 @@ mod tests {
             for i in 0..100 {
                 let event = FileEvent {
                     time: Utc::now(),
-                    event_type: "CREATE".into(),
+                    event_type: EventType::Create,
                     path: PathBuf::from(format!("/tmp/file{}", i)),
                     pid: 1,
                     cmd: "test".into(),
