@@ -78,6 +78,10 @@
 所有配置通过 CLI 参数传入。systemd 服务切到长时间运行后，调整参数需要重新 `install`。
 **修复**: 增加 `fsmon.toml` 配置文件支持（`toml = "0.8"`）。新建 `src/config.rs` 模块，`Config` 结构体含 `MonitorConfig`/`QueryConfig`/`CleanConfig`。从 `~/.fsmon/config.toml`（主）或 `/etc/fsmon/config.toml`（备）加载，无文件返回默认值，无效 TOML 报错。所有 CLI 参数（含 `format`/`sort`）改为 `Option` 类型，通过 `cli.or(config).unwrap_or(默认值)` 模式实现三级优先级：CLI > 配置文件 > 默认值。4 项单元测试覆盖加载、解析、无效、合并场景。
 
+### R9 [低] 帮助文本枚举化集中管理 ✅ 已修复
+所有 `#[command(about/long_about)]` 和 root `after_help` 帮助文本从散落的 `const LONG_ABOUT_*` 常量提取到独立 `src/help.rs` 模块。
+**修复**: 新增 `HelpTopic` 枚举（9 个变体：Root + 8 个子命令），`about()` / `long_about()` / `after_help()` 三个 `const fn` 集中管理。`main.rs` 减 103 行，编译时类型安全，新增命令自动提示完整匹配。
+
 ### R6 [低] 无自动日志轮转
 `fsmon clean` 为手动命令。长时间运行的 daemon 日志会无限增长。
 **提议**: 集成 `ReadWritePaths=/var/log` 时按大小自动 truncate 当前日志，或支持 log rotate signal。

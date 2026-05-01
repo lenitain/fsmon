@@ -12,12 +12,15 @@ use std::str::FromStr;
 mod config;
 mod dir_cache;
 mod fid_parser;
+mod help;
 mod monitor;
 mod output;
 mod proc_cache;
 mod query;
 mod systemd;
 mod utils;
+
+use help::HelpTopic;
 
 use config::Config;
 use monitor::Monitor;
@@ -28,10 +31,8 @@ use utils::{format_datetime, format_size, parse_size};
 #[command(name = "fsmon")]
 #[command(author = "fsmon contributors")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
-#[command(about = "Lightweight high-performance file change tracking tool", long_about = None)]
-#[command(
-    after_help = "Use 'fsmon <COMMAND> --help' for detailed command info\n\nExamples:\n  fsmon monitor /var/log                     # Basic monitoring\n  fsmon monitor /etc --types MODIFY         # Investigate config file changes\n  fsmon monitor / --all-events               # Enable all 14 event types\n  fsmon monitor ~/project --recursive       # Recursively monitor project\n  fsmon install /var/log -o /var/log/fsmon.log  # Install systemd service\n  fsmon query --since 1h --cmd nginx         # Query nginx operations in last hour\n  fsmon status                               # Check service status"
-)]
+#[command(about = help::about(HelpTopic::Root), long_about = None)]
+#[command(after_help = help::after_help())]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -39,7 +40,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    #[command(about = "Real-time file change monitoring", long_about = LONG_ABOUT_MONITOR)]
+    #[command(about = help::about(HelpTopic::Monitor), long_about = help::long_about(HelpTopic::Monitor))]
     Monitor {
         /// Directory/file path to monitor (supports multiple)
         #[arg(value_name = "PATH")]
@@ -76,7 +77,7 @@ enum Commands {
         recursive: bool,
     },
 
-    #[command(about = "Query historical monitoring logs", long_about = LONG_ABOUT_QUERY)]
+    #[command(about = help::about(HelpTopic::Query), long_about = help::long_about(HelpTopic::Query))]
     Query {
         /// Log file path to query (default: ~/.fsmon/history.log)
         #[arg(short, long, value_name = "FILE")]
@@ -121,16 +122,16 @@ enum Commands {
         sort: Option<SortBy>,
     },
 
-    #[command(about = "Check systemd service status", long_about = LONG_ABOUT_STATUS)]
+    #[command(about = help::about(HelpTopic::Status), long_about = help::long_about(HelpTopic::Status))]
     Status,
 
-    #[command(about = "Stop systemd service", long_about = LONG_ABOUT_STOP)]
+    #[command(about = help::about(HelpTopic::Stop), long_about = help::long_about(HelpTopic::Stop))]
     Stop,
 
-    #[command(about = "Start systemd service", long_about = LONG_ABOUT_START)]
+    #[command(about = help::about(HelpTopic::Start), long_about = help::long_about(HelpTopic::Start))]
     Start,
 
-    #[command(about = "Install systemd service", long_about = LONG_ABOUT_INSTALL)]
+    #[command(about = help::about(HelpTopic::Install), long_about = help::long_about(HelpTopic::Install))]
     Install {
         /// Directory/file path to monitor (supports multiple)
         #[arg(value_name = "PATH")]
@@ -141,10 +142,10 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
-    #[command(about = "Uninstall systemd service", long_about = LONG_ABOUT_UNINSTALL)]
+    #[command(about = help::about(HelpTopic::Uninstall), long_about = help::long_about(HelpTopic::Uninstall))]
     Uninstall,
 
-    #[command(about = "Clean historical logs", long_about = LONG_ABOUT_CLEAN)]
+    #[command(about = help::about(HelpTopic::Clean), long_about = help::long_about(HelpTopic::Clean))]
     Clean {
         /// Log file path to clean (default: ~/.fsmon/history.log)
         #[arg(short, long, value_name = "FILE")]
@@ -163,97 +164,6 @@ enum Commands {
         dry_run: bool,
     },
 }
-
-const LONG_ABOUT_MONITOR: &str = r#"Monitor filesystem events on specified paths, output fanotify raw events in real-time.
-
-[Event Types]
-  Default: 8 core change events (CLOSE_WRITE, ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF)
-  --all-events: Enable all 14 fanotify events (includes ACCESS, MODIFY, OPEN, OPEN_EXEC, CLOSE_NOWRITE, FS_ERROR)
-
-[Systemd Service]
-  Use 'fsmon install' to set up systemd service for long-term monitoring
-  fsmon status/stop/start to manage service
-
-[Examples]
-  fsmon monitor /etc --types MODIFY          # Investigate config file changes
-  fsmon monitor / --all-events               # Enable all 14 event types
-  fsmon monitor ~/project --recursive        # Recursively monitor project directory
-  fsmon monitor /tmp --min-size 100MB        # Track large file creation
-  fsmon monitor /var/log --format json       # JSON format output"#;
-
-const LONG_ABOUT_QUERY: &str = r#"Query historical file change events from log files, supports multiple filter conditions and sorting.
-
-[Time Filtering]
-  --since   Start time: relative (1h, 30m, 7d) or absolute ("2024-05-01 10:00")
-  --until   End time
-  
-[Process Filtering]
-  --pid     Filter by process ID (multiple supported: 1234,5678)
-  --cmd     Filter by process name (wildcard support: nginx*, python)
-  --user    Filter by username (multiple supported: root,admin)
-
-[Event Filtering]
-  --types     Filter by event type (ACCESS,MODIFY,CREATE,DELETE,...)
-  --min-size  Filter by size change (e.g., 100MB, 1GB)
-
-[Examples]
-  fsmon query                              # Query default log (~/.fsmon/history.log)
-  fsmon query --since 1h                   # Last 1 hour
-  fsmon query --cmd nginx                  # Only nginx operations
-  fsmon query --since 1h --cmd java --types MODIFY --min-size 100MB  # Combined filters
-  fsmon query --format json --sort size    # JSON output, sorted by size"#;
-
-const LONG_ABOUT_STATUS: &str = r#"Check fsmon systemd service status.
-
-[Output Content]
-  - Service status (active/inactive/failed)
-  - Use 'systemctl status fsmon' for detailed information
-
-[Examples]
-  fsmon status"#;
-
-const LONG_ABOUT_STOP: &str = r#"Stop fsmon systemd service.
-
-[Examples]
-  fsmon stop"#;
-
-const LONG_ABOUT_START: &str = r#"Start fsmon systemd service.
-
-[Examples]
-  fsmon start"#;
-
-const LONG_ABOUT_INSTALL: &str = r#"Install fsmon as a systemd service.
-
-[Service Configuration]
-  - Creates /etc/systemd/system/fsmon.service
-  - Configures auto-restart on failure
-  - Logs to systemd journal
-
-[Examples]
-  fsmon install /var/log -o /var/log/fsmon.log    # Monitor /var/log
-  fsmon install /etc /var/log                      # Monitor multiple paths"#;
-
-const LONG_ABOUT_UNINSTALL: &str = r#"Uninstall fsmon systemd service.
-
-[Actions]
-  - Stops service if running
-  - Disables service
-  - Removes service file
-
-[Examples]
-  fsmon uninstall"#;
-
-const LONG_ABOUT_CLEAN: &str = r#"Clean historical log files, retain by time or size.
-
-[Cleanup Strategy]
-  --keep-days   Keep logs from last N days (default: 30 days)
-  --max-size    Limit maximum log file size (e.g., 100MB, 1GB)
-  --dry-run     Preview mode, don't actually delete
-
-[Examples]
-  fsmon clean --keep-days 7           # Keep 7 days of logs
-  fsmon clean --max-size 100MB        # Limit logs to 100MB
-  fsmon clean --keep-days 7 --dry-run # Preview without deleting"#;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum OutputFormat {
