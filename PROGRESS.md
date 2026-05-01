@@ -17,6 +17,7 @@
 - 二进制实际位置可能不同（`~/.cargo/bin/fsmon`, `/usr/bin/fsmon` 等）
 - 安装时未检测 `current_exe()` 自动填充
 - **修改**: 使用 `std::env::current_exe()` 在 `install` 时动态检测二进制路径
+- **新增**: `--force` 选项支持覆盖已存在的 service 文件
 
 ### H2 [中] 默认日志路径重复定义 ✅ 提取常量
 `main.rs:438-439` 和 `main.rs:527-528` — `~/.fsmon/history.log`
