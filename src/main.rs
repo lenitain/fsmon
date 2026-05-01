@@ -634,22 +634,31 @@ fn find_tail_offset(path: &Path, max_bytes: usize) -> Result<usize> {
     Ok(read_start + first_newline)
 }
 
-/// Keep only bytes from offset to end
+/// Keep only bytes from offset to end, streaming via temp file
 fn truncate_from_start(path: &Path, offset: usize) -> Result<()> {
     if offset == 0 {
         return Ok(());
     }
 
-    let content = {
-        let mut f = fs::File::open(path)?;
-        f.seek(std::io::SeekFrom::Start(offset as u64))?;
-        let mut buf = Vec::new();
-        f.read_to_end(&mut buf)?;
-        buf
-    };
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let tmp_path = dir.join(".fsmon_trunc_tmp");
 
-    let mut f = fs::File::create(path)?;
-    f.write_all(&content)?;
+    {
+        let mut tmp = fs::File::create_new(&tmp_path)?;
+        let mut src = fs::File::open(path)?;
+        src.seek(std::io::SeekFrom::Start(offset as u64))?;
+
+        let mut buf = vec![0u8; 8192];
+        loop {
+            let n = src.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            tmp.write_all(&buf[..n])?;
+        }
+    }
+
+    fs::rename(&tmp_path, path)?;
     Ok(())
 }
 
