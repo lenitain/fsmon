@@ -395,6 +395,7 @@ async fn main() -> Result<()> {
             let all_events = all_events || config.all_events.unwrap_or(false);
             let output = output.or(config.output);
             let recursive = recursive || config.recursive.unwrap_or(false);
+            let buffer_size = config.buffer_size;
             let format = format
                 .or(config.format.as_deref().and_then(parse_output_format))
                 .unwrap_or(OutputFormat::Human);
@@ -422,7 +423,7 @@ async fn main() -> Result<()> {
                 format,
                 recursive,
                 all_events,
-                None, // buffer_size: will be added in H6
+                buffer_size,
             );
 
             monitor.run().await?;
