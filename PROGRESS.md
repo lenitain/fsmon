@@ -2,9 +2,10 @@
 
 ## 当前状态
 
-- 编译通过，53 单元测试全绿，8 集成测试 `#[ignore]`
+- 编译通过，72 单元测试全绿，7 集成测试 `#[ignore]`
 - Clippy 无警告（R1 已修复）
 - P2 已完成：非 CREATE/MODIFY/CLOSE_WRITE 事件跳过 metadata syscall
+- R5 已完成：fsmon.toml 配置文件支持
 
 ---
 
@@ -73,9 +74,9 @@
 `monitor.rs:102` — `"*.tmp".replace("*", ".*")` 不转义正则元字符。`test.tmp` 中的 `.` 会匹配任意字符。路径含正则元字符时行为异常。
 **修复**: 用 `regex::escape` 前处理，再将 `\*` 替换为 `.*`，`\?` 替换为 `.`。
 
-### R5 [低] 无配置文件支持
+### R5 [低] 无配置文件支持 ✅ 已修复
 所有配置通过 CLI 参数传入。systemd 服务切到长时间运行后，调整参数需要重新 `install`。
-**提议**: 增加 `fsmon.toml` 配置文件，CLI 参数覆盖配置项。
+**修复**: 增加 `fsmon.toml` 配置文件支持（`toml = "0.8"`）。新建 `src/config.rs` 模块，`Config` 结构体含 `MonitorConfig`/`QueryConfig`/`CleanConfig`。从 `~/.fsmon/config.toml`（主）或 `/etc/fsmon/config.toml`（备）加载，无文件返回默认值，无效 TOML 报错。CLI 参数通过 `cli.or(config)` 模式覆盖配置值。4 项单元测试覆盖加载、解析、无效、合并场景。
 
 ### R6 [低] 无自动日志轮转
 `fsmon clean` 为手动命令。长时间运行的 daemon 日志会无限增长。
