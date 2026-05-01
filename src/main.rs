@@ -2,10 +2,12 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process;
+use std::str::FromStr;
 
 mod monitor;
 mod proc_cache;
@@ -262,10 +264,94 @@ pub enum SortBy {
     Pid,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum EventType {
+    Access,
+    Modify,
+    CloseWrite,
+    CloseNowrite,
+    Open,
+    OpenExec,
+    Attrib,
+    Create,
+    Delete,
+    DeleteSelf,
+    MovedFrom,
+    MovedTo,
+    MoveSelf,
+    FsError,
+}
+
+impl EventType {
+    pub const ALL: &'static [EventType] = &[
+        EventType::Access,
+        EventType::Modify,
+        EventType::CloseWrite,
+        EventType::CloseNowrite,
+        EventType::Open,
+        EventType::OpenExec,
+        EventType::Attrib,
+        EventType::Create,
+        EventType::Delete,
+        EventType::DeleteSelf,
+        EventType::MovedFrom,
+        EventType::MovedTo,
+        EventType::MoveSelf,
+        EventType::FsError,
+    ];
+}
+
+impl fmt::Display for EventType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            EventType::Access => "ACCESS",
+            EventType::Modify => "MODIFY",
+            EventType::CloseWrite => "CLOSE_WRITE",
+            EventType::CloseNowrite => "CLOSE_NOWRITE",
+            EventType::Open => "OPEN",
+            EventType::OpenExec => "OPEN_EXEC",
+            EventType::Attrib => "ATTRIB",
+            EventType::Create => "CREATE",
+            EventType::Delete => "DELETE",
+            EventType::DeleteSelf => "DELETE_SELF",
+            EventType::MovedFrom => "MOVED_FROM",
+            EventType::MovedTo => "MOVED_TO",
+            EventType::MoveSelf => "MOVE_SELF",
+            EventType::FsError => "FS_ERROR",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl FromStr for EventType {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_uppercase().as_str() {
+            "ACCESS" => Ok(EventType::Access),
+            "MODIFY" => Ok(EventType::Modify),
+            "CLOSE_WRITE" => Ok(EventType::CloseWrite),
+            "CLOSE_NOWRITE" => Ok(EventType::CloseNowrite),
+            "OPEN" => Ok(EventType::Open),
+            "OPEN_EXEC" => Ok(EventType::OpenExec),
+            "ATTRIB" => Ok(EventType::Attrib),
+            "CREATE" => Ok(EventType::Create),
+            "DELETE" => Ok(EventType::Delete),
+            "DELETE_SELF" => Ok(EventType::DeleteSelf),
+            "MOVED_FROM" => Ok(EventType::MovedFrom),
+            "MOVED_TO" => Ok(EventType::MovedTo),
+            "MOVE_SELF" => Ok(EventType::MoveSelf),
+            "FS_ERROR" => Ok(EventType::FsError),
+            _ => Err(format!("Unknown event type: {}", s)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEvent {
     pub time: DateTime<Utc>,
-    pub event_type: String,
+    pub event_type: EventType,
     pub path: PathBuf,
     pub pid: u32,
     pub cmd: String,
@@ -314,11 +400,17 @@ async fn main() -> Result<()> {
 
             let min_size_bytes = min_size.map(|s| parse_size(&s)).transpose()?;
 
-            let event_types = types.map(|t| {
-                t.split(',')
-                    .map(|s| s.trim().to_uppercase())
-                    .collect::<Vec<_>>()
-            });
+            let event_types = types
+                .map(|t| {
+                    t.split(',')
+                        .map(|s| {
+                            s.trim()
+                                .parse::<EventType>()
+                                .map_err(|e| anyhow::anyhow!(e))
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })
+                .transpose()?;
 
             let monitor = Monitor::new(
                 paths,
@@ -365,11 +457,17 @@ async fn main() -> Result<()> {
                     .collect::<Vec<_>>()
             });
 
-            let event_types = types.map(|t| {
-                t.split(',')
-                    .map(|s| s.trim().to_uppercase())
-                    .collect::<Vec<_>>()
-            });
+            let event_types = types
+                .map(|t| {
+                    t.split(',')
+                        .map(|s| {
+                            s.trim()
+                                .parse::<EventType>()
+                                .map_err(|e| anyhow::anyhow!(e))
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })
+                .transpose()?;
 
             let query = Query::new(
                 log_file,
@@ -664,7 +762,7 @@ mod tests {
         // Create events: one old, one new
         let old_event = FileEvent {
             time: Utc::now() - chrono::Duration::days(60),
-            event_type: "CREATE".into(),
+            event_type: EventType::Create,
             path: PathBuf::from("/tmp/old"),
             pid: 1,
             cmd: "test".into(),
@@ -673,7 +771,7 @@ mod tests {
         };
         let new_event = FileEvent {
             time: Utc::now(),
-            event_type: "CREATE".into(),
+            event_type: EventType::Create,
             path: PathBuf::from("/tmp/new"),
             pid: 1,
             cmd: "test".into(),
@@ -709,7 +807,7 @@ mod tests {
 
         let old_event = FileEvent {
             time: Utc::now() - chrono::Duration::days(60),
-            event_type: "CREATE".into(),
+            event_type: EventType::Create,
             path: PathBuf::from("/tmp/old"),
             pid: 1,
             cmd: "test".into(),
@@ -754,7 +852,7 @@ mod tests {
             for i in 0..100 {
                 let event = FileEvent {
                     time: Utc::now(),
-                    event_type: "CREATE".into(),
+                    event_type: EventType::Create,
                     path: PathBuf::from(format!("/tmp/file{}", i)),
                     pid: 1,
                     cmd: "test".into(),

@@ -54,8 +54,9 @@
 ### R2 [中] `monitor.rs` 文件过大 (1253 行)
 拆分：`fid_parser.rs`（FID 事件解析）、`dir_cache.rs`（目录句柄缓存）、`output.rs`（事件格式化输出）。
 
-### R3 [中] 事件类型用字符串比较
+### R3 [中] 事件类型用字符串比较 ✅ 已修复
 `event_types: Option<Vec<String>>` — 字符串比较易手误。应使用 `enum EventType` 枚举 + `FromStr`/`Display`。
+**修复**: 添加 `EventType` 枚举（14种事件类型），实现 `FromStr`/`Display`/`Serialize`/`Deserialize`。将 `FileEvent.event_type`、`Monitor.event_types`、`Query.event_types` 从 `String` 改为 `EventType`，所有比较改为类型安全的枚举比较。
 
 ### R4 [中] 排除模式 glob → regex 转换不安全 ✅ 已修复
 `monitor.rs:102` — `"*.tmp".replace("*", ".*")` 不转义正则元字符。`test.tmp` 中的 `.` 会匹配任意字符。路径含正则元字符时行为异常。
@@ -87,11 +88,11 @@
 | P0 | 质量 | R1 clippy 修复 | 极小 |
 | P1 | 性能 | P1 树缓存懒加载 | 大 |
 | P1 | 质量 | R4 glob → regex ✅ | 小 |
-| P2 | 质量 | R3 EventType 枚举 | 中 |
+| P2 | 质量 | R3 EventType 枚举 ✅ | 中 |
 | P2 | 质量 | R2 monitor.rs 拆分 | 大 |
 | P3 | 性能 | P2 减少 metadata syscall | 中 |
 | P3 | 性能 | P3 日志索引查询 | 大 |
 | P4 | 性能 | P4+P5 内存/延迟优化 | 中 |
 | P4 | 质量 | R5-R8 增强 | 小-中 |
 
-**下一步建议**: 处理 P1 性能瓶颈（树缓存懒加载）。
+**下一步建议**: 处理 R2 monitor.rs 拆分（大复杂度，将 fid_parser/dir_cache/output 拆分为独立模块）。

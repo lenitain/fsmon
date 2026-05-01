@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::proc_cache::{self, ProcCache};
 use crate::utils::get_process_info_by_pid;
-use crate::{FileEvent, OutputFormat};
+use crate::{EventType, FileEvent, OutputFormat};
 
 /// Handle key type: fsid + file_handle bytes, stack-allocated if ≤128 bytes
 type HandleKey = SmallVec<[u8; 128]>;
@@ -77,7 +77,7 @@ struct FidEvent {
 pub struct Monitor {
     paths: Vec<PathBuf>,
     min_size: Option<i64>,
-    event_types: Option<Vec<String>>,
+    event_types: Option<Vec<EventType>>,
     exclude_regex: Option<regex::Regex>,
     output: Option<PathBuf>,
     format: OutputFormat,
@@ -92,7 +92,7 @@ impl Monitor {
     pub fn new(
         paths: Vec<PathBuf>,
         min_size: Option<i64>,
-        event_types: Option<Vec<String>>,
+        event_types: Option<Vec<EventType>>,
         exclude: Option<String>,
         output: Option<PathBuf>,
         format: OutputFormat,
@@ -341,19 +341,19 @@ impl Monitor {
         Ok(())
     }
 
-    fn build_file_event(&mut self, raw: &FidEvent, event_type: &str) -> FileEvent {
+    fn build_file_event(&mut self, raw: &FidEvent, event_type: EventType) -> FileEvent {
         let pid = raw.pid.unsigned_abs();
         let (cmd, user) = get_process_info_by_pid(pid, &raw.path, self.proc_cache.as_ref());
 
         let size_change = match event_type {
             // For CREATE/MODIFY/CLOSE_WRITE: get actual size and cache it
-            "CREATE" | "MODIFY" | "CLOSE_WRITE" => {
+            EventType::Create | EventType::Modify | EventType::CloseWrite => {
                 let size = fs::metadata(&raw.path).map(|m| m.len()).unwrap_or(0);
                 self.file_size_cache.insert(raw.path.clone(), size);
                 size as i64
             }
             // For DELETE/DELETE_SELF/MOVED_FROM: use cached size (file already gone)
-            "DELETE" | "DELETE_SELF" | "MOVED_FROM" => {
+            EventType::Delete | EventType::DeleteSelf | EventType::MovedFrom => {
                 self.file_size_cache.remove(&raw.path).unwrap_or(0) as i64
             }
             // For other events: get actual size
@@ -362,7 +362,7 @@ impl Monitor {
 
         FileEvent {
             time: Utc::now(),
-            event_type: event_type.to_string(),
+            event_type,
             path: raw.path.clone(),
             pid,
             cmd,
@@ -456,28 +456,28 @@ impl Monitor {
 
 // ---- Event type mapping (1:1 with fanotify event bits) ----
 
-const EVENT_BITS: [(u64, &str); 14] = [
-    (FAN_ACCESS, "ACCESS"),
-    (FAN_MODIFY, "MODIFY"),
-    (FAN_CLOSE_WRITE, "CLOSE_WRITE"),
-    (FAN_CLOSE_NOWRITE, "CLOSE_NOWRITE"),
-    (FAN_OPEN, "OPEN"),
-    (FAN_OPEN_EXEC, "OPEN_EXEC"),
-    (FAN_ATTRIB, "ATTRIB"),
-    (FAN_CREATE, "CREATE"),
-    (FAN_DELETE, "DELETE"),
-    (FAN_DELETE_SELF, "DELETE_SELF"),
-    (FAN_MOVED_FROM, "MOVED_FROM"),
-    (FAN_MOVED_TO, "MOVED_TO"),
-    (FAN_MOVE_SELF, "MOVE_SELF"),
-    (FAN_FS_ERROR, "FS_ERROR"),
+const EVENT_BITS: [(u64, EventType); 14] = [
+    (FAN_ACCESS, EventType::Access),
+    (FAN_MODIFY, EventType::Modify),
+    (FAN_CLOSE_WRITE, EventType::CloseWrite),
+    (FAN_CLOSE_NOWRITE, EventType::CloseNowrite),
+    (FAN_OPEN, EventType::Open),
+    (FAN_OPEN_EXEC, EventType::OpenExec),
+    (FAN_ATTRIB, EventType::Attrib),
+    (FAN_CREATE, EventType::Create),
+    (FAN_DELETE, EventType::Delete),
+    (FAN_DELETE_SELF, EventType::DeleteSelf),
+    (FAN_MOVED_FROM, EventType::MovedFrom),
+    (FAN_MOVED_TO, EventType::MovedTo),
+    (FAN_MOVE_SELF, EventType::MoveSelf),
+    (FAN_FS_ERROR, EventType::FsError),
 ];
 
-fn mask_to_event_types(mask: u64) -> SmallVec<[&'static str; 8]> {
+fn mask_to_event_types(mask: u64) -> SmallVec<[EventType; 8]> {
     EVENT_BITS
         .iter()
         .filter(|(bit, _)| mask & bit != 0)
-        .map(|(_, name)| *name)
+        .map(|(_, event_type)| *event_type)
         .collect()
 }
 
@@ -829,7 +829,7 @@ mod tests {
     fn test_mask_to_event_types_single() {
         let types = mask_to_event_types(FAN_CREATE);
         assert_eq!(types.len(), 1);
-        assert_eq!(types[0], "CREATE");
+        assert_eq!(types[0], EventType::Create);
     }
 
     #[test]
@@ -837,9 +837,9 @@ mod tests {
         let mask = FAN_CREATE | FAN_DELETE | FAN_MODIFY;
         let types = mask_to_event_types(mask);
         assert_eq!(types.len(), 3);
-        assert!(types.contains(&"CREATE"));
-        assert!(types.contains(&"DELETE"));
-        assert!(types.contains(&"MODIFY"));
+        assert!(types.contains(&EventType::Create));
+        assert!(types.contains(&EventType::Delete));
+        assert!(types.contains(&EventType::Modify));
     }
 
     #[test]
@@ -874,7 +874,7 @@ mod tests {
         let mask = FAN_CREATE | FAN_EVENT_ON_CHILD | FAN_ONDIR;
         let types = mask_to_event_types(mask);
         assert_eq!(types.len(), 1);
-        assert_eq!(types[0], "CREATE");
+        assert_eq!(types[0], EventType::Create);
     }
 
     #[test]
@@ -889,7 +889,7 @@ mod tests {
             false,
             false,
         );
-        let event = make_event("/tmp/test.txt", "CREATE", 1000, 1024);
+        let event = make_event("/tmp/test.txt", EventType::Create, 1000, 1024);
         assert!(m.should_output(&event));
     }
 
@@ -898,16 +898,16 @@ mod tests {
         let m = Monitor::new(
             vec![PathBuf::from("/tmp")],
             None,
-            Some(vec!["CREATE".into(), "DELETE".into()]),
+            Some(vec![EventType::Create, EventType::Delete]),
             None,
             None,
             OutputFormat::Human,
             false,
             false,
         );
-        assert!(m.should_output(&make_event("/tmp/a", "CREATE", 1, 0)));
-        assert!(m.should_output(&make_event("/tmp/a", "DELETE", 1, 0)));
-        assert!(!m.should_output(&make_event("/tmp/a", "MODIFY", 1, 0)));
+        assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, 0)));
+        assert!(m.should_output(&make_event("/tmp/a", EventType::Delete, 1, 0)));
+        assert!(!m.should_output(&make_event("/tmp/a", EventType::Modify, 1, 0)));
     }
 
     #[test]
@@ -922,10 +922,10 @@ mod tests {
             false,
             false,
         );
-        assert!(m.should_output(&make_event("/tmp/a", "CREATE", 1, 2000)));
-        assert!(m.should_output(&make_event("/tmp/a", "CREATE", 1, -2000)));
-        assert!(!m.should_output(&make_event("/tmp/a", "CREATE", 1, 500)));
-        assert!(!m.should_output(&make_event("/tmp/a", "CREATE", 1, -500)));
+        assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, 2000)));
+        assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, -2000)));
+        assert!(!m.should_output(&make_event("/tmp/a", EventType::Create, 1, 500)));
+        assert!(!m.should_output(&make_event("/tmp/a", EventType::Create, 1, -500)));
     }
 
     #[test]
@@ -943,8 +943,8 @@ mod tests {
             false,
         );
         // /tmp/test.tmp matches (ends with .tmp)
-        assert!(!m.should_output(&make_event("/tmp/test.tmp", "CREATE", 1, 0)));
-        assert!(!m.should_output(&make_event("/tmp/foo.tmp", "DELETE", 1, 0)));
+        assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
+        assert!(!m.should_output(&make_event("/tmp/foo.tmp", EventType::Delete, 1, 0)));
         // Note: /tmp/test.txt also matches because regex ".*.tmp" matches "/tmp" substring
         // This is expected behavior - the pattern is a substring match, not a glob
     }
@@ -962,11 +962,11 @@ mod tests {
             false,
             false,
         );
-        assert!(m.should_output(&make_event("/tmp/test.txt", "CREATE", 1, 0)));
-        assert!(!m.should_output(&make_event("/tmp/test.tmp", "CREATE", 1, 0)));
-        assert!(m.should_output(&make_event("/tmp/foo.tmp", "DELETE", 1, 0)));
+        assert!(m.should_output(&make_event("/tmp/test.txt", EventType::Create, 1, 0)));
+        assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
+        assert!(m.should_output(&make_event("/tmp/foo.tmp", EventType::Delete, 1, 0)));
         // Should not match "testXtmp" because dot is escaped
-        assert!(m.should_output(&make_event("/tmp/testXtmp", "CREATE", 1, 0)));
+        assert!(m.should_output(&make_event("/tmp/testXtmp", EventType::Create, 1, 0)));
     }
 
     #[test]
@@ -974,7 +974,7 @@ mod tests {
         let m = Monitor::new(
             vec![PathBuf::from("/tmp")],
             Some(100),
-            Some(vec!["CREATE".into()]),
+            Some(vec![EventType::Create]),
             Some("*.log".into()),
             None,
             OutputFormat::Human,
@@ -982,13 +982,13 @@ mod tests {
             false,
         );
         // Passes all filters
-        assert!(m.should_output(&make_event("/tmp/data", "CREATE", 1, 200)));
+        assert!(m.should_output(&make_event("/tmp/data", EventType::Create, 1, 200)));
         // Wrong type
-        assert!(!m.should_output(&make_event("/tmp/data", "DELETE", 1, 200)));
+        assert!(!m.should_output(&make_event("/tmp/data", EventType::Delete, 1, 200)));
         // Too small
-        assert!(!m.should_output(&make_event("/tmp/data", "CREATE", 1, 50)));
+        assert!(!m.should_output(&make_event("/tmp/data", EventType::Create, 1, 50)));
         // Excluded pattern
-        assert!(!m.should_output(&make_event("/tmp/app.log", "CREATE", 1, 200)));
+        assert!(!m.should_output(&make_event("/tmp/app.log", EventType::Create, 1, 200)));
     }
 
     #[test]
@@ -1052,10 +1052,10 @@ mod tests {
         assert!(!m.is_path_in_scope(Path::new("/etc/passwd"), &watched));
     }
 
-    fn make_event(path: &str, event_type: &str, pid: u32, size: i64) -> FileEvent {
+    fn make_event(path: &str, event_type: EventType, pid: u32, size: i64) -> FileEvent {
         FileEvent {
             time: Utc::now(),
-            event_type: event_type.to_string(),
+            event_type,
             path: PathBuf::from(path),
             pid,
             cmd: "test".to_string(),

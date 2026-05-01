@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use crate::utils::{format_size, parse_time};
-use crate::{FileEvent, OutputFormat, SortBy};
+use crate::{EventType, FileEvent, OutputFormat, SortBy};
 
 pub struct Query {
     log_file: PathBuf,
@@ -15,7 +15,7 @@ pub struct Query {
     pids: Option<Vec<u32>>,
     cmd: Option<String>,
     users: Option<Vec<String>>,
-    event_types: Option<Vec<String>>,
+    event_types: Option<Vec<EventType>>,
     min_size: Option<i64>,
     format: OutputFormat,
     sort: SortBy,
@@ -30,7 +30,7 @@ impl Query {
         pids: Option<Vec<u32>>,
         cmd: Option<String>,
         users: Option<Vec<String>>,
-        event_types: Option<Vec<String>>,
+        event_types: Option<Vec<EventType>>,
         min_size: Option<i64>,
         format: OutputFormat,
         sort: SortBy,
@@ -212,7 +212,7 @@ mod tests {
     fn make_event(time: DateTime<Utc>, size: i64, pid: u32) -> FileEvent {
         FileEvent {
             time,
-            event_type: "CREATE".to_string(),
+            event_type: EventType::Create,
             path: PathBuf::from("/tmp/test"),
             pid,
             cmd: "test".to_string(),
@@ -314,7 +314,7 @@ mod tests {
 
         let e1 = FileEvent {
             time: Utc::now(),
-            event_type: "CREATE".into(),
+            event_type: EventType::Create,
             path: PathBuf::from("/tmp/a"),
             pid: 100,
             cmd: "test".into(),
@@ -323,7 +323,7 @@ mod tests {
         };
         let e2 = FileEvent {
             time: Utc::now(),
-            event_type: "DELETE".into(),
+            event_type: EventType::Delete,
             path: PathBuf::from("/tmp/b"),
             pid: 200,
             cmd: "test".into(),
@@ -364,7 +364,7 @@ mod tests {
 
         let e1 = FileEvent {
             time: Utc::now(),
-            event_type: "CREATE".into(),
+            event_type: EventType::Create,
             path: PathBuf::from("/tmp/a"),
             pid: 1,
             cmd: "test".into(),
@@ -373,7 +373,7 @@ mod tests {
         };
         let e2 = FileEvent {
             time: Utc::now(),
-            event_type: "MODIFY".into(),
+            event_type: EventType::Modify,
             path: PathBuf::from("/tmp/b"),
             pid: 1,
             cmd: "test".into(),
@@ -392,7 +392,7 @@ mod tests {
             None,
             None,
             None,
-            Some(vec!["CREATE".into()]),
+            Some(vec![EventType::Create]),
             None,
             OutputFormat::Human,
             SortBy::Time,
@@ -400,7 +400,7 @@ mod tests {
 
         let events = q.read_events(None, None, None).unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, "CREATE");
+        assert_eq!(events[0].event_type, EventType::Create);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -414,7 +414,7 @@ mod tests {
 
         let e1 = FileEvent {
             time: Utc::now(),
-            event_type: "CREATE".into(),
+            event_type: EventType::Create,
             path: PathBuf::from("/tmp/a"),
             pid: 1,
             cmd: "test".into(),
@@ -423,7 +423,7 @@ mod tests {
         };
         let e2 = FileEvent {
             time: Utc::now(),
-            event_type: "CREATE".into(),
+            event_type: EventType::Create,
             path: PathBuf::from("/tmp/b"),
             pid: 1,
             cmd: "test".into(),
@@ -467,7 +467,7 @@ mod tests {
 
         let e1 = FileEvent {
             time: t1,
-            event_type: "CREATE".into(),
+            event_type: EventType::Create,
             path: PathBuf::from("/tmp/a"),
             pid: 1,
             cmd: "test".into(),
@@ -476,7 +476,7 @@ mod tests {
         };
         let e2 = FileEvent {
             time: t2,
-            event_type: "CREATE".into(),
+            event_type: EventType::Create,
             path: PathBuf::from("/tmp/b"),
             pid: 1,
             cmd: "test".into(),
