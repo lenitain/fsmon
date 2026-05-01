@@ -17,7 +17,11 @@
 `monitor.rs:343` — 文件已删除后 `fs::metadata` 失败返回 `unwrap_or(0)`，无法记录删除前大小。
 **修复**: 添加 `file_size_cache: HashMap<PathBuf, u64>` 缓存文件大小。CREATE/MODIFY/CLOSE_WRITE 事件时缓存实际大小，DELETE/DELETE_SELF/MOVED_FROM 事件时使用缓存值。
 
-### B3 [中] 包含 `keep_days=0` 清理时 `chrono::Duration::days(0)` 会返回 0 天正常
+### B3 [中] DELETE/DELETE_SELF 事件路径为空（预存在目录） ✅ 已修复
+`monitor.rs:620-634` — 第二遍恢复循环只检查 `dfid_name_handle`，未检查 `self_handle`。预存目录的 DELETE_SELF 事件（kernel 只发 DFID record，无 DFID_NAME）无法从 `dir_cache` 恢复路径。
+**修复**: 在恢复循环中添加 `self_handle` → `dir_cache` 查找分支。
+
+### B4 [中] 包含 `keep_days=0` 清理时 `chrono::Duration::days(0)` 会返回 0 天正常
 当前代码 `keep_days: u32` 从 CLI 接收，默认 30 天。传 0 表示"保留 0 天"即清空。当前逻辑正确。
 
 ---

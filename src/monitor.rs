@@ -631,6 +631,13 @@ fn read_fid_events(
                 };
                 made_progress = true;
             }
+            if ev.path.as_os_str().is_empty()
+                && let Some(ref key) = ev.self_handle
+                && let Some(cached_path) = dir_cache.get(key)
+            {
+                ev.path = cached_path.clone();
+                made_progress = true;
+            }
         }
 
         if !made_progress {
