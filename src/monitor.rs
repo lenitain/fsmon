@@ -311,8 +311,8 @@ impl Monitor {
             EventType::Delete | EventType::DeleteSelf | EventType::MovedFrom => {
                 self.file_size_cache.remove(&raw.path).unwrap_or(0) as i64
             }
-            // For other events: get actual size
-            _ => fs::metadata(&raw.path).map(|m| m.len() as i64).unwrap_or(0),
+            // For other events (OPEN, ACCESS, ATTRIB, etc.): use cached size if available
+            _ => self.file_size_cache.get(&raw.path).map_or(0, |&s| s as i64),
         };
 
         FileEvent {
