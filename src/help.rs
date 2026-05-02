@@ -5,7 +5,7 @@ macro_rules! config_template {
 \n\
 [monitor]\n\
 # Directories to watch for filesystem events\n\
-paths = [\"/var/log\", \"/tmp\"]\n\
+paths = []\n\
 \n\
 # Minimum file size change to report (supports KB, MB, GB suffixes, e.g. \"100MB\", \"1GB\")\n\
 # min_size = \"100MB\"\n\
@@ -18,22 +18,22 @@ paths = [\"/var/log\", \"/tmp\"]\n\
 # exclude = \"*.tmp\"\n\
 \n\
 # Report all 14 event types regardless of the 'types' filter\n\
-# all_events = true\n\
+all_events = false\n\
 \n\
 # Path to the event log file\n\
 # output = \"/var/log/fsmon.log\"\n\
 \n\
 # Log output format: \"human\", \"json\", or \"csv\"\n\
-# format = \"json\"\n\
+format = \"human\"\n\
 \n\
 # Watch subdirectories recursively\n\
-# recursive = true\n\
+recursive = false\n\
 \n\
-# Fanotify read buffer size in bytes (default: 32768)\n\
-# buffer_size = 65536\n\
+# Fanotify read buffer size in bytes\n\
+buffer_size = 32768\n\
 \n\
 [query]\n\
-# Event log file to query (default: ~/.fsmon/history.log)\n\
+# Event log file to query\n\
 # log_file = \"/var/log/fsmon.log\"\n\
 \n\
 # Start time: relative (\"1h\", \"30m\", \"7d\") or absolute (\"2024-05-01 10:00\")\n\
@@ -58,33 +58,33 @@ paths = [\"/var/log\", \"/tmp\"]\n\
 # min_size = \"100MB\"\n\
 \n\
 # Output format: \"human\", \"json\", or \"csv\"\n\
-# format = \"json\"\n\
+format = \"human\"\n\
 \n\
 # Sort results: \"time\", \"size\", or \"pid\"\n\
-# sort = \"size\"\n\
+sort = \"time\"\n\
 \n\
 [clean]\n\
-# Event log file to clean (default: ~/.fsmon/history.log)\n\
+# Event log file to clean\n\
 # log_file = \"/var/log/fsmon.log\"\n\
 \n\
-# Number of days to retain log entries (default: 30)\n\
-# keep_days = 7\n\
+# Number of days to retain log entries\n\
+keep_days = 30\n\
 \n\
 # Maximum log file size before tail truncation (e.g. \"100MB\", \"1GB\")\n\
 # max_size = \"500MB\"\n\
 \n\
 [install]\n\
 # systemd ProtectSystem value (\"yes\", \"no\", \"strict\", \"full\")\n\
-# protect_system = \"strict\"\n\
+protect_system = \"strict\"\n\
 \n\
 # systemd ProtectHome value (\"yes\", \"no\", \"read-only\")\n\
-# protect_home = \"read-only\"\n\
+protect_home = \"read-only\"\n\
 \n\
 # Additional read-write paths for systemd service (used when ProtectSystem is strict)\n\
-# read_write_paths = [\"/var/log\", \"/tmp\"]\n\
+read_write_paths = [\"/var/log\"]\n\
 \n\
 # systemd PrivateTmp value (\"yes\" or \"no\")\n\
-# private_tmp = \"yes\"\n"
+private_tmp = \"yes\"\n"
     };
 }
 

@@ -156,6 +156,7 @@ fsmon stop              # 停止 systemd 服务
 fsmon start             # 启动 systemd 服务
 fsmon install --help    # 安装 systemd 服务（自动检测二进制路径）
 fsmon uninstall         # 卸载 systemd 服务
+fsmon generate          # 生成默认的配置文件 (~/.config/fsmon/config.toml)
 ```
 
 ## 配置文件
@@ -163,55 +164,93 @@ fsmon uninstall         # 卸载 systemd 服务
 fsmon 支持 TOML 配置文件，按以下优先级查找（首个存在的文件生效）：
 
 1. `~/.fsmon/config.toml` — 旧版兼容路径
-2. `~/.config/fsmon/config.toml` — XDG 标准路径（`fsmon generate-config` 生成于此）
+2. `~/.config/fsmon/config.toml` — XDG 标准路径（`fsmon generate` 生成于此）
 3. `/etc/fsmon/config.toml` — 系统级配置
 
-示例配置：
+默认配置（`fsmon generate`）：
 
 ```toml
 [monitor]
 # 要监控的目录路径
-paths = ["/var/log", "/tmp"]
-# 报告的最小文件大小（支持 KB、MB、GB 后缀）
-min_size = "100MB"
-# 要过滤的事件类型，逗号分隔（ACCESS、MODIFY、CREATE 等）
-types = "MODIFY,CREATE"
+paths = []
+
+# 报告的最小文件大小（支持 KB、MB、GB 后缀，例如 "100MB"、"1GB"）
+# min_size = "100MB"
+
+# 要过滤的事件类型，逗号分隔（ACCESS、MODIFY、CREATE、DELETE ...）
+# types = "MODIFY,CREATE"
+
 # 要排除的 glob 模式
-exclude = "*.tmp"
-# 忽略 types 过滤，报告所有事件类型
-all_events = true
+# exclude = "*.tmp"
+
+# 忽略 types 过滤，报告所有 14 种事件类型
+all_events = false
+
 # 事件日志文件路径
-output = "/var/log/fsmon.log"
-# 日志输出格式："json" 或 "text"
-format = "json"
+# output = "/var/log/fsmon.log"
+
+# 日志输出格式："human"、"json" 或 "csv"
+format = "human"
+
 # 递归监控子目录
-recursive = true
-# 读取缓冲区大小（字节）
-buffer_size = 65536
+recursive = false
+
+# Fanotify 读取缓冲区大小（字节）
+buffer_size = 32768
 
 [query]
 # 要查询的事件日志文件
-log_file = "/var/log/fsmon.log"
-# 从现在向后的查询时间范围（如 1h、30m、7d）
-since = "1h"
-# 输出格式："json" 或 "text"
-format = "json"
-# 按字段排序结果："time"、"size"、"path"
-sort = "size"
+# log_file = "/var/log/fsmon.log"
+
+# 开始时间：相对（"1h"、"30m"、"7d"）或绝对（"2024-05-01 10:00"）
+# since = "1h"
+
+# 结束时间：格式同 since
+# until = "2h"
+
+# 按进程 ID 过滤（逗号分隔）
+# pid = "1234,5678"
+
+# 按进程名过滤（支持通配符：nginx*、python）
+# cmd = "nginx"
+
+# 按用户名过滤（逗号分隔）
+# user = "root,admin"
+
+# 按事件类型过滤（逗号分隔）
+# types = "MODIFY,CREATE"
+
+# 最小变化大小
+# min_size = "100MB"
+
+# 输出格式："human"、"json" 或 "csv"
+format = "human"
+
+# 排序方式："time"、"size" 或 "pid"
+sort = "time"
 
 [clean]
+# 要清理的事件日志文件
+# log_file = "/var/log/fsmon.log"
+
 # 保留日志的天数
-keep_days = 7
-# 日志文件轮转前的最大大小
-max_size = "500MB"
+keep_days = 30
+
+# 日志文件截断前的最大大小（例如 "100MB"、"1GB"）
+# max_size = "500MB"
 
 [install]
-# 跳过系统路径监控（/proc、/sys 等）
-protect_system = "false"
-# 跳过用户主目录监控
-protect_home = "false"
-read_write_paths = ["/var/log", "/tmp"]
-private_tmp = "no"
+# systemd ProtectSystem 值（"yes"、"no"、"strict"、"full"）
+protect_system = "strict"
+
+# systemd ProtectHome 值（"yes"、"no"、"read-only"）
+protect_home = "read-only"
+
+# 额外的读写路径（ProtectSystem 为 strict 时使用）
+read_write_paths = ["/var/log"]
+
+# systemd PrivateTmp 值（"yes" 或 "no"）
+private_tmp = "yes"
 ```
 
 CLI 参数优先级高于配置文件。
