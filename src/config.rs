@@ -1,4 +1,90 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+
+pub const DEFAULT_CONFIG_TEMPLATE: &str = "# fsmon configuration file\n\
+# See https://github.com/lenitain/fsmon for full documentation\n\
+\n\
+[monitor]\n\
+# Directories to watch for filesystem events\n\
+paths = []\n\
+\n\
+# Minimum file size change to report (supports KB, MB, GB suffixes, e.g. \"100MB\", \"1GB\")\n\
+# min_size = \"100MB\"\n\
+\n\
+# Comma-separated event types to filter: ACCESS, MODIFY, CLOSE_WRITE, CLOSE_NOWRITE,\n\
+# OPEN, OPEN_EXEC, ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF\n\
+# types = \"MODIFY,CREATE\"\n\
+\n\
+# Glob patterns to exclude from monitoring\n\
+# exclude = \"*.tmp\"\n\
+\n\
+# Report all 14 event types regardless of the 'types' filter\n\
+all_events = false\n\
+\n\
+# Path to the event log file\n\
+# output = \"/var/log/fsmon.log\"\n\
+\n\
+# Log output format: \"human\", \"json\", or \"csv\"\n\
+format = \"human\"\n\
+\n\
+# Watch subdirectories recursively\n\
+recursive = false\n\
+\n\
+# Fanotify read buffer size in bytes\n\
+buffer_size = 32768\n\
+\n\
+[query]\n\
+# Event log file to query\n\
+# log_file = \"/var/log/fsmon.log\"\n\
+\n\
+# Start time: relative (\"1h\", \"30m\", \"7d\") or absolute (\"2024-05-01 10:00\")\n\
+# since = \"1h\"\n\
+\n\
+# End time: same format as since\n\
+# until = \"2h\"\n\
+\n\
+# Filter by process IDs (comma-separated)\n\
+# pid = \"1234,5678\"\n\
+\n\
+# Filter by process name (wildcard support: nginx*, python)\n\
+# cmd = \"nginx\"\n\
+\n\
+# Filter by usernames (comma-separated)\n\
+# user = \"root,admin\"\n\
+\n\
+# Filter by event types (comma-separated)\n\
+# types = \"MODIFY,CREATE\"\n\
+\n\
+# Minimum size change to include\n\
+# min_size = \"100MB\"\n\
+\n\
+# Output format: \"human\", \"json\", or \"csv\"\n\
+format = \"human\"\n\
+\n\
+# Sort results: \"time\", \"size\", or \"pid\"\n\
+sort = \"time\"\n\
+\n\
+[clean]\n\
+# Event log file to clean\n\
+# log_file = \"/var/log/fsmon.log\"\n\
+\n\
+# Number of days to retain log entries\n\
+keep_days = 30\n\
+\n\
+# Maximum log file size before tail truncation (e.g. \"100MB\", \"1GB\")\n\
+# max_size = \"500MB\"\n\
+\n\
+[install]\n\
+# systemd ProtectSystem value (\"yes\", \"no\", \"strict\", \"full\")\n\
+protect_system = \"strict\"\n\
+\n\
+# systemd ProtectHome value (\"yes\", \"no\", \"read-only\")\n\
+protect_home = \"read-only\"\n\
+\n\
+# Additional read-write paths for systemd service (used when ProtectSystem is strict)\n\
+read_write_paths = [\"/var/log\"]\n\
+\n\
+# systemd PrivateTmp value (\"yes\" or \"no\")\n\
+private_tmp = \"yes\"\n";
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -69,20 +155,43 @@ impl Config {
         Ok(config)
     }
 
+    /// Search config files in priority order:
+    ///   1. ~/.fsmon/config.toml (legacy, backward compat)
+    ///   2. ~/.config/fsmon/config.toml (XDG)
+    ///   3. /etc/fsmon/config.toml (system-wide)
     fn find_config_file() -> Option<PathBuf> {
-        if let Some(home) = dirs::home_dir() {
-            let home_config = home.join(".fsmon").join("config.toml");
-            if home_config.exists() {
-                return Some(home_config);
-            }
+        let candidates = [
+            dirs::home_dir().map(|h| h.join(".fsmon").join("config.toml")),
+            dirs::config_dir().map(|h| h.join("fsmon").join("config.toml")),
+            Some(PathBuf::from("/etc/fsmon/config.toml")),
+        ];
+
+        candidates.into_iter().flatten().find(|path| path.exists())
+    }
+
+    /// Generate a commented default config file at the XDG path (~/.config/fsmon/config.toml).
+    pub fn generate(force: bool) -> Result<PathBuf> {
+        let config_dir = dirs::config_dir()
+            .context("Cannot determine XDG config directory")?
+            .join("fsmon");
+        let config_path = config_dir.join("config.toml");
+
+        if config_path.exists() && !force {
+            anyhow::bail!(
+                "Config already exists at {}. Use --force to overwrite.",
+                config_path.display()
+            );
         }
 
-        let etc_config = PathBuf::from("/etc/fsmon/config.toml");
-        if etc_config.exists() {
-            return Some(etc_config);
-        }
+        fs::create_dir_all(&config_dir)
+            .with_context(|| format!("Failed to create {}", config_dir.display()))?;
 
-        None
+        let content = DEFAULT_CONFIG_TEMPLATE;
+        fs::write(&config_path, content)
+            .with_context(|| format!("Failed to write {}", config_path.display()))?;
+
+        println!("Generated config: {}", config_path.display());
+        Ok(config_path)
     }
 }
 
