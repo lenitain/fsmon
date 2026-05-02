@@ -23,7 +23,7 @@
 - **高性能**: Rust + Tokio 编写，内存占用 <5MB，零拷贝 FID 事件解析，二分查找日志查询
 - **灵活过滤**: 支持按时间、大小、进程、用户、事件类型和排除模式（通配符）过滤
 - **多种格式**: 人类可读、JSON、CSV 三种输出格式
-- **TOML 配置**: 持久化配置文件，支持 `~/.fsmon/config.toml` 或 `/etc/fsmon/config.toml`
+- **TOML 配置**: 持久化配置文件，支持 `~/.fsmon/config.toml`、`~/.config/fsmon/config.toml` 或 `/etc/fsmon/config.toml`（按优先级查找）
 - **日志管理**: 基于时间和大小的日志轮转，支持预览模式
 - **Systemd 服务**: 安装为 systemd 服务，安全加固可配置
 
@@ -160,7 +160,13 @@ fsmon uninstall         # 卸载 systemd 服务
 
 ## 配置文件
 
-fsmon 支持 TOML 配置文件，路径为 `~/.fsmon/config.toml` 或 `/etc/fsmon/config.toml`：
+fsmon 支持 TOML 配置文件，按以下优先级查找（首个存在的文件生效）：
+
+1. `~/.fsmon/config.toml` — 旧版兼容路径
+2. `~/.config/fsmon/config.toml` — XDG 标准路径（`fsmon generate-config` 生成于此）
+3. `/etc/fsmon/config.toml` — 系统级配置
+
+示例配置：
 
 ```toml
 [monitor]
