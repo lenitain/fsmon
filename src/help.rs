@@ -1,3 +1,93 @@
+macro_rules! config_template {
+    () => {
+        "# fsmon configuration file\n\
+# See https://github.com/lenitain/fsmon for full documentation\n\
+\n\
+[monitor]\n\
+# Directories to watch for filesystem events\n\
+paths = [\"/var/log\", \"/tmp\"]\n\
+\n\
+# Minimum file size change to report (supports KB, MB, GB suffixes, e.g. \"100MB\", \"1GB\")\n\
+# min_size = \"100MB\"\n\
+\n\
+# Comma-separated event types to filter: ACCESS, MODIFY, CLOSE_WRITE, CLOSE_NOWRITE,\n\
+# OPEN, OPEN_EXEC, ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF\n\
+# types = \"MODIFY,CREATE\"\n\
+\n\
+# Glob patterns to exclude from monitoring\n\
+# exclude = \"*.tmp\"\n\
+\n\
+# Report all 14 event types regardless of the 'types' filter\n\
+# all_events = true\n\
+\n\
+# Path to the event log file\n\
+# output = \"/var/log/fsmon.log\"\n\
+\n\
+# Log output format: \"human\", \"json\", or \"csv\"\n\
+# format = \"json\"\n\
+\n\
+# Watch subdirectories recursively\n\
+# recursive = true\n\
+\n\
+# Fanotify read buffer size in bytes (default: 32768)\n\
+# buffer_size = 65536\n\
+\n\
+[query]\n\
+# Event log file to query (default: ~/.fsmon/history.log)\n\
+# log_file = \"/var/log/fsmon.log\"\n\
+\n\
+# Start time: relative (\"1h\", \"30m\", \"7d\") or absolute (\"2024-05-01 10:00\")\n\
+# since = \"1h\"\n\
+\n\
+# End time: same format as since\n\
+# until = \"2h\"\n\
+\n\
+# Filter by process IDs (comma-separated)\n\
+# pid = \"1234,5678\"\n\
+\n\
+# Filter by process name (wildcard support: nginx*, python)\n\
+# cmd = \"nginx\"\n\
+\n\
+# Filter by usernames (comma-separated)\n\
+# user = \"root,admin\"\n\
+\n\
+# Filter by event types (comma-separated)\n\
+# types = \"MODIFY,CREATE\"\n\
+\n\
+# Minimum size change to include\n\
+# min_size = \"100MB\"\n\
+\n\
+# Output format: \"human\", \"json\", or \"csv\"\n\
+# format = \"json\"\n\
+\n\
+# Sort results: \"time\", \"size\", or \"pid\"\n\
+# sort = \"size\"\n\
+\n\
+[clean]\n\
+# Event log file to clean (default: ~/.fsmon/history.log)\n\
+# log_file = \"/var/log/fsmon.log\"\n\
+\n\
+# Number of days to retain log entries (default: 30)\n\
+# keep_days = 7\n\
+\n\
+# Maximum log file size before tail truncation (e.g. \"100MB\", \"1GB\")\n\
+# max_size = \"500MB\"\n\
+\n\
+[install]\n\
+# systemd ProtectSystem value (\"yes\", \"no\", \"strict\", \"full\")\n\
+# protect_system = \"strict\"\n\
+\n\
+# systemd ProtectHome value (\"yes\", \"no\", \"read-only\")\n\
+# protect_home = \"read-only\"\n\
+\n\
+# Additional read-write paths for systemd service (used when ProtectSystem is strict)\n\
+# read_write_paths = [\"/var/log\", \"/tmp\"]\n\
+\n\
+# systemd PrivateTmp value (\"yes\" or \"no\")\n\
+# private_tmp = \"yes\"\n"
+    };
+}
+
 pub enum HelpTopic {
     Root,
     Monitor,
@@ -129,21 +219,25 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
   fsmon clean --keep-days 7 --dry-run # Preview without deleting"#
         }
         HelpTopic::Generate => {
-            r#"Generate a commented default configuration file.
-
-Generates a TOML config file with all available options commented.
-Created at: ~/.config/fsmon/config.toml (XDG config path)
-
-Config is searched in the following order:
-  1. ~/.fsmon/config.toml        (legacy)
-  2. ~/.config/fsmon/config.toml (XDG)
-  3. /etc/fsmon/config.toml      (system-wide)
-
-[Examples]
-  fsmon generate                  # Generate config (fails if exists)
-  fsmon generate --force          # Overwrite existing config"#
+            concat!(
+                "Generate a commented default configuration file.\n\n",
+                "Generates a TOML config file at ~/.config/fsmon/config.toml (XDG config path)\n\n",
+                "Config is searched in the following order:\n",
+                "  1. ~/.fsmon/config.toml        (legacy)\n",
+                "  2. ~/.config/fsmon/config.toml (XDG)\n",
+                "  3. /etc/fsmon/config.toml      (system-wide)\n\n",
+                "[Default Config Template]\n",
+                config_template!(),
+                "\n[Examples]\n",
+                "  fsmon generate                  # Generate config (fails if exists)\n",
+                "  fsmon generate --force          # Overwrite existing config",
+            )
         }
     }
+}
+
+pub fn default_config_template() -> &'static str {
+    config_template!()
 }
 
 pub const fn after_help() -> &'static str {

@@ -1,3 +1,4 @@
+use crate::help;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -100,101 +101,12 @@ impl Config {
         fs::create_dir_all(&config_dir)
             .with_context(|| format!("Failed to create {}", config_dir.display()))?;
 
-        let content = Self::default_config_template();
+        let content = help::default_config_template();
         fs::write(&config_path, content)
             .with_context(|| format!("Failed to write {}", config_path.display()))?;
 
         println!("Generated config: {}", config_path.display());
         Ok(config_path)
-    }
-
-    fn default_config_template() -> &'static str {
-        r#"# fsmon configuration file
-# See https://github.com/lenitain/fsmon for full documentation
-
-[monitor]
-# Directories to watch for filesystem events
-paths = ["/var/log", "/tmp"]
-
-# Minimum file size change to report (supports K, MB, GB suffixes, e.g. "100MB", "1GB")
-# min_size = "100MB"
-
-# Comma-separated event types to filter: ACCESS, MODIFY, CLOSE_WRITE, CLOSE_NOWRITE,
-# OPEN, OPEN_EXEC, ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF
-# types = "MODIFY,CREATE"
-
-# Glob patterns to exclude from monitoring
-# exclude = "*.tmp"
-
-# Report all 14 event types regardless of the 'types' filter
-# all_events = true
-
-# Path to the event log file
-# output = "/var/log/fsmon.log"
-
-# Log output format: "human", "json", or "csv"
-# format = "json"
-
-# Watch subdirectories recursively
-# recursive = true
-
-# Fanotify read buffer size in bytes (default: 32768)
-# buffer_size = 65536
-
-[query]
-# Event log file to query (default: ~/.fsmon/history.log)
-# log_file = "/var/log/fsmon.log"
-
-# Start time: relative ("1h", "30m", "7d") or absolute ("2024-05-01 10:00")
-# since = "1h"
-
-# End time: same format as since
-# until = "2h"
-
-# Filter by process IDs (comma-separated)
-# pid = "1234,5678"
-
-# Filter by process name (wildcard support: nginx*, python)
-# cmd = "nginx"
-
-# Filter by usernames (comma-separated)
-# user = "root,admin"
-
-# Filter by event types (comma-separated)
-# types = "MODIFY,CREATE"
-
-# Minimum size change to include
-# min_size = "100MB"
-
-# Output format: "human", "json", or "csv"
-# format = "json"
-
-# Sort results: "time", "size", or "pid"
-# sort = "size"
-
-[clean]
-# Event log file to clean (default: ~/.fsmon/history.log)
-# log_file = "/var/log/fsmon.log"
-
-# Number of days to retain log entries (default: 30)
-# keep_days = 7
-
-# Maximum log file size before tail truncation (e.g. "100MB", "1GB")
-# max_size = "500MB"
-
-[install]
-# systemd ProtectSystem value ("yes", "no", "strict", "full")
-# protect_system = "strict"
-
-# systemd ProtectHome value ("yes", "no", "read-only")
-# protect_home = "read-only"
-
-# Additional read-write paths for systemd service (used when ProtectSystem is strict)
-# read_write_paths = ["/var/log", "/tmp"]
-
-# systemd PrivateTmp value ("yes" or "no")
-# private_tmp = "yes"
-"#
     }
 }
 

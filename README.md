@@ -166,7 +166,7 @@ fsmon supports TOML configuration files at `~/.fsmon/config.toml` or `/etc/fsmon
 [monitor]
 # Paths to watch for filesystem events
 paths = ["/var/log", "/tmp"]
-# Minimum file size to report (supports K, MB, GB suffixes)
+# Minimum file size to report (supports KB, MB, GB suffixes)
 min_size = "100MB"
 # Comma-separated event types to filter (ACCESS, MODIFY, CREATE, etc.)
 types = "MODIFY,CREATE"

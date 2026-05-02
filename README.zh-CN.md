@@ -166,7 +166,7 @@ fsmon 支持 TOML 配置文件，路径为 `~/.fsmon/config.toml` 或 `/etc/fsmo
 [monitor]
 # 要监控的目录路径
 paths = ["/var/log", "/tmp"]
-# 报告的最小文件大小（支持 K、MB、GB 后缀）
+# 报告的最小文件大小（支持 KB、MB、GB 后缀）
 min_size = "100MB"
 # 要过滤的事件类型，逗号分隔（ACCESS、MODIFY、CREATE 等）
 types = "MODIFY,CREATE"
