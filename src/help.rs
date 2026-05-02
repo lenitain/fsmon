@@ -8,6 +8,7 @@ pub enum HelpTopic {
     Install,
     Uninstall,
     Clean,
+    Generate,
 }
 
 pub const fn about(topic: HelpTopic) -> &'static str {
@@ -21,6 +22,7 @@ pub const fn about(topic: HelpTopic) -> &'static str {
         HelpTopic::Install => "Install systemd service",
         HelpTopic::Uninstall => "Uninstall systemd service",
         HelpTopic::Clean => "Clean historical logs",
+        HelpTopic::Generate => "Generate a default config file",
     }
 }
 
@@ -125,6 +127,21 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
   fsmon clean --keep-days 7           # Keep 7 days of logs
   fsmon clean --max-size 100MB        # Limit logs to 100MB
   fsmon clean --keep-days 7 --dry-run # Preview without deleting"#
+        }
+        HelpTopic::Generate => {
+            r#"Generate a commented default configuration file.
+
+Generates a TOML config file with all available options commented.
+Created at: ~/.config/fsmon/config.toml (XDG config path)
+
+Config is searched in the following order:
+  1. ~/.fsmon/config.toml        (legacy)
+  2. ~/.config/fsmon/config.toml (XDG)
+  3. /etc/fsmon/config.toml      (system-wide)
+
+[Examples]
+  fsmon generate                  # Generate config (fails if exists)
+  fsmon generate --force          # Overwrite existing config"#
         }
     }
 }

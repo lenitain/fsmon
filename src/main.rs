@@ -186,6 +186,13 @@ enum Commands {
         #[arg(short, long)]
         dry_run: bool,
     },
+
+    #[command(about = help::about(HelpTopic::Generate), long_about = help::long_about(HelpTopic::Generate))]
+    Generate {
+        /// Force overwrite existing config file
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -559,10 +566,21 @@ async fn main() -> Result<()> {
             } else {
                 Some(read_write_paths.as_slice())
             };
-            systemd::install(&paths, output.as_ref(), force, protect_system, protect_home, read_write_paths, private_tmp)?;
+            systemd::install(
+                &paths,
+                output.as_ref(),
+                force,
+                protect_system,
+                protect_home,
+                read_write_paths,
+                private_tmp,
+            )?;
         }
         Commands::Uninstall => {
             systemd::uninstall()?;
+        }
+        Commands::Generate { force } => {
+            Config::generate(force)?;
         }
         Commands::Clean {
             log_file,
