@@ -164,28 +164,45 @@ fsmon 支持 TOML 配置文件，路径为 `~/.fsmon/config.toml` 或 `/etc/fsmo
 
 ```toml
 [monitor]
+# 要监控的目录路径
 paths = ["/var/log", "/tmp"]
+# 报告的最小文件大小（支持 K、MB、GB 后缀）
 min_size = "100MB"
+# 要过滤的事件类型，逗号分隔（ACCESS、MODIFY、CREATE 等）
 types = "MODIFY,CREATE"
+# 要排除的 glob 模式
 exclude = "*.tmp"
+# 忽略 types 过滤，报告所有事件类型
 all_events = true
+# 事件日志文件路径
 output = "/var/log/fsmon.log"
+# 日志输出格式："json" 或 "text"
 format = "json"
+# 递归监控子目录
 recursive = true
+# 读取缓冲区大小（字节）
 buffer_size = 65536
 
 [query]
+# 要查询的事件日志文件
 log_file = "/var/log/fsmon.log"
+# 从现在向后的查询时间范围（如 1h、30m、7d）
 since = "1h"
+# 输出格式："json" 或 "text"
 format = "json"
+# 按字段排序结果："time"、"size"、"path"
 sort = "size"
 
 [clean]
+# 保留日志的天数
 keep_days = 7
+# 日志文件轮转前的最大大小
 max_size = "500MB"
 
 [install]
+# 跳过系统路径监控（/proc、/sys 等）
 protect_system = "false"
+# 跳过用户主目录监控
 protect_home = "false"
 read_write_paths = ["/var/log", "/tmp"]
 private_tmp = "no"

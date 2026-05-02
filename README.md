@@ -164,28 +164,45 @@ fsmon supports TOML configuration files at `~/.fsmon/config.toml` or `/etc/fsmon
 
 ```toml
 [monitor]
+# Paths to watch for filesystem events
 paths = ["/var/log", "/tmp"]
+# Minimum file size to report (supports K, MB, GB suffixes)
 min_size = "100MB"
+# Comma-separated event types to filter (ACCESS, MODIFY, CREATE, etc.)
 types = "MODIFY,CREATE"
+# Glob patterns to exclude from monitoring
 exclude = "*.tmp"
+# Report all event types regardless of the 'types' filter
 all_events = true
+# Path to the event log file
 output = "/var/log/fsmon.log"
+# Log output format: "json" or "text"
 format = "json"
+# Watch subdirectories recursively
 recursive = true
+# Read buffer size in bytes
 buffer_size = 65536
 
 [query]
+# Event log file to query
 log_file = "/var/log/fsmon.log"
+# Time range to query backwards from now (e.g. 1h, 30m, 7d)
 since = "1h"
+# Output format: "json" or "text"
 format = "json"
+# Sort results by field: "time", "size", "path"
 sort = "size"
 
 [clean]
+# Number of days to retain log entries
 keep_days = 7
+# Maximum log file size before rotation
 max_size = "500MB"
 
 [install]
+# Skip monitoring on system paths (/proc, /sys, etc.)
 protect_system = "false"
+# Skip monitoring on user home directories
 protect_home = "false"
 read_write_paths = ["/var/log", "/tmp"]
 private_tmp = "no"
