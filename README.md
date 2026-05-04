@@ -195,7 +195,7 @@ all_events = false
 # Path to the event log file
 # output = "/var/log/fsmon.log"
 
-# Terminal output format: "human", "json", or "csv" (affects stdout only; log file is always JSON)
+# stdout format: "human", "json", or "csv" (log file is always JSON)
 format = "human"
 
 # Watch subdirectories recursively
@@ -229,7 +229,7 @@ buffer_size = 32768
 # Minimum size change to include
 # min_size = "100MB"
 
-# Terminal output format: "human", "json", or "csv" (affects stdout only; log file is always JSON)
+# stdout format: "human", "json", or "csv" (log file is always JSON)
 format = "human"
 
 # Sort results: "time", "size", or "pid"

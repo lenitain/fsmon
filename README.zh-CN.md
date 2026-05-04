@@ -22,7 +22,7 @@
 - **完整删除捕获**: 通过持久化目录句柄缓存，完整捕获 `rm -rf` 递归删除中的每个文件
 - **高性能**: Rust + Tokio 编写，内存占用 <5MB，零拷贝 FID 事件解析，二分查找日志查询
 - **灵活过滤**: 支持按时间、大小、进程、用户、事件类型和排除模式（通配符）过滤
-- **多种格式**: 人类可读、JSON、CSV 三种输出格式
+- **多种格式**: 人类可读、JSON、CSV 三种输出格式（配置文件始终是JSON格式）
 - **TOML 配置**: 持久化配置文件，支持 `~/.fsmon/config.toml`、`~/.config/fsmon/config.toml` 或 `/etc/fsmon/config.toml`（按优先级查找）
 - **日志管理**: 基于时间和大小的日志轮转，支持预览模式
 - **Systemd 服务**: 安装为 systemd 服务，安全加固可配置
@@ -195,7 +195,7 @@ all_events = false
 # 事件日志文件路径
 # output = "/var/log/fsmon.log"
 
-# 日志输出格式："human"、"json" 或 "csv"
+# stdout输出格式："human"、"json" 或 "csv"（日志文件始终是JSON格式）
 format = "human"
 
 # 递归监控子目录
@@ -229,7 +229,7 @@ buffer_size = 32768
 # 最小变化大小
 # min_size = "100MB"
 
-# 输出格式："human"、"json" 或 "csv"
+# stdout输出格式："human"、"json" 或 "csv"（日志文件始终是JSON格式）
 format = "human"
 
 # 排序方式："time"、"size" 或 "pid"
