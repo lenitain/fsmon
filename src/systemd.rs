@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 const SERVICE_NAME: &str = "fsmon";
+
 const SERVICE_TEMPLATE: &str = r#"[Unit]
 Description=fsmon filesystem monitor
 After=network.target
@@ -140,43 +141,6 @@ fn uninstall_inner() -> Result<()> {
         .context("Failed to reload systemd daemon")?;
 
     println!("Service uninstalled");
-    Ok(())
-}
-
-pub fn status() -> Result<String> {
-    let output = Command::new("systemctl")
-        .args(["is-active", SERVICE_NAME])
-        .output()
-        .context("Failed to check service status")?;
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-pub fn stop() -> Result<()> {
-    if !is_root() {
-        bail!("Stopping service requires root privileges. Please run with sudo.");
-    }
-
-    Command::new("systemctl")
-        .args(["stop", SERVICE_NAME])
-        .output()
-        .context("Failed to stop service")?;
-
-    println!("Service stopped");
-    Ok(())
-}
-
-pub fn start() -> Result<()> {
-    if !is_root() {
-        bail!("Starting service requires root privileges. Please run with sudo.");
-    }
-
-    Command::new("systemctl")
-        .args(["start", SERVICE_NAME])
-        .output()
-        .context("Failed to start service")?;
-
-    println!("Service started");
     Ok(())
 }
 

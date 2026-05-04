@@ -125,15 +125,6 @@ enum Commands {
         sort: Option<SortBy>,
     },
 
-    #[command(about = help::about(HelpTopic::Status), long_about = help::long_about(HelpTopic::Status))]
-    Status,
-
-    #[command(about = help::about(HelpTopic::Stop), long_about = help::long_about(HelpTopic::Stop))]
-    Stop,
-
-    #[command(about = help::about(HelpTopic::Start), long_about = help::long_about(HelpTopic::Start))]
-    Start,
-
     #[command(about = help::about(HelpTopic::Install), long_about = help::long_about(HelpTopic::Install))]
     Install {
         /// Directory/file path to monitor (supports multiple)
@@ -525,16 +516,6 @@ async fn main() -> Result<()> {
             );
 
             query.execute().await?;
-        }
-        Commands::Status => {
-            let status = systemd::status()?;
-            println!("fsmon service: {}", status);
-        }
-        Commands::Stop => {
-            systemd::stop()?;
-        }
-        Commands::Start => {
-            systemd::start()?;
         }
         Commands::Install {
             paths,

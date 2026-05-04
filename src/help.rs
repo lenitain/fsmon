@@ -2,9 +2,6 @@ pub enum HelpTopic {
     Root,
     Monitor,
     Query,
-    Status,
-    Stop,
-    Start,
     Install,
     Uninstall,
     Clean,
@@ -16,9 +13,6 @@ pub const fn about(topic: HelpTopic) -> &'static str {
         HelpTopic::Root => "Lightweight high-performance file change tracking tool",
         HelpTopic::Monitor => "Real-time file change monitoring",
         HelpTopic::Query => "Query historical monitoring logs",
-        HelpTopic::Status => "Check systemd service status",
-        HelpTopic::Stop => "Stop systemd service",
-        HelpTopic::Start => "Start systemd service",
         HelpTopic::Install => "Install systemd service",
         HelpTopic::Uninstall => "Uninstall systemd service",
         HelpTopic::Clean => "Clean historical logs",
@@ -38,7 +32,7 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
 
 [Systemd Service]
   Use 'fsmon install' to set up systemd service for long-term monitoring
-  fsmon status/stop/start to manage service
+  Use 'systemctl start/stop/status fsmon' to manage service
 
 [Examples]
   fsmon monitor /etc --types MODIFY          # Investigate config file changes
@@ -69,28 +63,6 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
   fsmon query --cmd nginx                  # Only nginx operations
   fsmon query --since 1h --cmd java --types MODIFY --min-size 100MB  # Combined filters
   fsmon query --format json --sort size    # JSON output, sorted by size"#
-        }
-        HelpTopic::Status => {
-            r#"Check fsmon systemd service status.
-
-[Output Content]
-  - Service status (active/inactive/failed)
-  - Use 'systemctl status fsmon' for detailed information
-
-[Examples]
-  fsmon status"#
-        }
-        HelpTopic::Stop => {
-            r#"Stop fsmon systemd service.
-
-[Examples]
-  fsmon stop"#
-        }
-        HelpTopic::Start => {
-            r#"Start fsmon systemd service.
-
-[Examples]
-  fsmon start"#
         }
         HelpTopic::Install => {
             r#"Install fsmon as a systemd service.
@@ -154,5 +126,5 @@ Examples:
   fsmon monitor ~/project --recursive       # Recursively monitor project
   fsmon install /var/log -o /var/log/fsmon.log  # Install systemd service
   fsmon query --since 1h --cmd nginx         # Query nginx operations in last hour
-  fsmon status                               # Check service status"#
+  systemctl status fsmon                     # Check service status"#
 }
