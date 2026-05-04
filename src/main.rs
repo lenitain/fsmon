@@ -187,7 +187,7 @@ enum Commands {
         dry_run: bool,
     },
 
-    #[command(about = help::about(HelpTopic::Generate), long_about = help::long_about(HelpTopic::Generate))]
+    #[command(about = help::about(HelpTopic::Generate))]
     Generate {
         /// Force overwrite existing config file
         #[arg(short, long)]
