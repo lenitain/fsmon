@@ -78,6 +78,10 @@ enum Commands {
         /// Recursively monitor all subdirectories
         #[arg(short, long)]
         recursive: bool,
+
+        /// Instance name (for systemd template mode, reads /etc/fsmon/fsmon-{name}.toml)
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
     },
 
     #[command(about = help::about(HelpTopic::Query), long_about = help::long_about(HelpTopic::Query))]
@@ -127,15 +131,7 @@ enum Commands {
 
     #[command(about = help::about(HelpTopic::Install), long_about = help::long_about(HelpTopic::Install))]
     Install {
-        /// Directory/file path to monitor (supports multiple)
-        #[arg(value_name = "PATH")]
-        paths: Vec<PathBuf>,
-
-        /// Write monitoring log to specified file
-        #[arg(short, long, value_name = "FILE")]
-        output: Option<PathBuf>,
-
-        /// Force overwrite existing service file
+        /// Force overwrite existing service template
         #[arg(short, long)]
         force: bool,
 
@@ -158,6 +154,50 @@ enum Commands {
 
     #[command(about = help::about(HelpTopic::Uninstall), long_about = help::long_about(HelpTopic::Uninstall))]
     Uninstall,
+
+    #[command(about = help::about(HelpTopic::Enable), long_about = help::long_about(HelpTopic::Enable))]
+    Enable {
+        /// Instance name (e.g., "var-log", "web")
+        instance: String,
+
+        /// Directory/file path to monitor (supports multiple)
+        #[arg(required = true, value_name = "PATH")]
+        paths: Vec<PathBuf>,
+
+        /// Write monitoring log to specified file
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
+
+        /// Only record events with size change >= specified value
+        #[arg(short, long, value_name = "SIZE")]
+        min_size: Option<String>,
+
+        /// Only monitor specified operation types
+        #[arg(short, long, value_name = "TYPES")]
+        types: Option<String>,
+
+        /// Paths to exclude from monitoring
+        #[arg(short, long, value_name = "PATTERN")]
+        exclude: Option<String>,
+
+        /// Capture all 14 fanotify events
+        #[arg(long)]
+        all_events: bool,
+
+        /// Recursively monitor all subdirectories
+        #[arg(short, long)]
+        recursive: bool,
+
+        /// Force overwrite existing instance config
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    #[command(about = help::about(HelpTopic::Disable), long_about = help::long_about(HelpTopic::Disable))]
+    Disable {
+        /// Instance name to disable
+        instance: String,
+    },
 
     #[command(about = help::about(HelpTopic::Clean), long_about = help::long_about(HelpTopic::Clean))]
     Clean {
@@ -389,13 +429,37 @@ async fn main() -> Result<()> {
             output,
             format,
             recursive,
+            instance,
         } => {
-            let config = config.monitor.unwrap_or_default();
+            let user_config = config.monitor.unwrap_or_default();
 
-            let paths = if paths.is_empty() {
-                config.paths.unwrap_or_default()
-            } else {
+            // Load instance config if --instance is given (systemd template mode)
+            let instance_config = match instance {
+                Some(ref name) => Config::load_instance(name)?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Instance config not found for '{}'. Create with 'fsmon enable {} ...' or manually at /etc/fsmon/fsmon-{}.toml",
+                            name, name, name
+                        )
+                    })?,
+                None => config::InstanceConfig {
+                    paths: vec![],
+                    output: None,
+                    min_size: None,
+                    types: None,
+                    exclude: None,
+                    all_events: None,
+                    recursive: None,
+                },
+            };
+
+            // Merge priority: CLI args > instance config > user config
+            let paths = if !paths.is_empty() {
                 paths
+            } else if !instance_config.paths.is_empty() {
+                instance_config.paths.clone()
+            } else {
+                user_config.paths.unwrap_or_default()
             };
 
             if paths.is_empty() {
@@ -403,15 +467,27 @@ async fn main() -> Result<()> {
                 process::exit(1);
             }
 
-            let min_size = min_size.or(config.min_size);
-            let types = types.or(config.types);
-            let exclude = exclude.or(config.exclude);
-            let all_events = all_events || config.all_events.unwrap_or(false);
-            let output = output.or(config.output);
-            let recursive = recursive || config.recursive.unwrap_or(false);
-            let buffer_size = config.buffer_size;
+            let min_size = min_size
+                .or(instance_config.min_size.clone())
+                .or(user_config.min_size.clone());
+            let types = types
+                .or(instance_config.types.clone())
+                .or(user_config.types.clone());
+            let exclude = exclude
+                .or(instance_config.exclude.clone())
+                .or(user_config.exclude.clone());
+            let all_events = all_events
+                || instance_config.all_events.unwrap_or(false)
+                || user_config.all_events.unwrap_or(false);
+            let output = output
+                .or(instance_config.output.clone())
+                .or(user_config.output.clone());
+            let recursive = recursive
+                || instance_config.recursive.unwrap_or(false)
+                || user_config.recursive.unwrap_or(false);
+            let buffer_size = user_config.buffer_size;
             let format = format
-                .or(config.format.as_deref().and_then(parse_output_format))
+                .or(user_config.format.as_deref().and_then(parse_output_format))
                 .unwrap_or(OutputFormat::Human);
 
             let min_size_bytes = min_size.map(|s| parse_size(&s)).transpose()?;
@@ -438,6 +514,7 @@ async fn main() -> Result<()> {
                 recursive,
                 all_events,
                 buffer_size,
+                instance,
             )?;
 
             monitor.run().await?;
@@ -518,18 +595,12 @@ async fn main() -> Result<()> {
             query.execute().await?;
         }
         Commands::Install {
-            paths,
-            output,
             force,
             protect_system,
             protect_home,
             read_write_paths,
             private_tmp,
         } => {
-            if paths.is_empty() {
-                eprintln!("Error: Please specify at least one monitor path");
-                process::exit(1);
-            }
             let install_cfg = config.install.as_ref();
             let protect_system = protect_system
                 .as_deref()
@@ -548,8 +619,6 @@ async fn main() -> Result<()> {
                 Some(read_write_paths.as_slice())
             };
             systemd::install(
-                &paths,
-                output.as_ref(),
                 force,
                 protect_system,
                 protect_home,
@@ -559,6 +628,32 @@ async fn main() -> Result<()> {
         }
         Commands::Uninstall => {
             systemd::uninstall()?;
+        }
+        Commands::Enable {
+            instance,
+            paths,
+            output,
+            min_size,
+            types,
+            exclude,
+            all_events,
+            recursive,
+            force,
+        } => {
+            systemd::enable_instance(
+                &instance,
+                &paths,
+                output.as_ref(),
+                min_size.as_deref(),
+                types.as_deref(),
+                exclude.as_deref(),
+                all_events,
+                recursive,
+                force,
+            )?;
+        }
+        Commands::Disable { instance } => {
+            systemd::disable_instance(&instance)?;
         }
         Commands::Generate { force } => {
             Config::generate(force)?;

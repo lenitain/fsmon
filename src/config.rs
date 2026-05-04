@@ -1,4 +1,7 @@
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+
+pub const INSTANCE_CONFIG_DIR: &str = "/etc/fsmon";
 
 pub const DEFAULT_CONFIG_TEMPLATE: &str = "# fsmon configuration file\n\
 # See https://github.com/lenitain/fsmon for full documentation\n\
@@ -85,7 +88,6 @@ read_write_paths = [\"/var/log\"]\n\
 \n\
 # systemd PrivateTmp value (\"yes\" or \"no\")\n\
 private_tmp = \"yes\"\n";
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -193,6 +195,80 @@ impl Config {
         println!("Generated config: {}", config_path.display());
         Ok(config_path)
     }
+
+    /// Load instance config by name.
+    /// Search order: /etc/fsmon/fsmon-{name}.toml, ~/.config/fsmon/fsmon-{name}.toml
+    pub fn load_instance(name: &str) -> Result<Option<InstanceConfig>> {
+        let mut candidates: Vec<PathBuf> =
+            vec![PathBuf::from(INSTANCE_CONFIG_DIR).join(format!("fsmon-{}.toml", name))];
+        if let Some(config_dir) = dirs::config_dir() {
+            candidates.push(
+                config_dir
+                    .join("fsmon")
+                    .join(format!("fsmon-{}.toml", name)),
+            );
+        }
+
+        for path in &candidates {
+            if path.exists() {
+                let content = fs::read_to_string(path).with_context(|| {
+                    format!("Failed to read instance config {}", path.display())
+                })?;
+                let config: InstanceConfig = toml::from_str(&content)
+                    .with_context(|| format!("Invalid TOML in {}: {}", path.display(), content))?;
+                if config.paths.is_empty() {
+                    anyhow::bail!(
+                        "Instance '{}' config {} has no paths configured",
+                        name,
+                        path.display()
+                    );
+                }
+                return Ok(Some(config));
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// Per-instance configuration for systemd template instances.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstanceConfig {
+    pub paths: Vec<PathBuf>,
+    pub output: Option<PathBuf>,
+    pub min_size: Option<String>,
+    pub types: Option<String>,
+    pub exclude: Option<String>,
+    pub all_events: Option<bool>,
+    pub recursive: Option<bool>,
+}
+
+/// Generate an instance config TOML file and return its path.
+pub fn generate_instance_config(
+    name: &str,
+    config: &InstanceConfig,
+    force: bool,
+) -> Result<PathBuf> {
+    let config_dir = PathBuf::from(INSTANCE_CONFIG_DIR);
+    let config_path = config_dir.join(format!("fsmon-{}.toml", name));
+
+    if config_path.exists() && !force {
+        anyhow::bail!(
+            "Instance config already exists at {}. Use --force to overwrite.",
+            config_path.display()
+        );
+    }
+
+    fs::create_dir_all(&config_dir)
+        .with_context(|| format!("Failed to create {}", config_dir.display()))?;
+
+    let content = toml::to_string_pretty(config).context("Failed to serialize instance config")?;
+    let content = format!("# fsmon instance: {}\n{}\n", name, content);
+
+    fs::write(&config_path, &content)
+        .with_context(|| format!("Failed to write {}", config_path.display()))?;
+
+    println!("Instance config written to {}", config_path.display());
+    Ok(config_path)
 }
 
 #[cfg(test)]

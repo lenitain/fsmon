@@ -60,6 +60,7 @@ pub struct Monitor {
     proc_cache: Option<ProcCache>,
     file_size_cache: LruCache<PathBuf, u64>,
     buffer_size: usize,
+    instance_name: Option<String>,
 }
 
 impl Monitor {
@@ -74,6 +75,7 @@ impl Monitor {
         recursive: bool,
         all_events: bool,
         buffer_size: Option<usize>,
+        instance_name: Option<String>,
     ) -> Result<Self> {
         let exclude_regex = exclude.map(|p| {
             let escaped = regex::escape(&p);
@@ -101,6 +103,7 @@ impl Monitor {
             proc_cache: None,
             file_size_cache: LruCache::new(NonZeroUsize::new(FILE_SIZE_CACHE_CAP).unwrap()),
             buffer_size,
+            instance_name,
         })
     }
 
@@ -256,7 +259,56 @@ impl Monitor {
         let mut output_file = if let Some(ref path) = self.output {
             let parent = path.parent().unwrap_or(Path::new("."));
             fs::create_dir_all(parent)?;
-            Some(OpenOptions::new().create(true).append(true).open(path)?)
+            let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+
+            // Write a header comment line for traceability
+            let paths_str = self
+                .paths
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let types_str = self.event_types.as_ref().map(|t| {
+                t.iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            });
+            let min_size_str = self.min_size.map(|s| s.to_string());
+            let started = Utc::now().to_rfc3339();
+
+            let header = format!(
+                "# fsmon{instance} paths=\"{paths}\"{types}{min_size}{all_events}{recursive} started=\"{started}\"\n",
+                instance = self
+                    .instance_name
+                    .as_ref()
+                    .map(|n| format!(" instance=\"{}\"", n))
+                    .unwrap_or_default(),
+                paths = paths_str,
+                types = types_str
+                    .as_ref()
+                    .map(|t| format!(" types=\"{}\"", t))
+                    .unwrap_or_default(),
+                min_size = min_size_str
+                    .as_ref()
+                    .map(|s| format!(" min_size={}", s))
+                    .unwrap_or_default(),
+                all_events = if self.all_events {
+                    " all_events=true"
+                } else {
+                    ""
+                },
+                recursive = if self.recursive {
+                    " recursive=true"
+                } else {
+                    ""
+                },
+            );
+
+            use std::io::Write;
+            let _ = file.write_all(header.as_bytes());
+
+            Some(file)
         } else {
             None
         };
@@ -474,6 +526,7 @@ mod tests {
             false,
             false,
             None,
+            None,
         )
         .unwrap();
         let event = make_event("/tmp/test.txt", EventType::Create, 1000, 1024);
@@ -491,6 +544,7 @@ mod tests {
             OutputFormat::Human,
             false,
             false,
+            None,
             None,
         )
         .unwrap();
@@ -510,6 +564,7 @@ mod tests {
             OutputFormat::Human,
             false,
             false,
+            None,
             None,
         )
         .unwrap();
@@ -533,6 +588,7 @@ mod tests {
             false,
             false,
             None,
+            None,
         )
         .unwrap();
         // /tmp/test.tmp matches (ends with .tmp)
@@ -555,6 +611,7 @@ mod tests {
             false,
             false,
             None,
+            None,
         )
         .unwrap();
         assert!(m.should_output(&make_event("/tmp/test.txt", EventType::Create, 1, 0)));
@@ -575,6 +632,7 @@ mod tests {
             OutputFormat::Human,
             false,
             false,
+            None,
             None,
         )
         .unwrap();
@@ -600,6 +658,7 @@ mod tests {
             true,
             false,
             None,
+            None,
         )
         .unwrap();
         let watched = vec![PathBuf::from("/tmp")];
@@ -621,6 +680,7 @@ mod tests {
             OutputFormat::Human,
             false,
             false,
+            None,
             None,
         )
         .unwrap();
@@ -646,6 +706,7 @@ mod tests {
             OutputFormat::Human,
             true,
             false,
+            None,
             None,
         )
         .unwrap();
@@ -694,6 +755,7 @@ mod tests {
             false,
             false,
             Some(1024),
+            None,
         );
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("at least 4096"));
@@ -709,6 +771,7 @@ mod tests {
             false,
             false,
             Some(2 * 1024 * 1024),
+            None,
         );
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("not exceed"));
@@ -724,6 +787,7 @@ mod tests {
             false,
             false,
             Some(65536),
+            None,
         );
         assert!(result.is_ok());
     }

@@ -64,6 +64,14 @@
 - 支持 `[install]` 配置文件节: `protect_system`, `protect_home`, `read_write_paths`, `private_tmp`
 - 优先级: CLI > 配置文件 > 硬编码默认值
 
+## 系统多实例支持（已完成）
+
+- **systemd template unit**: `systemd.rs` 重写为 `fsmon@.service` template，用 `%i` 传实例名
+- **InstanceConfig**: `config.rs` 新增 `InstanceConfig` 结构体 + `/etc/fsmon/fsmon-{name}.toml` 配置读写
+- **enable/disable**: 新增子命令，自动生成实例配置 + `systemctl enable/disable --now`
+- **Log header**: 日志文件首行写入 `# fsmon instance="xxx" paths="..." ...` 注释行，用于追溯
+- **`--instance`**: `monitor` 命令支持 `--instance NAME` 模式，读取实例配置
+
 ### H10 [低] Cargo.toml 元数据占位符
 - `version = "0.1.4"`（发布前需更新）
 - `authors = ["lenitain <xt.zhu@qq.com>"]`
@@ -76,6 +84,9 @@
 | P2 | 硬编码 | H3-H4,H7 magic number 提取常量 ✅ | 小 |
 | P2 | 硬编码 | H5 proc connector 就绪信号 ✅ | 小 |
 | P2 | 硬编码 | H6 fanotify 缓冲区大小 ✅ | 小 |
+| P3 | 多实例 | systemd template unit 支持 | 大 |
+| P3 | 多实例 | InstanceConfig + enable/disable | 中 |
+| P3 | 多实例 | Log 文件 header 追溯 | 小 |
 | P3 | 硬编码 | H8 uid_passwd_map 刷新 | 中 |
-| P3 | 硬编码 | H9 systemd 安全加固可配置 | 中 |
+| P3 | 硬编码 | H9 systemd 安全加固可配置 ✅ | 中 |
 | P4 | 硬编码 | H10-H11 元数据/CI 分支 | 极小 |
