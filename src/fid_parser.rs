@@ -3,8 +3,8 @@ use fanotify::low_level::{
     FAN_DELETE_SELF, FAN_MODIFY, FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO, FAN_OPEN,
     FAN_OPEN_EXEC,
 };
+use dashmap::DashMap;
 use smallvec::SmallVec;
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -20,9 +20,7 @@ const FAN_EVENT_INFO_TYPE_FID: u8 = 1;
 const FAN_EVENT_INFO_TYPE_DFID_NAME: u8 = 2;
 const FAN_EVENT_INFO_TYPE_DFID: u8 = 3;
 
-/// FAN_FS_ERROR: filesystem error notification (Linux 5.16+)
-/// fanotify-rs 0.3.1 does not export this constant, manually define
-pub const FAN_FS_ERROR: u64 = 0x0000_8000;
+
 
 /// fanotify_event_metadata (matches kernel structure)
 #[repr(C)]
@@ -64,7 +62,7 @@ pub struct FidEvent {
 
 // ---- Event type mapping (1:1 with fanotify event bits) ----
 
-const EVENT_BITS: [(u64, EventType); 14] = [
+const EVENT_BITS: [(u64, EventType); 13] = [
     (FAN_ACCESS, EventType::Access),
     (FAN_MODIFY, EventType::Modify),
     (FAN_CLOSE_WRITE, EventType::CloseWrite),
@@ -78,7 +76,6 @@ const EVENT_BITS: [(u64, EventType); 14] = [
     (FAN_MOVED_FROM, EventType::MovedFrom),
     (FAN_MOVED_TO, EventType::MovedTo),
     (FAN_MOVE_SELF, EventType::MoveSelf),
-    (FAN_FS_ERROR, EventType::FsError),
 ];
 
 pub fn mask_to_event_types(mask: u64) -> SmallVec<[EventType; 8]> {
@@ -100,7 +97,7 @@ pub fn mask_to_event_types(mask: u64) -> SmallVec<[EventType; 8]> {
 pub fn read_fid_events(
     fan_fd: i32,
     mount_fds: &[i32],
-    dir_cache: &mut HashMap<HandleKey, PathBuf>,
+    dir_cache: &DashMap<HandleKey, PathBuf>,
     buf: &mut Vec<u8>,
 ) -> Vec<FidEvent> {
     let n = unsafe { libc::read(fan_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
@@ -404,9 +401,9 @@ mod tests {
             | FAN_MOVED_FROM
             | FAN_MOVED_TO
             | FAN_MOVE_SELF
-            | FAN_FS_ERROR;
+;
         let types = mask_to_event_types(mask);
-        assert_eq!(types.len(), 14);
+        assert_eq!(types.len(), 13);
     }
 
     #[test]

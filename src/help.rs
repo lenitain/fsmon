@@ -1,12 +1,10 @@
 pub enum HelpTopic {
     Root,
-    Monitor,
+    Daemon,
+    Add,
+    Remove,
+    Managed,
     Query,
-    Status,
-    Stop,
-    Start,
-    Install,
-    Uninstall,
     Clean,
     Generate,
 }
@@ -14,145 +12,149 @@ pub enum HelpTopic {
 pub const fn about(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::Root => "Lightweight high-performance file change tracking tool",
-        HelpTopic::Monitor => "Real-time file change monitoring",
-        HelpTopic::Query => "Query historical monitoring logs",
-        HelpTopic::Status => "Check systemd service status",
-        HelpTopic::Stop => "Stop systemd service",
-        HelpTopic::Start => "Start systemd service",
-        HelpTopic::Install => "Install systemd service",
-        HelpTopic::Uninstall => "Uninstall systemd service",
-        HelpTopic::Clean => "Clean historical logs",
-        HelpTopic::Generate => "Generate a default config file",
+        HelpTopic::Daemon => "Run the fsmon daemon (requires sudo for fanotify)",
+        HelpTopic::Add => "Add a path to the monitoring list",
+        HelpTopic::Remove => "Remove a path from the monitoring list",
+        HelpTopic::Managed => "List all monitored paths with their configuration",
+        HelpTopic::Query => "Query historical file change events from log files",
+        HelpTopic::Clean => "Clean historical log files, retain by time or size",
+        HelpTopic::Generate => "Generate a default configuration file",
     }
 }
 
 pub const fn long_about(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::Root => "",
-        HelpTopic::Monitor => {
-            r#"Monitor filesystem events on specified paths, output fanotify raw events in real-time.
+        HelpTopic::Daemon => {
+            r#"Run the fsmon daemon as a foreground process (requires sudo for fanotify).
 
-[Event Types]
-  Default: 8 core change events (CLOSE_WRITE, ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF)
-  --all-events: Enable all 14 fanotify events (includes ACCESS, MODIFY, OPEN, OPEN_EXEC, CLOSE_NOWRITE, FS_ERROR)
+The daemon monitors all configured paths via fanotify and logs events.
+Use 'fsmon add'/'fsmon remove' to manage paths dynamically without
+restarting the daemon.
 
-[Systemd Service]
-  Use 'fsmon install' to set up systemd service for long-term monitoring
-  fsmon status/stop/start to manage service
+Usage:
+  sudo fsmon daemon &       Start daemon in background
+  fsmon add /path -r --types MODIFY  Filter by event types
+  fsmon add /path --exclude-cmd rsync  Exclude by process name
+  fsmon managed                       List monitored paths
+  fsmon query --since 1h    Query events
 
-[Examples]
-  fsmon monitor /etc --types MODIFY          # Investigate config file changes
-  fsmon monitor / --all-events               # Enable all 14 event types
-  fsmon monitor ~/project --recursive        # Recursively monitor project directory
-  fsmon monitor /tmp --min-size 100MB        # Track large file creation
-  fsmon monitor /var/log --format json       # JSON format output"#
+Config:           ~/.config/fsmon/config.toml
+Managed:          ~/.local/share/fsmon/managed.jsonl (configurable via [managed].file)
+Log dir:          ~/.local/state/fsmon/ (configurable via [logging].dir)
+Socket:           /tmp/fsmon-<UID>.sock (configurable via [socket].path)"#
+        }
+        HelpTopic::Add => {
+            r#"Add a path to the monitoring list.
+
+The path is added immediately if the daemon is running, and persisted
+in ~/.config/fsmon/config.toml for automatic monitoring on daemon restart.
+
+No sudo needed — store is updated immediately.
+
+Options:
+  -r, --recursive         Watch subdirectories recursively
+  -t, --types             Event types to monitor (comma-separated)
+  -m, --min-size          Minimum file size change to report (e.g., 100MB, 1GB)
+  -e, --exclude           Glob patterns to exclude (e.g., "*.tmp")
+  --exclude-cmd           Process names to exclude (glob, e.g. "rsync|apt")
+  --only-cmd              Only capture from these process names (glob)
+  --all-events            Monitor all 14 fanotify event types
+
+Examples:
+  fsmon add /path/to/project -r --types MODIFY,CREATE
+  fsmon add /etc --types MODIFY --min-size 100KB
+  fsmon add /var/log --exclude-cmd "rsync|apt"
+  fsmon add /tmp --only-cmd nginx"#
+        }
+        HelpTopic::Remove => {
+            r#"Remove a path from the monitoring list.
+
+The path is removed immediately if the daemon is running.
+
+Examples:
+  fsmon remove /path/to/watch"#
+        }
+        HelpTopic::Managed => {
+            r#"List all monitored paths with their configuration.
+
+Displays each path with its recursive flag, event type filters,
+size threshold, path/cmd exclusion patterns.
+
+Examples:
+  fsmon managed"#
         }
         HelpTopic::Query => {
-            r#"Query historical file change events from log files, supports multiple filter conditions and sorting.
+            r#"Query historical file change events from log files.
 
-[Time Filtering]
-  --since   Start time: relative (1h, 30m, 7d) or absolute ("2024-05-01 10:00")
-  --until   End time
-  
-[Process Filtering]
-  --pid     Filter by process ID (multiple supported: 1234,5678)
-  --cmd     Filter by process name (wildcard support: nginx*, python)
-  --user    Filter by username (multiple supported: root,admin)
+Output is JSONL (one JSON object per line), pipe to jq for custom filtering.
 
-[Event Filtering]
-  --types     Filter by event type (ACCESS,MODIFY,CREATE,DELETE,...)
-  --min-size  Filter by size change (e.g., 100MB, 1GB)
+Options:
+  -p, --path        Path(s) to query. Repeatable. Default: all.
+  -S, --since       Start time: relative (1h, 30m, 7d) or absolute
+  -U, --until       End time
 
-[Examples]
-  fsmon query                              # Query default log (~/.fsmon/history.log)
-  fsmon query --since 1h                   # Last 1 hour
-  fsmon query --cmd nginx                  # Only nginx operations
-  fsmon query --since 1h --cmd java --types MODIFY --min-size 100MB  # Combined filters
-  fsmon query --format json --sort size    # JSON output, sorted by size"#
-        }
-        HelpTopic::Status => {
-            r#"Check fsmon systemd service status.
-
-[Output Content]
-  - Service status (active/inactive/failed)
-  - Use 'systemctl status fsmon' for detailed information
-
-[Examples]
-  fsmon status"#
-        }
-        HelpTopic::Stop => {
-            r#"Stop fsmon systemd service.
-
-[Examples]
-  fsmon stop"#
-        }
-        HelpTopic::Start => {
-            r#"Start fsmon systemd service.
-
-[Examples]
-  fsmon start"#
-        }
-        HelpTopic::Install => {
-            r#"Install fsmon as a systemd service.
-
-[Service Configuration]
-  - Creates /etc/systemd/system/fsmon.service
-  - Configures auto-restart on failure
-  - Logs to systemd journal
-
-[Examples]
-  fsmon install /var/log -o /var/log/fsmon.log    # Monitor /var/log
-  fsmon install /etc /var/log                      # Monitor multiple paths"#
-        }
-        HelpTopic::Uninstall => {
-            r#"Uninstall fsmon systemd service.
-
-[Actions]
-  - Stops service if running
-  - Disables service
-  - Removes service file
-
-[Examples]
-  fsmon uninstall"#
+Examples:
+  fsmon query --since 1h
+  fsmon query --path /tmp --since 1h
+  fsmon query --since 1h | jq 'select(.cmd == "nginx")'
+  fsmon query | jq -s 'sort_by(.file_size)[]'"#
         }
         HelpTopic::Clean => {
             r#"Clean historical log files, retain by time or size.
 
-[Cleanup Strategy]
-  --keep-days   Keep logs from last N days (default: 30 days)
-  --max-size    Limit maximum log file size (e.g., 100MB, 1GB)
-  --dry-run     Preview mode, don't actually delete
+Defaults come from config.toml [logging] section (keep_days=30, max_size="1GB").
+CLI args override config overrides code defaults.
 
-[Examples]
-  fsmon clean --keep-days 7           # Keep 7 days of logs
-  fsmon clean --max-size 100MB        # Limit logs to 100MB
-  fsmon clean --keep-days 7 --dry-run # Preview without deleting"#
+Options:
+  --path            Path(s) to clean. Repeatable. Default: all.
+  --keep-days       Keep logs from last N days
+  --max-size        Maximum log file size (e.g., 100MB, 1GB)
+  --dry-run         Preview mode, don't actually delete
+
+Examples:
+  fsmon clean                       Use config defaults
+  fsmon clean --keep-days 7         Override retention
+  fsmon clean --path /tmp --dry-run Preview without deleting"#
         }
         HelpTopic::Generate => {
-            "Generate a commented default configuration file.\n\
-Generates a TOML config file at ~/.config/fsmon/config.toml (XDG config path).\n\
-\n\
-[Config Search Order]\n\
-  1. ~/.fsmon/config.toml        (legacy)\n\
-  2. ~/.config/fsmon/config.toml (XDG)\n\
-  3. /etc/fsmon/config.toml      (system-wide)\n\
-\n\
-[Examples]\n\
-  fsmon generate                  # Generate config (fails if exists)\n\
-  fsmon generate --force          # Overwrite existing config"
+            r#"Generate a default configuration file at ~/.config/fsmon/config.toml.
+
+The config includes safety nets (keep_days=30, max_size="1GB")
+that prevent disk overflow even if you never run 'fsmon clean'.
+
+Monitored paths are managed separately via 'fsmon add'/'fsmon remove'.
+The daemon also auto-generates a default config if none exists when started.
+
+Examples:
+  fsmon generate"#
         }
     }
 }
 
 pub const fn after_help() -> &'static str {
-    r#"Use 'fsmon <COMMAND> --help' for detailed command info
+    r#"Use 'fsmon <COMMAND> --help' for detailed help
 
-Examples:
-  fsmon monitor /var/log                     # Basic monitoring
-  fsmon monitor /etc --types MODIFY         # Investigate config file changes
-  fsmon monitor / --all-events               # Enable all 14 event types
-  fsmon monitor ~/project --recursive       # Recursively monitor project
-  fsmon install /var/log -o /var/log/fsmon.log  # Install systemd service
-  fsmon query --since 1h --cmd nginx         # Query nginx operations in last hour
-  fsmon status                               # Check service status"#
+Daemon (requires sudo):
+  sudo fsmon daemon &               Start daemon in background
+  kill %1                           Stop daemon (or Ctrl+C)
+
+Management (no sudo needed):
+  fsmon add /path -r                Add path (recursive)
+  fsmon add /path --only-cmd nginx  Filter by process name
+  fsmon remove /path                Remove path
+  fsmon managed                     List monitored paths
+
+Query (stdout JSONL, pipe to jq):
+  fsmon query --since 1h            Events from last hour
+  fsmon query | jq 'select(.cmd == "nginx")'  Custom filter
+
+Clean (config defaults: keep_days=30, max_size=1GB):
+  fsmon clean                       Clean all logs
+  fsmon clean --keep-days 7         Override retention
+  fsmon clean --dry-run             Preview without deleting
+
+Config: ~/.config/fsmon/config.toml
+Managed: ~/.local/share/fsmon/managed.jsonl (configurable via [managed].file)
+Logs:   ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].dir)"#
 }
