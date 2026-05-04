@@ -92,8 +92,11 @@ fsmon query --since 1h --cmd nginx
 # Clean old logs (dry-run preview)
 fsmon clean --keep-days 7 --dry-run
 
-# Check service status
-fsmon status
+# Manage service via systemd
+sudo systemctl start fsmon
+sudo systemctl stop fsmon
+sudo systemctl status fsmon
+sudo journalctl -u fsmon
 ```
 
 ## Examples
@@ -151,12 +154,15 @@ sudo fsmon monitor /var/www --types CREATE,DELETE --exclude "*.tmp"
 fsmon monitor --help    # Real-time monitoring with fanotify
 fsmon query --help      # Query history logs with filters and sorting
 fsmon clean --help      # Cleanup old logs by time or size
-fsmon status            # Check systemd service status
-fsmon stop              # Stop systemd service
-fsmon start             # Start systemd service
 fsmon install --help    # Install systemd service (auto-detects binary path)
 fsmon uninstall         # Uninstall systemd service
 fsmon generate          # Generate default configuration file (~/.config/fsmon/config.toml)
+
+# Service management via systemd
+sudo systemctl start fsmon
+sudo systemctl stop fsmon
+sudo systemctl status fsmon
+sudo journalctl -u fsmon
 ```
 
 ## Configuration
@@ -268,7 +274,7 @@ CLI flags override config file values.
 | `proc_cache.rs` | Netlink proc connector listener — captures short-lived process info at `exec()` |
 | `query.rs` | Log file querying with binary search optimization and combined filters |
 | `config.rs` | TOML-based persistent configuration |
-| `systemd.rs` | Systemd service lifecycle (install, uninstall, status, start, stop) |
+| `systemd.rs` | Systemd service install and uninstall |
 | `output.rs` | Event output formatting (human, JSON, CSV) |
 | `utils.rs` | Size/time parsing, process info helpers, UID lookup |
 | `help.rs` | Centralized help text for all commands |

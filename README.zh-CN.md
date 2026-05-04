@@ -92,8 +92,11 @@ fsmon query --since 1h --cmd nginx
 # 预览清理旧日志
 fsmon clean --keep-days 7 --dry-run
 
-# 查看服务状态
-fsmon status
+# 通过 systemd 管理服务
+sudo systemctl start fsmon
+sudo systemctl stop fsmon
+sudo systemctl status fsmon
+sudo journalctl -u fsmon
 ```
 
 ## 示例
@@ -151,12 +154,15 @@ sudo fsmon monitor /var/www --types CREATE,DELETE --exclude "*.tmp"
 fsmon monitor --help    # 实时监控（fanotify）
 fsmon query --help      # 查询历史日志（支持过滤和排序）
 fsmon clean --help      # 按时间或大小清理旧日志
-fsmon status            # 查看 systemd 服务状态
-fsmon stop              # 停止 systemd 服务
-fsmon start             # 启动 systemd 服务
 fsmon install --help    # 安装 systemd 服务（自动检测二进制路径）
 fsmon uninstall         # 卸载 systemd 服务
 fsmon generate          # 生成默认的配置文件 (~/.config/fsmon/config.toml)
+
+# 通过 systemd 管理服务
+sudo systemctl start fsmon
+sudo systemctl stop fsmon
+sudo systemctl status fsmon
+sudo journalctl -u fsmon
 ```
 
 ## 配置文件
@@ -268,7 +274,7 @@ CLI 参数优先级高于配置文件。
 | `proc_cache.rs` | Netlink proc connector 监听器 — 在进程 `exec()` 时捕获短命进程信息 |
 | `query.rs` | 日志文件查询，二分查找优化，多条件组合过滤 |
 | `config.rs` | TOML 持久化配置管理 |
-| `systemd.rs` | Systemd 服务生命周期管理（安装、卸载、状态、启停） |
+| `systemd.rs` | Systemd 服务安装和卸载 |
 | `output.rs` | 事件输出格式化（人类可读、JSON、CSV） |
 | `utils.rs` | 大小/时间解析、进程信息获取、UID 查询 |
 | `help.rs` | 所有命令的集中帮助文本 |
