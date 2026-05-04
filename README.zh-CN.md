@@ -134,8 +134,9 @@ sudo fsmon monitor ~/.projects --types DELETE --recursive --output /tmp/deletes.
 rm -rf ~/.projects/fsmon-test/
 
 # 输出显示每个被删除的文件（包括子目录中的）
-[2026-05-04 21:01:11] [DELETE] /home/pilot/.projects/fsmon-test/hello.c (PID: 16119, CMD: rm, USER: pilot, SIZE: +0B)
-[2026-05-04 21:01:11] [DELETE] /home/pilot/.projects/fsmon-test (PID: 16119, CMD: rm, USER: pilot, SIZE: +0B)
+[2026-05-04 21:37:47] [DELETE] /home/pilot/.projects/fsmon-test/hello.c (PID: 32838, CMD: rm, USER: pilot, SIZE: +0B)
+[2026-05-04 21:37:47] [DELETE_SELF] /home/pilot/.projects/fsmon-test/. (PID: 32838, CMD: rm, USER: pilot, SIZE: +0B)
+[2026-05-04 21:37:47] [DELETE] /home/pilot/.projects/fsmon-test (PID: 32838, CMD: rm, USER: pilot, SIZE: +0B)
 ```
 
 ### 组合过滤查询
