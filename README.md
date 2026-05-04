@@ -22,7 +22,7 @@
 - **Complete Deletion Capture**: Captures every file deleted during `rm -rf` via persistent directory handle cache
 - **High Performance**: Rust + Tokio, <5MB memory footprint, zero-copy FID event parsing, binary-search log querying
 - **Flexible Filtering**: Filter by time, size, process, user, event type, and exclude patterns (wildcards)
-- **Multiple Formats**: Human-readable, JSON, and CSV output
+- **Multiple Formats**: Human-readable, JSON, and CSV terminal output (log file always uses JSON for queryability)
 - **TOML Configuration**: Persistent config at `~/.fsmon/config.toml`, `~/.config/fsmon/config.toml`, or `/etc/fsmon/config.toml` (priority order)
 - **Log Management**: Time-based and size-based log rotation with dry-run preview
 - **Systemd Service**: Install as systemd service with configurable security hardening
@@ -128,14 +128,14 @@ dd if=/dev/zero of=/tmp/large_test.bin bs=1M count=100
 
 ```bash
 # Capture complete recursive deletion
-sudo fsmon monitor ~/test-project --types DELETE --recursive --output /tmp/deletes.log
+sudo fsmon monitor ~/.projects --types DELETE --recursive --output /tmp/deletes.log
 
 # Trigger
-rm -rf ~/test-project/build/
+rm -rf ~/.projects/fsmon-test/
 
 # Output shows every file deleted (even in subdirectories)
-[2026-01-15 16:00:00] [DELETE] /home/pilot/test-project/build/output.o (PID: 34567, CMD: rm)
-[2026-01-15 16:00:00] [DELETE] /home/pilot/test-project/build (PID: 34567, CMD: rm)
+[2026-05-04 21:01:11] [DELETE] /home/pilot/.projects/fsmon-test/hello.c (PID: 16119, CMD: rm, USER: pilot, SIZE: +0B)
+[2026-05-04 21:01:11] [DELETE] /home/pilot/.projects/fsmon-test (PID: 16119, CMD: rm, USER: pilot, SIZE: +0B)
 ```
 
 ### Filter with Combined Criteria
@@ -195,7 +195,7 @@ all_events = false
 # Path to the event log file
 # output = "/var/log/fsmon.log"
 
-# Log output format: "human", "json", or "csv"
+# Terminal output format: "human", "json", or "csv" (affects stdout only; log file is always JSON)
 format = "human"
 
 # Watch subdirectories recursively
@@ -229,7 +229,7 @@ buffer_size = 32768
 # Minimum size change to include
 # min_size = "100MB"
 
-# Output format: "human", "json", or "csv"
+# Terminal output format: "human", "json", or "csv" (affects stdout only; log file is always JSON)
 format = "human"
 
 # Sort results: "time", "size", or "pid"

@@ -4,6 +4,8 @@ use std::io::Write;
 
 use crate::{FileEvent, OutputFormat};
 
+/// Output an event: stdout follows `format`, log file is always JSON
+/// (not all formats are parseable by `fsmon query`, so JSON is the canonical file format)
 pub fn output_event(
     event: &FileEvent,
     format: OutputFormat,

@@ -128,14 +128,14 @@ dd if=/dev/zero of=/tmp/large_test.bin bs=1M count=100
 
 ```bash
 # 捕获完整的递归删除
-sudo fsmon monitor ~/test-project --types DELETE --recursive --output /tmp/deletes.log
+sudo fsmon monitor ~/.projects --types DELETE --recursive --output /tmp/deletes.log
 
 # 触发
-rm -rf ~/test-project/build/
+rm -rf ~/.projects/fsmon-test/
 
 # 输出显示每个被删除的文件（包括子目录中的）
-[2026-01-15 16:00:00] [DELETE] /home/pilot/test-project/build/output.o (PID: 34567, CMD: rm)
-[2026-01-15 16:00:00] [DELETE] /home/pilot/test-project/build (PID: 34567, CMD: rm)
+[2026-05-04 21:01:11] [DELETE] /home/pilot/.projects/fsmon-test/hello.c (PID: 16119, CMD: rm, USER: pilot, SIZE: +0B)
+[2026-05-04 21:01:11] [DELETE] /home/pilot/.projects/fsmon-test (PID: 16119, CMD: rm, USER: pilot, SIZE: +0B)
 ```
 
 ### 组合过滤查询

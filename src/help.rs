@@ -39,7 +39,7 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
   fsmon monitor / --all-events               # Enable all 14 event types
   fsmon monitor ~/project --recursive        # Recursively monitor project directory
   fsmon monitor /tmp --min-size 100MB        # Track large file creation
-  fsmon monitor /var/log --format json       # JSON format output"#
+  fsmon monitor /var/log --format json       # JSON format output (log file is always JSON)"#
         }
         HelpTopic::Query => {
             r#"Query historical file change events from log files, supports multiple filter conditions and sorting.
@@ -62,7 +62,7 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
   fsmon query --since 1h                   # Last 1 hour
   fsmon query --cmd nginx                  # Only nginx operations
   fsmon query --since 1h --cmd java --types MODIFY --min-size 100MB  # Combined filters
-  fsmon query --format json --sort size    # JSON output, sorted by size"#
+  fsmon query --format json --sort size    # JSON terminal output, sorted by size"#
         }
         HelpTopic::Install => {
             r#"Install fsmon as a systemd service.

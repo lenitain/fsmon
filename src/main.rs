@@ -71,7 +71,7 @@ enum Commands {
         #[arg(short, long, value_name = "FILE")]
         output: Option<PathBuf>,
 
-        /// Output format (human, json, csv)
+        /// Output format (human, json, csv) — affects stdout only; log file is always JSON
         #[arg(short, long, value_enum)]
         format: Option<OutputFormat>,
 
@@ -116,7 +116,7 @@ enum Commands {
         #[arg(short, long, value_name = "SIZE")]
         min_size: Option<String>,
 
-        /// Output format (human, json, csv)
+        /// Output format (human, json, csv) — affects stdout only
         #[arg(short, long, value_enum)]
         format: Option<OutputFormat>,
 
