@@ -238,7 +238,8 @@ impl Monitor {
         // Fall back to inode mark + dynamic marking on EXDEV (e.g., btrfs subvolumes)
         let use_fs_mark = {
             let mut ok = true;
-            for canonical in &self.canonical_paths {
+            let mut marked_count = 0; // how many filesystem marks succeeded before EXDEV
+            for (idx, canonical) in self.canonical_paths.iter().enumerate() {
                 let path_mask = self.mask;
                 match fanotify_mark(
                     fan_fd,
@@ -247,7 +248,9 @@ impl Monitor {
                     AT_FDCWD,
                     canonical,
                 ) {
-                    Ok(()) => {}
+                    Ok(()) => {
+                        marked_count = idx + 1;
+                    }
                     Err(ref e) if e.raw_os_error() == Some(libc::EXDEV) => {
                         ok = false;
                         break;
@@ -255,6 +258,22 @@ impl Monitor {
                     Err(e) => {
                         eprintln!("[WARNING] Cannot monitor {}: {:#}", canonical.display(), e);
                     }
+                }
+            }
+            // If any path triggered EXDEV (cross-filesystem), remove the
+            // filesystem marks that were already added. The fanotify fd
+            // becomes bound to a single filesystem after the first
+            // FAN_MARK_FILESYSTEM, and subsequent inode marks on other
+            // filesystems would fail with EXDEV.
+            if !ok {
+                for canonical in self.canonical_paths.iter().take(marked_count) {
+                    let _ = fanotify_mark(
+                        fan_fd,
+                        FAN_MARK_REMOVE | FAN_MARK_FILESYSTEM,
+                        self.mask,
+                        AT_FDCWD,
+                        canonical,
+                    );
                 }
             }
             ok

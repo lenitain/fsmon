@@ -108,6 +108,14 @@ cargo test         ✅ 67 passed, 7 ignored (fanotify 测试需要 sudo)
 - **原因**: 之前 `<id>.log` 格式不易区分，改为 `log_<id>.toml`（带前缀 + .toml 后缀更明确）
 - **改动**: `monitor.rs`, `query.rs`, `lib.rs` 中 3 处文件名拼接 + `help.rs` 文档
 
+### 2026-05-05 — fanotify fd 跨文件系统 EXDEV 导致 inode mark 失败
+
+- **问题**: 跨文件系统路径（如 `/tmp` 在 `/`, `/home` 独立分区）。
+  第一个路径 `FAN_MARK_FILESYSTEM` 成功后 fanotify fd 绑定在第一个文件系统上，
+  后续其他文件系统的 inode mark 被内核拒绝返回 EXDEV。
+- **修复**: EXDEV 时先 `FAN_MARK_REMOVE` 移除已加的 filesystem mark，
+  再统一用 inode mark（无跨文件系统限制）。
+
 ### 2026-05-05 — 事件路径 canonical 不匹配导致 log 目录为空
 
 - **问题**: 事件路径来自 `/proc/self/fd/{fd}` readlink（canonical 路径），而 `entry_id_for_path()`
