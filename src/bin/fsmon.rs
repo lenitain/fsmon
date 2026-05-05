@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use fsmon::config::{Config, PathEntry};
+use fsmon::help::{self, HelpTopic};
 use fsmon::monitor::{Monitor, PathOptions};
 use fsmon::query::Query;
 use fsmon::socket::{self, SocketCmd};
@@ -13,7 +14,8 @@ use std::path::PathBuf;
 #[command(name = "fsmon")]
 #[command(author = "fsmon contributors")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
-#[command(about = "Lightweight high-performance file change tracking tool")]
+#[command(about = help::about(HelpTopic::Root))]
+#[command(after_help = help::after_help())]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -21,28 +23,28 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run the fsmon daemon (background monitoring service)
+    #[command(about = help::about(HelpTopic::Daemon), long_about = help::long_about(HelpTopic::Daemon))]
     Daemon,
 
-    /// Add a path to monitor
+    #[command(about = help::about(HelpTopic::Add), long_about = help::long_about(HelpTopic::Add))]
     Add(AddArgs),
 
-    /// Remove a path from monitoring
+    #[command(about = help::about(HelpTopic::Remove), long_about = help::long_about(HelpTopic::Remove))]
     Remove { path: PathBuf },
 
-    /// List all monitored paths
+    #[command(about = help::about(HelpTopic::Managed), long_about = help::long_about(HelpTopic::Managed))]
     Managed,
 
-    /// Query historical monitoring logs
+    #[command(about = help::about(HelpTopic::Query), long_about = help::long_about(HelpTopic::Query))]
     Query(QueryArgs),
 
-    /// Clean historical logs
+    #[command(about = help::about(HelpTopic::Clean), long_about = help::long_about(HelpTopic::Clean))]
     Clean(CleanArgs),
 
-    /// Install systemd service
+    #[command(about = help::about(HelpTopic::Install), long_about = help::long_about(HelpTopic::Install))]
     Install { #[arg(short, long)] force: bool },
 
-    /// Uninstall systemd service
+    #[command(about = help::about(HelpTopic::Uninstall), long_about = help::long_about(HelpTopic::Uninstall))]
     Uninstall,
 }
 

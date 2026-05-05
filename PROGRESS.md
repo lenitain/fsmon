@@ -98,5 +98,5 @@ all_events = false
 - [ ] 删除旧 `fsmon-cli.rs` 相关逻辑
 - [ ] 删除 `InstanceConfig`（已合并到主配置）
 - [ ] 删除 `generate` 命令
-- [ ] 更新 help 文档
-- [ ] 测试 & lint
+- [x] 更新 help 文档（`help.rs` + `fsmon.rs` clap 引用）
+- [x] 测试通过（78 passed, 7 ignored）
