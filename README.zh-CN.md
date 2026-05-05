@@ -96,7 +96,13 @@ sudo fsmon monitor /var/log --exclude "*.log"
 # 1. 安装 systemd 模板（一次性）
 sudo fsmon install
 
-# 2. 手动创建实例配置
+# 2. 生成实例配置模板（或手动创建）
+sudo fsmon generate --instance web
+
+# 编辑模板设置路径和选项
+sudo vim /etc/fsmon/fsmon-web.toml
+
+# 或手动创建：
 sudo mkdir -p /etc/fsmon
 cat > /etc/fsmon/fsmon-web.toml << 'EOF'
 paths = ["/var/www"]
@@ -184,7 +190,8 @@ fsmon install           # 安装 systemd 模板单元（fsmon@.service）
 fsmon uninstall         # 卸载 systemd 模板
 fsmon enable <name>     # 创建并启动监控实例
 fsmon disable <name>    # 停用并移除监控实例
-fsmon generate          # 生成默认的配置文件 (~/.config/fsmon/fsmon.toml)
+fsmon generate                      # 生成 CLI 配置 (~/.config/fsmon/fsmon.toml)
+fsmon generate --instance web       # 生成实例配置模板 (/etc/fsmon/fsmon-web.toml)
 ```
 
 ## 两种模式：CLI vs Systemd 实例

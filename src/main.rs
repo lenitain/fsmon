@@ -155,11 +155,15 @@ enum Commands {
     #[command(about = help::about(HelpTopic::Uninstall), long_about = help::long_about(HelpTopic::Uninstall))]
     Uninstall,
 
-    #[command(about = help::about(HelpTopic::Generate))]
+    #[command(about = help::about(HelpTopic::Generate), long_about = help::long_about(HelpTopic::Generate))]
     Generate {
         /// Force overwrite existing config file
         #[arg(short, long)]
         force: bool,
+
+        /// Instance name to generate config for (e.g., "web"), creates /etc/fsmon/fsmon-{name}.toml
+        #[arg(short, long)]
+        instance: Option<String>,
     },
 
     #[command(about = help::about(HelpTopic::Clean), long_about = help::long_about(HelpTopic::Clean))]
@@ -589,8 +593,12 @@ async fn main() -> Result<()> {
         Commands::Uninstall => {
             systemd::uninstall()?;
         }
-        Commands::Generate { force } => {
-            Config::generate(force)?;
+        Commands::Generate { force, instance } => {
+            if let Some(ref name) = instance {
+                config::generate_instance_config(name, force)?;
+            } else {
+                Config::generate(force)?;
+            }
         }
         Commands::Clean {
             log_file,

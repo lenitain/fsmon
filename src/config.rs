@@ -3,6 +3,33 @@ use serde::{Deserialize, Serialize};
 
 pub const INSTANCE_CONFIG_DIR: &str = "/etc/fsmon";
 
+pub const INSTANCE_CONFIG_TEMPLATE: &str = r#"# fsmon instance configuration
+# Place this file at /etc/fsmon/fsmon-{name}.toml
+
+# Directories/files to monitor (required)
+paths = []
+
+# Event log file path (omit to skip file logging — events go to journald only)
+# output = "/var/log/fsmon/{name}.log"
+
+# Minimum file size change to report (supports KB, MB, GB suffixes)
+# min_size = "100MB"
+
+# Comma-separated event types to filter:
+# ACCESS, MODIFY, CLOSE_WRITE, CLOSE_NOWRITE, OPEN, OPEN_EXEC,
+# ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF
+# types = "MODIFY,CREATE"
+
+# Glob patterns to exclude from monitoring
+# exclude = "*.tmp"
+
+# Capture all 14 fanotify events
+all_events = false
+
+# Watch subdirectories recursively
+recursive = false
+"#;
+
 pub const DEFAULT_CONFIG_TEMPLATE: &str = "# fsmon configuration file\n\
 # See https://github.com/lenitain/fsmon for full documentation\n\
 \n\
@@ -240,6 +267,33 @@ pub struct InstanceConfig {
     pub exclude: Option<String>,
     pub all_events: Option<bool>,
     pub recursive: Option<bool>,
+}
+
+/// Generate an instance config template file at /etc/fsmon/fsmon-{name}.toml.
+pub fn generate_instance_config(name: &str, force: bool) -> Result<PathBuf> {
+    let config_dir = PathBuf::from(INSTANCE_CONFIG_DIR);
+    let config_path = config_dir.join(format!("fsmon-{}.toml", name));
+
+    if config_path.exists() && !force {
+        anyhow::bail!(
+            "Instance config already exists at {}. Use --force to overwrite.",
+            config_path.display()
+        );
+    }
+
+    fs::create_dir_all(&config_dir)
+        .with_context(|| format!("Failed to create {}", config_dir.display()))?;
+
+    let content = INSTANCE_CONFIG_TEMPLATE.replace("{name}", name);
+    fs::write(&config_path, &content)
+        .with_context(|| format!("Failed to write {}", config_path.display()))?;
+
+    println!("Generated instance config: {}", config_path.display());
+    println!(
+        "Edit it to set paths and options, then: systemctl enable fsmon@{} --now",
+        name
+    );
+    Ok(config_path)
 }
 
 #[cfg(test)]

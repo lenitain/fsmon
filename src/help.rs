@@ -16,7 +16,7 @@ pub const fn about(topic: HelpTopic) -> &'static str {
         HelpTopic::Install => "Install systemd service template",
         HelpTopic::Uninstall => "Uninstall systemd service template",
         HelpTopic::Clean => "Clean historical logs",
-        HelpTopic::Generate => "Generate a default config file",
+        HelpTopic::Generate => "Generate CLI or instance configuration file",
     }
 }
 
@@ -127,17 +127,23 @@ Each instance reads its own config from /etc/fsmon/fsmon-{NAME}.toml.
   fsmon clean --keep-days 7 --dry-run # Preview without deleting"#
         }
         HelpTopic::Generate => {
-            "Generate a commented default configuration file.\n\
-Generates a TOML config file at ~/.config/fsmon/fsmon.toml (XDG config path).\n\
+            "Generate configuration files.\n\
 \n\
-[Config Search Order]\n\
+Without --instance: creates ~/.config/fsmon/fsmon.toml for CLI mode.\n\
+With --instance <name>: creates /etc/fsmon/fsmon-{name}.toml for systemd instance mode.\n\
+\n\
+[CLI Config Search Order]\n\
   1. ~/.fsmon/fsmon.toml\n\
-  2. ~/.config/fsmon/fsmon.toml (XDG)\n\
+  2. ~/.config/fsmon/fsmon.toml (XDG, created by `fsmon generate`)\n\
   3. /etc/fsmon/fsmon.toml (system-wide)\n\
 \n\
-[Examples]\n\
-  fsmon generate                  # Generate config (fails if exists)\n\
-  fsmon generate --force          # Overwrite existing config"
+[Instance Config]\n\
+  fsmon generate --instance web   # Generate /etc/fsmon/fsmon-web.toml template\n\
+  fsmon generate --instance web --force  # Overwrite existing\n\
+\n\
+[CLI Examples]\n\
+  fsmon generate                  # Generate CLI config (fails if exists)\n\
+  fsmon generate --force          # Overwrite existing CLI config"
         }
     }
 }

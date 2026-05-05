@@ -96,7 +96,13 @@ Config read from `fsmon.toml` (search: `~/.fsmon/` → `~/.config/fsmon/` → `/
 # 1. Install systemd template (one-time)
 sudo fsmon install
 
-# 2. Create instance config manually
+# 2. Generate instance config template (or create manually)
+sudo fsmon generate --instance web
+
+# Edit the template to set paths and options
+sudo vim /etc/fsmon/fsmon-web.toml
+
+# Or create manually:
 sudo mkdir -p /etc/fsmon
 cat > /etc/fsmon/fsmon-web.toml << 'EOF'
 paths = ["/var/www"]
@@ -184,7 +190,8 @@ fsmon install           # Install systemd template unit (fsmon@.service)
 fsmon uninstall         # Uninstall systemd template
 fsmon enable <name>     # Create and start a monitoring instance
 fsmon disable <name>    # Stop and remove a monitoring instance
-fsmon generate          # Generate default configuration file (~/.config/fsmon/fsmon.toml)
+fsmon generate                      # Generate CLI config (~/.config/fsmon/fsmon.toml)
+fsmon generate --instance web       # Generate instance config template (/etc/fsmon/fsmon-web.toml)
 ```
 
 ## Two Modes: CLI vs Systemd Instance
