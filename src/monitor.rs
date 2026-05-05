@@ -3,9 +3,9 @@ use chrono::Utc;
 use fanotify::low_level::{
     AT_FDCWD, FAN_ACCESS, FAN_ATTRIB, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_CLOSE_NOWRITE,
     FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE, FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_MARK_ADD,
-    FAN_MARK_FILESYSTEM, FAN_MODIFY, FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO, FAN_NONBLOCK,
-    FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC, FAN_Q_OVERFLOW, FAN_REPORT_DIR_FID, FAN_REPORT_FID,
-    FAN_REPORT_NAME, O_CLOEXEC, O_RDONLY, fanotify_init, fanotify_mark,
+    FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE, FAN_MODIFY, FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO,
+    FAN_NONBLOCK, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC, FAN_Q_OVERFLOW, FAN_REPORT_DIR_FID,
+    FAN_REPORT_FID, FAN_REPORT_NAME, O_CLOEXEC, O_RDONLY, fanotify_init, fanotify_mark,
 };
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -16,13 +16,16 @@ use std::path::{Path, PathBuf};
 
 use lru::LruCache;
 use tokio::io::unix::AsyncFd;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::signal::unix::{SignalKind, signal};
 
+use crate::config::{Config, PathEntry};
 use crate::dir_cache;
-use crate::fid_parser::{self, FAN_FS_ERROR, HandleKey};
+use crate::fid_parser::{self, FAN_FS_ERROR};
 use crate::output;
 use crate::proc_cache::{self, ProcCache};
-use crate::utils::get_process_info_by_pid;
+use crate::socket::{SocketCmd, SocketResp};
+use crate::utils::{get_process_info_by_pid, parse_size};
 use crate::{EventType, FileEvent, OutputFormat};
 
 // ---- FanFd wrapper for AsyncFd ----
@@ -44,45 +47,79 @@ impl AsFd for FanFd {
     }
 }
 
-// ---- Monitor ----
+// ---- Constants ----
 
 const FILE_SIZE_CACHE_CAP: usize = 10_000;
 const PROC_CONNECTOR_TIMEOUT_SECS: u64 = 2;
 
+const DEFAULT_EVENT_MASK: u64 = FAN_CLOSE_WRITE
+    | FAN_ATTRIB
+    | FAN_CREATE
+    | FAN_DELETE
+    | FAN_DELETE_SELF
+    | FAN_MOVED_FROM
+    | FAN_MOVED_TO
+    | FAN_MOVE_SELF
+    | FAN_EVENT_ON_CHILD
+    | FAN_ONDIR;
+
+const ALL_EVENT_MASK: u64 = FAN_ACCESS
+    | FAN_MODIFY
+    | FAN_ATTRIB
+    | FAN_CLOSE_WRITE
+    | FAN_CLOSE_NOWRITE
+    | FAN_OPEN
+    | FAN_OPEN_EXEC
+    | FAN_CREATE
+    | FAN_DELETE
+    | FAN_DELETE_SELF
+    | FAN_MOVED_FROM
+    | FAN_MOVED_TO
+    | FAN_MOVE_SELF
+    | FAN_FS_ERROR
+    | FAN_EVENT_ON_CHILD
+    | FAN_ONDIR;
+
+// ---- PathOptions ----
+
+#[derive(Clone)]
+pub struct PathOptions {
+    pub min_size: Option<i64>,
+    pub event_types: Option<Vec<EventType>>,
+    pub exclude_regex: Option<regex::Regex>,
+    pub recursive: bool,
+    pub all_events: bool,
+}
+
+// ---- Monitor ----
+
 pub struct Monitor {
     paths: Vec<PathBuf>,
-    min_size: Option<i64>,
-    event_types: Option<Vec<EventType>>,
-    exclude_regex: Option<regex::Regex>,
+    canonical_paths: Vec<PathBuf>,
+    path_options: HashMap<PathBuf, PathOptions>,
     output: Option<PathBuf>,
     format: OutputFormat,
-    recursive: bool,
-    all_events: bool,
     proc_cache: Option<ProcCache>,
     file_size_cache: LruCache<PathBuf, u64>,
     buffer_size: usize,
     instance_name: Option<String>,
+    socket_listener: Option<tokio::net::UnixListener>,
+    fan_fd: Option<i32>,
+    mask: u64,
+    mount_fds: Vec<RawFd>,
+    use_fs_mark: bool,
+    dir_cache: HashMap<fid_parser::HandleKey, PathBuf>,
 }
 
 impl Monitor {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        paths: Vec<PathBuf>,
-        min_size: Option<i64>,
-        event_types: Option<Vec<EventType>>,
-        exclude: Option<String>,
+        paths_and_options: Vec<(PathBuf, PathOptions)>,
         output: Option<PathBuf>,
         format: OutputFormat,
-        recursive: bool,
-        all_events: bool,
         buffer_size: Option<usize>,
         instance_name: Option<String>,
+        socket_listener: Option<tokio::net::UnixListener>,
     ) -> Result<Self> {
-        let exclude_regex = exclude.map(|p| {
-            let escaped = regex::escape(&p);
-            let pattern = escaped.replace("\\*", ".*");
-            regex::Regex::new(&pattern).expect("invalid exclude pattern")
-        });
         let buffer_size = buffer_size.unwrap_or(4096 * 8); // Default 32KB
 
         if buffer_size < 4096 {
@@ -92,23 +129,33 @@ impl Monitor {
             bail!("buffer_size must not exceed 1048576 bytes (1MB)");
         }
 
+        let mut paths = Vec::new();
+        let mut path_options = HashMap::new();
+        for (path, opts) in paths_and_options {
+            path_options.insert(path.clone(), opts);
+            paths.push(path);
+        }
+
         Ok(Self {
             paths,
-            min_size,
-            event_types,
-            exclude_regex,
+            canonical_paths: Vec::new(),
+            path_options,
             output,
             format,
-            recursive,
-            all_events,
             proc_cache: None,
             file_size_cache: LruCache::new(NonZeroUsize::new(FILE_SIZE_CACHE_CAP).unwrap()),
             buffer_size,
             instance_name,
+            socket_listener,
+            fan_fd: None,
+            mask: 0,
+            mount_fds: Vec::new(),
+            use_fs_mark: false,
+            dir_cache: HashMap::new(),
         })
     }
 
-    pub async fn run(mut self) -> Result<()> {
+    pub async fn run(&mut self) -> Result<()> {
         if unsafe { libc::geteuid() } != 0 {
             let hint = if let Ok(exe) = std::env::current_exe() {
                 if exe.to_string_lossy().contains(".cargo/bin") {
@@ -166,42 +213,14 @@ impl Monitor {
             (O_CLOEXEC | O_RDONLY) as u32,
         )
         .context("fanotify_init failed (requires Linux 5.9+ kernel)")?;
+        self.fan_fd = Some(fan_fd);
 
-        // Event mask
-        // Default: 8 core change events
-        // --all-events: all 14 fanotify notification events
-        let mask = if self.all_events {
-            FAN_ACCESS
-                | FAN_MODIFY
-                | FAN_ATTRIB
-                | FAN_CLOSE_WRITE
-                | FAN_CLOSE_NOWRITE
-                | FAN_OPEN
-                | FAN_OPEN_EXEC
-                | FAN_CREATE
-                | FAN_DELETE
-                | FAN_DELETE_SELF
-                | FAN_MOVED_FROM
-                | FAN_MOVED_TO
-                | FAN_MOVE_SELF
-                | FAN_FS_ERROR
-                | FAN_EVENT_ON_CHILD
-                | FAN_ONDIR
+        // Compute combined event mask from all monitored paths
+        self.mask = if self.path_options.values().any(|o| o.all_events) {
+            ALL_EVENT_MASK
         } else {
-            FAN_CLOSE_WRITE
-                | FAN_ATTRIB
-                | FAN_CREATE
-                | FAN_DELETE
-                | FAN_DELETE_SELF
-                | FAN_MOVED_FROM
-                | FAN_MOVED_TO
-                | FAN_MOVE_SELF
-                | FAN_EVENT_ON_CHILD
-                | FAN_ONDIR
+            DEFAULT_EVENT_MASK
         };
-
-        let mut mount_fds = Vec::new();
-        let mut canonical_paths = Vec::new();
 
         // Collect canonical paths
         for path in &self.paths {
@@ -210,18 +229,18 @@ impl Monitor {
             } else {
                 path.clone()
             };
-            canonical_paths.push(canonical);
+            self.canonical_paths.push(canonical);
         }
 
         // Try filesystem mark first (covers entire filesystem, no race window)
         // Fall back to inode mark + dynamic marking on EXDEV (e.g., btrfs subvolumes)
         let use_fs_mark = {
             let mut ok = true;
-            for canonical in &canonical_paths {
+            for canonical in &self.canonical_paths {
                 match fanotify_mark(
                     fan_fd,
                     FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
-                    mask,
+                    self.mask,
                     AT_FDCWD,
                     canonical,
                 ) {
@@ -237,24 +256,28 @@ impl Monitor {
             }
             ok
         };
+        self.use_fs_mark = use_fs_mark;
 
         if !use_fs_mark {
             // inode mark fallback: mark directories one by one
-            for canonical in &canonical_paths {
-                mark_directory(fan_fd, mask, canonical)?;
-                if self.recursive && canonical.is_dir() {
-                    mark_recursive(fan_fd, mask, canonical);
+            for (i, canonical) in self.canonical_paths.iter().enumerate() {
+                let opts = self.paths.get(i).and_then(|p| self.path_options.get(p));
+                let recursive = opts.is_some_and(|o| o.recursive);
+                let path_mask = if opts.is_some_and(|o| o.all_events) { ALL_EVENT_MASK } else { DEFAULT_EVENT_MASK };
+                mark_directory(fan_fd, path_mask, canonical)?;
+                if recursive && canonical.is_dir() {
+                    mark_recursive(fan_fd, path_mask, canonical);
                 }
             }
         }
 
         // Open directory fds for open_by_handle_at to resolve file handles
-        for canonical in &canonical_paths {
+        for canonical in &self.canonical_paths {
             if let Ok(c_path) = CString::new(canonical.to_string_lossy().as_bytes()) {
                 let mfd =
                     unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
                 if mfd >= 0 {
-                    mount_fds.push(mfd);
+                    self.mount_fds.push(mfd);
                 }
             }
         }
@@ -286,41 +309,16 @@ impl Monitor {
                 .map(|p| p.display().to_string())
                 .collect::<Vec<_>>()
                 .join(" ");
-            let types_str = self.event_types.as_ref().map(|t| {
-                t.iter()
-                    .map(|e| e.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            });
-            let min_size_str = self.min_size.map(|s| s.to_string());
             let started = Utc::now().to_rfc3339();
 
             let header = format!(
-                "# fsmon{instance} paths=\"{paths}\"{types}{min_size}{all_events}{recursive} started=\"{started}\"\n",
+                "# fsmon{instance} paths=\"{paths}\" started=\"{started}\"\n",
                 instance = self
                     .instance_name
                     .as_ref()
                     .map(|n| format!(" instance=\"{}\"", n))
                     .unwrap_or_default(),
                 paths = paths_str,
-                types = types_str
-                    .as_ref()
-                    .map(|t| format!(" types=\"{}\"", t))
-                    .unwrap_or_default(),
-                min_size = min_size_str
-                    .as_ref()
-                    .map(|s| format!(" min_size={}", s))
-                    .unwrap_or_default(),
-                all_events = if self.all_events {
-                    " all_events=true"
-                } else {
-                    ""
-                },
-                recursive = if self.recursive {
-                    " recursive=true"
-                } else {
-                    ""
-                },
             );
 
             use std::io::Write;
@@ -334,24 +332,22 @@ impl Monitor {
         println!("Starting file trace monitor...");
         println!(
             "Monitoring paths: {}\n",
-            canonical_paths
+            self.canonical_paths
                 .iter()
                 .map(|p| p.display().to_string())
                 .collect::<Vec<_>>()
                 .join(", "),
         );
 
-        // Persistent directory handle cache: handle_key → dir_path
-        // Pre-cache directory handles at startup so DELETE/DELETE_SELF events
-        // for pre-existing directories can recover paths via the cache.
-        // In recursive mode, cache all subdirectories; otherwise only root dirs.
-        let mut dir_cache: HashMap<HandleKey, PathBuf> = HashMap::new();
-        for canonical in &canonical_paths {
+        // Pre-cache directory handles
+        for (i, canonical) in self.canonical_paths.iter().enumerate() {
             if canonical.is_dir() {
-                if self.recursive {
-                    dir_cache::cache_recursive(&mut dir_cache, canonical);
+                let opts = self.paths.get(i).and_then(|p| self.path_options.get(p));
+                let recursive = opts.is_some_and(|o| o.recursive);
+                if recursive {
+                    dir_cache::cache_recursive(&mut self.dir_cache, canonical);
                 } else {
-                    dir_cache::cache_dir_handle(&mut dir_cache, canonical);
+                    dir_cache::cache_dir_handle(&mut self.dir_cache, canonical);
                 }
             }
         }
@@ -363,13 +359,18 @@ impl Monitor {
 
         let mut sigterm =
             signal(SignalKind::terminate()).context("failed to create SIGTERM signal handler")?;
+        let mut sighup =
+            signal(SignalKind::hangup()).context("failed to create SIGHUP signal handler")?;
+
+        // Take socket listener for use in select! branches
+        let socket_listener = self.socket_listener.take();
 
         loop {
             tokio::select! {
                 result = async_fd.readable() => {
                     let mut guard = result?;
 
-                    let events = fid_parser::read_fid_events(fan_fd, &mount_fds, &mut dir_cache, &mut buf);
+                    let events = fid_parser::read_fid_events(fan_fd, &self.mount_fds, &mut self.dir_cache, &mut buf);
 
                     if events.is_empty() {
                         guard.clear_ready();
@@ -377,14 +378,18 @@ impl Monitor {
                     }
 
                     // inode mark mode: dynamically add marks and update handle cache
-                    if !use_fs_mark && self.recursive {
+                    if !use_fs_mark {
                         for raw in &events {
+                            let opts = self.get_matching_path_options(&raw.path);
+                            let recursive = opts.is_some_and(|o| o.recursive);
+                            if !recursive { continue; }
                             let is_dir_create = raw.mask & FAN_CREATE != 0 && raw.mask & FAN_ONDIR != 0;
                             let is_dir_moved_to = raw.mask & FAN_MOVED_TO != 0 && raw.mask & FAN_ONDIR != 0;
                             if (is_dir_create || is_dir_moved_to) && raw.path.is_dir() {
-                                let _ = mark_directory(fan_fd, mask, &raw.path);
-                                mark_recursive(fan_fd, mask, &raw.path);
-                                dir_cache::cache_recursive(&mut dir_cache, &raw.path);
+                                let path_mask = if opts.is_some_and(|o| o.all_events) { ALL_EVENT_MASK } else { DEFAULT_EVENT_MASK };
+                                let _ = mark_directory(fan_fd, path_mask, &raw.path);
+                                mark_recursive(fan_fd, path_mask, &raw.path);
+                                dir_cache::cache_recursive(&mut self.dir_cache, &raw.path);
                             }
                         }
                     }
@@ -400,7 +405,7 @@ impl Monitor {
                         for event_type in event_types {
                             let event = self.build_file_event(raw, event_type);
 
-                            if use_fs_mark && !self.is_path_in_scope(&event.path, &canonical_paths) {
+                            if use_fs_mark && !self.is_path_in_scope(&event.path, &self.canonical_paths) {
                                 continue;
                             }
 
@@ -409,12 +414,50 @@ impl Monitor {
                             }
                         }
                     }
+
+                    guard.clear_ready();
                 }
                 _ = tokio::signal::ctrl_c() => {
                     break;
                 }
                 _ = sigterm.recv() => {
                     break;
+                }
+                _ = sighup.recv() => {
+                    if let Err(e) = self.reload_config() {
+                        eprintln!("Config reload error: {e}");
+                    }
+                }
+                accept_result = async {
+                    match socket_listener.as_ref() {
+                        Some(listener) => {
+                            let (stream, _) = listener.accept().await?;
+                            let (reader, writer) = stream.into_split();
+                            let mut buf_reader = tokio::io::BufReader::new(reader);
+                            let mut line = String::new();
+                            buf_reader.read_line(&mut line).await?;
+                            Ok::<(tokio::net::unix::OwnedWriteHalf, String), std::io::Error>((writer, line.trim().to_string()))
+                        }
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    match accept_result {
+                        Ok((mut writer, cmd_str)) => {
+                            let resp = match serde_json::from_str::<SocketCmd>(&cmd_str) {
+                                Ok(cmd) => self.handle_socket_cmd(cmd),
+                                Err(e) => SocketResp {
+                                    ok: false,
+                                    error: Some(format!("Invalid command: {e}")),
+                                    paths: None,
+                                },
+                            };
+                            if let Ok(json) = serde_json::to_string(&resp) {
+                                let resp_bytes = format!("{json}\n");
+                                let _ = writer.write_all(resp_bytes.as_bytes()).await;
+                            }
+                        }
+                        Err(e) => eprintln!("Socket accept error: {e}"),
+                    }
                 }
             }
         }
@@ -423,7 +466,7 @@ impl Monitor {
         unsafe {
             libc::close(fan_fd);
         }
-        for mfd in mount_fds {
+        for &mfd in &self.mount_fds {
             unsafe {
                 libc::close(mfd);
             }
@@ -463,20 +506,311 @@ impl Monitor {
         }
     }
 
+    fn get_matching_path_options(&self, path: &Path) -> Option<&PathOptions> {
+        for watched in &self.paths {
+            if let Some(opts) = self.path_options.get(watched) {
+                if opts.recursive {
+                    if path.starts_with(watched) {
+                        return Some(opts);
+                    }
+                } else if path == watched.as_path()
+                    || path.parent() == Some(watched.as_path())
+                {
+                    return Some(opts);
+                }
+            }
+        }
+        None
+    }
+
+    pub fn add_path(&mut self, entry: &PathEntry) -> Result<()> {
+        let path = &entry.path;
+        if self.path_options.contains_key(path) {
+            bail!("Path already being monitored: {}", path.display());
+        }
+
+        let canonical = if path.exists() {
+            path.canonicalize().unwrap_or_else(|_| path.clone())
+        } else {
+            path.clone()
+        };
+
+        let event_types = entry.types.as_ref().map(|types| {
+            types.iter().filter_map(|s| s.parse::<EventType>().ok()).collect()
+        });
+        let min_size = entry.min_size.as_ref().map(|s| parse_size(s)).transpose()?;
+        let exclude_regex = entry.exclude.as_ref().map(|p| {
+            let escaped = regex::escape(p);
+            let pattern = escaped.replace("\\*", ".*");
+            regex::Regex::new(&pattern).expect("invalid exclude pattern")
+        });
+        let recursive = entry.recursive.unwrap_or(false);
+        let all_events = entry.all_events.unwrap_or(false);
+
+        let opts = PathOptions {
+            min_size,
+            event_types,
+            exclude_regex,
+            recursive,
+            all_events,
+        };
+
+        let fan_fd = self.fan_fd.context("Monitor not running")?;
+        let path_mask = if all_events { ALL_EVENT_MASK } else { DEFAULT_EVENT_MASK };
+
+        match fanotify_mark(
+            fan_fd,
+            FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
+            path_mask,
+            AT_FDCWD,
+            &canonical,
+        ) {
+            Ok(()) => {}
+            Err(ref e) if e.raw_os_error() == Some(libc::EXDEV) => {
+                mark_directory(fan_fd, path_mask, &canonical)?;
+                if recursive && canonical.is_dir() {
+                    mark_recursive(fan_fd, path_mask, &canonical);
+                }
+            }
+            Err(e) => bail!("fanotify_mark add failed: {}: {}", canonical.display(), e),
+        }
+
+        // Open directory fd for handle resolution
+        if let Ok(c_path) = CString::new(canonical.to_string_lossy().as_bytes()) {
+            let mfd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
+            if mfd >= 0 {
+                self.mount_fds.push(mfd);
+            }
+        }
+
+        // Update path tracking
+        self.paths.push(path.clone());
+        self.canonical_paths.push(canonical.clone());
+        self.path_options.insert(path.clone(), opts);
+
+        // Pre-cache directory handles
+        if canonical.is_dir() {
+            if recursive {
+                dir_cache::cache_recursive(&mut self.dir_cache, &canonical);
+            } else {
+                dir_cache::cache_dir_handle(&mut self.dir_cache, &canonical);
+            }
+        }
+
+        // Update combined mask
+        if all_events {
+            self.mask |= ALL_EVENT_MASK;
+        } else {
+            self.mask |= DEFAULT_EVENT_MASK;
+        }
+
+        println!("Added path: {} (recursive={}, all_events={})", path.display(), recursive, all_events);
+        Ok(())
+    }
+
+    pub fn remove_path(&mut self, path: &Path) -> Result<()> {
+        let pos = self.paths.iter().position(|p| p == path)
+            .ok_or_else(|| anyhow::anyhow!("Path not being monitored: {}", path.display()))?;
+
+        let canonical = &self.canonical_paths[pos];
+        let fan_fd = self.fan_fd.context("Monitor not running")?;
+        let opts = self.path_options.get(path)
+            .ok_or_else(|| anyhow::anyhow!("No options for path: {}", path.display()))?;
+        let path_mask = if opts.all_events { ALL_EVENT_MASK } else { DEFAULT_EVENT_MASK };
+
+        // Try to remove filesystem mark
+        match fanotify_mark(
+            fan_fd,
+            FAN_MARK_REMOVE | FAN_MARK_FILESYSTEM,
+            path_mask,
+            AT_FDCWD,
+            canonical,
+        ) {
+            Ok(()) => {}
+            Err(ref e)
+                if e.raw_os_error() == Some(libc::EXDEV)
+                    || e.raw_os_error() == Some(libc::EINVAL) =>
+            {
+                // In inode mark mode, marks are per-directory and hard to remove individually.
+                // They'll be cleaned up on shutdown. That's acceptable.
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: fanotify_mark remove failed for {}: {}",
+                    canonical.display(),
+                    e
+                );
+            }
+        }
+
+        self.paths.remove(pos);
+        self.canonical_paths.remove(pos);
+        self.path_options.remove(path);
+
+        println!("Removed path: {}", path.display());
+        Ok(())
+    }
+
+    fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> SocketResp {
+        match cmd {
+            SocketCmd::Add {
+                path,
+                recursive,
+                types,
+                min_size,
+                exclude,
+                all_events,
+            } => {
+                let entry = PathEntry {
+                    path,
+                    recursive,
+                    types,
+                    min_size,
+                    exclude,
+                    all_events,
+                };
+                match self.add_path(&entry) {
+                    Ok(()) => {
+                        let _ = self.persist_config();
+                        SocketResp {
+                            ok: true,
+                            error: None,
+                            paths: None,
+                        }
+                    }
+                    Err(e) => SocketResp {
+                        ok: false,
+                        error: Some(e.to_string()),
+                        paths: None,
+                    },
+                }
+            }
+            SocketCmd::Remove { path } => match self.remove_path(&path) {
+                Ok(()) => {
+                    let _ = self.persist_config();
+                    SocketResp {
+                        ok: true,
+                        error: None,
+                        paths: None,
+                    }
+                }
+                Err(e) => SocketResp {
+                    ok: false,
+                    error: Some(e.to_string()),
+                    paths: None,
+                },
+            },
+            SocketCmd::List => {
+                let paths: Vec<PathEntry> = self
+                    .paths
+                    .iter()
+                    .map(|p| {
+                        let opts = self.path_options.get(p);
+                        PathEntry {
+                            path: p.clone(),
+                            recursive: opts.map(|o| o.recursive),
+                            types: opts.and_then(|o| {
+                                o.event_types
+                                    .as_ref()
+                                    .map(|v| v.iter().map(|t| t.to_string()).collect())
+                            }),
+                            min_size: opts
+                                .and_then(|o| o.min_size.map(|s| s.to_string())),
+                            exclude: opts.and_then(|o| {
+                                o.exclude_regex
+                                    .as_ref()
+                                    .map(|r| r.as_str().to_string())
+                            }),
+                            all_events: opts.map(|o| o.all_events),
+                        }
+                    })
+                    .collect();
+                SocketResp {
+                    ok: true,
+                    error: None,
+                    paths: Some(paths),
+                }
+            }
+        }
+    }
+
+    fn persist_config(&self) -> Result<()> {
+        let entries: Vec<PathEntry> = self
+            .paths
+            .iter()
+            .map(|p| {
+                let opts = self.path_options.get(p);
+                PathEntry {
+                    path: p.clone(),
+                    recursive: opts.map(|o| o.recursive),
+                    types: opts.and_then(|o| {
+                        o.event_types
+                            .as_ref()
+                            .map(|v| v.iter().map(|t| t.to_string()).collect())
+                    }),
+                    min_size: opts.and_then(|o| o.min_size.map(|s| s.to_string())),
+                    exclude: opts.and_then(|o| {
+                        o.exclude_regex
+                            .as_ref()
+                            .map(|r| r.as_str().to_string())
+                    }),
+                    all_events: opts.map(|o| o.all_events),
+                }
+            })
+            .collect();
+        let cfg = Config {
+            log_file: self.output.clone(),
+            socket_path: None,
+            paths: entries,
+        };
+        cfg.save()
+    }
+
+    fn reload_config(&mut self) -> Result<()> {
+        let config = Config::load()?;
+        // Add new paths that appear in config
+        for entry in &config.paths {
+            if !self.path_options.contains_key(&entry.path)
+                && let Err(e) = self.add_path(entry)
+            {
+                eprintln!(
+                    "Failed to add path {} on reload: {e}",
+                    entry.path.display()
+                );
+            }
+        }
+        // Remove paths no longer in config
+        let current_paths: Vec<PathBuf> = self.paths.clone();
+        for path in &current_paths {
+            if !config.paths.iter().any(|p| p.path == *path)
+                && let Err(e) = self.remove_path(path)
+            {
+                eprintln!("Failed to remove path {} on reload: {e}", path.display());
+            }
+        }
+        println!("Config reloaded");
+        Ok(())
+    }
+
     fn should_output(&self, event: &FileEvent) -> bool {
-        if let Some(ref types) = self.event_types
+        let opts = match self.get_matching_path_options(&event.path) {
+            Some(o) => o,
+            None => return true,
+        };
+
+        if let Some(ref types) = opts.event_types
             && !types.contains(&event.event_type)
         {
             return false;
         }
 
-        if let Some(min) = self.min_size
+        if let Some(min) = opts.min_size
             && event.size_change.abs() < min
         {
             return false;
         }
 
-        if let Some(ref regex) = self.exclude_regex
+        if let Some(ref regex) = opts.exclude_regex
             && regex.is_match(&event.path.to_string_lossy())
         {
             return false;
@@ -486,24 +820,23 @@ impl Monitor {
     }
 
     /// Check if path is within monitoring scope
-    /// recursive=true: path can have any monitored directory as prefix
-    /// recursive=false: path's parent must be exactly the monitored directory (i.e., direct children only)
+    /// Uses per-path recursive setting from path_options
     fn is_path_in_scope(&self, path: &Path, canonical_paths: &[PathBuf]) -> bool {
-        for watched in canonical_paths {
-            if self.recursive {
+        for (i, watched) in canonical_paths.iter().enumerate() {
+            let recursive = self
+                .paths
+                .get(i)
+                .and_then(|p| self.path_options.get(p))
+                .map(|o| o.recursive)
+                .unwrap_or(false);
+            if recursive {
                 if path.starts_with(watched) {
                     return true;
                 }
-            } else {
-                // Non-recursive: only match direct children or self
-                if path == watched.as_path() {
-                    return true;
-                }
-                if let Some(parent) = path.parent()
-                    && parent == watched.as_path()
-                {
-                    return true;
-                }
+            } else if path == watched.as_path()
+                || path.parent() == Some(watched.as_path())
+            {
+                return true;
             }
         }
         false
@@ -538,40 +871,65 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    #[test]
-    fn test_should_output_no_filters() {
-        let m = Monitor::new(
-            vec![PathBuf::from("/tmp")],
-            None,
-            None,
-            None,
+    fn options(
+        min_size: Option<i64>,
+        event_types: Option<Vec<EventType>>,
+        exclude: Option<&str>,
+        recursive: bool,
+        all_events: bool,
+    ) -> PathOptions {
+        let exclude_regex = exclude.map(|p| {
+            let escaped = regex::escape(p);
+            let pattern = escaped.replace("\\*", ".*");
+            regex::Regex::new(&pattern).expect("invalid exclude pattern")
+        });
+        PathOptions {
+            min_size,
+            event_types,
+            exclude_regex,
+            recursive,
+            all_events,
+        }
+    }
+
+    fn make_monitor(
+        paths: Vec<&str>,
+        min_size: Option<i64>,
+        event_types: Option<Vec<EventType>>,
+        exclude: Option<&str>,
+        recursive: bool,
+        all_events: bool,
+    ) -> Monitor {
+        Monitor::new(
+            paths.into_iter().map(|p| {
+                (PathBuf::from(p), options(min_size, event_types.clone(), exclude, recursive, all_events))
+            }).collect(),
             None,
             OutputFormat::Human,
-            false,
-            false,
+            None,
             None,
             None,
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    #[test]
+    fn test_should_output_no_filters() {
+        let m = make_monitor(vec!["/tmp"], None, None, None, false, false);
         let event = make_event("/tmp/test.txt", EventType::Create, 1000, 1024);
         assert!(m.should_output(&event));
     }
 
     #[test]
     fn test_should_output_type_filter_match() {
-        let m = Monitor::new(
-            vec![PathBuf::from("/tmp")],
+        let m = make_monitor(
+            vec!["/tmp"],
             None,
             Some(vec![EventType::Create, EventType::Delete]),
             None,
-            None,
-            OutputFormat::Human,
             false,
             false,
-            None,
-            None,
-        )
-        .unwrap();
+        );
         assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, 0)));
         assert!(m.should_output(&make_event("/tmp/a", EventType::Delete, 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/a", EventType::Modify, 1, 0)));
@@ -579,19 +937,7 @@ mod tests {
 
     #[test]
     fn test_should_output_min_size_filter() {
-        let m = Monitor::new(
-            vec![PathBuf::from("/tmp")],
-            Some(1000),
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            false,
-            false,
-            None,
-            None,
-        )
-        .unwrap();
+        let m = make_monitor(vec!["/tmp"], Some(1000), None, None, false, false);
         assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, 2000)));
         assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, -2000)));
         assert!(!m.should_output(&make_event("/tmp/a", EventType::Create, 1, 500)));
@@ -600,91 +946,39 @@ mod tests {
 
     #[test]
     fn test_should_output_exclude_pattern() {
-        // Pattern "*.tmp" becomes regex ".*.tmp" (dot is not escaped, matches any char)
-        // This matches any path containing "tmp" as a substring in the right position
-        let m = Monitor::new(
-            vec![PathBuf::from("/tmp")],
-            None,
-            None,
-            Some("*.tmp".into()),
-            None,
-            OutputFormat::Human,
-            false,
-            false,
-            None,
-            None,
-        )
-        .unwrap();
-        // /tmp/test.tmp matches (ends with .tmp)
+        let m = make_monitor(vec!["/tmp"], None, None, Some("*.tmp"), false, false);
         assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/foo.tmp", EventType::Delete, 1, 0)));
-        // Note: /tmp/test.txt also matches because regex ".*.tmp" matches "/tmp" substring
-        // This is expected behavior - the pattern is a substring match, not a glob
     }
 
     #[test]
     fn test_should_output_exclude_exact_pattern() {
-        // Pattern "test.tmp" should match literally, not regex "test.tmp"
-        let m = Monitor::new(
-            vec![PathBuf::from("/tmp")],
-            None,
-            None,
-            Some("test.tmp".into()),
-            None,
-            OutputFormat::Human,
-            false,
-            false,
-            None,
-            None,
-        )
-        .unwrap();
+        let m = make_monitor(vec!["/tmp"], None, None, Some("test.tmp"), false, false);
         assert!(m.should_output(&make_event("/tmp/test.txt", EventType::Create, 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
         assert!(m.should_output(&make_event("/tmp/foo.tmp", EventType::Delete, 1, 0)));
-        // Should not match "testXtmp" because dot is escaped
         assert!(m.should_output(&make_event("/tmp/testXtmp", EventType::Create, 1, 0)));
     }
 
     #[test]
     fn test_should_output_combined_filters() {
-        let m = Monitor::new(
-            vec![PathBuf::from("/tmp")],
+        let m = make_monitor(
+            vec!["/tmp"],
             Some(100),
             Some(vec![EventType::Create]),
-            Some("*.log".into()),
-            None,
-            OutputFormat::Human,
+            Some("*.log"),
             false,
             false,
-            None,
-            None,
-        )
-        .unwrap();
-        // Passes all filters
+        );
         assert!(m.should_output(&make_event("/tmp/data", EventType::Create, 1, 200)));
-        // Wrong type
         assert!(!m.should_output(&make_event("/tmp/data", EventType::Delete, 1, 200)));
-        // Too small
         assert!(!m.should_output(&make_event("/tmp/data", EventType::Create, 1, 50)));
-        // Excluded pattern
         assert!(!m.should_output(&make_event("/tmp/app.log", EventType::Create, 1, 200)));
     }
 
     #[test]
     fn test_is_path_in_scope_recursive() {
-        let m = Monitor::new(
-            vec![PathBuf::from("/tmp")],
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            true,
-            false,
-            None,
-            None,
-        )
-        .unwrap();
+        let m = make_monitor(vec!["/tmp"], None, None, None, true, false);
         let watched = vec![PathBuf::from("/tmp")];
         assert!(m.is_path_in_scope(Path::new("/tmp"), &watched));
         assert!(m.is_path_in_scope(Path::new("/tmp/sub"), &watched));
@@ -695,45 +989,20 @@ mod tests {
 
     #[test]
     fn test_is_path_in_scope_non_recursive() {
-        let m = Monitor::new(
-            vec![PathBuf::from("/tmp")],
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            false,
-            false,
-            None,
-            None,
-        )
-        .unwrap();
+        let m = make_monitor(vec!["/tmp"], None, None, None, false, false);
         let watched = vec![PathBuf::from("/tmp")];
-        // Self matches
         assert!(m.is_path_in_scope(Path::new("/tmp"), &watched));
-        // Direct children match
         assert!(m.is_path_in_scope(Path::new("/tmp/file.txt"), &watched));
-        // Nested children don't match
         assert!(!m.is_path_in_scope(Path::new("/tmp/sub/file.txt"), &watched));
-        // Unrelated paths don't match
         assert!(!m.is_path_in_scope(Path::new("/var/log"), &watched));
     }
 
     #[test]
     fn test_is_path_in_scope_multiple_paths() {
-        let m = Monitor::new(
-            vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")],
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            true,
-            false,
-            None,
-            None,
-        )
-        .unwrap();
+        let m = make_monitor(
+            vec!["/tmp", "/var/log"],
+            None, None, None, true, false,
+        );
         let watched = vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")];
         assert!(m.is_path_in_scope(Path::new("/tmp/file"), &watched));
         assert!(m.is_path_in_scope(Path::new("/var/log/syslog"), &watched));
@@ -752,14 +1021,12 @@ mod tests {
         cache.put(PathBuf::from("/c"), 300);
         assert_eq!(cache.len(), 3);
 
-        // Inserting a 4th entry evicts the least recently used (/a)
         cache.put(PathBuf::from("/d"), 400);
         assert_eq!(cache.len(), 3);
         assert!(cache.get(&PathBuf::from("/a")).is_none());
         assert_eq!(cache.get(&PathBuf::from("/b")), Some(&200));
         assert_eq!(cache.get(&PathBuf::from("/d")), Some(&400));
 
-        // Accessing /b promotes it; inserting /e evicts /c (now LRU)
         cache.get(&PathBuf::from("/b"));
         cache.put(PathBuf::from("/e"), 500);
         assert!(cache.get(&PathBuf::from("/c")).is_none());
@@ -768,52 +1035,73 @@ mod tests {
 
     #[test]
     fn test_monitor_buffer_size_validation() {
-        // Test minimum buffer size
+        let opts = options(None, None, None, false, false);
+
         let result = Monitor::new(
-            vec![PathBuf::from("/tmp")],
-            None,
-            None,
-            None,
+            vec![(PathBuf::from("/tmp"), opts.clone())],
             None,
             OutputFormat::Human,
-            false,
-            false,
             Some(1024),
+            None,
             None,
         );
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("at least 4096"));
 
-        // Test maximum buffer size
         let result = Monitor::new(
-            vec![PathBuf::from("/tmp")],
-            None,
-            None,
-            None,
+            vec![(PathBuf::from("/tmp"), opts.clone())],
             None,
             OutputFormat::Human,
-            false,
-            false,
             Some(2 * 1024 * 1024),
+            None,
             None,
         );
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("not exceed"));
 
-        // Test valid buffer size
         let result = Monitor::new(
-            vec![PathBuf::from("/tmp")],
-            None,
-            None,
-            None,
+            vec![(PathBuf::from("/tmp"), opts.clone())],
             None,
             OutputFormat::Human,
-            false,
-            false,
             Some(65536),
+            None,
             None,
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_add_path_and_remove_path() {
+        let mut m = Monitor::new(
+            vec![],
+            None,
+            OutputFormat::Human,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        m.fan_fd = Some(-1); // dummy fd for log path test
+
+        let entry = PathEntry {
+            path: PathBuf::from("/tmp/test_add"),
+            recursive: Some(true),
+            types: None,
+            min_size: None,
+            exclude: None,
+            all_events: None,
+        };
+
+        // add_path won't actually work without real fan_fd, but we can test basic flow
+        let result = m.add_path(&entry);
+        // Expect error because fan_fd is -1 (invalid), but the path_options tracking should
+        // not happen since add_path failed
+        assert!(result.is_err());
+        assert!(!m.path_options.contains_key(Path::new("/tmp/test_add")));
+
+        // remove_path on non-existent path
+        let result = m.remove_path(Path::new("/nonexistent"));
+        assert!(result.is_err());
     }
 
     fn make_event(path: &str, event_type: EventType, pid: u32, size: i64) -> FileEvent {
@@ -931,9 +1219,7 @@ mod tests {
         let counter_clone = counter.clone();
         let test_dir_clone = test_dir.clone();
 
-        // Run monitor in background for a short time
         let handle = rt.spawn(async move {
-            // Initialize fanotify
             let fd = fanotify_init(
                 FAN_CLOEXEC
                     | FAN_NONBLOCK
@@ -955,7 +1241,6 @@ mod tests {
             )
             .unwrap();
 
-            // Read events for 200ms
             let mut buf = vec![0u8; 4096];
             let start = std::time::Instant::now();
             while start.elapsed() < std::time::Duration::from_millis(200) {
@@ -971,17 +1256,14 @@ mod tests {
             }
         });
 
-        // Give monitor time to start
         std::thread::sleep(std::time::Duration::from_millis(50));
 
-        // Create some files to trigger events
         for i in 0..3 {
             let path = test_dir.join(format!("test_{}.txt", i));
             let mut f = std::fs::File::create(&path).unwrap();
             writeln!(f, "content {}", i).unwrap();
         }
 
-        // Wait for monitor to finish
         rt.block_on(handle).unwrap();
 
         let events_captured = counter.load(Ordering::SeqCst);

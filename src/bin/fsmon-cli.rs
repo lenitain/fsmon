@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use fsmon::config::Config;
 use fsmon::help::{self, HelpTopic};
-use fsmon::monitor::Monitor;
+use fsmon::monitor::{Monitor, PathOptions};
 use fsmon::query::Query;
 use fsmon::utils::parse_size;
 use fsmon::{DEFAULT_KEEP_DAYS, DEFAULT_LOG_PATH, EventType, OutputFormat, SortBy, clean_logs};
@@ -180,15 +180,25 @@ async fn main() -> Result<()> {
 
             let format = format.unwrap_or(OutputFormat::Human);
 
-            let monitor = Monitor::new(
-                paths,
-                min_size_bytes,
+            let exclude_regex = exclude.as_ref().map(|p| {
+                let escaped = regex::escape(p);
+                let pattern = escaped.replace("\\*", ".*");
+                regex::Regex::new(&pattern).expect("invalid exclude pattern")
+            });
+
+            let path_options = PathOptions {
+                min_size: min_size_bytes,
                 event_types,
-                exclude,
-                output,
-                format,
+                exclude_regex,
                 recursive,
                 all_events,
+            };
+
+            let mut monitor = Monitor::new(
+                paths.into_iter().map(|p| (p, path_options.clone())).collect(),
+                output,
+                format,
+                None,
                 None,
                 None,
             )?;
