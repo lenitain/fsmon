@@ -189,22 +189,22 @@ impl Config {
             .with_context(|| format!("Failed to create directory {}", parent.display()))?;
         let content = r#"# fsmon configuration file
 #
-# This file defines infrastructure paths. Monitored paths are managed
-# separately via 'fsmon add' / 'fsmon remove' and stored in [store].file.
-# All paths support ~ expansion. <UID> is replaced at runtime.
+# Infrastructure paths for fsmon. Monitored paths are managed separately
+# via 'fsmon add' / 'fsmon remove' and persisted in [store].file.
+# All paths support ~ expansion. <UID> is replaced with the numeric UID at runtime.
 #
-# Usually the defaults are fine. Change only if you need custom locations.
+# The defaults work out of the box. Change only if you need custom locations.
 
 [store]
-# Path to the monitored paths database (auto-managed by add/remove).
+# Path to the auto-managed monitored paths database.
 file = "~/.local/share/fsmon/store.toml"
 
 [logging]
-# Directory containing per-entry log files named <id>.log.
+# Directory containing per-entry log files (named <entry_id>.log).
 dir = "~/.local/state/fsmon"
 
 [socket]
-# Unix socket for daemon-CLI communication.
+# Unix socket path for daemon-CLI live communication.
 path = "/tmp/fsmon-<UID>.sock"
 "#;
         fs::write(&path, content)
