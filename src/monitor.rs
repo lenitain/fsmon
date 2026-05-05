@@ -265,6 +265,20 @@ impl Monitor {
             fs::create_dir_all(parent)?;
             let mut file = OpenOptions::new().create(true).append(true).open(path)?;
 
+            // Acquire exclusive file lock to prevent concurrent writes from multiple instances
+            let lock_ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if lock_ret != 0 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::EWOULDBLOCK) {
+                    eprintln!(
+                        "[WARNING] Another fsmon instance is already writing to {}.\n\
+                         Concurrent writes may corrupt the log file.\n\
+                         Consider using separate output paths per instance.",
+                        path.display()
+                    );
+                }
+            }
+
             // Write a header comment line for traceability
             let paths_str = self
                 .paths
