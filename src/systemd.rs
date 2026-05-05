@@ -29,6 +29,7 @@ StandardOutput=journal
 StandardError=journal
 CapabilityBoundingSet=CAP_SYS_ADMIN
 AmbientCapabilities=CAP_SYS_ADMIN
+ProtectHome=no
 
 [Install]
 WantedBy=multi-user.target

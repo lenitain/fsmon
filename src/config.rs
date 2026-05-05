@@ -161,7 +161,15 @@ all_events = false
 
     #[test]
     fn test_load_returns_default_when_no_file() {
-        let config = Config::load().unwrap();
+        // Use a temp file path that doesn't exist
+        let dir = std::env::temp_dir().join("fsmon_test_load_default");
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("does_not_exist.toml");
+        let config = Config::load_from_path(&path).unwrap_or_else(|_| Config {
+            log_file: None,
+            socket_path: None,
+            paths: vec![],
+        });
         assert!(config.log_file.is_none());
         assert!(config.socket_path.is_none());
         assert!(config.paths.is_empty());

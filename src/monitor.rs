@@ -232,48 +232,29 @@ impl Monitor {
             self.canonical_paths.push(canonical);
         }
 
-        // Try filesystem mark first (covers entire filesystem, no race window)
-        // Fall back to inode mark + dynamic marking on EXDEV (e.g., btrfs subvolumes)
-        let use_fs_mark = {
-            let mut ok = true;
-            for canonical in &self.canonical_paths {
-                match fanotify_mark(
-                    fan_fd,
-                    FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
-                    self.mask,
-                    AT_FDCWD,
-                    canonical,
-                ) {
-                    Ok(()) => {}
-                    Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
-                        ok = false;
-                        break;
-                    }
-                    Err(e) => {
-                        bail!("fanotify_mark failed: {}: {}", canonical.display(), e);
-                    }
-                }
-            }
-            ok
-        };
-        self.use_fs_mark = use_fs_mark;
-
-        if !use_fs_mark {
-            // inode mark fallback: mark directories one by one
-            for (i, canonical) in self.canonical_paths.iter().enumerate() {
-                let opts = self.paths.get(i).and_then(|p| self.path_options.get(p));
-                let recursive = opts.is_some_and(|o| o.recursive);
-                let path_mask = if opts.is_some_and(|o| o.all_events) {
-                    ALL_EVENT_MASK
-                } else {
-                    DEFAULT_EVENT_MASK
-                };
-                mark_directory(fan_fd, path_mask, canonical)?;
-                if recursive && canonical.is_dir() {
-                    mark_recursive(fan_fd, path_mask, canonical);
+        // Try filesystem mark for each path
+        // Skip paths that fail to mark (warn and continue, don't crash)
+        let mut use_fs_mark = true;
+        for canonical in &self.canonical_paths {
+            match fanotify_mark(
+                fan_fd,
+                FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
+                self.mask,
+                AT_FDCWD,
+                canonical,
+            ) {
+                Ok(()) => {}
+                Err(e) => {
+                    eprintln!(
+                        "[WARNING] Cannot monitor {}: {}",
+                        canonical.display(),
+                        e
+                    );
+                    use_fs_mark = false;
                 }
             }
         }
+        self.use_fs_mark = use_fs_mark;
 
         // Open directory fds for open_by_handle_at to resolve file handles
         for canonical in &self.canonical_paths {
@@ -571,21 +552,18 @@ impl Monitor {
             DEFAULT_EVENT_MASK
         };
 
-        match fanotify_mark(
+        if let Err(e) = fanotify_mark(
             fan_fd,
             FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
             path_mask,
             AT_FDCWD,
             &canonical,
         ) {
-            Ok(()) => {}
-            Err(ref e) if e.raw_os_error() == Some(libc::EXDEV) => {
-                mark_directory(fan_fd, path_mask, &canonical)?;
-                if recursive && canonical.is_dir() {
-                    mark_recursive(fan_fd, path_mask, &canonical);
-                }
-            }
-            Err(e) => bail!("fanotify_mark add failed: {}: {}", canonical.display(), e),
+            eprintln!(
+                "[WARNING] Cannot monitor {} (will retry on restart): {}",
+                canonical.display(),
+                e
+            );
         }
 
         // Open directory fd for handle resolution
@@ -1126,14 +1104,12 @@ mod tests {
             all_events: None,
         };
 
-        // add_path won't actually work without real fan_fd, but we can test basic flow
+        // add_path warns on bad fan_fd but still tracks the path
         let result = m.add_path(&entry);
-        // Expect error because fan_fd is -1 (invalid), but the path_options tracking should
-        // not happen since add_path failed
-        assert!(result.is_err());
-        assert!(!m.path_options.contains_key(Path::new("/tmp/test_add")));
+        assert!(result.is_ok());
+        assert!(m.path_options.contains_key(Path::new("/tmp/test_add")));
 
-        // remove_path on non-existent path
+        // remove_path on non-existent path (not in options)
         let result = m.remove_path(Path::new("/nonexistent"));
         assert!(result.is_err());
     }

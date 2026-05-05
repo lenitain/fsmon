@@ -8,7 +8,7 @@ use fsmon::socket::{self, SocketCmd};
 use fsmon::utils::parse_size;
 use fsmon::{DEFAULT_KEEP_DAYS, EventType, OutputFormat, SortBy, clean_logs};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "fsmon")]
@@ -186,40 +186,73 @@ async fn cmd_daemon() -> Result<()> {
 }
 
 fn cmd_add(args: AddArgs) -> Result<()> {
+    let path = args.path.clone();
+    let types: Option<Vec<String>> = args
+        .types
+        .map(|t| t.split(',').map(|s| s.trim().to_string()).collect());
+    let min_size = args.min_size.clone();
+    let exclude = args.exclude.clone();
+    let recursive = if args.recursive { Some(true) } else { None };
+    let all_events = if args.all_events { Some(true) } else { None };
+
+    // Always persist to config first
+    Config::add_path(PathEntry {
+        path: path.clone(),
+        recursive,
+        types: types.clone(),
+        min_size: min_size.clone(),
+        exclude: exclude.clone(),
+        all_events,
+    })?;
+    println!("Path added to config: {}", path.display());
+
+    // Try live update via socket (non-fatal if fails)
     let socket_path = resolve_socket_path();
-    let cmd = SocketCmd::Add {
-        path: args.path,
-        recursive: if args.recursive { Some(true) } else { None },
-        types: args
-            .types
-            .map(|t| t.split(',').map(|s| s.trim().to_string()).collect()),
-        min_size: args.min_size,
-        exclude: args.exclude,
-        all_events: if args.all_events { Some(true) } else { None },
-    };
-    let resp = socket::send_cmd(&socket_path, &cmd)
-        .with_context(|| "Failed to communicate with fsmon daemon. Is it running?")?;
-    if resp.ok {
-        println!("Path added successfully");
-    } else {
-        eprintln!("Error: {}", resp.error.unwrap_or_default());
-        std::process::exit(1);
+    match socket::send_cmd(
+        &socket_path,
+        &SocketCmd::Add {
+            path,
+            recursive,
+            types,
+            min_size,
+            exclude,
+            all_events,
+        },
+    ) {
+        Ok(resp) if resp.ok => {
+            println!("Daemon updated live");
+        }
+        Ok(resp) => {
+            eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
+            eprintln!("Path will be monitored after daemon restart");
+        }
+        Err(e) => {
+            eprintln!("Daemon not reachable: {}", e);
+            eprintln!("Path will be monitored after daemon restart");
+        }
     }
     Ok(())
 }
 
-fn cmd_remove(path: &std::path::Path) -> Result<()> {
+fn cmd_remove(path: &Path) -> Result<()> {
+    // Always persist to config first
+    Config::remove_path(path)?;
+    println!("Path removed from config: {}", path.display());
+
+    // Try live update via socket (non-fatal if fails)
     let socket_path = resolve_socket_path();
-    let cmd = SocketCmd::Remove {
-        path: path.to_path_buf(),
-    };
-    let resp = socket::send_cmd(&socket_path, &cmd)
-        .with_context(|| "Failed to communicate with fsmon daemon. Is it running?")?;
-    if resp.ok {
-        println!("Path removed successfully");
-    } else {
-        eprintln!("Error: {}", resp.error.unwrap_or_default());
-        std::process::exit(1);
+    match socket::send_cmd(&socket_path, &SocketCmd::Remove { path: path.into() }) {
+        Ok(resp) if resp.ok => {
+            println!("Daemon updated live");
+        }
+        Ok(resp) => {
+            eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
+            eprintln!("Change will apply after daemon restart");
+        }
+        Err(e) => {
+            eprintln!("Daemon not reachable: {}", e);
+            eprintln!("Change will apply after daemon restart");
+        }
     }
     Ok(())
 }
@@ -229,10 +262,7 @@ fn cmd_managed() -> Result<()> {
 
     let entries = match socket::send_cmd(&socket_path, &SocketCmd::List) {
         Ok(resp) if resp.ok => resp.paths.unwrap_or_default(),
-        _ => {
-            let config = Config::load()?;
-            config.paths
-        }
+        Ok(_) | Err(_) => Config::load().unwrap_or(Config { log_file: None, socket_path: None, paths: vec![] }).paths,
     };
 
     println!(
