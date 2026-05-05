@@ -39,7 +39,8 @@ Usage:
   fsmon query --since 1h    Query events
 
 Config:           ~/.config/fsmon/config.toml
-Log file:         ~/.local/state/fsmon/history.log
+Store:            ~/.local/share/fsmon/store.toml (managed by add/remove)
+Log dir:          ~/.local/state/fsmon/ (one .log file per entry ID)
 Socket:           /tmp/fsmon-<UID>.sock"#
         }
         HelpTopic::Add => {
@@ -48,7 +49,7 @@ Socket:           /tmp/fsmon-<UID>.sock"#
 The path is added immediately if the daemon is running, and persisted
 in ~/.config/fsmon/config.toml for automatic monitoring on daemon restart.
 
-No sudo needed — config is per-user.
+No sudo needed — store is updated immediately.
 
 Options:
   -r, --recursive     Watch subdirectories recursively
@@ -85,7 +86,8 @@ Examples:
             r#"Query historical file change events from log files.
 
 Options:
-  --log-file        Log file path (default: ~/.local/state/fsmon/history.log)
+  --id              Entry ID(s). Comma-separated and/or ranges. Repeatable. Default: all.
+                    Examples: --id 1 --id 1,3,5-8
   --since           Start time: relative (1h, 30m, 7d) or absolute
   --until           End time
   --pid             Filter by PID (comma-separated)
@@ -98,29 +100,27 @@ Options:
 
 Examples:
   fsmon query --since 1h
-  fsmon query --cmd nginx
-  fsmon query --since 1h --cmd nginx --types MODIFY --format json"#
+  fsmon query --id 1 --since 1h
+  fsmon query --id 1,3-5 --cmd nginx"#
         }
         HelpTopic::Clean => {
             r#"Clean historical log files, retain by time or size.
 
 Options:
-  --log-file        Log file path (default: ~/.local/state/fsmon/history.log)
+  --id              Entry ID(s). Comma-separated and/or ranges. Repeatable. Default: all.
   --keep-days       Keep logs from last N days (default: 30)
   --max-size        Maximum log file size (e.g., 100MB, 1GB)
   --dry-run         Preview mode, don't actually delete
 
 Examples:
   fsmon clean --keep-days 7
-  fsmon clean --max-size 100MB --dry-run"#
+  fsmon clean --id 1 --max-size 100MB --dry-run"#
         }
         HelpTopic::Generate => {
-            r#"Generate a default configuration file at ~/.config/fsmon/config.toml
-with all fields populated for easy customization.
+            r#"Generate a default configuration file at ~/.config/fsmon/config.toml.
 
-This command is useful to quickly bootstrap your fsmon setup. You can
-then edit the generated config file to adjust monitored paths, event
-types, size thresholds, and exclusion patterns.
+The config file defines infrastructure paths (store, log dir, socket).
+Monitored paths are managed separately via 'fsmon add'/'fsmon remove'.
 
 The daemon also auto-generates a default config if none exists when started.
 
@@ -144,9 +144,10 @@ Management (no sudo needed):
 
 Query & Clean:
   fsmon query --since 1h            Events from last hour
-  fsmon query --cmd nginx           Filter by process name
+  fsmon query --id 1 --since 1h     Events for entry ID 1
   fsmon clean --keep-days 7         Keep 7 days of logs
 
 Config: ~/.config/fsmon/config.toml
-Log:    ~/.local/state/fsmon/history.log"#
+Store:  ~/.local/share/fsmon/store.toml
+Logs:   ~/.local/state/fsmon/<ID>.log"#
 }
