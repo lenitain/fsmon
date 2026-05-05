@@ -68,11 +68,11 @@ all_events = false
 
 ### P2 — daemon 子系统
 - [ ] `fsmon daemon` 命令入口，加载配置，`fanotify_init`
-- [ ] 适配现有 `monitor.rs` 为 daemon 模式（多 path fanotify_mark）
-- [ ] unix socket listener（tokio + tokio::net::UnixListener）
-- [ ] add/remove/list 命令处理 + 动态 fanotify_mark
-- [ ] SIGHUP 重载配置
-- [ ] 优雅关闭（SIGTERM/SIGINT）
+- [x] 适配现有 `monitor.rs` 为 daemon 模式（多 path fanotify_mark、PathOptions 逐路径过滤）
+- [x] unix socket listener（tokio::select! 集成到主循环）
+- [x] add/remove/list 命令处理 + 动态 fanotify_mark（FAN_MARK_ADD/FAN_MARK_REMOVE）
+- [x] SIGHUP 重载配置（reload_config 方法）
+- [x] 优雅关闭（SIGTERM/SIGINT）
 
 ### P3 — CLI 子系统
 - [ ] `add <path>`：连 socket → 发 add 命令 → 显示结果
