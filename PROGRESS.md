@@ -4,13 +4,13 @@
 
 基础功能已完成：fanotify 实时监控、进程缓存、日志查询、systemd 集成、日志清理。
 
+**D1/D2 已完成**：配置错误统一 exit(78) + `RestartPreventExitStatus` 保护 + 醒目提示。
+
 ---
 
 ## 后台模式（systemd 模板）边界问题与解决方案
 
-### D1 [高] 实例配置不存在 ⇒ systemd 无限重启
-
-**问题**：`systemctl enable fsmon@web --now` 时 `/etc/fsmon/fsmon-web.toml` 不存在 → `exit(EXIT_CONFIG)` (78) → `Restart=on-abnormal` 判定为非正常退出 → 每 5s 无限重启循环，错误信息一闪而过难以追溯。
+### D1 [高] 实例配置不存在 ⇒ systemd 无限重启 ✅
 
 **方案**：
 1. **区分退出码语义**：在生成的 systemd template 中添加 `RestartPreventExitStatus=78`，阻止 systemd 重启配置类错误
@@ -18,9 +18,7 @@
 
 **涉及文件**：`src/systemd.rs`、`src/main.rs:398-410`
 
-### D2 [高] 实例配置路径为空 / TOML 格式错误 ⇒ 无限重启
-
-**问题**：实例 TOML 中 `paths = []` 或文件内容非法 → 同样 `exit(78)` → 无限重启。
+### D2 [高] 实例配置路径为空 / TOML 格式错误 ⇒ 无限重启 ✅
 
 **方案**：
 - 和 D1 统一处理：`RestartPreventExitStatus=78` 覆盖所有配置类错误
@@ -89,13 +87,10 @@
 
 **涉及文件**：`src/config.rs`、`src/monitor.rs`
 
-### D9 [中] Restart=on-abnormal 语义与配置错误不匹配
-
-**问题**：`EXIT_CONFIG` (78) 在应用语义上是预期内的"配置错误"，不是"进程崩溃"。但 exit code ≠ 0 即被 systemd 判定为 abnormal → restart loop。
+### D9 [中] Restart=on-abnormal 语义与配置错误不匹配 ✅
 
 **方案**：
-- 在 `SERVICE_TEMPLATE` 中添加 `RestartPreventExitStatus=78`
-- 同时调整 `Restart=on-abnormal` 为 `Restart=on-failure` + `RestartPreventExitStatus=78`，明确区分可恢复错误和配置错误
+- `Restart=on-abnormal` → `Restart=on-failure` + `RestartPreventExitStatus=78`
 
 **涉及文件**：`src/systemd.rs:13-34`
 
@@ -113,24 +108,17 @@
 
 ## 优先级与工作顺序
 
-| 优先级 | 类别 | 问题 | 工作量 |
-|--------|------|------|--------|
-| P0 | 配置错误 | D1/D2/D9 systemd 无限重启 + Restart 策略 | 小 |
-| P0 | 事件丢失 | D4 output 未配置静默丢事件 | 小 |
-| P1 | 启动验证 | D3 路径不存在检查 | 小 |
-| P1 | 优雅关闭 | D6 SIGTERM 处理 | 小 |
-| P1 | 启动降级 | D7 proc_cache 超时降级 | 小 |
-| P2 | 文件冲突 | D5 多实例 output 冲突 | 中 |
-| P2 | 磁盘管理 | D8 日志自动轮转 | 中 |
-| P3 | 可移植性 | D10 容器环境检测 | 小 |
+| 优先级 | 类别 | 问题 | 工作量 | 状态 |
+|--------|------|------|--------|------|
+| P0 | 配置错误 | D1/D2/D9 systemd 无限重启 | 小 | ✅ |
+| P0 | 事件丢失 | D4 output 未配置静默丢事件 | 小 | ⏳ |
+| P1 | 启动验证 | D3 路径不存在检查 | 小 | ⏳ |
+| P1 | 优雅关闭 | D6 SIGTERM 处理 | 小 | ⏳ |
+| P1 | 启动降级 | D7 proc_cache 超时降级 | 小 | ⏳ |
+| P2 | 文件冲突 | D5 多实例 output 冲突 | 中 | ⏳ |
+| P2 | 磁盘管理 | D8 日志自动轮转 | 中 | ⏳ |
+| P3 | 可移植性 | D10 容器环境检测 | 小 | ⏳ |
 
-## 实现顺序建议
+## 下一步
 
-1. **D1/D2/D9** — 配置错误不重启（exit code 78 保护 + 醒目提示），这是最严重的生产问题
-2. **D4** — output 未配置时 warning 提示
-3. **D3** — 启动时验证路径存在性
-4. **D6** — SIGTERM 优雅关闭
-5. **D7** — proc_cache 超时降级为 warning
-6. **D5** — output 文件冲突检测
-7. **D8** — 日志自动轮转
-8. **D10** — 容器环境友好提示
+建议按顺序推进：D4 → D3 → D6 → D7 → D5 → D8 → D10

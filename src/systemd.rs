@@ -17,7 +17,8 @@ After=network.target
 [Service]
 Type=simple
 ExecStart=EXEC_START_PLACEHOLDER monitor --instance %i
-Restart=on-abnormal
+Restart=on-failure
+RestartPreventExitStatus=78
 RestartSec=5
 StandardOutput=journal
 StandardError=journal

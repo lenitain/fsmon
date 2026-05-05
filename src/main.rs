@@ -396,14 +396,33 @@ async fn main() -> Result<()> {
 
             // Load instance config if --instance is given (systemd template mode)
             let instance_config = match instance {
-                Some(ref name) => match Config::load_instance(name)? {
-                    Some(cfg) => cfg,
-                    None => {
+                Some(ref name) => match Config::load_instance(name) {
+                    Ok(Some(cfg)) => cfg,
+                    Ok(None) => {
                         eprintln!(
-                            "Error: Instance config not found for '{}'.\n\
-                             Create /etc/fsmon/fsmon-{}.toml first.\n\
-                             See: fsmon generate --instance {}",
+                            "========================================\n\
+                             ERROR: Instance config not found for '{}'.\n\
+                             \n\
+                             Create /etc/fsmon/fsmon-{}.toml first:\n\
+                               sudo fsmon generate --instance {}\n\
+                             \n\
+                             Then edit the config file to set monitored paths.\n\
+                             ========================================",
                             name, name, name
+                        );
+                        process::exit(EXIT_CONFIG);
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "========================================\n\
+                             ERROR: Invalid instance config for '{}':\n\
+                             \n\
+                             {}\n\
+                             \n\
+                             Fix the file at /etc/fsmon/fsmon-{}.toml\n\
+                             or regenerate with: fsmon generate --instance {} --force\n\
+                             ========================================",
+                            name, e, name, name
                         );
                         process::exit(EXIT_CONFIG);
                     }
