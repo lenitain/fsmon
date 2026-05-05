@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use lru::LruCache;
 use tokio::io::unix::AsyncFd;
+use tokio::signal::unix::{signal, SignalKind};
 
 use crate::dir_cache;
 use crate::fid_parser::{self, FAN_FS_ERROR, HandleKey};
@@ -343,6 +344,9 @@ impl Monitor {
         let async_fd =
             AsyncFd::new(FanFd(fan_fd)).context("failed to register fanotify fd with tokio")?;
 
+        let mut sigterm = signal(SignalKind::terminate())
+            .context("failed to create SIGTERM signal handler")?;
+
         loop {
             tokio::select! {
                 result = async_fd.readable() => {
@@ -390,6 +394,9 @@ impl Monitor {
                     }
                 }
                 _ = tokio::signal::ctrl_c() => {
+                    break;
+                }
+                _ = sigterm.recv() => {
                     break;
                 }
             }
