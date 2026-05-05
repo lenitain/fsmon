@@ -76,14 +76,16 @@ cargo test         ✅ 67 passed, 7 ignored (fanotify 测试需要 sudo)
 
 ## Bug 修复
 
-### 2026-05-05 — `fsmon add` 实时添加路径时 fanotify_mark 失败未优雅处理
+### 2026-05-05 — fanotify_mark EXDEV 跨挂载点路径导致 daemon 崩溃
 
-- **问题**: `monitor.rs::add_path()` 中，文件系统级 mark 遇到 EXDEV 后回退到 inode 级
-  `mark_directory()`，但该调用使用了 `?` 传播错误，导致 `handle_socket_cmd` 返回
-  `ok: false` 给 CLI，用户看到惊悚的 "Daemon error" 消息。
-- **修复**: 将 EXDEV 回退路径从 `mark_directory()?` 改为 `if let Err(e) = mark_directory(...)`，
-  失败时仅警告不传播，路径仍加入跟踪列表，重启后生效。
-- **额外**: 修复了 monitor.rs 中一个 `collapsible_if` clippy 警告。
+- **问题**: 当监控路径位于不同挂载点（如 `/home` vs `/`），daemon 启动时文件系统级
+  fanotify_mark 返回 EXDEV，回退到 inode 级 `mark_directory()` 仍失败（同样 EXDEV），
+  `?` 传播错误导致 daemon 崩溃退出。同样问题出现在 `fsmon add` 实时添加路径时。
+- **修复**:
+  - `monitor.rs::run()`: inode 回退 `mark_directory` 从 `?` 改为 `if let Err(e)`，
+    失败时仅 `[WARNING]`，daemon 继续运行。
+  - `monitor.rs::add_path()`: 同上修复，live add 返回 `ok: true`。
+- **额外**: 修复一个 `collapsible_if` clippy 警告。
 
 ## 下一阶段可能的改进
 

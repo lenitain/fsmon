@@ -271,8 +271,13 @@ impl Monitor {
                 } else {
                     DEFAULT_EVENT_MASK
                 };
-                mark_directory(fan_fd, path_mask, canonical)?;
-                if recursive && canonical.is_dir() {
+                if let Err(e) = mark_directory(fan_fd, path_mask, canonical) {
+                    eprintln!(
+                        "[WARNING] Cannot monitor {} (inode mark): {}",
+                        canonical.display(),
+                        e
+                    );
+                } else if recursive && canonical.is_dir() {
                     mark_recursive(fan_fd, path_mask, canonical);
                 }
             }
