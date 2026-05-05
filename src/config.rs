@@ -75,6 +75,7 @@ impl Config {
 
     pub fn add_path(entry: PathEntry) -> Result<()> {
         let mut config = Self::load()?;
+        config.paths.retain(|p| p.path != entry.path);
         config.paths.push(entry);
         config.save()
     }
