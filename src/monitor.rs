@@ -937,9 +937,12 @@ impl Monitor {
                 if self.path_options.contains_key(&path) {
                     let _ = self.remove_path(&path);
                 }
-                let next_id = self.path_ids.values().max().copied().unwrap_or(0) + 1;
+                // Use the ID assigned by the CLI if provided; fallback for other clients
+                let id = cmd
+                    .id
+                    .unwrap_or_else(|| self.path_ids.values().max().copied().unwrap_or(0) + 1);
                 let entry = PathEntry {
-                    id: next_id,
+                    id,
                     path,
                     recursive: cmd.recursive,
                     types: cmd.types.clone(),
@@ -1076,7 +1079,12 @@ impl Monitor {
             && let Ok(mut store) = Store::load(store_path)
         {
             store.entries = entries;
-            store.next_id = max_id + 1;
+            // Preserve monotonically-increasing next_id: when entries are removed,
+            // max_id drops, but next_id must never regress.
+            let calculated = max_id + 1;
+            if calculated > store.next_id {
+                store.next_id = calculated;
+            }
             let _ = store.save(store_path);
         }
         Ok(())

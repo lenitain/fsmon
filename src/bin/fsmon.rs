@@ -255,7 +255,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             min_size,
             exclude,
             all_events,
-            id: None,
+            id: Some(id),
         },
     ) {
         Ok(resp) if resp.ok => {
