@@ -253,7 +253,7 @@ impl Monitor {
                         break;
                     }
                     Err(e) => {
-                        eprintln!("[WARNING] Cannot monitor {}: {}", canonical.display(), e);
+                        eprintln!("[WARNING] Cannot monitor {}: {:#}", canonical.display(), e);
                     }
                 }
             }
@@ -273,7 +273,7 @@ impl Monitor {
                 };
                 if let Err(e) = mark_directory(fan_fd, path_mask, canonical) {
                     eprintln!(
-                        "[WARNING] Cannot monitor {} (inode mark): {}",
+                        "[WARNING] Cannot monitor {} (inode mark): {:#}",
                         canonical.display(),
                         e
                     );
@@ -581,7 +581,7 @@ impl Monitor {
                 // so the path is still tracked and will work after daemon restart.
                 if let Err(e) = mark_directory(fan_fd, path_mask, &canonical) {
                     eprintln!(
-                        "[WARNING] Cannot monitor {} (inode mark fallback): {}",
+                        "[WARNING] Cannot monitor {} (inode mark fallback): {:#}",
                         canonical.display(),
                         e
                     );
@@ -590,7 +590,7 @@ impl Monitor {
                 }
             }
             Err(e) => {
-                eprintln!("[WARNING] Cannot monitor {}: {}", canonical.display(), e);
+                eprintln!("[WARNING] Cannot monitor {}: {:#}", canonical.display(), e);
             }
         }
 
