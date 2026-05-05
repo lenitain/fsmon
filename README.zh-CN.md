@@ -25,6 +25,7 @@
 - **多种格式**: 人类可读、JSON、CSV 三种终端输出格式（日志文件始终是JSON格式）
 - **TOML 配置**: 持久化配置文件，支持 `~/.config/fsmon/fsmon.toml`
 - **日志管理**: 基于时间和大小的日志轮转，支持预览模式
+- **双模式**: CLI 模式（读 `fsmon.toml`，交互式）和 systemd 实例模式（读 `/etc/fsmon/fsmon-{name}.toml`，后台） — 配置完全独立
 - **Systemd 服务**: 模板单元（`fsmon@.service`）支持多实例监控，安全加固可配置 — 不同路径可分别运行独立实例
 
 ## 为什么选择 fsmon
@@ -71,36 +72,52 @@ sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 sudo ~/.cargo/bin/fsmon monitor ...
 ```
 
-### 基础用法
+### CLI 模式 — 交互式监控
 
 ```bash
-# 监控目录
+# 监控目录（输出到 stdout）
 sudo fsmon monitor /etc --types MODIFY
 
 # 递归监控
 sudo fsmon monitor ~/myproject --recursive
 
+# 写入日志文件
+sudo fsmon monitor /tmp --recursive -o /tmp/events.log
+
 # 排除模式
 sudo fsmon monitor /var/log --exclude "*.log"
+```
 
-# 安装 systemd 模板（一次性）
+读取 `fsmon.toml`（搜索顺序：`~/.fsmon/` → `~/.config/fsmon/` → `/etc/fsmon/`）。CLI 参数覆盖配置文件。
+
+### 实例模式 — Systemd 后台监控
+
+```bash
+# 1. 安装 systemd 模板（一次性）
 sudo fsmon install
 
-# 手动创建实例配置 /etc/fsmon/fsmon-web.toml：
-#   paths = ["/var/www"]
-#   types = "MODIFY,CREATE"
-#   output = "/var/log/fsmon/web.log"
+# 2. 手动创建实例配置
+sudo mkdir -p /etc/fsmon
+cat > /etc/fsmon/fsmon-web.toml << 'EOF'
+paths = ["/var/www"]
+types = "MODIFY,CREATE"
+output = "/var/log/fsmon/web.log"
+EOF
 
-# 然后直接用 systemctl 管理：
-sudo systemctl enable fsmon@web --now      # 创建+启动实例
-sudo systemctl enable fsmon@audit --now    # 另一个实例
-sudo systemctl status fsmon@web            # 查看状态
-sudo journalctl -u fsmon@web               # 查看日志
-sudo systemctl stop fsmon@web && sudo systemctl disable fsmon@web  # 停用
+# 3. 用 systemd 启动
+sudo systemctl enable fsmon@web --now
+sudo systemctl status fsmon@web
+sudo journalctl -u fsmon@web
 
-# 直接 CLI 使用无默认日志 — 事件仅输出到 stdout
-sudo fsmon monitor /tmp --recursive
+# 4. 停用
+sudo systemctl stop fsmon@web && sudo systemctl disable fsmon@web
+```
 
+读取 `/etc/fsmon/fsmon-{name}.toml`。**此模式下 `fsmon.toml` 不生效。** 每个实例完全独立。
+
+### 其他命令
+
+```bash
 # 查询历史事件
 fsmon query --since 1h --cmd nginx
 
@@ -168,18 +185,59 @@ fsmon uninstall         # 卸载 systemd 模板
 fsmon enable <name>     # 创建并启动监控实例
 fsmon disable <name>    # 停用并移除监控实例
 fsmon generate          # 生成默认的配置文件 (~/.config/fsmon/fsmon.toml)
-
-# 通过 systemd 管理实例（模板单元）
-sudo systemctl enable fsmon@<name> --now
-sudo systemctl start fsmon@<name>
-sudo systemctl stop fsmon@<name>
-sudo systemctl status fsmon@<name>
-sudo journalctl -u fsmon@<name>
 ```
+
+## 两种模式：CLI vs Systemd 实例
+
+fsmon 有两种完全独立的运行模式，各自有自己的配置文件：
+
+### CLI 模式（`fsmon monitor /path ...`）
+
+| 项目 | 说明 |
+|------|------|
+| 配置文件 | `fsmon.toml`（搜索顺序如下） |
+| 配置位置 | `~/.fsmon/` → `~/.config/fsmon/` → `/etc/fsmon/` |
+| 日志 | stdout，或 `-o` 指定文件 |
+| 用途 | 临时调试、交互式排查 |
+
+```bash
+# CLI 模式：读 fsmon.toml，命令行参数覆盖配置值
+sudo fsmon monitor /var/www --types MODIFY
+sudo fsmon monitor /tmp --recursive -o /tmp/events.log
+```
+
+### 实例模式（`fsmon monitor --instance <name>`）
+
+| 项目 | 说明 |
+|------|------|
+| 配置文件 | `fsmon-{name}.toml`（每个实例独立） |
+| 配置位置 | 仅 `/etc/fsmon/fsmon-web.toml` |
+| 日志 | 实例配置中的 `output` 字段指定。不写则无文件日志（事件仅进 journald） |
+| 用途 | 长期运行的 systemd 后台监控 |
+
+```bash
+# 1. 安装 systemd 模板（一次性）
+sudo fsmon install
+
+# 2. 手动创建实例配置
+#    /etc/fsmon/fsmon-web.toml：
+#      paths = ["/var/www"]
+#      types = "MODIFY,CREATE"
+#      output = "/var/log/fsmon/web.log"
+
+# 3. 用 systemd 启动
+sudo systemctl enable fsmon@web --now
+sudo systemctl status fsmon@web
+sudo journalctl -u fsmon@web
+```
+
+**核心原则：两种配置永不合并。** CLI 模式不读实例配置；实例模式不读 `fsmon.toml`。改一个不会影响另一个。
 
 ## 配置文件
 
-fsmon 支持 TOML 配置文件，按以下优先级查找（首个存在的文件生效）：
+### CLI 配置（`fsmon.toml`）
+
+按以下优先级查找（首个存在的文件生效）：
 
 1. `~/.fsmon/fsmon.toml`
 2. `~/.config/fsmon/fsmon.toml`（`fsmon generate` 生成于此）
@@ -272,6 +330,37 @@ private_tmp = "yes"
 ```
 
 CLI 参数优先级高于配置文件。
+
+### 实例配置（`/etc/fsmon/fsmon-{name}.toml`）
+
+每个 systemd 实例读取自己的 `/etc/fsmon/fsmon-{name}.toml`：
+
+```toml
+# 必需：监控路径
+paths = ["/var/www"]
+
+# 可选字段
+output = "/var/log/fsmon/web.log"   # 日志文件路径（不写则无文件日志）
+types = "MODIFY,CREATE"              # 事件类型过滤
+min_size = "100MB"                   # 最小变更大小
+exclude = "*.tmp"                    # 排除模式
+all_events = false                   # 开启全部 14 种事件
+recursive = true                     # 递归监控子目录
+```
+
+可选字段说明（除 `paths` 外均为可选）：
+
+| 字段 | CLI 对应 | 说明 |
+|------|---------|------|
+| `paths` | `PATH` 参数 | **必需。** 监控的目录/文件 |
+| `output` | `-o, --output` | 日志文件路径。不设则无文件日志（事件仅进 journald） |
+| `types` | `-t, --types` | 事件类型过滤，逗号分隔 |
+| `min_size` | `-s, --min-size` | 最小变更大小 |
+| `exclude` | `-e, --exclude` | 排除模式，支持通配符 |
+| `all_events` | `--all-events` | 开启全部 14 种事件 |
+| `recursive` | `-r, --recursive` | 递归监控子目录 |
+
+实例配置没有搜索优先级 — 按实例名精确加载 `/etc/fsmon/fsmon-{name}.toml`。CLI 参数（与 `--instance` 同时传入时）会覆盖实例配置。
 
 ## 技术架构
 

@@ -25,6 +25,7 @@
 - **Multiple Formats**: Human-readable, JSON, and CSV terminal output (log file always uses JSON for queryability)
 - **TOML Configuration**: Persistent config at `~/.config/fsmon/fsmon.toml`
 - **Log Management**: Time-based and size-based log rotation with dry-run preview
+- **Two Modes**: CLI mode (reads `fsmon.toml`, interactive) and systemd instance mode (reads `/etc/fsmon/fsmon-{name}.toml`, background) — fully independent configs
 - **Systemd Service**: Template unit (`fsmon@.service`) for multi-instance monitoring with configurable security hardening — run separate instances for different paths
 
 ## Why fsmon
@@ -71,36 +72,52 @@ sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 sudo ~/.cargo/bin/fsmon monitor ... 
 ```
 
-### Basic Usage
+### CLI Mode — Interactive Monitoring
 
 ```bash
-# Monitor a directory
+# Monitor a directory (output to stdout)
 sudo fsmon monitor /etc --types MODIFY
 
 # Monitor with recursive watching
 sudo fsmon monitor ~/myproject --recursive
 
+# Write to a log file
+sudo fsmon monitor /tmp --recursive -o /tmp/events.log
+
 # Exclude patterns
 sudo fsmon monitor /var/log --exclude "*.log"
+```
 
-# Install systemd template (one-time)
+Config read from `fsmon.toml` (search: `~/.fsmon/` → `~/.config/fsmon/` → `/etc/fsmon/`). CLI flags override config values.
+
+### Instance Mode — Systemd Background Monitoring
+
+```bash
+# 1. Install systemd template (one-time)
 sudo fsmon install
 
-# Create instance config at /etc/fsmon/fsmon-web.toml manually:
-#   paths = ["/var/www"]
-#   types = "MODIFY,CREATE"
-#   output = "/var/log/fsmon/web.log"
+# 2. Create instance config manually
+sudo mkdir -p /etc/fsmon
+cat > /etc/fsmon/fsmon-web.toml << 'EOF'
+paths = ["/var/www"]
+types = "MODIFY,CREATE"
+output = "/var/log/fsmon/web.log"
+EOF
 
-# Then manage with systemctl directly:
-sudo systemctl enable fsmon@web --now      # Create + start instance
-sudo systemctl enable fsmon@audit --now    # Another instance
-sudo systemctl status fsmon@web            # Check instance status
-sudo journalctl -u fsmon@web               # View instance logs
-sudo systemctl stop fsmon@web && sudo systemctl disable fsmon@web  # Stop + disable
+# 3. Start with systemd
+sudo systemctl enable fsmon@web --now
+sudo systemctl status fsmon@web
+sudo journalctl -u fsmon@web
 
-# Direct CLI usage has no default log — events go to stdout only
-sudo fsmon monitor /tmp --recursive
+# 4. Stop and disable
+sudo systemctl stop fsmon@web && sudo systemctl disable fsmon@web
+```
 
+Config read from `/etc/fsmon/fsmon-{name}.toml`. **`fsmon.toml` is ignored in this mode.** Each instance is fully independent.
+
+### Other Commands
+
+```bash
 # Query historical events
 fsmon query --since 1h --cmd nginx
 
@@ -168,18 +185,59 @@ fsmon uninstall         # Uninstall systemd template
 fsmon enable <name>     # Create and start a monitoring instance
 fsmon disable <name>    # Stop and remove a monitoring instance
 fsmon generate          # Generate default configuration file (~/.config/fsmon/fsmon.toml)
-
-# Service management via systemd (template unit)
-sudo systemctl enable fsmon@<name> --now
-sudo systemctl start fsmon@<name>
-sudo systemctl stop fsmon@<name>
-sudo systemctl status fsmon@<name>
-sudo journalctl -u fsmon@<name>
 ```
+
+## Two Modes: CLI vs Systemd Instance
+
+fsmon has two completely independent operating modes, each with its own config file:
+
+### CLI Mode (`fsmon monitor /path ...`)
+
+| Aspect | Detail |
+|--------|--------|
+| Config file | `fsmon.toml` (search order below) |
+| Config location | `~/.fsmon/` → `~/.config/fsmon/` → `/etc/fsmon/` |
+| Log file | stdout only, or `-o` flag |
+| Use case | Ad-hoc debugging, interactive investigation |
+
+```bash
+# CLI mode: reads fsmon.toml, flags override config values
+sudo fsmon monitor /var/www --types MODIFY
+sudo fsmon monitor /tmp --recursive -o /tmp/events.log
+```
+
+### Instance Mode (`fsmon monitor --instance <name>`)
+
+| Aspect | Detail |
+|--------|--------|
+| Config file | `fsmon-{name}.toml` (per-instance) |
+| Config location | `/etc/fsmon/fsmon-web.toml` only |
+| Log file | Defined in instance config (`output` field). If omitted, no file log (events go to journald only) |
+| Use case | Long-running systemd background monitoring |
+
+```bash
+# 1. Install systemd template (one-time)
+sudo fsmon install
+
+# 2. Create instance config manually
+#    /etc/fsmon/fsmon-web.toml:
+#      paths = ["/var/www"]
+#      types = "MODIFY,CREATE"
+#      output = "/var/log/fsmon/web.log"
+
+# 3. Start with systemd
+sudo systemctl enable fsmon@web --now
+sudo systemctl status fsmon@web
+sudo journalctl -u fsmon@web
+```
+
+**Key rule: the two configs never merge.** CLI mode ignores instance configs; instance mode ignores `fsmon.toml`. Changing one has zero effect on the other.
 
 ## Configuration
 
-fsmon supports TOML configuration files. Search priority (first found wins):
+### CLI Config (`fsmon.toml`)
+
+Search priority (first found wins):
 
 1. `~/.fsmon/fsmon.toml`
 2. `~/.config/fsmon/fsmon.toml` (generated by `fsmon generate`)
@@ -272,6 +330,37 @@ private_tmp = "yes"
 ```
 
 CLI flags override config file values.
+
+### Instance Config (`/etc/fsmon/fsmon-{name}.toml`)
+
+Each systemd instance reads its own config from `/etc/fsmon/fsmon-{name}.toml`:
+
+```toml
+# Required: paths to monitor
+paths = ["/var/www"]
+
+# Optional fields
+output = "/var/log/fsmon/web.log"   # log file path (omit to skip file logging)
+types = "MODIFY,CREATE"              # event type filter
+min_size = "100MB"                   # minimum size change
+exclude = "*.tmp"                    # exclude pattern
+all_events = false                   # capture all 14 event types
+recursive = true                     # watch subdirectories
+```
+
+Available fields (all optional except `paths`):
+
+| Field | CLI equivalent | Description |
+|-------|---------------|-------------|
+| `paths` | `PATH` arguments | **Required.** Directories/files to monitor |
+| `output` | `-o, --output` | Log file path. Not set → no file log (events go to journald only) |
+| `types` | `-t, --types` | Event type filter, comma-separated |
+| `min_size` | `-s, --min-size` | Minimum size change to report |
+| `exclude` | `-e, --exclude` | Exclude pattern with wildcard support |
+| `all_events` | `--all-events` | Enable all 14 event types |
+| `recursive` | `-r, --recursive` | Recursively monitor subdirectories |
+
+Instance configs have no search priority — they are loaded by exact instance name from `/etc/fsmon/`. CLI flags passed alongside `--instance` override instance config fields.
 
 ## Technical Architecture
 
