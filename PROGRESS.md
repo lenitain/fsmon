@@ -156,6 +156,20 @@ cargo test         ✅ 67 passed, 7 ignored (fanotify 测试需要 sudo)
   - `add_path()`: mount_fd + shared_dir_cache 写入移到 `spawn_fd_reader` 之前
   - `add_path()`: 目录句柄缓存写入 `shared_dir_cache` 而非 `self.dir_cache`
 
+### 2026-05-05 — store.next_id 因 daemon persist_config 回退导致 ID 不唯一
+
+- **问题**: 三个 bug 叠加导致 ID 不唯一：
+  1. CLI `fsmon add` 通过 socket 通知 daemon 时未发送已分配的 ID
+     (`id: None`)，daemon 用 `max(path_ids) + 1` 自算，与 store 的 `next_id` 脱节
+  2. `handle_socket_cmd("add")` 完全忽略 `cmd.id` 字段
+  3. `persist_config()` 用 `store.next_id = max_id + 1` 覆写 store，
+     当 entry 被删除后 `max_id` 降低，导致 `next_id` 回退，
+     后续 `store.add_entry()` 分配已用过的 ID
+- **修复**:
+  - CLI 发送 `id: Some(assigned_id)` 给 daemon
+  - daemon 优先使用 `cmd.id`，未提供时再 fallback
+  - `persist_config()` 用 `store.next_id.max(calculated)` 避免回退
+
 ### 2026-05-05 — add/remove 打印不必要的 daemon 不可达警告
 
 - **问题**: `fsmon add` / `fsmon remove` 在 store 操作成功后尝试 socket 通知 daemon，
