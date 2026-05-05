@@ -1,14 +1,11 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use fsmon::config::{self, Config};
+use fsmon::config::Config;
 use fsmon::help::{self, HelpTopic};
 use fsmon::monitor::Monitor;
 use fsmon::query::Query;
 use fsmon::utils::parse_size;
-use fsmon::{
-    DEFAULT_KEEP_DAYS, DEFAULT_LOG_PATH, EventType, OutputFormat, SortBy, clean_logs,
-    parse_output_format, parse_sort_by,
-};
+use fsmon::{DEFAULT_KEEP_DAYS, DEFAULT_LOG_PATH, EventType, OutputFormat, SortBy, clean_logs};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -57,10 +54,6 @@ enum Commands {
         /// Recursively monitor all subdirectories
         #[arg(short, long)]
         recursive: bool,
-
-        /// Instance name (for systemd template mode, reads /etc/fsmon/fsmon-{name}.toml)
-        #[arg(long, value_name = "NAME")]
-        instance: Option<String>,
     },
 
     #[command(about = help::about(HelpTopic::Query), long_about = help::long_about(HelpTopic::Query))]
@@ -136,7 +129,7 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let config = Config::load()?;
+    let _config = Config::load()?;
 
     match cli.command {
         Commands::Monitor {
@@ -148,68 +141,7 @@ async fn main() -> Result<()> {
             output,
             format,
             recursive,
-            instance,
         } => {
-            let user_config = config.monitor.unwrap_or_default();
-
-            let instance_config = match instance {
-                Some(ref name) => match Config::load_instance(name) {
-                    Ok(Some(cfg)) => cfg,
-                    Ok(None) => {
-                        eprintln!(
-                            "========================================\n\
-                             ERROR: Instance config not found for '{}'.\n\
-                             \n\
-                             Create /etc/fsmon/fsmon-{}.toml first:\n\
-                               sudo fsmon generate --instance {}\n\
-                             \n\
-                             Then edit the config file to set monitored paths.\n\
-                             ========================================",
-                            name, name, name
-                        );
-                        std::process::exit(fsmon::EXIT_CONFIG);
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "========================================\n\
-                             ERROR: Invalid instance config for '{}':\n\
-                             \n\
-                             {}\n\
-                             \n\
-                             Fix the file at /etc/fsmon/fsmon-{}.toml\n\
-                             or regenerate with: fsmon generate --instance {} --force\n\
-                             ========================================",
-                            name, e, name, name
-                        );
-                        std::process::exit(fsmon::EXIT_CONFIG);
-                    }
-                },
-                None => config::InstanceConfig {
-                    paths: vec![],
-                    output: None,
-                    min_size: None,
-                    types: None,
-                    exclude: None,
-                    all_events: None,
-                    recursive: None,
-                },
-            };
-
-            let base = if instance.is_some() {
-                instance_config
-            } else {
-                config::InstanceConfig {
-                    paths: user_config.paths.unwrap_or_default(),
-                    output: user_config.output,
-                    min_size: user_config.min_size,
-                    types: user_config.types,
-                    exclude: user_config.exclude,
-                    all_events: user_config.all_events,
-                    recursive: user_config.recursive,
-                }
-            };
-
-            let paths = if !paths.is_empty() { paths } else { base.paths };
             if paths.is_empty() {
                 eprintln!("Error: Please specify at least one monitor path");
                 std::process::exit(1);
@@ -232,36 +164,6 @@ async fn main() -> Result<()> {
                 std::process::exit(fsmon::EXIT_CONFIG);
             }
 
-            let min_size = min_size.or(base.min_size);
-            let types = types.or(base.types);
-            let exclude = exclude.or(base.exclude);
-            let all_events = all_events || base.all_events.unwrap_or(false);
-            let output = output.or(base.output);
-            if let Some(ref name) = instance
-                && output.is_none()
-            {
-                eprintln!(
-                    "[WARNING] No output file configured for instance '{}'.\n\
-                     Events will only be written to stdout (journald) and will NOT be persisted.\n\
-                     Set output = \"/var/log/fsmon/{}.log\" in /etc/fsmon/fsmon-{}.toml\n\
-                     to enable persistent event logging for query and cleanup.",
-                    name, name, name
-                );
-            }
-            let recursive = recursive || base.recursive.unwrap_or(false);
-            let buffer_size = if instance.is_some() {
-                None
-            } else {
-                user_config.buffer_size
-            };
-            let format = if instance.is_some() {
-                OutputFormat::Human
-            } else {
-                format
-                    .or(user_config.format.as_deref().and_then(parse_output_format))
-                    .unwrap_or(OutputFormat::Human)
-            };
-
             let min_size_bytes = min_size.map(|s| parse_size(&s)).transpose()?;
 
             let event_types = types
@@ -276,6 +178,8 @@ async fn main() -> Result<()> {
                 })
                 .transpose()?;
 
+            let format = format.unwrap_or(OutputFormat::Human);
+
             let monitor = Monitor::new(
                 paths,
                 min_size_bytes,
@@ -285,8 +189,8 @@ async fn main() -> Result<()> {
                 format,
                 recursive,
                 all_events,
-                buffer_size,
-                instance,
+                None,
+                None,
             )?;
 
             monitor.run().await?;
@@ -303,27 +207,11 @@ async fn main() -> Result<()> {
             format,
             sort,
         } => {
-            let query_cfg = config.query.unwrap_or_default();
-
-            let log_file = log_file.or(query_cfg.log_file).unwrap_or_else(|| {
+            let log_file = log_file.unwrap_or_else(|| {
                 dirs::config_dir()
                     .map(|h: PathBuf| h.join("fsmon").join(DEFAULT_LOG_PATH))
                     .unwrap_or_else(|| PathBuf::from("fsmon").join(DEFAULT_LOG_PATH))
             });
-
-            let since = since.or(query_cfg.since);
-            let until = until.or(query_cfg.until);
-            let pid = pid.or(query_cfg.pid);
-            let cmd = cmd.or(query_cfg.cmd);
-            let user = user.or(query_cfg.user);
-            let types = types.or(query_cfg.types);
-            let min_size = min_size.or(query_cfg.min_size);
-            let format = format
-                .or(query_cfg.format.as_deref().and_then(parse_output_format))
-                .unwrap_or(OutputFormat::Human);
-            let sort = sort
-                .or(query_cfg.sort.as_deref().and_then(parse_sort_by))
-                .unwrap_or(SortBy::Time);
 
             let min_size_bytes = min_size.map(|s| parse_size(&s)).transpose()?;
 
@@ -351,6 +239,9 @@ async fn main() -> Result<()> {
                 })
                 .transpose()?;
 
+            let format = format.unwrap_or(OutputFormat::Human);
+            let sort = sort.unwrap_or(SortBy::Time);
+
             let query = Query::new(
                 log_file,
                 since,
@@ -372,26 +263,20 @@ async fn main() -> Result<()> {
             max_size,
             dry_run,
         } => {
-            let clean_cfg = config.clean.unwrap_or_default();
-
-            let log_file = log_file.or(clean_cfg.log_file).unwrap_or_else(|| {
+            let log_file = log_file.unwrap_or_else(|| {
                 dirs::config_dir()
                     .map(|h: PathBuf| h.join("fsmon").join(DEFAULT_LOG_PATH))
                     .unwrap_or_else(|| PathBuf::from("fsmon").join(DEFAULT_LOG_PATH))
             });
 
-            let keep_days = keep_days
-                .or(clean_cfg.keep_days)
-                .unwrap_or(DEFAULT_KEEP_DAYS);
-
-            let max_size = max_size.or(clean_cfg.max_size);
+            let keep_days = keep_days.unwrap_or(DEFAULT_KEEP_DAYS);
 
             let max_size_bytes = max_size.map(|s| parse_size(&s)).transpose()?;
 
             clean_logs(&log_file, keep_days, max_size_bytes, dry_run).await?;
         }
-        Commands::Generate { force } => {
-            Config::generate(force)?;
+        Commands::Generate { force: _ } => {
+            Config::generate_default()?;
         }
     }
 

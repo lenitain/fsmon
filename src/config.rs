@@ -1,476 +1,257 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-
-pub const INSTANCE_CONFIG_DIR: &str = "/etc/fsmon";
-
-pub const INSTANCE_CONFIG_TEMPLATE: &str = r#"# fsmon instance configuration
-# Place this file at /etc/fsmon/fsmon-{name}.toml
-
-# Directories/files to monitor (required)
-paths = []
-
-# Event log file path (omit to skip file logging — events go to journald only)
-# output = "/var/log/fsmon/{name}.log"
-
-# Minimum file size change to report (supports KB, MB, GB suffixes)
-# min_size = "100MB"
-
-# Comma-separated event types to filter:
-# ACCESS, MODIFY, CLOSE_WRITE, CLOSE_NOWRITE, OPEN, OPEN_EXEC,
-# ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF
-# types = "MODIFY,CREATE"
-
-# Glob patterns to exclude from monitoring
-# exclude = "*.tmp"
-
-# Capture all 14 fanotify events
-all_events = false
-
-# Watch subdirectories recursively
-recursive = false
-"#;
-
-pub const DEFAULT_CONFIG_TEMPLATE: &str = "# fsmon configuration file\n\
-# See https://github.com/lenitain/fsmon for full documentation\n\
-\n\
-[monitor]\n\
-# Directories to watch for filesystem events\n\
-paths = []\n\
-\n\
-# Minimum file size change to report (supports KB, MB, GB suffixes, e.g. \"100MB\", \"1GB\")\n\
-# min_size = \"100MB\"\n\
-\n\
-# Comma-separated event types to filter: ACCESS, MODIFY, CLOSE_WRITE, CLOSE_NOWRITE,\n\
-# OPEN, OPEN_EXEC, ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF\n\
-# types = \"MODIFY,CREATE\"\n\
-\n\
-# Glob patterns to exclude from monitoring\n\
-# exclude = \"*.tmp\"\n\
-\n\
-# Report all 14 event types regardless of the 'types' filter\n\
-all_events = false\n\
-\n\
-# Path to the event log file\n\
-# output = \"/var/log/fsmon.log\"\n\
-\n\
-# Terminal output format: \"human\", \"json\", or \"csv\" (affects stdout only; log file is always JSON)\n\
-format = \"human\"\n\
-\n\
-# Watch subdirectories recursively\n\
-recursive = false\n\
-\n\
-# Fanotify read buffer size in bytes\n\
-buffer_size = 32768\n\
-\n\
-[query]\n\
-# Event log file to query\n\
-# log_file = \"/var/log/fsmon.log\"\n\
-\n\
-# Start time: relative (\"1h\", \"30m\", \"7d\") or absolute (\"2024-05-01 10:00\")\n\
-# since = \"1h\"\n\
-\n\
-# End time: same format as since\n\
-# until = \"2h\"\n\
-\n\
-# Filter by process IDs (comma-separated)\n\
-# pid = \"1234,5678\"\n\
-\n\
-# Filter by process name (wildcard support: nginx*, python)\n\
-# cmd = \"nginx\"\n\
-\n\
-# Filter by usernames (comma-separated)\n\
-# user = \"root,admin\"\n\
-\n\
-# Filter by event types (comma-separated)\n\
-# types = \"MODIFY,CREATE\"\n\
-\n\
-# Minimum size change to include\n\
-# min_size = \"100MB\"\n\
-\n\
-# Terminal output format: \"human\", \"json\", or \"csv\" (affects stdout only; log file is always JSON)\n\
-format = \"human\"\n\
-\n\
-# Sort results: \"time\", \"size\", or \"pid\"\n\
-sort = \"time\"\n\
-\n\
-[clean]\n\
-# Event log file to clean\n\
-# log_file = \"/var/log/fsmon.log\"\n\
-\n\
-# Number of days to retain log entries\n\
-keep_days = 30\n\
-\n\
-# Maximum log file size before tail truncation (e.g. \"100MB\", \"1GB\")\n\
-# max_size = \"500MB\"\n\
-\n\
-[install]\n\
-# systemd ProtectSystem value (\"yes\", \"no\", \"strict\", \"full\")\n\
-protect_system = \"strict\"\n\
-\n\
-# systemd ProtectHome value (\"yes\", \"no\", \"read-only\")\n\
-protect_home = \"read-only\"\n\
-\n\
-# Additional read-write paths for systemd service (used when ProtectSystem is strict)\n\
-read_write_paths = [\"/var/log\"]\n\
-\n\
-# systemd PrivateTmp value (\"yes\" or \"no\")\n\
-private_tmp = \"yes\"\n";
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub monitor: Option<MonitorConfig>,
-    pub query: Option<QueryConfig>,
-    pub clean: Option<CleanConfig>,
-    pub install: Option<InstallConfig>,
+    pub log_file: Option<PathBuf>,
+    pub socket_path: Option<PathBuf>,
+    pub paths: Vec<PathEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct MonitorConfig {
-    pub paths: Option<Vec<PathBuf>>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathEntry {
+    pub path: PathBuf,
+    pub recursive: Option<bool>,
+    pub types: Option<Vec<String>>,
     pub min_size: Option<String>,
-    pub types: Option<String>,
     pub exclude: Option<String>,
     pub all_events: Option<bool>,
-    pub output: Option<PathBuf>,
-    pub format: Option<String>,
-    pub recursive: Option<bool>,
-    pub buffer_size: Option<usize>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct QueryConfig {
-    pub log_file: Option<PathBuf>,
-    pub since: Option<String>,
-    pub until: Option<String>,
-    pub pid: Option<String>,
-    pub cmd: Option<String>,
-    pub user: Option<String>,
-    pub types: Option<String>,
-    pub min_size: Option<String>,
-    pub format: Option<String>,
-    pub sort: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct CleanConfig {
-    pub log_file: Option<PathBuf>,
-    pub keep_days: Option<u32>,
-    pub max_size: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct InstallConfig {
-    pub protect_system: Option<String>,
-    pub protect_home: Option<String>,
-    pub read_write_paths: Option<Vec<String>>,
-    pub private_tmp: Option<String>,
 }
 
 impl Config {
+    pub fn default_config_path() -> PathBuf {
+        PathBuf::from("/etc/fsmon/fsmon.toml")
+    }
+
     pub fn load() -> Result<Self> {
-        match Self::find_config_file() {
-            Some(path) => Self::load_from_path(&path),
-            None => Ok(Config::default()),
+        let path = Self::default_config_path();
+        if path.exists() {
+            Self::load_from_path(&path)
+        } else {
+            Ok(Config {
+                log_file: None,
+                socket_path: None,
+                paths: vec![],
+            })
         }
     }
 
     pub fn load_from_path(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("Failed to read config {}: {}", path.display(), e))?;
+            .with_context(|| format!("Failed to read config {}", path.display()))?;
         let config: Config = toml::from_str(&content)
-            .map_err(|e| anyhow::anyhow!("Invalid TOML in {}: {}", path.display(), e))?;
+            .with_context(|| format!("Invalid TOML in {}", path.display()))?;
         Ok(config)
     }
 
-    /// Find CLI config at ~/.config/fsmon/fsmon.toml
-    fn find_config_file() -> Option<PathBuf> {
-        let path = dirs::config_dir()?.join("fsmon").join("fsmon.toml");
-        if path.exists() { Some(path) } else { None }
+    pub fn save(&self) -> Result<()> {
+        let path = Self::default_config_path();
+        let parent = path.parent().context("Config path has no parent")?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create directory {}", parent.display()))?;
+        let content = toml::to_string_pretty(self).context("Failed to serialize config")?;
+        fs::write(&path, content)
+            .with_context(|| format!("Failed to write config to {}", path.display()))?;
+        Ok(())
     }
 
-    /// Generate a commented default config file at ~/.config/fsmon/fsmon.toml.
-    pub fn generate(force: bool) -> Result<PathBuf> {
-        let config_dir = dirs::config_dir()
-            .context("Cannot determine XDG config directory")?
-            .join("fsmon");
-        let config_path = config_dir.join("fsmon.toml");
-
-        if config_path.exists() && !force {
-            anyhow::bail!(
-                "Config already exists at {}. Use --force to overwrite.",
-                config_path.display()
-            );
-        }
-
-        fs::create_dir_all(&config_dir)
-            .with_context(|| format!("Failed to create {}", config_dir.display()))?;
-
-        let content = DEFAULT_CONFIG_TEMPLATE;
-        fs::write(&config_path, content)
-            .with_context(|| format!("Failed to write {}", config_path.display()))?;
-
-        println!("Generated config: {}", config_path.display());
-        Ok(config_path)
-    }
-
-    /// Load instance config from /etc/fsmon/fsmon-{name}.toml
-    pub fn load_instance(name: &str) -> Result<Option<InstanceConfig>> {
-        let path = PathBuf::from(INSTANCE_CONFIG_DIR).join(format!("fsmon-{}.toml", name));
+    pub fn generate_default() -> Result<()> {
+        let path = Self::default_config_path();
         if path.exists() {
-            let content = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read instance config {}", path.display()))?;
-            let config: InstanceConfig = toml::from_str(&content)
-                .with_context(|| format!("Invalid TOML in {}: {}", path.display(), content))?;
-            if config.paths.is_empty() {
-                anyhow::bail!(
-                    "Instance '{}' config {} has no paths configured",
-                    name,
-                    path.display()
-                );
-            }
-            return Ok(Some(config));
+            return Ok(());
         }
-        Ok(None)
-    }
-}
-
-/// Per-instance configuration for systemd template instances.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InstanceConfig {
-    pub paths: Vec<PathBuf>,
-    pub output: Option<PathBuf>,
-    pub min_size: Option<String>,
-    pub types: Option<String>,
-    pub exclude: Option<String>,
-    pub all_events: Option<bool>,
-    pub recursive: Option<bool>,
-}
-
-/// Generate an instance config template file at /etc/fsmon/fsmon-{name}.toml.
-pub fn generate_instance_config(name: &str, force: bool) -> Result<PathBuf> {
-    let config_dir = PathBuf::from(INSTANCE_CONFIG_DIR);
-    let config_path = config_dir.join(format!("fsmon-{}.toml", name));
-
-    if config_path.exists() && !force {
-        anyhow::bail!(
-            "Instance config already exists at {}. Use --force to overwrite.",
-            config_path.display()
-        );
+        let config = Config {
+            log_file: Some(PathBuf::from("/var/log/fsmon/history.log")),
+            socket_path: Some(PathBuf::from("/var/run/fsmon/fsmon.sock")),
+            paths: vec![],
+        };
+        config.save()
     }
 
-    fs::create_dir_all(&config_dir)
-        .with_context(|| format!("Failed to create {}", config_dir.display()))?;
+    pub fn add_path(entry: PathEntry) -> Result<()> {
+        let mut config = Self::load()?;
+        config.paths.push(entry);
+        config.save()
+    }
 
-    let content = INSTANCE_CONFIG_TEMPLATE.replace("{name}", name);
-    fs::write(&config_path, &content)
-        .with_context(|| format!("Failed to write {}", config_path.display()))?;
-
-    println!("Generated instance config: {}", config_path.display());
-    println!(
-        "Edit it to set paths and options, then: systemctl enable fsmon@{} --now",
-        name
-    );
-    Ok(config_path)
+    pub fn remove_path(path: &Path) -> Result<()> {
+        let mut config = Self::load()?;
+        config.paths.retain(|p| p.path != path);
+        config.save()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
-    fn test_config_load_nonexistent() {
-        let dir = std::env::temp_dir().join("fsmon_test_nonexistent");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-
-        // Prevent interference from actual user config
-        let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", &dir);
-        }
-
-        let config = Config::load().unwrap();
-        assert!(config.monitor.is_none());
-        assert!(config.query.is_none());
-        assert!(config.clean.is_none());
-        assert!(config.install.is_none());
-
-        // Restore original
-        if let Some(val) = prev_xdg {
-            unsafe {
-                std::env::set_var("XDG_CONFIG_HOME", val);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("XDG_CONFIG_HOME");
-            }
-        }
-        let _ = fs::remove_dir_all(&dir);
+    fn test_default_config_path() {
+        assert_eq!(
+            Config::default_config_path(),
+            PathBuf::from("/etc/fsmon/fsmon.toml")
+        );
     }
 
     #[test]
-    fn test_config_load_valid() {
+    fn test_load_from_path_valid() {
         let dir = std::env::temp_dir().join("fsmon_test_config_valid");
+        let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        let config_path = dir.join("config.toml");
+        let config_path = dir.join("fsmon.toml");
 
         let toml_content = r#"
-[monitor]
-paths = ["/var/log", "/tmp"]
-min_size = "100MB"
-types = "MODIFY,CREATE"
-exclude = "*.tmp"
-all_events = true
-output = "/var/log/fsmon.log"
-format = "json"
+log_file = "/var/log/fsmon/history.log"
+socket_path = "/var/run/fsmon/fsmon.sock"
+
+[[paths]]
+path = "/var/www"
 recursive = true
-
-[query]
-log_file = "/var/log/fsmon.log"
-since = "1h"
-format = "json"
-sort = "size"
-
-[clean]
-keep_days = 7
-max_size = "500MB"
+types = ["MODIFY", "CREATE"]
+min_size = "100MB"
+exclude = "*.tmp"
+all_events = false
 "#;
 
-        let mut file = fs::File::create(&config_path).unwrap();
-        file.write_all(toml_content.as_bytes()).unwrap();
+        fs::write(&config_path, toml_content).unwrap();
 
         let config = Config::load_from_path(&config_path).unwrap();
-
-        let monitor = config.monitor.unwrap();
-        assert_eq!(monitor.paths.unwrap().len(), 2);
-        assert_eq!(monitor.min_size.unwrap(), "100MB");
-        assert_eq!(monitor.types.unwrap(), "MODIFY,CREATE");
-        assert_eq!(monitor.exclude.unwrap(), "*.tmp");
-        assert!(monitor.all_events.unwrap());
-        assert_eq!(monitor.output.unwrap(), PathBuf::from("/var/log/fsmon.log"));
-        assert_eq!(monitor.format.unwrap(), "json");
-        assert!(monitor.recursive.unwrap());
-
-        let query = config.query.unwrap();
-        assert_eq!(query.log_file.unwrap(), PathBuf::from("/var/log/fsmon.log"));
-        assert_eq!(query.since.unwrap(), "1h");
-        assert_eq!(query.format.unwrap(), "json");
-        assert_eq!(query.sort.unwrap(), "size");
-
-        let clean = config.clean.unwrap();
-        assert_eq!(clean.keep_days.unwrap(), 7);
-        assert_eq!(clean.max_size.unwrap(), "500MB");
+        assert_eq!(
+            config.log_file,
+            Some(PathBuf::from("/var/log/fsmon/history.log"))
+        );
+        assert_eq!(
+            config.socket_path,
+            Some(PathBuf::from("/var/run/fsmon/fsmon.sock"))
+        );
+        assert_eq!(config.paths.len(), 1);
+        assert_eq!(config.paths[0].path, PathBuf::from("/var/www"));
+        assert!(config.paths[0].recursive.unwrap());
+        assert_eq!(
+            config.paths[0].types.as_ref().unwrap(),
+            &["MODIFY".to_string(), "CREATE".to_string()]
+        );
+        assert_eq!(config.paths[0].min_size.as_ref().unwrap(), "100MB");
+        assert_eq!(config.paths[0].exclude.as_ref().unwrap(), "*.tmp");
+        assert!(!config.paths[0].all_events.unwrap());
 
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn test_config_load_invalid() {
+    fn test_load_from_path_invalid_toml() {
         let dir = std::env::temp_dir().join("fsmon_test_config_invalid");
+        let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        let config_path = dir.join("config.toml");
+        let config_path = dir.join("fsmon.toml");
 
-        let invalid_toml = "this is not valid toml [[[[";
-
-        let mut file = fs::File::create(&config_path).unwrap();
-        file.write_all(invalid_toml.as_bytes()).unwrap();
+        fs::write(&config_path, "invalid toml [[[").unwrap();
 
         let result = Config::load_from_path(&config_path);
         assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("Invalid TOML"),
-            "error should mention invalid TOML: {err_msg}"
-        );
+        assert!(result.unwrap_err().to_string().contains("Invalid TOML"));
 
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn test_config_load_buffer_size() {
-        let dir = std::env::temp_dir().join("fsmon_test_config_buffer_size");
+    fn test_load_returns_default_when_no_file() {
+        let dir = std::env::temp_dir().join("fsmon_test_load_default");
+        let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        let config_path = dir.join("config.toml");
 
-        let toml_content = r#"
-[monitor]
-buffer_size = 65536
-"#;
-
-        let mut file = fs::File::create(&config_path).unwrap();
-        file.write_all(toml_content.as_bytes()).unwrap();
-
-        let config = Config::load_from_path(&config_path).unwrap();
-        let monitor = config.monitor.unwrap();
-        assert_eq!(monitor.buffer_size.unwrap(), 65536);
+        let config = Config {
+            log_file: None,
+            socket_path: None,
+            paths: vec![],
+        };
+        assert!(config.log_file.is_none());
+        assert!(config.socket_path.is_none());
+        assert!(config.paths.is_empty());
 
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn test_config_merge_cli_overrides() {
-        let toml_content = r#"
-[monitor]
-paths = ["/var/log"]
-min_size = "100MB"
-types = "MODIFY"
-"#;
+    fn test_toml_round_trip() {
+        let config = Config {
+            log_file: Some(PathBuf::from("/var/log/fsmon/history.log")),
+            socket_path: Some(PathBuf::from("/var/run/fsmon/fsmon.sock")),
+            paths: vec![PathEntry {
+                path: PathBuf::from("/srv"),
+                recursive: Some(true),
+                types: Some(vec!["MODIFY".to_string()]),
+                min_size: None,
+                exclude: Some("*.log".to_string()),
+                all_events: Some(false),
+            }],
+        };
 
-        let config: Config = toml::from_str(toml_content).unwrap();
-        let monitor = config.monitor.as_ref().unwrap();
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        let parsed: Config = toml::from_str(&toml_str).unwrap();
 
-        assert_eq!(
-            monitor.paths.as_ref().unwrap(),
-            &vec![PathBuf::from("/var/log")]
-        );
-        assert_eq!(monitor.min_size.as_deref(), Some("100MB"));
-        assert_eq!(monitor.types.as_deref(), Some("MODIFY"));
-
-        let cli_min_size: Option<String> = Some("50MB".to_string());
-        let merged_min_size = cli_min_size.or(monitor.min_size.clone());
-        assert_eq!(merged_min_size.as_deref(), Some("50MB"));
-
-        let cli_types: Option<String> = None;
-        let merged_types = cli_types.or(monitor.types.clone());
-        assert_eq!(merged_types.as_deref(), Some("MODIFY"));
+        assert_eq!(config.log_file, parsed.log_file);
+        assert_eq!(config.socket_path, parsed.socket_path);
+        assert_eq!(config.paths.len(), parsed.paths.len());
+        assert_eq!(config.paths[0].path, parsed.paths[0].path);
+        assert_eq!(config.paths[0].recursive, parsed.paths[0].recursive);
+        assert_eq!(config.paths[0].types, parsed.paths[0].types);
     }
 
     #[test]
-    fn test_install_config() {
-        let toml_content = r#"
-[install]
-protect_system = "false"
-protect_home = "false"
-read_write_paths = ["/var/log", "/tmp"]
-private_tmp = "no"
-"#;
-
-        let config: Config = toml::from_str(toml_content).unwrap();
-        let install = config.install.unwrap();
-        assert_eq!(install.protect_system.as_deref(), Some("false"));
-        assert_eq!(install.protect_home.as_deref(), Some("false"));
-        assert_eq!(
-            install.read_write_paths.unwrap(),
-            vec!["/var/log".to_string(), "/tmp".to_string()]
-        );
-        assert_eq!(install.private_tmp.as_deref(), Some("no"));
+    fn test_empty_paths() {
+        let config = Config {
+            log_file: None,
+            socket_path: None,
+            paths: vec![],
+        };
+        assert!(config.paths.is_empty());
     }
 
     #[test]
-    fn test_install_config_partial() {
-        let toml_content = r#"
-[install]
-protect_system = "false"
-"#;
+    fn test_multiple_paths() {
+        let config = Config {
+            log_file: None,
+            socket_path: None,
+            paths: vec![
+                PathEntry {
+                    path: PathBuf::from("/a"),
+                    recursive: None,
+                    types: None,
+                    min_size: None,
+                    exclude: None,
+                    all_events: None,
+                },
+                PathEntry {
+                    path: PathBuf::from("/b"),
+                    recursive: None,
+                    types: None,
+                    min_size: None,
+                    exclude: None,
+                    all_events: None,
+                },
+            ],
+        };
+        assert_eq!(config.paths.len(), 2);
+    }
 
-        let config: Config = toml::from_str(toml_content).unwrap();
-        let install = config.install.unwrap();
-        assert_eq!(install.protect_system.as_deref(), Some("false"));
-        assert!(install.protect_home.is_none());
-        assert!(install.read_write_paths.is_none());
-        assert!(install.private_tmp.is_none());
+    #[test]
+    fn test_path_entry_all_fields_none() {
+        let entry = PathEntry {
+            path: PathBuf::from("/test"),
+            recursive: None,
+            types: None,
+            min_size: None,
+            exclude: None,
+            all_events: None,
+        };
+        assert_eq!(entry.path, PathBuf::from("/test"));
+        assert!(entry.recursive.is_none());
+        assert!(entry.types.is_none());
+        assert!(entry.min_size.is_none());
+        assert!(entry.exclude.is_none());
+        assert!(entry.all_events.is_none());
     }
 }

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use fsmon::config::{self, Config};
+use fsmon::config::Config;
 use fsmon::help::{self, HelpTopic};
 use fsmon::systemd;
 
@@ -8,7 +8,7 @@ use fsmon::systemd;
 #[command(name = "fsmon")]
 #[command(author = "fsmon contributors")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
-#[command(about = "fsmon daemon manager — install, uninstall, and generate instance configuration")]
+#[command(about = "fsmon daemon manager — install, uninstall, and generate configuration")]
 #[command(after_help = help::daemon_after_help())]
 struct Cli {
     #[command(subcommand)]
@@ -43,12 +43,8 @@ enum Commands {
     #[command(about = help::about(HelpTopic::Uninstall), long_about = help::long_about(HelpTopic::Uninstall))]
     Uninstall,
 
-    #[command(about = help::about(HelpTopic::GenerateInstance), long_about = help::long_about(HelpTopic::GenerateInstance))]
+    #[command(about = "Generate default configuration at /etc/fsmon/fsmon.toml")]
     Generate {
-        /// Instance name to generate config for (e.g., "web"), creates /etc/fsmon/fsmon-{name}.toml
-        #[arg(short, long, required = true, value_name = "NAME")]
-        instance: String,
-
         /// Force overwrite existing config file
         #[arg(short, long)]
         force: bool,
@@ -57,7 +53,7 @@ enum Commands {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let config = Config::load()?;
+    let _config = Config::load()?;
 
     match cli.command {
         Commands::Install {
@@ -67,36 +63,23 @@ fn main() -> Result<()> {
             read_write_paths,
             private_tmp,
         } => {
-            let install_cfg = config.install.as_ref();
-            let protect_system = protect_system
-                .as_deref()
-                .or(install_cfg.and_then(|c| c.protect_system.as_deref()));
-            let protect_home = protect_home
-                .as_deref()
-                .or(install_cfg.and_then(|c| c.protect_home.as_deref()));
-            let private_tmp = private_tmp
-                .as_deref()
-                .or(install_cfg.and_then(|c| c.private_tmp.as_deref()));
-            let read_write_paths: Option<&[String]> = if read_write_paths.is_empty() {
-                install_cfg
-                    .and_then(|c| c.read_write_paths.as_ref())
-                    .map(|v| v.as_slice())
-            } else {
-                Some(read_write_paths.as_slice())
-            };
             systemd::install(
                 force,
-                protect_system,
-                protect_home,
-                read_write_paths,
-                private_tmp,
+                protect_system.as_deref(),
+                protect_home.as_deref(),
+                if read_write_paths.is_empty() {
+                    None
+                } else {
+                    Some(read_write_paths.as_slice())
+                },
+                private_tmp.as_deref(),
             )?;
         }
         Commands::Uninstall => {
             systemd::uninstall()?;
         }
-        Commands::Generate { instance, force } => {
-            config::generate_instance_config(&instance, force)?;
+        Commands::Generate { force: _ } => {
+            Config::generate_default()?;
         }
     }
 
