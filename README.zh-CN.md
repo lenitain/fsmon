@@ -2,7 +2,7 @@
   <samp>fsmon</samp>
 </h1>
 
-<h3 align="center">实时 Linux 文件系统变更监控，精准追溯进程操作。</h3>
+<h3 align="center">实时监控文件变更，追溯进程操作。</h3>
 
 🌍 **选择语言 | Language**
 - [简体中文](./README.zh-CN.md)
@@ -17,22 +17,19 @@
 ## 特性
 
 - **实时监控**: 默认捕获 8 种核心 fanotify 事件，`--all-events` 开启全部 14 种
-- **进程追溯**: 追踪每个文件变更的 PID、命令名和用户 — 即使是 `touch`、`rm`、`mv` 等短命进程
-- **递归监控**: 监控整个目录树，自动追踪新建的子目录
+- **进程追溯**: 追踪每个文件变更的 PID、命令名和用户 — 包括 `touch`、`rm`、`mv` 等短命进程
+- **递归监控**: 监控整个目录树，追踪新建的子目录
 - **完整删除捕获**: 通过持久化目录句柄缓存，完整捕获 `rm -rf` 递归删除中的每个文件
 - **高性能**: Rust + Tokio 编写，内存占用 <5MB，零拷贝 FID 事件解析，二分查找日志查询
 - **灵活过滤**: 支持按时间、大小、进程、用户、事件类型和排除模式（通配符）过滤
 - **多种格式**: 人类可读、JSON、CSV 三种终端输出格式（日志文件始终是JSON格式）
-- **TOML 配置**: 持久化配置文件，支持 `~/.config/fsmon/fsmon.toml`
-- **日志管理**: 基于时间和大小的日志轮转，支持预览模式
-- **双模式**: CLI 模式（读 `fsmon.toml`，交互式）和 systemd 实例模式（读 `/etc/fsmon/fsmon-{name}.toml`，后台） — 配置完全独立
-- **Systemd 服务**: 模板单元（`fsmon@.service`）支持多实例监控，安全加固可配置 — 不同路径可分别运行独立实例
+- **Systemd 服务**: 模板单元（`fsmon@.service`）支持多实例后台监控
 
 ## 为什么选择 fsmon
 
-是否曾想知道"谁修改了这个文件？"这正是 fsmon 要解决的问题。
+fsmon用于记录"谁修改了这个文件？"。
 
-传统的文件监控工具只给你事件本身，而没有上下文 — fsmon 桥接了这段空白，将每个文件变更归因到对应的进程。无论是恶意脚本、自动化部署还是配置错误的服务，你都能准确知道发生了什么、何时发生的、以及是谁（或什么）导致的。
+传统的文件监控工具只提供事件本身，缺少上下文。fsmon 将每个文件变更归因到对应的进程。无论是恶意脚本、自动化部署还是配置错误的服务。
 
 ## 快速开始
 
@@ -99,26 +96,26 @@ sudo fsmon-cli monitor /var/log --exclude "*.log"
 sudo fsmon install
 
 # 2. 生成实例配置模板（或手动创建）
-sudo fsmon generate --instance web   # 模板使用 `{name}` 占位符，生成时替换为 "web"
+sudo fsmon generate --instance {name}
 
 # 编辑模板设置路径和选项
-sudo vim /etc/fsmon/fsmon-web.toml
+sudo vim /etc/fsmon/fsmon-{name}.toml
 
 # 或手动创建：
 sudo mkdir -p /etc/fsmon
-cat > /etc/fsmon/fsmon-web.toml << 'EOF'
+cat > /etc/fsmon/fsmon-{name}.toml << 'EOF'
 paths = ["/var/www"]
 types = "MODIFY,CREATE"
-output = "/var/log/fsmon/web.log"
+output = "/var/log/fsmon/{name}.log"
 EOF
 
 # 3. 用 systemd 启动
-sudo systemctl enable fsmon@web --now
-sudo systemctl status fsmon@web
-sudo journalctl -u fsmon@web
+sudo systemctl enable fsmon@{name} --now
+sudo systemctl status fsmon@{name}
+sudo journalctl -u fsmon@{name}
 
 # 4. 停用
-sudo systemctl stop fsmon@web && sudo systemctl disable fsmon@web
+sudo systemctl stop fsmon@{name} && sudo systemctl disable fsmon@{name}
 ```
 
 读取 `/etc/fsmon/fsmon-{name}.toml`。**此模式下 `fsmon.toml` 不生效。** 每个实例完全独立。
@@ -196,7 +193,7 @@ fsmon-cli generate           # 生成 CLI 配置 (~/.config/fsmon/fsmon.toml)
 ```bash
 fsmon install                       # 安装 systemd 模板单元（fsmon@.service）
 fsmon uninstall                     # 卸载 systemd 模板
-fsmon generate --instance web       # 生成实例配置模板 (/etc/fsmon/fsmon-web.toml)
+fsmon generate --instance {name}       # 生成实例配置模板 (/etc/fsmon/fsmon-web.toml)
 ```
 
 ## 两种模式：CLI vs Systemd 实例
@@ -223,7 +220,7 @@ sudo fsmon-cli monitor /tmp --recursive -o /tmp/events.log
 | 项目 | 说明 |
 |------|------|
 | 配置文件 | `fsmon-{name}.toml`（每个实例独立） |
-| 配置位置 | 仅 `/etc/fsmon/fsmon-web.toml` |
+| 配置位置 | 仅 `/etc/fsmon/fsmon-{name}.toml` |
 | 日志 | 实例配置中的 `output` 字段指定。不写则无文件日志（事件仅进 journald） |
 | 用途 | 长期运行的 systemd 后台监控 |
 
@@ -232,15 +229,15 @@ sudo fsmon-cli monitor /tmp --recursive -o /tmp/events.log
 sudo fsmon install
 
 # 2. 手动创建实例配置
-#    /etc/fsmon/fsmon-web.toml：
+#    /etc/fsmon/fsmon-{name}.toml：
 #      paths = ["/var/www"]
 #      types = "MODIFY,CREATE"
-#      output = "/var/log/fsmon/web.log"
+#      output = "/var/log/fsmon/{name}.log"
 
 # 3. 用 systemd 启动
-sudo systemctl enable fsmon@web --now
-sudo systemctl status fsmon@web
-sudo journalctl -u fsmon@web
+sudo systemctl enable fsmon@{name} --now
+sudo systemctl status fsmon@{name}
+sudo journalctl -u fsmon@{name}
 ```
 
 **核心原则：两种配置永不合并。** CLI 模式不读实例配置；实例模式不读 `fsmon.toml`。改一个不会影响另一个。
@@ -288,11 +285,11 @@ CLI 参数优先级高于配置文件。
 
 每个 systemd 实例读取自己的 `/etc/fsmon/fsmon-{name}.toml`。仅 `paths` 为必需字段。生成模板：`sudo fsmon generate --instance <name>`
 
-生成的模板中 `output` 路径使用 `{name}` 占位符，`fsmon generate --instance <name>` 生成时自动替换为实际实例名（非硬编码）。以实例 `web` 为例：
+生成的模板中 `output` 路径使用 `{name}` 占位符，`fsmon generate --instance <name>` 生成时自动替换为实际实例名（非硬编码）。以实例 `{name}` 为例：
 
 ```toml
 paths = ["/var/www"]
-# output = "/var/log/fsmon/web.log"
+# output = "/var/log/fsmon/{name}.log"
 # types = "MODIFY,CREATE"
 # min_size = "100MB"
 # exclude = "*.tmp"
