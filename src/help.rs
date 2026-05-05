@@ -17,8 +17,8 @@ pub const fn about(topic: HelpTopic) -> &'static str {
         HelpTopic::Install => "Install systemd service template",
         HelpTopic::Uninstall => "Uninstall systemd service template",
         HelpTopic::Clean => "Clean historical logs",
-        HelpTopic::Generate => "Generate CLI configuration file",
-        HelpTopic::GenerateInstance => "Generate instance configuration file",
+        HelpTopic::Generate => "Generate CLI configuration file at ~/.config/fsmon/fsmon.toml",
+        HelpTopic::GenerateInstance => "Generate instance configuration file at /etc/fsmon/fsmon-{name}.toml",
     }
 }
 
@@ -130,20 +130,23 @@ Each instance reads its own config from /etc/fsmon/fsmon-{NAME}.toml.
   fsmon-cli clean --keep-days 7 --dry-run # Preview without deleting"#
         }
         HelpTopic::Generate => {
-            "Generate CLI configuration file at ~/.config/fsmon/fsmon.toml.\n\
+            "Generate CLI configuration file.\n\
 \n\
-[Config File]\n\
-  ~/.config/fsmon/fsmon.toml — default config for CLI mode\n\
+[Output Path]\n\
+  ~/.config/fsmon/fsmon.toml\n\
 \n\
 [Examples]\n\
   fsmon-cli generate                  # Generate CLI config (fails if exists)\n\
   fsmon-cli generate --force          # Overwrite existing CLI config"
         }
         HelpTopic::GenerateInstance => {
-            "Generate instance configuration file at /etc/fsmon/fsmon-{name}.toml.\n\
+            "Generate instance configuration file for systemd service.\n\
 \n\
-[Instance Config]\n\
-  Reads from /etc/fsmon/fsmon-{name}.toml\n\
+[Output Path]\n\
+  /etc/fsmon/fsmon-{name}.toml\n\
+\n\
+Edit the generated file to set monitored paths, then:\n\
+  systemctl enable fsmon@{name} --now\n\
 \n\
 [Examples]\n\
   fsmon generate --instance web   # Generate /etc/fsmon/fsmon-web.toml template\n\
