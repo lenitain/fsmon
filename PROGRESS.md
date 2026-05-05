@@ -53,7 +53,8 @@ all_events = false
 ## 实现计划
 
 ### P0 — 基础设施
-- [x] 重写 `config.rs`：Config + PathEntry 结构体，`[[paths]]` TOML 格式（2026-05-05)
+- [x] 重写 `config.rs`：Config + PathEntry 结构体，`[[paths]]` TOML 格式
+- [x] 创建 `socket.rs`：SocketCmd/SocketResp 协议、send_cmd 客户端、listen 监听器
 - [ ] 删除 `src/bin/fsmon.rs` 和 `src/bin/fsmon-cli.rs`，新建 `src/bin/fsmon.rs`
 - [ ] 重新组织 CLI 命令树（使用 clap enum dispatch）
 - [ ] 更新 `Cargo.toml` 为单 binary
