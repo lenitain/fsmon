@@ -255,6 +255,11 @@ impl Monitor {
                 ) {
                     Ok(()) => {
                         matched = true;
+                        eprintln!(
+                            "[INFO] Monitoring {} (fs mark) on existing fd {}",
+                            canonical.display(),
+                            group.fd
+                        );
                         break;
                     }
                     Err(ref e) if e.raw_os_error() == Some(libc::EXDEV) => {
@@ -789,9 +794,15 @@ impl Monitor {
                 }
             };
 
-        // Spawn reader task if we created a new fd
+        // Spawn reader task + confirm monitoring
         if is_new_fd {
             self.spawn_fd_reader(fan_fd);
+        } else {
+            eprintln!(
+                "[INFO] Monitoring {} on existing fd {}",
+                canonical.display(),
+                fan_fd
+            );
         }
 
         // Open directory fd for handle resolution
