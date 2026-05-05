@@ -99,8 +99,11 @@ kill %1
 | Purpose | Path | Created by | Permissions |
 |---|---|---|---|
 | Config (monitored paths) | `~/.config/fsmon/config.toml` | `fsmon add` / `fsmon remove` | user-owned |
-| Event log | `~/.local/state/fsmon/history.log` | daemon (root) | 644 |
-| Unix socket | `/tmp/fsmon-<UID>.sock` | daemon (root) | 666 |
+| Event log | `~/.local/state/fsmon/history.log` | daemon (root)¹ | 644 |
+| Unix socket | `/tmp/fsmon-<UID>.sock` | daemon (root)¹ | 666 |
+
+¹ The daemon runs as root (via sudo) but resolves your original user's home directory
+  via `SUDO_UID` + `getpwuid_r`, so it writes to `/home/<you>/...` not `/root/...`.
 
 ### Auto-start on Boot (Optional)
 

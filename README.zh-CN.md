@@ -97,8 +97,11 @@ kill %1
 | 用途 | 路径 | 创建者 | 权限 |
 |---|---|---|---|
 | 配置（监控路径） | `~/.config/fsmon/config.toml` | `fsmon add` / `fsmon remove` | 用户 |
-| 事件日志 | `~/.local/state/fsmon/history.log` | daemon (root) | 644 |
-| Unix socket | `/tmp/fsmon-<UID>.sock` | daemon (root) | 666 |
+| 事件日志 | `~/.local/state/fsmon/history.log` | daemon (root)¹ | 644 |
+| Unix socket | `/tmp/fsmon-<UID>.sock` | daemon (root)¹ | 666 |
+
+¹ daemon 以 root 运行（通过 sudo），但会通过 `SUDO_UID` + `getpwuid_r` 自动解析原始用户的 home 目录，
+  所以实际写入的是 `/home/<你>/...` 而不是 `/root/...`。
 
 ### 开机自启（可选）
 
