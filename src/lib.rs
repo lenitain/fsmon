@@ -7,6 +7,7 @@ pub mod output;
 pub mod proc_cache;
 pub mod query;
 pub mod socket;
+pub mod store;
 pub mod systemd;
 pub mod utils;
 
