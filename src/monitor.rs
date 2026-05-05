@@ -143,10 +143,13 @@ impl Monitor {
                 break;
             }
             if tokio::time::Instant::now() >= deadline {
-                bail!(
-                    "proc connector subscription timed out after {}s",
+                eprintln!(
+                    "[WARNING] proc connector subscription timed out after {}s. \
+                     Process name attribution may be incomplete. Monitoring continues.",
                     PROC_CONNECTOR_TIMEOUT_SECS
                 );
+                self.proc_cache = None;
+                break;
             }
             tokio::time::sleep(poll_interval).await;
             poll_interval = (poll_interval * 2).min(tokio::time::Duration::from_millis(50));
