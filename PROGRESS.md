@@ -103,6 +103,16 @@ cargo test         ✅ 67 passed, 7 ignored (fanotify 测试需要 sudo)
 - **修复**: `socket.rs::send_cmd()` 响应读取改为 EOF 终止，不再依赖空行分隔。
   TOML 本身可包含空行，解析器正确处理。
 
+### 2026-05-05 — 实时添加路径不生成 .log 文件
+
+- **问题**: 通过 `fsmon add` (socket 通知 daemon) 添加的路径不生成对应 ID 的 `.log` 文件。
+  `add_path()` 未更新 `self.path_ids`，导致 `write_event()` → `entry_id_for_path()` 返回 `None`
+  → 静默 return，事件全部丢失。同时 `handle_socket_cmd("add")` 硬编码 `id: 0`，
+  进一步导致 persist 后 store 写入 `id = 0`。
+- **修复**:
+  - `monitor.rs::add_path()`: 新增 `self.path_ids.insert(path, entry.id)`
+  - `monitor.rs::handle_socket_cmd("add")`: 用 `max(existing IDs) + 1` 分配正确 ID
+
 ## 下一阶段可能的改进
 
 - 找回 query.rs 中丢失的 17 个二进制搜索测试 (代码逻辑未改, 测试函数需恢复)

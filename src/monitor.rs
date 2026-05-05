@@ -591,6 +591,7 @@ impl Monitor {
         self.paths.push(path.clone());
         self.canonical_paths.push(canonical.clone());
         self.path_options.insert(path.clone(), opts);
+        self.path_ids.insert(path.clone(), entry.id);
 
         // Pre-cache directory handles
         if canonical.is_dir() {
@@ -706,8 +707,9 @@ impl Monitor {
                 if self.path_options.contains_key(&path) {
                     let _ = self.remove_path(&path);
                 }
+                let next_id = self.path_ids.values().max().copied().unwrap_or(0) + 1;
                 let entry = PathEntry {
-                    id: 0,
+                    id: next_id,
                     path,
                     recursive: cmd.recursive,
                     types: cmd.types.clone(),
