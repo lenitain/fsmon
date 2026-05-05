@@ -3,30 +3,38 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// User-managed config storing monitored paths.
+/// Infrastructure configuration for fsmon.
 ///
 /// The config file lives at `~/.config/fsmon/config.toml`.
 /// All path resolution is based on the **original user** (not root's HOME).
 /// Daemon (running as root via sudo) uses SUDO_UID to find the right home.
 /// CLI (running as user) uses the user's own HOME directly.
+///
+/// This file is manually edited. Only infrastructure paths go here.
+/// Monitored path entries are stored in the separate store file (see `[store].file`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserConfig {
-    /// Auto-incrementing ID counter for PathEntry
-    pub next_id: u64,
-    pub paths: Vec<PathEntry>,
+pub struct Config {
+    pub store: StoreConfig,
+    pub logging: LoggingConfig,
+    pub socket: SocketConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PathEntry {
-    /// Unique numeric identifier
-    pub id: u64,
-    pub path: PathBuf,
-    pub recursive: Option<bool>,
-    pub types: Option<Vec<String>>,
-    pub min_size: Option<String>,
-    pub exclude: Option<String>,
-    pub all_events: Option<bool>,
+pub struct StoreConfig {
+    pub file: PathBuf,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoggingConfig {
+    pub dir: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SocketConfig {
+    pub path: PathBuf,
+}
+
+// ---- Helpers ----
 
 /// Resolve the original user's UID:
 /// - If SUDO_UID is set (sudo), use that
@@ -80,132 +88,116 @@ pub fn resolve_home(uid: u32) -> Result<PathBuf> {
     Ok(PathBuf::from(home))
 }
 
-impl UserConfig {
-    /// Return the user config path: `$XDG_CONFIG_HOME/fsmon/config.toml`
+/// Best-effort guess of user's home directory.
+/// Used by CLI commands (running as user, HOME is correct).
+/// For daemon (root via sudo), use SUDO_UID + getpwuid.
+/// For tests, use HOME env.
+pub fn guess_home() -> String {
+    // 1. SUDO_UID — daemon running via sudo
+    let uid_str = match std::env::var("SUDO_UID") {
+        Ok(s) => s,
+        Err(_) => return std::env::var("HOME").unwrap_or_else(|_| "/root".into()),
+    };
+    let uid = match uid_str.parse::<u32>() {
+        Ok(u) => u,
+        Err(_) => return std::env::var("HOME").unwrap_or_else(|_| "/root".into()),
+    };
+    // If we're not actually root (e.g. in tests where SUDO_UID is unset),
+    // just use HOME. If we are root, try getpwuid.
+    if unsafe { libc::geteuid() } != 0 {
+        return std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    }
+    match resolve_home(uid) {
+        Ok(p) => p.to_string_lossy().into_owned(),
+        Err(_) => std::env::var("HOME").unwrap_or_else(|_| "/root".into()),
+    }
+}
+
+/// Expand a leading `~` in a path to the given home directory.
+fn expand_tilde(path: &Path, home: &str) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(rest) = s.strip_prefix('~') {
+        if rest.is_empty() || rest.starts_with('/') {
+            return PathBuf::from(format!("{}{}", home, rest));
+        }
+    }
+    path.to_path_buf()
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            store: StoreConfig {
+                file: PathBuf::from("~/.local/share/fsmon/store.toml"),
+            },
+            logging: LoggingConfig {
+                dir: PathBuf::from("~/.local/state/fsmon"),
+            },
+            socket: SocketConfig {
+                path: PathBuf::from("/tmp/fsmon-<UID>.sock"),
+            },
+        }
+    }
+}
+
+impl Config {
+    /// Return the config file path: `$XDG_CONFIG_HOME/fsmon/config.toml`
     /// Falls back to `~/.config/fsmon/config.toml`.
     pub fn path() -> PathBuf {
-        let home = Self::guess_home();
+        let home = guess_home();
         let xdg_config =
             std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{}/.config", home));
         PathBuf::from(xdg_config).join("fsmon").join("config.toml")
     }
 
-    /// Best-effort guess of user's home directory.
-    /// Used by CLI commands (running as user, HOME is correct).
-    /// For daemon (root via sudo), use SUDO_UID + getpwuid.
-    /// For tests, use HOME env.
-    fn guess_home() -> String {
-        // 1. SUDO_UID — daemon running via sudo
-        let uid_str = match std::env::var("SUDO_UID") {
-            Ok(s) => s,
-            Err(_) => return std::env::var("HOME").unwrap_or_else(|_| "/root".into()),
-        };
-        let uid = match uid_str.parse::<u32>() {
-            Ok(u) => u,
-            Err(_) => return std::env::var("HOME").unwrap_or_else(|_| "/root".into()),
-        };
-        // If we're not actually root (e.g. in tests where SUDO_UID is unset),
-        // just use HOME. If we are root, try getpwuid.
-        if unsafe { libc::geteuid() } != 0 {
-            return std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-        }
-        match resolve_home(uid) {
-            Ok(p) => p.to_string_lossy().into_owned(),
-            Err(_) => std::env::var("HOME").unwrap_or_else(|_| "/root".into()),
-        }
-    }
-
-    /// Load user paths config. Returns empty config if file doesn't exist.
+    /// Load config from file. Returns default Config if file doesn't exist.
     pub fn load() -> Result<Self> {
         let p = Self::path();
-        if p.exists() {
-            let content = fs::read_to_string(&p)
-                .with_context(|| format!("Failed to read user config {}", p.display()))?;
-            let cfg: UserConfig = toml::from_str(&content)
-                .with_context(|| format!("Invalid TOML in {}", p.display()))?;
-            Ok(cfg)
-        } else {
-            Ok(UserConfig {
-                next_id: 1,
-                paths: vec![],
-            })
+        if !p.exists() {
+            return Ok(Config::default());
         }
+        let content = fs::read_to_string(&p)
+            .with_context(|| format!("Failed to read config {}", p.display()))?;
+        let cfg: Config = toml::from_str(&content)
+            .with_context(|| format!("Invalid TOML in {}", p.display()))?;
+        Ok(cfg)
     }
 
-    fn save_to(path: &Path, cfg: &UserConfig) -> Result<()> {
-        let parent = path.parent().context("Config path has no parent")?;
-        fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create directory {}", parent.display()))?;
-        let content = toml::to_string_pretty(cfg).context("Failed to serialize user config")?;
-        fs::write(path, content)
-            .with_context(|| format!("Failed to write user config to {}", path.display()))?;
+    /// Expand `~` in all paths using the original user's home directory.
+    /// Replace `<UID>` in socket path with the actual numeric UID.
+    pub fn resolve_paths(&mut self) -> Result<()> {
+        let home = guess_home();
+        let uid = resolve_uid();
+
+        self.store.file = expand_tilde(&self.store.file, &home);
+        self.logging.dir = expand_tilde(&self.logging.dir, &home);
+
+        let socket_str = self.socket.path.to_string_lossy().to_string();
+        self.socket.path = PathBuf::from(socket_str.replace("<UID>", &uid.to_string()));
+        // Also expand tilde in socket path if present
+        self.socket.path = expand_tilde(&self.socket.path, &home);
+
         Ok(())
     }
 
-    /// Save config to the user's config path.
-    pub fn save(cfg: &UserConfig) -> Result<()> {
-        Self::save_to(&Self::path(), cfg)
-    }
-
-    /// Add a path entry to the user config, auto-assigning a unique ID.
-    /// Returns the assigned ID.
-    pub fn add_path(entry: PathEntry) -> Result<u64> {
-        let mut cfg = Self::load()?;
-        let id = cfg.next_id;
-        cfg.next_id += 1;
-        let mut entry = entry;
-        entry.id = id;
-        cfg.paths.push(entry);
-        Self::save(&cfg)?;
-        Ok(id)
-    }
-
-    /// Remove a path entry by its numeric ID.
-    pub fn remove_path(id: u64) -> Result<()> {
-        let mut cfg = Self::load()?;
-        cfg.paths.retain(|p| p.id != id);
-        Self::save(&cfg)
-    }
-
-    /// Default log file path: `~/.local/state/fsmon/history.log`
-    pub fn default_log_file() -> PathBuf {
-        let home = Self::guess_home();
-        let xdg_state =
-            std::env::var("XDG_STATE_HOME").unwrap_or_else(|_| format!("{}/.local/state", home));
-        PathBuf::from(xdg_state).join("fsmon").join("history.log")
-    }
-
-    /// Default socket path: `/tmp/fsmon-<UID>.sock` with 0666 permissions
-    pub fn default_socket_path() -> PathBuf {
-        let uid = resolve_uid();
-        PathBuf::from("/tmp").join(format!("fsmon-{}.sock", uid))
-    }
-
-    /// Generate a default configuration file with all fields commented as examples,
-    /// writing to the user config path. Creates parent directories if needed.
+    /// Generate a default configuration file at Config::path().
+    /// Creates parent directories if needed.
     pub fn generate_default() -> Result<()> {
         let path = Self::path();
         let parent = path.parent().context("Config path has no parent")?;
         fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create directory {}", parent.display()))?;
-        let content = r#"# fsmon configuration file
-# IDs are auto-assigned when adding entries with `fsmon add`.
+        let content = r#"[store]
+file = "~/.local/share/fsmon/store.toml"
 
-next_id = 1
-paths = []
+[logging]
+dir = "~/.local/state/fsmon"
 
-# Example entry (uncomment to use):
-#[[paths]]
-#id = 1
-#path = "/path/to/watch"
-#recursive = true
-#types = ["MODIFY", "CREATE", "DELETE"]
-#min_size = "1KB"
-#exclude = "*.tmp"
-#all_events = false
+[socket]
+path = "/tmp/fsmon-<UID>.sock"
 "#;
-        let disp = path.display().to_string();
-        fs::write(&path, content).with_context(|| format!("Failed to write config to {}", disp))?;
+        fs::write(&path, content)
+            .with_context(|| format!("Failed to write config to {}", path.display()))?;
         Ok(())
     }
 }
@@ -227,28 +219,25 @@ mod tests {
     /// Mutex to prevent concurrent env var manipulation across tests
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// Override HOME + SUDO_UID for test isolation.
-    /// Sets SUDO_UID to simulate daemon running under sudo,
-    /// but since the process is not root, guess_home() falls back to HOME.
-    fn with_isolated_env(f: impl FnOnce()) {
+    /// Override HOME for test isolation.
+    fn with_isolated_home(f: impl FnOnce(&Path)) {
         let _lock = ENV_LOCK.lock().unwrap();
         let dir = unique_home_dir();
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join(".config/fsmon")).unwrap();
-        fs::create_dir_all(dir.join(".local/state")).unwrap();
 
         let old_home = std::env::var("HOME").ok();
         let old_xdg_config = std::env::var("XDG_CONFIG_HOME").ok();
-        let old_xdg_state = std::env::var("XDG_STATE_HOME").ok();
         let old_sudo_uid = std::env::var("SUDO_UID").ok();
 
         unsafe {
             std::env::set_var("HOME", dir.to_str().unwrap());
             std::env::remove_var("XDG_CONFIG_HOME");
-            std::env::remove_var("XDG_STATE_HOME");
             std::env::remove_var("SUDO_UID");
         }
-        f();
+
+        f(&dir);
+
         unsafe {
             if let Some(v) = old_home {
                 std::env::set_var("HOME", v);
@@ -260,11 +249,6 @@ mod tests {
             } else {
                 std::env::remove_var("XDG_CONFIG_HOME");
             }
-            if let Some(v) = old_xdg_state {
-                std::env::set_var("XDG_STATE_HOME", v);
-            } else {
-                std::env::remove_var("XDG_STATE_HOME");
-            }
             if let Some(v) = old_sudo_uid {
                 std::env::set_var("SUDO_UID", v);
             } else {
@@ -275,117 +259,141 @@ mod tests {
     }
 
     #[test]
-    fn test_load_empty_when_no_file() {
-        with_isolated_env(|| {
-            let cfg = UserConfig::load().unwrap();
-            assert!(cfg.paths.is_empty());
-        });
-    }
-
-    #[test]
-    fn test_add_and_remove_path() {
-        with_isolated_env(|| {
-            let initial = UserConfig::load().unwrap();
-            assert!(
-                initial.paths.is_empty(),
-                "expected empty, got {}",
-                initial.paths.len()
+    fn test_load_returns_default_when_no_file() {
+        with_isolated_home(|_| {
+            let cfg = Config::load().unwrap();
+            assert_eq!(
+                cfg.store.file.to_string_lossy(),
+                "~/.local/share/fsmon/store.toml"
             );
-
-            // add_path auto-assigns id
-            let id1 = UserConfig::add_path(PathEntry {
-                id: 0,
-                path: PathBuf::from("/tmp"),
-                recursive: Some(true),
-                types: None,
-                min_size: None,
-                exclude: None,
-                all_events: None,
-            })
-            .unwrap();
-            assert_eq!(id1, 1);
-
-            let cfg = UserConfig::load().unwrap();
-            assert_eq!(cfg.paths.len(), 1);
-            assert_eq!(cfg.paths[0].path, PathBuf::from("/tmp"));
-            assert_eq!(cfg.paths[0].id, 1);
-            assert_eq!(cfg.next_id, 2);
-
-            // Add another path, gets next id
-            let id2 = UserConfig::add_path(PathEntry {
-                id: 0,
-                path: PathBuf::from("/var"),
-                recursive: Some(false),
-                types: Some(vec!["CREATE".into()]),
-                min_size: None,
-                exclude: None,
-                all_events: None,
-            })
-            .unwrap();
-            assert_eq!(id2, 2);
-
-            let cfg = UserConfig::load().unwrap();
-            assert_eq!(cfg.paths.len(), 2);
-            assert_eq!(cfg.next_id, 3);
-
-            // Remove by id
-            UserConfig::remove_path(2).unwrap();
-            let cfg = UserConfig::load().unwrap();
-            assert_eq!(cfg.paths.len(), 1);
-            assert_eq!(cfg.paths[0].id, 1);
-        });
-    }
-
-    #[test]
-    fn test_default_paths() {
-        with_isolated_env(|| {
-            let log = UserConfig::default_log_file();
-            assert!(
-                log.to_string_lossy()
-                    .contains(".local/state/fsmon/history.log"),
-                "log path: {}",
-                log.display()
+            assert_eq!(
+                cfg.logging.dir.to_string_lossy(),
+                "~/.local/state/fsmon"
             );
-
-            let sock = UserConfig::default_socket_path();
-            assert!(
-                sock.to_string_lossy().contains("/tmp/fsmon-"),
-                "socket path: {}",
-                sock.display()
-            );
-            // resolve_uid() returns our UID (not root)
-            assert!(
-                sock.to_string_lossy()
-                    .contains(&format!("fsmon-{}", unsafe { libc::geteuid() })),
-                "socket path should contain UID: {}",
-                sock.display()
+            assert_eq!(
+                cfg.socket.path.to_string_lossy(),
+                "/tmp/fsmon-<UID>.sock"
             );
         });
     }
 
     #[test]
-    fn test_toml_round_trip() {
-        with_isolated_env(|| {
-            let cfg = UserConfig {
-                next_id: 42,
-                paths: vec![PathEntry {
-                    id: 1,
-                    path: PathBuf::from("/srv"),
-                    recursive: Some(true),
-                    types: Some(vec!["MODIFY".to_string()]),
-                    min_size: None,
-                    exclude: Some("*.log".to_string()),
-                    all_events: Some(false),
-                }],
-            };
-            UserConfig::save(&cfg).unwrap();
-            let loaded = UserConfig::load().unwrap();
-            assert_eq!(loaded.paths.len(), 1);
-            assert_eq!(loaded.paths[0].path, PathBuf::from("/srv"));
-            assert_eq!(loaded.paths[0].recursive, Some(true));
-            assert_eq!(loaded.paths[0].types.as_ref().unwrap(), &["MODIFY"]);
-            assert_eq!(loaded.paths[0].exclude.as_ref().unwrap(), "*.log");
+    fn test_load_reads_existing_file() {
+        with_isolated_home(|_| {
+            // Write a config file
+            let content = r#"[store]
+file = "/custom/store.toml"
+
+[logging]
+dir = "/custom/logs"
+
+[socket]
+path = "/tmp/custom.sock"
+"#;
+            fs::write(Config::path(), content).unwrap();
+
+            let cfg = Config::load().unwrap();
+            assert_eq!(cfg.store.file, PathBuf::from("/custom/store.toml"));
+            assert_eq!(cfg.logging.dir, PathBuf::from("/custom/logs"));
+            assert_eq!(cfg.socket.path, PathBuf::from("/tmp/custom.sock"));
         });
+    }
+
+    #[test]
+    fn test_resolve_paths_expands_tilde_and_uid() {
+        with_isolated_home(|home| {
+            let mut cfg = Config::default();
+            cfg.resolve_paths().unwrap();
+
+            let home_str = home.to_string_lossy();
+            assert!(
+                cfg.store.file.to_string_lossy().starts_with(&*home_str),
+                "store.file should start with home dir: {} vs {}",
+                cfg.store.file.display(),
+                home_str
+            );
+            assert!(
+                cfg.logging.dir.to_string_lossy().starts_with(&*home_str),
+                "logging.dir should start with home dir"
+            );
+            assert!(
+                cfg.socket.path.to_string_lossy().contains("/tmp/fsmon-"),
+                "socket should contain /tmp/fsmon-"
+            );
+            assert!(
+                !cfg.socket.path.to_string_lossy().contains("<UID>"),
+                "socket should not contain <UID> placeholder"
+            );
+        });
+    }
+
+    #[test]
+    fn test_generate_default_creates_valid_config() {
+        with_isolated_home(|_| {
+            let path = Config::path();
+            assert!(!path.exists(), "config should not exist before generate");
+
+            Config::generate_default().unwrap();
+            assert!(path.exists(), "config should exist after generate");
+
+            // Must be parseable
+            let cfg = Config::load().unwrap();
+            assert_eq!(
+                cfg.store.file.to_string_lossy(),
+                "~/.local/share/fsmon/store.toml"
+            );
+            assert_eq!(
+                cfg.logging.dir.to_string_lossy(),
+                "~/.local/state/fsmon"
+            );
+            assert_eq!(
+                cfg.socket.path.to_string_lossy(),
+                "/tmp/fsmon-<UID>.sock"
+            );
+        });
+    }
+
+    #[test]
+    fn test_generate_default_overwrites_without_error() {
+        with_isolated_home(|_| {
+            Config::generate_default().unwrap();
+            // Generate again — should overwrite without error
+            Config::generate_default().unwrap();
+            let cfg = Config::load().unwrap();
+            assert_eq!(
+                cfg.store.file.to_string_lossy(),
+                "~/.local/share/fsmon/store.toml"
+            );
+        });
+    }
+
+    #[test]
+    fn test_config_path_uses_xdg_config_home() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let old = std::env::var("XDG_CONFIG_HOME").ok();
+        let old_home = std::env::var("HOME").ok();
+
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", "/custom/xdg/config");
+            std::env::set_var("HOME", "/home/test");
+        }
+
+        let path = Config::path();
+        assert!(path.to_string_lossy().contains("/custom/xdg/config/fsmon/config.toml"));
+
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+        let path = Config::path();
+        assert!(path.to_string_lossy().contains("/home/test/.config/fsmon/config.toml"));
+
+        // Restore
+        if let Some(v) = old {
+            unsafe { std::env::set_var("XDG_CONFIG_HOME", v); }
+        }
+        if let Some(v) = old_home {
+            unsafe { std::env::set_var("HOME", v); }
+        }
     }
 
     #[test]
@@ -404,5 +412,21 @@ mod tests {
                 std::env::set_var("SUDO_UID", v);
             }
         }
+    }
+
+    #[test]
+    fn test_expand_tilde_basic() {
+        assert_eq!(
+            expand_tilde(Path::new("~/foo/bar"), "/home/user"),
+            PathBuf::from("/home/user/foo/bar")
+        );
+        assert_eq!(
+            expand_tilde(Path::new("~"), "/home/user"),
+            PathBuf::from("/home/user")
+        );
+        assert_eq!(
+            expand_tilde(Path::new("/absolute/path"), "/home/user"),
+            PathBuf::from("/absolute/path")
+        );
     }
 }
