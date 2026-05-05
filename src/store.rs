@@ -67,8 +67,12 @@ impl Store {
     }
 
     /// Add an entry, auto-assigning a unique numeric ID.
+    /// If an entry with the same path already exists, it is replaced
+    /// (all old entries with that path are removed first).
     /// Returns the assigned ID.
     pub fn add_entry(&mut self, mut entry: PathEntry) -> u64 {
+        // Remove all existing entries with the same path so the new one replaces them
+        self.entries.retain(|e| e.path != entry.path);
         let id = self.next_id;
         self.next_id += 1;
         entry.id = id;
@@ -142,6 +146,40 @@ mod tests {
         assert_eq!(id2, 2);
         assert_eq!(store.next_id, 3);
         assert_eq!(store.entries.len(), 2);
+    }
+
+    #[test]
+    fn test_add_entry_replaces_same_path() {
+        let (_dir, path) = temp_path();
+        let mut store = Store::load(&path).unwrap();
+
+        let id1 = store.add_entry(PathEntry {
+            id: 0,
+            path: PathBuf::from("/home"),
+            recursive: Some(true),
+            types: None,
+            min_size: None,
+            exclude: None,
+            all_events: None,
+        });
+        assert_eq!(id1, 1);
+        assert_eq!(store.entries.len(), 1);
+
+        // Adding same path again replaces old entry, gets fresh ID
+        let id2 = store.add_entry(PathEntry {
+            id: 0,
+            path: PathBuf::from("/home"),
+            recursive: Some(false),
+            types: Some(vec!["MODIFY".into()]),
+            min_size: None,
+            exclude: None,
+            all_events: None,
+        });
+        assert_eq!(id2, 2);
+        assert_eq!(store.entries.len(), 1); // replaced, not duplicated
+        assert_eq!(store.entries[0].id, 2);
+        assert_eq!(store.entries[0].path, PathBuf::from("/home"));
+        assert_eq!(store.entries[0].recursive, Some(false)); // new params
     }
 
     #[test]
