@@ -22,7 +22,6 @@
 - **Complete Deletion Capture**: Captures every file deleted during `rm -rf` via persistent directory handle cache
 - **High Performance**: Rust + Tokio, <5MB memory footprint, zero-copy FID event parsing, binary-search log querying
 - **Flexible Filtering**: Filter by time, size, process, user, event type, and exclude patterns (wildcards)
-- **Multiple Formats**: Human-readable, JSON, and CSV terminal output (log file always uses JSON for queryability)
 - **TOML Configuration**: Persistent config at `/etc/fsmon/fsmon.toml`
 - **Log Management**: Time-based and size-based log rotation with dry-run preview
 - **Dynamic Path Management**: Add/remove monitored paths at runtime via Unix socket (no daemon restart needed)
