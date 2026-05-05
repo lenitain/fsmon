@@ -156,6 +156,14 @@ cargo test         ✅ 67 passed, 7 ignored (fanotify 测试需要 sudo)
   - `add_path()`: mount_fd + shared_dir_cache 写入移到 `spawn_fd_reader` 之前
   - `add_path()`: 目录句柄缓存写入 `shared_dir_cache` 而非 `self.dir_cache`
 
+### 2026-05-05 — add/remove 打印不必要的 daemon 不可达警告
+
+- **问题**: `fsmon add` / `fsmon remove` 在 store 操作成功后尝试 socket 通知 daemon，
+  若 daemon 未运行则打印 "Daemon not reachable" + 重启提示，
+  让用户误以为操作失败（实际 store 已正确修改）。
+- **修复**: 静默忽略 `Err(_)`（daemon 未运行），store 已保存，重启后自动生效。
+  仅保留 `Ok(resp)` 非 ok 分支的错误输出（daemon 运行但操作失败）。
+
 ## 下一阶段可能的改进
 
 - 找回 query.rs 中丢失的 17 个二进制搜索测试 (代码逻辑未改, 测试函数需恢复)
