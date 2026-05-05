@@ -356,22 +356,35 @@ impl Monitor {
         }
 
         if fan_groups.is_empty() {
-            bail!("No paths could be monitored. Check warnings above.");
-        }
+            eprintln!("No paths configured. Waiting for socket commands (use 'fsmon add <path>').");
+        } else {
+            // Store fds for live-add reuse via socket commands
+            for group in &fan_groups {
+                self.fan_fds.push(group.fd);
+            }
 
-        // Store fds for live-add reuse via socket commands
-        for group in &fan_groups {
-            self.fan_fds.push(group.fd);
-        }
+            // Open directory fds for open_by_handle_at to resolve file handles.
+            // These are shared across all fan_fds (resolve_file_handle tries each).
+            for canonical in &self.canonical_paths {
+                if let Ok(c_path) = CString::new(canonical.to_string_lossy().as_bytes()) {
+                    let mfd =
+                        unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
+                    if mfd >= 0 {
+                        self.mount_fds.push(mfd);
+                    }
+                }
+            }
 
-        // Open directory fds for open_by_handle_at to resolve file handles.
-        // These are shared across all fan_fds (resolve_file_handle tries each).
-        for canonical in &self.canonical_paths {
-            if let Ok(c_path) = CString::new(canonical.to_string_lossy().as_bytes()) {
-                let mfd =
-                    unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
-                if mfd >= 0 {
-                    self.mount_fds.push(mfd);
+            // Pre-cache directory handles (shared across fds)
+            for (i, canonical) in self.canonical_paths.iter().enumerate() {
+                if canonical.is_dir() {
+                    let opts = self.paths.get(i).and_then(|p| self.path_options.get(p));
+                    let recursive = opts.is_some_and(|o| o.recursive);
+                    if recursive {
+                        dir_cache::cache_recursive(&mut self.dir_cache, canonical);
+                    } else {
+                        dir_cache::cache_dir_handle(&mut self.dir_cache, canonical);
+                    }
                 }
             }
         }
@@ -383,27 +396,16 @@ impl Monitor {
         }
 
         println!("Starting file trace monitor...");
-        println!(
-            "Monitoring paths: {}",
-            self.canonical_paths
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
-        println!("  FDs: {} file-descriptor(s)", fan_groups.len());
-
-        // Pre-cache directory handles (shared across fds)
-        for (i, canonical) in self.canonical_paths.iter().enumerate() {
-            if canonical.is_dir() {
-                let opts = self.paths.get(i).and_then(|p| self.path_options.get(p));
-                let recursive = opts.is_some_and(|o| o.recursive);
-                if recursive {
-                    dir_cache::cache_recursive(&mut self.dir_cache, canonical);
-                } else {
-                    dir_cache::cache_dir_handle(&mut self.dir_cache, canonical);
-                }
-            }
+        if !self.canonical_paths.is_empty() {
+            println!(
+                "Monitoring paths: {}",
+                self.canonical_paths
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            println!("  FDs: {} file-descriptor(s)", fan_groups.len());
         }
 
         // Spawn one reader task per fan_fd. Events are sent through an
