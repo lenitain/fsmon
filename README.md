@@ -67,25 +67,27 @@ cargo install fsmon
 ```bash
 # Method 1: Copy to /usr/local/bin (recommended)
 sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
+sudo cp ~/.cargo/bin/fsmon-cli /usr/local/bin/
 
 # Method 2: Use full path directly
-sudo ~/.cargo/bin/fsmon monitor ... 
+sudo ~/.cargo/bin/fsmon install ...
+sudo ~/.cargo/bin/fsmon-cli monitor ... 
 ```
 
 ### CLI Mode — Interactive Monitoring
 
 ```bash
 # Monitor a directory (output to stdout)
-sudo fsmon monitor /etc --types MODIFY
+sudo fsmon-cli monitor /etc --types MODIFY
 
 # Monitor with recursive watching
-sudo fsmon monitor ~/myproject --recursive
+sudo fsmon-cli monitor ~/myproject --recursive
 
 # Write to a log file
-sudo fsmon monitor /tmp --recursive -o /tmp/events.log
+sudo fsmon-cli monitor /tmp --recursive -o /tmp/events.log
 
 # Exclude patterns
-sudo fsmon monitor /var/log --exclude "*.log"
+sudo fsmon-cli monitor /var/log --exclude "*.log"
 ```
 
 Config read from `~/.config/fsmon/fsmon.toml`. CLI flags override config values.
@@ -125,10 +127,10 @@ Config read from `/etc/fsmon/fsmon-{name}.toml`. **`fsmon.toml` is ignored in th
 
 ```bash
 # Query historical events
-fsmon query --since 1h --cmd nginx
+fsmon-cli query --since 1h --cmd nginx
 
 # Clean old logs (dry-run preview)
-fsmon clean --keep-days 7 --dry-run
+fsmon-cli clean --keep-days 7 --dry-run
 ```
 
 ## Examples
@@ -137,20 +139,20 @@ fsmon clean --keep-days 7 --dry-run
 
 ```bash
 # Monitor /etc for modifications
-sudo fsmon monitor /etc --types MODIFY --output /tmp/etc-monitor.log
+sudo fsmon-cli monitor /etc --types MODIFY --output /tmp/etc-monitor.log
 
 # In another terminal, make a change
 echo "192.168.1.100 newhost" | sudo tee -a /etc/hosts
 
 # Query the results
-fsmon query --log-file /tmp/etc-monitor.log --since 1h --types MODIFY
+fsmon-cli query --log-file /tmp/etc-monitor.log --since 1h --types MODIFY
 ```
 
 ### Track Large File Creation
 
 ```bash
 # Watch for files larger than 50MB
-sudo fsmon monitor /tmp --types CREATE --min-size 50MB --format json
+sudo fsmon-cli monitor /tmp --types CREATE --min-size 50MB --format json
 
 # Trigger
 dd if=/dev/zero of=/tmp/large_test.bin bs=1M count=100
@@ -160,7 +162,7 @@ dd if=/dev/zero of=/tmp/large_test.bin bs=1M count=100
 
 ```bash
 # Capture complete recursive deletion
-sudo fsmon monitor ~/.projects --types DELETE --recursive --output /tmp/deletes.log
+sudo fsmon-cli monitor ~/.projects --types DELETE --recursive --output /tmp/deletes.log
 
 # Trigger
 rm -rf ~/.projects/fsmon-test/
@@ -174,31 +176,34 @@ rm -rf ~/.projects/fsmon-test/
 
 ```bash
 # Query nginx operations in last hour, sorted by file size
-fsmon query --since 1h --cmd nginx* --sort size
+fsmon-cli query --since 1h --cmd nginx* --sort size
 
 # Monitor only CREATE and DELETE events, exclude temp files
-sudo fsmon monitor /var/www --types CREATE,DELETE --exclude "*.tmp"
+sudo fsmon-cli monitor /var/www --types CREATE,DELETE --exclude "*.tmp"
 ```
 
 ## Command Reference
 
+**fsmon-cli** (CLI operations):
 ```bash
-fsmon monitor --help    # Real-time monitoring with fanotify
-fsmon query --help      # Query history logs with filters and sorting
-fsmon clean --help      # Cleanup old logs by time or size
-fsmon install           # Install systemd template unit (fsmon@.service)
-fsmon uninstall         # Uninstall systemd template
-fsmon enable <name>     # Create and start a monitoring instance
-fsmon disable <name>    # Stop and remove a monitoring instance
-fsmon generate                      # Generate CLI config (~/.config/fsmon/fsmon.toml)
+fsmon-cli monitor --help     # Real-time monitoring with fanotify
+fsmon-cli query --help       # Query history logs with filters and sorting
+fsmon-cli clean --help       # Cleanup old logs by time or size
+fsmon-cli generate           # Generate CLI config (~/.config/fsmon/fsmon.toml)
+```
+
+**fsmon** (daemon management):
+```bash
+fsmon install                       # Install systemd template unit (fsmon@.service)
+fsmon uninstall                     # Uninstall systemd template
 fsmon generate --instance web       # Generate instance config template (/etc/fsmon/fsmon-web.toml)
 ```
 
 ## Two Modes: CLI vs Systemd Instance
 
-fsmon has two completely independent operating modes, each with its own config file:
+fsmon has two completely independent operating modes, each with its own config file and binary:
 
-### CLI Mode (`fsmon monitor /path ...`)
+### CLI Mode (`fsmon-cli monitor /path ...`)
 
 | Aspect | Detail |
 |--------|--------|
@@ -209,11 +214,11 @@ fsmon has two completely independent operating modes, each with its own config f
 
 ```bash
 # CLI mode: reads fsmon.toml, flags override config values
-sudo fsmon monitor /var/www --types MODIFY
-sudo fsmon monitor /tmp --recursive -o /tmp/events.log
+sudo fsmon-cli monitor /var/www --types MODIFY
+sudo fsmon-cli monitor /tmp --recursive -o /tmp/events.log
 ```
 
-### Instance Mode (`fsmon monitor --instance <name>`)
+### Instance Mode (`fsmon-cli monitor --instance <name>`)
 
 | Aspect | Detail |
 |--------|--------|
@@ -244,9 +249,9 @@ sudo journalctl -u fsmon@web
 
 ### CLI Config (`fsmon.toml`)
 
-Reads from `~/.config/fsmon/fsmon.toml` (generated by `fsmon generate`).
+Reads from `~/.config/fsmon/fsmon.toml` (generated by `fsmon-cli generate`).
 
-Generate a template: `fsmon generate`
+Generate a template: `fsmon-cli generate`
 
 | Section | Field | CLI flag | Type | Description |
 |---------|-------|----------|------|-------------|
@@ -311,7 +316,9 @@ Instance configs have no search priority — loaded by exact name from `/etc/fsm
 
 | Module | Description |
 |--------|-------------|
-| `main.rs` | CLI entry point with clap derive, `FileEvent` struct, log cleaning engine |
+| `lib.rs` | Library crate root — shared types (`FileEvent`, `EventType`), log cleaning engine |
+| `bin/fsmon.rs` | Daemon binary — `install`, `uninstall`, `generate --instance` |
+| `bin/fsmon-cli.rs` | CLI binary — `monitor`, `query`, `clean`, `generate` |
 | `monitor.rs` | Core fanotify monitoring loop, scope filtering, file size tracking (LRU) |
 | `fid_parser.rs` | Low-level FID mode event parsing, two-pass path recovery |
 | `dir_cache.rs` | Directory handle caching via `name_to_handle_at` for deleted file path resolution |
@@ -337,7 +344,7 @@ Linux Kernel (fanotify)
 - **fanotify (FID mode + FAN_REPORT_NAME)**: Kernel pushes file events with directory file handles and filenames. No polling — events delivered immediately via non-blocking read.
 - **Proc Connector**: Background thread subscribes to netlink `PROC_EVENT_EXEC` notifications, caching every process's `(pid, cmd, user)` at the instant it execs. This ensures short-lived processes (`touch`, `rm`, `mv`) are attributable even after they exit.
 - **FID Parser + Dir Cache**: Two-pass event processing: (1) resolve file handles via `open_by_handle_at`, (2) use persistent directory handle cache to recover paths for events where the parent directory was already deleted. Handles multi-level nested `rm -rf` scenarios.
-- **Binary Search Query**: `fsmon query` uses binary search on approximately time-sorted log files, narrowing the scan range to O(log N) seek operations. Combined with `expand_offset_backward` to catch minor out-of-order entries.
+- **Binary Search Query**: `fsmon-cli query` uses binary search on approximately time-sorted log files, narrowing the scan range to O(log N) seek operations. Combined with `expand_offset_backward` to catch minor out-of-order entries.
 - **Rust + Tokio**: Single-threaded async loop (`tokio::select` between fanotify fd and Ctrl+C signal). Background thread for proc connector. No complex concurrency — high efficiency instead.
 
 ### Event Mask Strategy

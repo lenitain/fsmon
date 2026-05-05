@@ -62,6 +62,9 @@ pub fn install(
         .canonicalize()
         .context("Failed to resolve executable path")?;
 
+    // fsmon@.service needs to run fsmon-cli (the monitoring binary)
+    let cli_path = exe_path.with_file_name("fsmon-cli");
+
     let protect_system_val = protect_system.unwrap_or("strict");
     let protect_home_val = protect_home.unwrap_or("read-only");
     let read_write_paths_val = read_write_paths
@@ -70,7 +73,7 @@ pub fn install(
     let private_tmp_val = private_tmp.unwrap_or("yes");
 
     let service_content = SERVICE_TEMPLATE
-        .replace("EXEC_START_PLACEHOLDER", &exe_path.display().to_string())
+        .replace("EXEC_START_PLACEHOLDER", &cli_path.display().to_string())
         .replace("{PROTECT_SYSTEM}", protect_system_val)
         .replace("{PROTECT_HOME}", protect_home_val)
         .replace("{READ_WRITE_PATHS}", &read_write_paths_val)
@@ -85,7 +88,7 @@ pub fn install(
         .context("Failed to reload systemd daemon")?;
 
     println!("Service template installed to {}", service_file.display());
-    println!("Binary path: {}", exe_path.display());
+    println!("fsmon-cli path: {}", cli_path.display());
     println!("Usage: systemctl enable fsmon@INSTANCE_NAME --now");
     println!("       systemctl start fsmon@INSTANCE_NAME");
     Ok(())

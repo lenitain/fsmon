@@ -2,12 +2,12 @@
 
 ## Project Overview
 
-`fsmon` is a Rust CLI tool for real-time Linux filesystem change monitoring with process attribution, built on fanotify (FID mode). Edition 2024. Single binary, requires `sudo` for monitoring operations.
+`fsmon` is a Rust tool for real-time Linux filesystem change monitoring with process attribution, built on fanotify (FID mode). Edition 2024. Two binaries: `fsmon` (daemon management) and `fsmon-cli` (CLI operations). Requires `sudo` for monitoring operations.
 
 ## Build / Lint / Test Commands
 
 ```bash
-# Build
+# Build all binaries
 cargo build --verbose
 cargo build --release          # optimized (LTO + strip)
 
@@ -16,22 +16,24 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt -- --check           # check formatting (no rustfmt.toml, use defaults)
 
 # Test
-cargo test --verbose           # run all tests
+cargo test --verbose           # run all tests (library + both binaries)
 cargo test test_parse_size     # run a single test by name
 cargo test -- --nocapture      # show stdout from tests
 
 # Run
-sudo ./target/debug/fsmon monitor /tmp
-cargo run -- monitor /tmp      # alternative (still needs sudo)
+sudo ./target/debug/fsmon-cli monitor /tmp
+sudo ./target/debug/fsmon install
 ```
 
 ## Code Architecture
 
 ```
 src/
-  main.rs       — CLI entry point, clap derive args, FileEvent struct, log cleaning
+  lib.rs        — Library crate root — shared types (FileEvent, EventType), log cleaning engine
+  bin/
+    fsmon.rs    — Daemon binary: install, uninstall, generate --instance
+    fsmon-cli.rs — CLI binary: monitor, query, clean, generate
   monitor.rs    — Core fanotify monitoring loop, FID event parsing, directory handle caching
-  daemon.rs     — Daemon lifecycle (PID file, status, stop)
   query.rs      — Log file querying with filters and sorting
   proc_cache.rs — Netlink proc connector listener for short-lived process attribution
   utils.rs      — Size/time parsing, process info helpers, uid lookup

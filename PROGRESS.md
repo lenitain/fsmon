@@ -4,6 +4,8 @@
 
 基础功能已完成：fanotify 实时监控、进程缓存、日志查询、systemd 集成、日志清理。
 
+**二进制拆分已完成**：`fsmon`（后台管理：install、uninstall、generate --instance）和 `fsmon-cli`（命令行操作：monitor、query、clean、generate）拆分为两个独立二进制，共享 `src/lib.rs` 中的库代码。
+
 **D1/D2 已完成**：配置错误统一 exit(78) + `RestartPreventExitStatus` 保护 + 醒目提示。
 
 ---
@@ -16,7 +18,7 @@
 1. **区分退出码语义**：在生成的 systemd template 中添加 `RestartPreventExitStatus=78`，阻止 systemd 重启配置类错误
 2. **醒目提示**：启动失败时用醒目的格式（=== BORDER ===）打印修复指引，告诉用户运行 `fsmon generate --instance <name>`
 
-**涉及文件**：`src/systemd.rs`、`src/main.rs:398-410`
+**涉及文件**：`src/systemd.rs`、`src/bin/fsmon-cli.rs`
 
 ### D2 [高] 实例配置路径为空 / TOML 格式错误 ⇒ 无限重启 ✅
 
@@ -24,7 +26,7 @@
 - 和 D1 统一处理：`RestartPreventExitStatus=78` 覆盖所有配置类错误
 - 错误消息中明确区分"格式错误"和"路径未配置"两种场景
 
-**涉及文件**：`src/config.rs:219-236`、`src/main.rs:398-410`
+**涉及文件**：`src/config.rs:219-236`、`src/bin/fsmon-cli.rs`
 
 ### D3 [高] 监控路径不存在 ⇒ 启动失败 ⇒ 无限重启
 
@@ -45,7 +47,7 @@
 - 实例模式启动时，若 `output` 为 None，向 stderr 打印 WARNING 提示用户事件不会被持久化
 - 可选：实例模式下默认使用 `/var/log/fsmon/{name}.log` 作为 output
 
-**涉及文件**：`src/main.rs:448-450`、`src/monitor.rs:258-314`
+**涉及文件**：`src/bin/fsmon-cli.rs`、`src/monitor.rs:258-314`
 
 ### D5 [中] 多实例写同一 output 文件 ⇒ 日志交错损坏
 

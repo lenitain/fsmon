@@ -6,6 +6,7 @@ pub enum HelpTopic {
     Uninstall,
     Clean,
     Generate,
+    GenerateInstance,
 }
 
 pub const fn about(topic: HelpTopic) -> &'static str {
@@ -16,7 +17,8 @@ pub const fn about(topic: HelpTopic) -> &'static str {
         HelpTopic::Install => "Install systemd service template",
         HelpTopic::Uninstall => "Uninstall systemd service template",
         HelpTopic::Clean => "Clean historical logs",
-        HelpTopic::Generate => "Generate CLI or instance configuration file",
+        HelpTopic::Generate => "Generate CLI configuration file",
+        HelpTopic::GenerateInstance => "Generate instance configuration file",
     }
 }
 
@@ -39,12 +41,12 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
   --instance NAME  Load config from /etc/fsmon/fsmon-{NAME}.toml (systemd template mode)
 
 [Examples]
-  fsmon monitor /etc --types MODIFY              # Investigate config file changes
-  fsmon monitor --instance var-log               # Run with instance config
-  fsmon monitor / --all-events                   # Enable all 14 event types
-  fsmon monitor ~/project --recursive            # Recursively monitor project directory
-  fsmon monitor /tmp --min-size 100MB            # Track large file creation
-  fsmon monitor /var/log --format json           # JSON format output (log file is always JSON)"#
+  fsmon-cli monitor /etc --types MODIFY              # Investigate config file changes
+  fsmon-cli monitor --instance var-log               # Run with instance config
+  fsmon-cli monitor / --all-events                   # Enable all 14 event types
+  fsmon-cli monitor ~/project --recursive            # Recursively monitor project directory
+  fsmon-cli monitor /tmp --min-size 100MB            # Track large file creation
+  fsmon-cli monitor /var/log --format json           # JSON format output (log file is always JSON)"#
         }
         HelpTopic::Query => {
             r#"Query historical file change events from log files, supports multiple filter conditions and sorting.
@@ -63,11 +65,11 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
   --min-size  Filter by size change (e.g., 100MB, 1GB)
 
 [Examples]
-  fsmon query                              # Query default log (~/.config/fsmon/history.log)
-  fsmon query --since 1h                   # Last 1 hour
-  fsmon query --cmd nginx                  # Only nginx operations
-  fsmon query --since 1h --cmd java --types MODIFY --min-size 100MB  # Combined filters
-  fsmon query --format json --sort size    # JSON terminal output, sorted by size"#
+  fsmon-cli query                              # Query default log (~/.config/fsmon/history.log)
+  fsmon-cli query --since 1h                   # Last 1 hour
+  fsmon-cli query --cmd nginx                  # Only nginx operations
+  fsmon-cli query --since 1h --cmd java --types MODIFY --min-size 100MB  # Combined filters
+  fsmon-cli query --format json --sort size    # JSON terminal output, sorted by size"#
         }
         HelpTopic::Install => {
             r#"Install fsmon systemd service template (fsmon@.service).
@@ -83,6 +85,7 @@ Each instance reads its own config from /etc/fsmon/fsmon-{NAME}.toml.
 
 [Workflow]
   fsmon install                                   # One-time: install template
+  fsmon generate --instance web                   # Generate instance config
   systemctl enable fsmon@web --now                # Create instance with systemd
   systemctl enable fsmon@db --now                 # Another instance
   systemctl status fsmon@web                      # Check instance status
@@ -91,7 +94,7 @@ Each instance reads its own config from /etc/fsmon/fsmon-{NAME}.toml.
 
 [Instance Config]
   Each instance reads /etc/fsmon/fsmon-{NAME}.toml.
-  Create it manually (see example below) before running systemctl enable.
+  Create it with 'fsmon generate --instance <name>' before running systemctl enable.
 
   Example /etc/fsmon/fsmon-web.toml:
     paths = ["/var/www"]
@@ -108,7 +111,7 @@ Each instance reads its own config from /etc/fsmon/fsmon-{NAME}.toml.
 [Actions]
   - Removes service template file
   - Reloads systemd daemon
-  - Does NOT stop running instances (do that first with 'fsmon disable <name>')
+  - Does NOT stop running instances (do that first with 'systemctl stop fsmon@<name>')
 
 [Examples]
   fsmon uninstall"#
@@ -122,41 +125,58 @@ Each instance reads its own config from /etc/fsmon/fsmon-{NAME}.toml.
   --dry-run     Preview mode, don't actually delete
 
 [Examples]
-  fsmon clean --keep-days 7           # Keep 7 days of logs
-  fsmon clean --max-size 100MB        # Limit logs to 100MB
-  fsmon clean --keep-days 7 --dry-run # Preview without deleting"#
+  fsmon-cli clean --keep-days 7           # Keep 7 days of logs
+  fsmon-cli clean --max-size 100MB        # Limit logs to 100MB
+  fsmon-cli clean --keep-days 7 --dry-run # Preview without deleting"#
         }
         HelpTopic::Generate => {
-            "Generate configuration files.\n\
+            "Generate CLI configuration file at ~/.config/fsmon/fsmon.toml.\n\
 \n\
-Without --instance: creates ~/.config/fsmon/fsmon.toml for CLI mode.\n\
-With --instance <name>: creates /etc/fsmon/fsmon-{name}.toml for systemd instance mode.\n\
+[Config File]\n\
+  ~/.config/fsmon/fsmon.toml — default config for CLI mode\n\
 \n\
-[CLI Config]\n\
-  Reads from ~/.config/fsmon/fsmon.toml\n\
+[Examples]\n\
+  fsmon-cli generate                  # Generate CLI config (fails if exists)\n\
+  fsmon-cli generate --force          # Overwrite existing CLI config"
+        }
+        HelpTopic::GenerateInstance => {
+            "Generate instance configuration file at /etc/fsmon/fsmon-{name}.toml.\n\
 \n\
 [Instance Config]\n\
   Reads from /etc/fsmon/fsmon-{name}.toml\n\
-  fsmon generate --instance web   # Generate /etc/fsmon/fsmon-web.toml template\n\
-  fsmon generate --instance web --force  # Overwrite existing\n\
 \n\
-[CLI Examples]\n\
-  fsmon generate                  # Generate CLI config (fails if exists)\n\
-  fsmon generate --force          # Overwrite existing CLI config"
+[Examples]\n\
+  fsmon generate --instance web   # Generate /etc/fsmon/fsmon-web.toml template\n\
+  fsmon generate --instance web --force  # Overwrite existing"
         }
     }
 }
 
-pub const fn after_help() -> &'static str {
+pub const fn daemon_after_help() -> &'static str {
     r#"Use 'fsmon <COMMAND> --help' for detailed command info
 
 Examples:
-  fsmon monitor /var/log                      # Basic monitoring
-  fsmon monitor /etc --types MODIFY          # Investigate config file changes
-  fsmon monitor --instance var-log           # Run with instance config
   fsmon install                              # Install systemd template
+  fsmon install --force                      # Reinstall with --force
+  fsmon uninstall                            # Uninstall systemd template
+  fsmon generate --instance web              # Generate instance config for 'web'
+  fsmon generate --instance web --force      # Overwrite existing instance config
+
+Instance management (via systemctl):
   systemctl enable fsmon@web --now           # Create + start an instance
   systemctl status fsmon@web                 # Check instance status
-  journalctl -u fsmon@web                    # View instance logs
-  fsmon query --since 1h --cmd nginx         # Query nginx operations in last hour"#
+  journalctl -u fsmon@web                    # View instance logs"#
+}
+
+pub const fn cli_after_help() -> &'static str {
+    r#"Use 'fsmon-cli <COMMAND> --help' for detailed command info
+
+Examples:
+  fsmon-cli monitor /var/log                 # Basic monitoring
+  fsmon-cli monitor /etc --types MODIFY     # Investigate config changes
+  fsmon-cli query --since 1h                # Last 1 hour of events
+  fsmon-cli query --cmd nginx               # Filter by process name
+  fsmon-cli clean --keep-days 7             # Keep 7 days of logs
+  fsmon-cli clean --max-size 100MB          # Limit log file size
+  fsmon-cli generate                        # Generate CLI config at ~/.config/fsmon/fsmon.toml"#
 }

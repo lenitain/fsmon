@@ -67,25 +67,27 @@ cargo install fsmon
 ```bash
 # 方法1：复制到 /usr/local/bin（推荐）
 sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
+sudo cp ~/.cargo/bin/fsmon-cli /usr/local/bin/
 
 # 方法2：直接使用完整路径
-sudo ~/.cargo/bin/fsmon monitor ...
+sudo ~/.cargo/bin/fsmon install ...
+sudo ~/.cargo/bin/fsmon-cli monitor ...
 ```
 
 ### CLI 模式 — 交互式监控
 
 ```bash
 # 监控目录（输出到 stdout）
-sudo fsmon monitor /etc --types MODIFY
+sudo fsmon-cli monitor /etc --types MODIFY
 
 # 递归监控
-sudo fsmon monitor ~/myproject --recursive
+sudo fsmon-cli monitor ~/myproject --recursive
 
 # 写入日志文件
-sudo fsmon monitor /tmp --recursive -o /tmp/events.log
+sudo fsmon-cli monitor /tmp --recursive -o /tmp/events.log
 
 # 排除模式
-sudo fsmon monitor /var/log --exclude "*.log"
+sudo fsmon-cli monitor /var/log --exclude "*.log"
 ```
 
 读取 `~/.config/fsmon/fsmon.toml`。CLI 参数覆盖配置文件。
@@ -125,10 +127,10 @@ sudo systemctl stop fsmon@web && sudo systemctl disable fsmon@web
 
 ```bash
 # 查询历史事件
-fsmon query --since 1h --cmd nginx
+fsmon-cli query --since 1h --cmd nginx
 
 # 预览清理旧日志
-fsmon clean --keep-days 7 --dry-run
+fsmon-cli clean --keep-days 7 --dry-run
 ```
 
 ## 示例
@@ -137,20 +139,20 @@ fsmon clean --keep-days 7 --dry-run
 
 ```bash
 # 监控 /etc 的修改
-sudo fsmon monitor /etc --types MODIFY --output /tmp/etc-monitor.log
+sudo fsmon-cli monitor /etc --types MODIFY --output /tmp/etc-monitor.log
 
 # 另一个终端执行修改
 echo "192.168.1.100 newhost" | sudo tee -a /etc/hosts
 
 # 查询结果
-fsmon query --log-file /tmp/etc-monitor.log --since 1h --types MODIFY
+fsmon-cli query --log-file /tmp/etc-monitor.log --since 1h --types MODIFY
 ```
 
 ### 追踪大文件创建
 
 ```bash
 # 监控大于 50MB 的文件创建
-sudo fsmon monitor /tmp --types CREATE --min-size 50MB --format json
+sudo fsmon-cli monitor /tmp --types CREATE --min-size 50MB --format json
 
 # 触发
 dd if=/dev/zero of=/tmp/large_test.bin bs=1M count=100
@@ -160,7 +162,7 @@ dd if=/dev/zero of=/tmp/large_test.bin bs=1M count=100
 
 ```bash
 # 捕获完整的递归删除
-sudo fsmon monitor ~/.projects --types DELETE --recursive --output /tmp/deletes.log
+sudo fsmon-cli monitor ~/.projects --types DELETE --recursive --output /tmp/deletes.log
 
 # 触发
 rm -rf ~/.projects/fsmon-test/
@@ -174,31 +176,34 @@ rm -rf ~/.projects/fsmon-test/
 
 ```bash
 # 查询最近 1 小时 nginx 的操作，按文件大小排序
-fsmon query --since 1h --cmd nginx* --sort size
+fsmon-cli query --since 1h --cmd nginx* --sort size
 
 # 仅监控 CREATE 和 DELETE 事件，排除临时文件
-sudo fsmon monitor /var/www --types CREATE,DELETE --exclude "*.tmp"
+sudo fsmon-cli monitor /var/www --types CREATE,DELETE --exclude "*.tmp"
 ```
 
 ## 命令参考
 
+**fsmon-cli**（命令行操作）：
 ```bash
-fsmon monitor --help    # 实时监控（fanotify）
-fsmon query --help      # 查询历史日志（支持过滤和排序）
-fsmon clean --help      # 按时间或大小清理旧日志
-fsmon install           # 安装 systemd 模板单元（fsmon@.service）
-fsmon uninstall         # 卸载 systemd 模板
-fsmon enable <name>     # 创建并启动监控实例
-fsmon disable <name>    # 停用并移除监控实例
-fsmon generate                      # 生成 CLI 配置 (~/.config/fsmon/fsmon.toml)
+fsmon-cli monitor --help     # 实时监控（fanotify）
+fsmon-cli query --help       # 查询历史日志（支持过滤和排序）
+fsmon-cli clean --help       # 按时间或大小清理旧日志
+fsmon-cli generate           # 生成 CLI 配置 (~/.config/fsmon/fsmon.toml)
+```
+
+**fsmon**（后台管理）：
+```bash
+fsmon install                       # 安装 systemd 模板单元（fsmon@.service）
+fsmon uninstall                     # 卸载 systemd 模板
 fsmon generate --instance web       # 生成实例配置模板 (/etc/fsmon/fsmon-web.toml)
 ```
 
 ## 两种模式：CLI vs Systemd 实例
 
-fsmon 有两种完全独立的运行模式，各自有自己的配置文件：
+fsmon 有两种完全独立的运行模式，各自有自己的配置文件和二进制程序：
 
-### CLI 模式（`fsmon monitor /path ...`）
+### CLI 模式（`fsmon-cli monitor /path ...`）
 
 | 项目 | 说明 |
 |------|------|
@@ -209,11 +214,11 @@ fsmon 有两种完全独立的运行模式，各自有自己的配置文件：
 
 ```bash
 # CLI 模式：读 fsmon.toml，命令行参数覆盖配置值
-sudo fsmon monitor /var/www --types MODIFY
-sudo fsmon monitor /tmp --recursive -o /tmp/events.log
+sudo fsmon-cli monitor /var/www --types MODIFY
+sudo fsmon-cli monitor /tmp --recursive -o /tmp/events.log
 ```
 
-### 实例模式（`fsmon monitor --instance <name>`）
+### 实例模式（`fsmon-cli monitor --instance <name>`）
 
 | 项目 | 说明 |
 |------|------|
@@ -244,10 +249,9 @@ sudo journalctl -u fsmon@web
 
 ### CLI 配置（`fsmon.toml`）
 
-按以下优先级查找（首个存在的文件生效）：
-读取 `~/.config/fsmon/fsmon.toml`（`fsmon generate` 生成于此）。
+读取 `~/.config/fsmon/fsmon.toml`（`fsmon-cli generate` 生成于此）。
 
-生成模板：`fsmon generate`
+生成模板：`fsmon-cli generate`
 
 | 区域 | 字段 | CLI 参数 | 类型 | 说明 |
 |------|------|---------|------|------|
@@ -312,7 +316,9 @@ paths = ["/var/www"]
 
 | 模块 | 说明 |
 |------|------|
-| `main.rs` | CLI 入口，clap 命令定义，`FileEvent` 结构体，日志清理引擎 |
+| `lib.rs` | 库根 — 共享类型（`FileEvent`、`EventType`），日志清理引擎 |
+| `bin/fsmon.rs` | 守护进程二进制 — `install`、`uninstall`、`generate --instance` |
+| `bin/fsmon-cli.rs` | 命令行二进制 — `monitor`、`query`、`clean`、`generate` |
 | `monitor.rs` | 核心 fanotify 监控循环，作用域过滤，LRU 文件大小追踪 |
 | `fid_parser.rs` | 底层 FID 模式事件解析，两阶段路径恢复 |
 | `dir_cache.rs` | 基于 `name_to_handle_at` 的目录句柄缓存，恢复已删除文件路径 |
@@ -338,7 +344,7 @@ Linux Kernel (fanotify)
 - **fanotify (FID 模式 + FAN_REPORT_NAME)**：内核推送文件事件时携带目录文件句柄和文件名。无需轮询，事件通过非阻塞 read 即时送达。
 - **Proc Connector**：后台线程订阅 netlink `PROC_EVENT_EXEC` 通知，在每个进程 exec 时缓存 `(pid, cmd, user)`。确保短命进程（`touch`、`rm`、`mv`）即使退出后也能被归因。
 - **FID 解析器 + 目录缓存**：两阶段事件处理：(1) 通过 `open_by_handle_at` 解析文件句柄，(2) 使用持久化目录句柄缓存恢复父目录已被删除的事件路径。处理多层嵌套的 `rm -rf` 场景。
-- **二分查找查询**：`fsmon query` 在大致按时间排序的日志文件上使用二分查找，将扫描范围缩小到 O(log N) 次 seek。配合 `expand_offset_backward` 处理边界附近的轻微乱序。
+- **二分查找查询**：`fsmon-cli query` 在大致按时间排序的日志文件上使用二分查找，将扫描范围缩小到 O(log N) 次 seek。配合 `expand_offset_backward` 处理边界附近的轻微乱序。
 - **Rust + Tokio**：单线程异步循环（`tokio::select` 在 fanotify fd 和 Ctrl+C 信号之间）。proc connector 使用独立后台线程。无需复杂并发 — 高效优先。
 
 ### 事件挂载策略
