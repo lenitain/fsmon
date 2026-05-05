@@ -376,7 +376,7 @@ impl Monitor {
                         for event_type in event_types {
                             let event = self.build_file_event(raw, event_type);
 
-                            if use_fs_mark && !self.is_path_in_scope(&event.path, &self.canonical_paths) {
+                            if !self.is_path_in_scope(&event.path, &self.canonical_paths) {
                                 continue;
                             }
 
@@ -499,6 +499,21 @@ impl Monitor {
                         return Some(opts);
                     }
                 } else if path == watched.as_path() || path.parent() == Some(watched.as_path()) {
+                    return Some(opts);
+                }
+            }
+        }
+        // Fallback: match against canonical paths (handles symlinks/bind-mounts)
+        for (i, canonical) in self.canonical_paths.iter().enumerate() {
+            if let Some(orig) = self.paths.get(i)
+                && let Some(opts) = self.path_options.get(orig)
+            {
+                if opts.recursive {
+                    if path.starts_with(canonical) {
+                        return Some(opts);
+                    }
+                } else if path == canonical.as_path() || path.parent() == Some(canonical.as_path())
+                {
                     return Some(opts);
                 }
             }
@@ -907,6 +922,8 @@ impl Monitor {
     }
 
     /// Find the entry ID for a given event path by checking path_ids (direct match or recursive).
+    /// Also checks canonical paths in case the store path differs from the actual filesystem path
+    /// (e.g., symlinks, bind mounts).
     fn entry_id_for_path(&self, path: &Path) -> Option<u64> {
         // Direct match first
         if let Some(&id) = self.path_ids.get(path) {
@@ -915,6 +932,15 @@ impl Monitor {
         // Recursive match: find watched path that is a prefix of event path
         for (watched, &id) in &self.path_ids {
             if path.starts_with(watched) {
+                return Some(id);
+            }
+        }
+        // Fallback: match against canonical paths (handles symlinks/bind-mounts)
+        for (i, canonical) in self.canonical_paths.iter().enumerate() {
+            if (path == canonical.as_path() || path.starts_with(canonical))
+                && let Some(orig) = self.paths.get(i)
+                && let Some(&id) = self.path_ids.get(orig)
+            {
                 return Some(id);
             }
         }
@@ -929,7 +955,14 @@ impl Monitor {
         };
         let entry_id = match self.entry_id_for_path(&event.path) {
             Some(id) => id,
-            None => return Ok(()),
+            None => {
+                // Warn once per unique unmatched path to avoid log spam
+                eprintln!(
+                    "[WARNING] Event not matched to any monitored path: {}",
+                    event.path.display()
+                );
+                return Ok(());
+            }
         };
         let log_path = log_dir.join(format!("log_{}.toml", entry_id));
         let mut file = OpenOptions::new()

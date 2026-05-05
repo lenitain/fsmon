@@ -108,6 +108,17 @@ cargo test         ✅ 67 passed, 7 ignored (fanotify 测试需要 sudo)
 - **原因**: 之前 `<id>.log` 格式不易区分，改为 `log_<id>.toml`（带前缀 + .toml 后缀更明确）
 - **改动**: `monitor.rs`, `query.rs`, `lib.rs` 中 3 处文件名拼接 + `help.rs` 文档
 
+### 2026-05-05 — 事件路径 canonical 不匹配导致 log 目录为空
+
+- **问题**: 事件路径来自 `/proc/self/fd/{fd}` readlink（canonical 路径），而 `entry_id_for_path()`
+  和 `get_matching_path_options()` 只用原始 store 路径比较。若监控路径是 symlink/bind-mount，
+  事件路径永远匹配不上，`write_event()` 静默返回使 log 目录完全为空。
+- **修复**:
+  - `entry_id_for_path()`: 新增 canonical 路径 fallback
+  - `get_matching_path_options()`: 新增 canonical 路径 fallback
+  - `write_event()`: 无法匹配时印 [WARNING] 便于诊断
+  - 事件循环: `is_path_in_scope` 检查改为始终开启（原来仅 fs_mark 模式），减少无关事件泄露
+
 ### 2026-05-05 — 实时添加路径不生成 .log 文件
 
 - **问题**: 通过 `fsmon add` (socket 通知 daemon) 添加的路径不生成对应 ID 的 `.log` 文件。
