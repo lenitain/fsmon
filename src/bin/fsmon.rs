@@ -31,9 +31,9 @@ enum Commands {
     #[command(about = help::about(HelpTopic::Add), long_about = help::long_about(HelpTopic::Add))]
     Add(AddArgs),
 
-    /// Remove a path from the monitoring list
+    /// Remove a path from the monitoring list by numeric ID
     #[command(about = help::about(HelpTopic::Remove), long_about = help::long_about(HelpTopic::Remove))]
-    Remove { path: PathBuf },
+    Remove { id: u64 },
 
     /// List all monitored paths with their configuration
     #[command(about = help::about(HelpTopic::Managed), long_about = help::long_about(HelpTopic::Managed))]
@@ -125,7 +125,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Daemon => cmd_daemon().await?,
         Commands::Add(args) => cmd_add(args)?,
-        Commands::Remove { path } => cmd_remove(&path)?,
+        Commands::Remove { id } => cmd_remove(id)?,
         Commands::Managed => cmd_managed()?,
         Commands::Query(args) => cmd_query(args).await?,
         Commands::Clean(args) => cmd_clean(args).await?,
@@ -172,9 +172,15 @@ async fn cmd_daemon() -> Result<()> {
     set_socket_permissions(&socket_path)?;
 
     let paths_and_options = parse_path_entries(&user_cfg.paths)?;
+    let path_ids: std::collections::HashMap<_, _> = user_cfg
+        .paths
+        .iter()
+        .map(|e| (e.path.clone(), e.id))
+        .collect();
 
     let mut monitor = Monitor::new(
         paths_and_options,
+        path_ids,
         Some(log_file),
         OutputFormat::Json,
         None,
@@ -206,7 +212,8 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     let all_events = if args.all_events { Some(true) } else { None };
 
     // Always persist to user config first
-    UserConfig::add_path(PathEntry {
+    let id = UserConfig::add_path(PathEntry {
+        id: 0,
         path: path.clone(),
         recursive,
         types: types.clone(),
@@ -214,7 +221,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         exclude: exclude.clone(),
         all_events,
     })?;
-    println!("Path added to config: {}", path.display());
+    println!("Path added to config (ID: {}): {}", id, path.display());
 
     // Try live update via socket (non-fatal if fails)
     let socket_path = UserConfig::default_socket_path();
@@ -244,14 +251,14 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_remove(path: &Path) -> Result<()> {
+fn cmd_remove(id: u64) -> Result<()> {
     // Always persist to user config first
-    UserConfig::remove_path(path)?;
-    println!("Path removed from config: {}", path.display());
+    UserConfig::remove_path(id)?;
+    println!("Path removed from config (ID: {})", id);
 
     // Try live update via socket (non-fatal if fails)
     let socket_path = UserConfig::default_socket_path();
-    match socket::send_cmd(&socket_path, &SocketCmd::Remove { path: path.into() }) {
+    match socket::send_cmd(&socket_path, &SocketCmd::Remove { id }) {
         Ok(resp) if resp.ok => {
             println!("Daemon updated live");
         }
@@ -274,7 +281,10 @@ fn cmd_managed() -> Result<()> {
         Ok(resp) if resp.ok => resp.paths.unwrap_or_default(),
         _ => {
             UserConfig::load()
-                .unwrap_or(UserConfig { paths: vec![] })
+                .unwrap_or(UserConfig {
+                    next_id: 1,
+                    paths: vec![],
+                })
                 .paths
         }
     };
@@ -299,8 +309,9 @@ fn cmd_managed() -> Result<()> {
         };
 
         println!(
-            "{} | types={} | {} | min_size={} | exclude={} | events={}",
+            "{} | id={} | types={} | {} | min_size={} | exclude={} | events={}",
             entry.path.display(),
+            entry.id,
             types_str,
             recursive_str,
             min_size_str,

@@ -63,18 +63,20 @@ Examples:
   fsmon add /tmp --all-events"#
         }
         HelpTopic::Remove => {
-            r#"Remove a path from the monitoring list.
+            r#"Remove a path from the monitoring list by numeric ID.
 
 The path is removed immediately if the daemon is running.
+Use 'fsmon managed' to view IDs.
 
 Examples:
-  fsmon remove /path/to/project"#
+  fsmon remove 1"#
         }
         HelpTopic::Managed => {
             r#"List all monitored paths with their configuration.
 
-Displays each path with its recursive flag, event type filters,
+Displays each path with its numeric ID, recursive flag, event type filters,
 minimum size threshold, and exclusion patterns.
+Use the ID with 'fsmon remove <ID>' to remove an entry.
 
 Examples:
   fsmon managed"#

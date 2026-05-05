@@ -11,11 +11,15 @@ use std::path::{Path, PathBuf};
 /// CLI (running as user) uses the user's own HOME directly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserConfig {
+    /// Auto-incrementing ID counter for PathEntry
+    pub next_id: u64,
     pub paths: Vec<PathEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathEntry {
+    /// Unique numeric identifier
+    pub id: u64,
     pub path: PathBuf,
     pub recursive: Option<bool>,
     pub types: Option<Vec<String>>,
@@ -121,7 +125,10 @@ impl UserConfig {
                 .with_context(|| format!("Invalid TOML in {}", p.display()))?;
             Ok(cfg)
         } else {
-            Ok(UserConfig { paths: vec![] })
+            Ok(UserConfig {
+                next_id: 1,
+                paths: vec![],
+            })
         }
     }
 
@@ -140,19 +147,23 @@ impl UserConfig {
         Self::save_to(&Self::path(), cfg)
     }
 
-    /// Add (or replace) a path entry in the user config.
-    pub fn add_path(entry: PathEntry) -> Result<()> {
+    /// Add a path entry to the user config, auto-assigning a unique ID.
+    /// Returns the assigned ID.
+    pub fn add_path(entry: PathEntry) -> Result<u64> {
         let mut cfg = Self::load()?;
-        cfg.paths.retain(|p| p.path != entry.path);
+        let id = cfg.next_id;
+        cfg.next_id += 1;
+        let mut entry = entry;
+        entry.id = id;
         cfg.paths.push(entry);
-        cfg.paths.sort_by(|a, b| a.path.cmp(&b.path));
-        Self::save(&cfg)
+        Self::save(&cfg)?;
+        Ok(id)
     }
 
-    /// Remove a path entry from the user config.
-    pub fn remove_path(path: &Path) -> Result<()> {
+    /// Remove a path entry by its numeric ID.
+    pub fn remove_path(id: u64) -> Result<()> {
         let mut cfg = Self::load()?;
-        cfg.paths.retain(|p| p.path != path);
+        cfg.paths.retain(|p| p.id != id);
         Self::save(&cfg)
     }
 
@@ -170,34 +181,32 @@ impl UserConfig {
         PathBuf::from("/tmp").join(format!("fsmon-{}.sock", uid))
     }
 
-    /// Generate a default configuration file with all fields, writing to the user config path.
-    /// Creates parent directories if needed.
+    /// Generate a default configuration file with all fields commented as examples,
+    /// writing to the user config path. Creates parent directories if needed.
     pub fn generate_default() -> Result<()> {
-        let cfg = UserConfig {
-            paths: vec![
-                PathEntry {
-                    path: PathBuf::from("/etc"),
-                    recursive: Some(true),
-                    types: Some(vec![
-                        "MODIFY".to_string(),
-                        "CREATE".to_string(),
-                        "DELETE".to_string(),
-                    ]),
-                    min_size: Some("1KB".to_string()),
-                    exclude: Some("*.swp".to_string()),
-                    all_events: Some(false),
-                },
-                PathEntry {
-                    path: PathBuf::from("/var/log"),
-                    recursive: Some(true),
-                    types: None,
-                    min_size: None,
-                    exclude: None,
-                    all_events: None,
-                },
-            ],
-        };
-        Self::save(&cfg)?;
+        let path = Self::path();
+        let parent = path.parent().context("Config path has no parent")?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create directory {}", parent.display()))?;
+        let content = r#"# fsmon configuration file
+# IDs are auto-assigned when adding entries with `fsmon add`.
+
+next_id = 1
+paths = []
+
+# Example entry (uncomment to use):
+#[[paths]]
+#id = 1
+#path = "/path/to/watch"
+#recursive = true
+#types = ["MODIFY", "CREATE", "DELETE"]
+#min_size = "1KB"
+#exclude = "*.tmp"
+#all_events = false
+"#;
+        let disp = path.display().to_string();
+        fs::write(&path, content)
+            .with_context(|| format!("Failed to write config to {}", disp))?;
         Ok(())
     }
 }
@@ -284,36 +293,45 @@ mod tests {
                 initial.paths.len()
             );
 
-            let e1 = PathEntry {
+            // add_path auto-assigns id
+            let id1 = UserConfig::add_path(PathEntry {
+                id: 0,
                 path: PathBuf::from("/tmp"),
                 recursive: Some(true),
                 types: None,
                 min_size: None,
                 exclude: None,
                 all_events: None,
-            };
-            UserConfig::add_path(e1.clone()).unwrap();
+            }).unwrap();
+            assert_eq!(id1, 1);
+
             let cfg = UserConfig::load().unwrap();
             assert_eq!(cfg.paths.len(), 1);
             assert_eq!(cfg.paths[0].path, PathBuf::from("/tmp"));
+            assert_eq!(cfg.paths[0].id, 1);
+            assert_eq!(cfg.next_id, 2);
 
-            // Add same path again (should replace)
-            let e2 = PathEntry {
-                path: PathBuf::from("/tmp"),
+            // Add another path, gets next id
+            let id2 = UserConfig::add_path(PathEntry {
+                id: 0,
+                path: PathBuf::from("/var"),
                 recursive: Some(false),
                 types: Some(vec!["CREATE".into()]),
                 min_size: None,
                 exclude: None,
                 all_events: None,
-            };
-            UserConfig::add_path(e2).unwrap();
+            }).unwrap();
+            assert_eq!(id2, 2);
+
+            let cfg = UserConfig::load().unwrap();
+            assert_eq!(cfg.paths.len(), 2);
+            assert_eq!(cfg.next_id, 3);
+
+            // Remove by id
+            UserConfig::remove_path(2).unwrap();
             let cfg = UserConfig::load().unwrap();
             assert_eq!(cfg.paths.len(), 1);
-            assert_eq!(cfg.paths[0].recursive, Some(false));
-
-            UserConfig::remove_path(Path::new("/tmp")).unwrap();
-            let cfg = UserConfig::load().unwrap();
-            assert!(cfg.paths.is_empty());
+            assert_eq!(cfg.paths[0].id, 1);
         });
     }
 
@@ -348,7 +366,9 @@ mod tests {
     fn test_toml_round_trip() {
         with_isolated_env(|| {
             let cfg = UserConfig {
+                next_id: 42,
                 paths: vec![PathEntry {
+                    id: 1,
                     path: PathBuf::from("/srv"),
                     recursive: Some(true),
                     types: Some(vec!["MODIFY".to_string()]),

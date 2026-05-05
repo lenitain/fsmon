@@ -96,6 +96,7 @@ pub struct PathOptions {
 pub struct Monitor {
     paths: Vec<PathBuf>,
     canonical_paths: Vec<PathBuf>,
+    path_ids: HashMap<PathBuf, u64>,
     path_options: HashMap<PathBuf, PathOptions>,
     output: Option<PathBuf>,
     format: OutputFormat,
@@ -114,6 +115,7 @@ pub struct Monitor {
 impl Monitor {
     pub fn new(
         paths_and_options: Vec<(PathBuf, PathOptions)>,
+        path_ids: HashMap<PathBuf, u64>,
         output: Option<PathBuf>,
         format: OutputFormat,
         buffer_size: Option<usize>,
@@ -139,6 +141,7 @@ impl Monitor {
         Ok(Self {
             paths,
             canonical_paths: Vec::new(),
+            path_ids,
             path_options,
             output,
             format,
@@ -453,6 +456,7 @@ impl Monitor {
                                 Err(e) => SocketResp {
                                     ok: false,
                                     error: Some(format!("Invalid command: {e}")),
+                                    id: None,
                                     paths: None,
                                 },
                             };
@@ -671,6 +675,7 @@ impl Monitor {
         self.paths.remove(pos);
         self.canonical_paths.remove(pos);
         self.path_options.remove(path);
+        self.path_ids.remove(path);
 
         // Close and remove the matching mount fd
         if pos < self.mount_fds.len() {
@@ -692,6 +697,10 @@ impl Monitor {
         }
     }
 
+    fn path_for_id(&self, id: u64) -> Option<&PathBuf> {
+        self.path_ids.iter().find(|&(_, &v)| v == id).map(|(k, _)| k)
+    }
+
     fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> SocketResp {
         match cmd {
             SocketCmd::Add {
@@ -707,6 +716,7 @@ impl Monitor {
                     let _ = self.remove_path(&path);
                 }
                 let entry = PathEntry {
+                    id: 0,
                     path,
                     recursive,
                     types,
@@ -714,44 +724,64 @@ impl Monitor {
                     exclude,
                     all_events,
                 };
+                let id = entry.id;
                 match self.add_path(&entry) {
                     Ok(()) => {
                         let _ = self.persist_config();
                         SocketResp {
                             ok: true,
                             error: None,
+                            id: Some(id),
                             paths: None,
                         }
                     }
                     Err(e) => SocketResp {
                         ok: false,
                         error: Some(e.to_string()),
+                        id: None,
                         paths: None,
                     },
                 }
             }
-            SocketCmd::Remove { path } => match self.remove_path(&path) {
-                Ok(()) => {
-                    let _ = self.persist_config();
-                    SocketResp {
-                        ok: true,
-                        error: None,
-                        paths: None,
+            SocketCmd::Remove { id } => {
+                let path = match self.path_for_id(id) {
+                    Some(p) => p.clone(),
+                    None => {
+                        return SocketResp {
+                            ok: false,
+                            error: Some(format!("No path with ID {}", id)),
+                            id: None,
+                            paths: None,
+                        }
                     }
+                };
+                match self.remove_path(&path) {
+                    Ok(()) => {
+                        let _ = self.persist_config();
+                        SocketResp {
+                            ok: true,
+                            error: None,
+                            id: None,
+                            paths: None,
+                        }
+                    }
+                    Err(e) => SocketResp {
+                        ok: false,
+                        error: Some(e.to_string()),
+                        id: None,
+                        paths: None,
+                    },
                 }
-                Err(e) => SocketResp {
-                    ok: false,
-                    error: Some(e.to_string()),
-                    paths: None,
-                },
-            },
+            }
             SocketCmd::List => {
                 let paths: Vec<PathEntry> = self
                     .paths
                     .iter()
                     .map(|p| {
                         let opts = self.path_options.get(p);
+                        let id = self.path_ids.get(p).copied().unwrap_or(0);
                         PathEntry {
+                            id,
                             path: p.clone(),
                             recursive: opts.map(|o| o.recursive),
                             types: opts.and_then(|o| {
@@ -770,6 +800,7 @@ impl Monitor {
                 SocketResp {
                     ok: true,
                     error: None,
+                    id: None,
                     paths: Some(paths),
                 }
             }
@@ -782,7 +813,9 @@ impl Monitor {
             .iter()
             .map(|p| {
                 let opts = self.path_options.get(p);
+                let id = self.path_ids.get(p).copied().unwrap_or(0);
                 PathEntry {
+                    id,
                     path: p.clone(),
                     recursive: opts.map(|o| o.recursive),
                     types: opts.and_then(|o| {
@@ -797,7 +830,11 @@ impl Monitor {
                 }
             })
             .collect();
-        let cfg = UserConfig { paths: entries };
+        let max_id = self.path_ids.values().max().copied().unwrap_or(0);
+        let cfg = UserConfig {
+            next_id: max_id + 1,
+            paths: entries,
+        };
         UserConfig::save(&cfg)
     }
 
@@ -899,6 +936,7 @@ fn mark_recursive(fan_fd: i32, mask: u64, dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     fn options(
@@ -946,6 +984,7 @@ mod tests {
                     )
                 })
                 .collect(),
+            HashMap::new(),
             None,
             OutputFormat::Human,
             None,
@@ -1078,6 +1117,7 @@ mod tests {
 
         let result = Monitor::new(
             vec![(PathBuf::from("/tmp"), opts.clone())],
+            HashMap::new(),
             None,
             OutputFormat::Human,
             Some(1024),
@@ -1089,6 +1129,7 @@ mod tests {
 
         let result = Monitor::new(
             vec![(PathBuf::from("/tmp"), opts.clone())],
+            HashMap::new(),
             None,
             OutputFormat::Human,
             Some(2 * 1024 * 1024),
@@ -1100,6 +1141,7 @@ mod tests {
 
         let result = Monitor::new(
             vec![(PathBuf::from("/tmp"), opts.clone())],
+            HashMap::new(),
             None,
             OutputFormat::Human,
             Some(65536),
@@ -1111,10 +1153,13 @@ mod tests {
 
     #[test]
     fn test_add_path_and_remove_path() {
-        let mut m = Monitor::new(vec![], None, OutputFormat::Human, None, None, None).unwrap();
+        let mut m =
+            Monitor::new(vec![], HashMap::new(), None, OutputFormat::Human, None, None, None)
+                .unwrap();
         m.fan_fd = Some(-1); // dummy fd for log path test
 
         let entry = PathEntry {
+            id: 1,
             path: PathBuf::from("/tmp/test_add"),
             recursive: Some(true),
             types: None,
