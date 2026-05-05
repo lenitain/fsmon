@@ -25,7 +25,7 @@
 - **Multiple Formats**: Human-readable, JSON, and CSV terminal output (log file always uses JSON for queryability)
 - **TOML Configuration**: Persistent config at `~/.fsmon/config.toml`, `~/.config/fsmon/config.toml`, or `/etc/fsmon/config.toml` (priority order)
 - **Log Management**: Time-based and size-based log rotation with dry-run preview
-- **Systemd Service**: Install as systemd service with configurable security hardening
+- **Systemd Service**: Template unit (`fsmon@.service`) for multi-instance monitoring with configurable security hardening — run separate instances for different paths
 
 ## Why fsmon
 
@@ -83,8 +83,16 @@ sudo fsmon monitor ~/myproject --recursive
 # Exclude patterns
 sudo fsmon monitor /var/log --exclude "*.log"
 
-# Install as systemd service for long-term auditing
-sudo fsmon install /var/log /etc -o /var/log/fsmon-audit.log
+# Install systemd template (one-time)
+sudo fsmon install
+
+# Create and start monitoring instances
+sudo fsmon enable audit --paths /var/log /etc
+sudo fsmon enable web --paths /var/www --types MODIFY,CREATE --recursive
+
+# Instance log files default to /var/log/fsmon/{name}.log
+# Override with -o:
+sudo fsmon enable custom --paths /data -o /var/log/fsmon-custom.log
 
 # Query historical events
 fsmon query --since 1h --cmd nginx
@@ -92,11 +100,14 @@ fsmon query --since 1h --cmd nginx
 # Clean old logs (dry-run preview)
 fsmon clean --keep-days 7 --dry-run
 
-# Manage service via systemd
-sudo systemctl start fsmon
-sudo systemctl stop fsmon
-sudo systemctl status fsmon
-sudo journalctl -u fsmon
+# Manage instances via systemd
+sudo systemctl start fsmon@audit
+sudo systemctl stop fsmon@web
+sudo systemctl status fsmon@audit
+sudo journalctl -u fsmon@web
+
+# Disable and remove an instance
+sudo fsmon disable web
 ```
 
 ## Examples
@@ -154,15 +165,17 @@ sudo fsmon monitor /var/www --types CREATE,DELETE --exclude "*.tmp"
 fsmon monitor --help    # Real-time monitoring with fanotify
 fsmon query --help      # Query history logs with filters and sorting
 fsmon clean --help      # Cleanup old logs by time or size
-fsmon install --help    # Install systemd service (auto-detects binary path)
-fsmon uninstall         # Uninstall systemd service
+fsmon install           # Install systemd template unit (fsmon@.service)
+fsmon uninstall         # Uninstall systemd template
+fsmon enable <name>     # Create and start a monitoring instance
+fsmon disable <name>    # Stop and remove a monitoring instance
 fsmon generate          # Generate default configuration file (~/.config/fsmon/config.toml)
 
 # Service management via systemd
-sudo systemctl start fsmon
-sudo systemctl stop fsmon
-sudo systemctl status fsmon
-sudo journalctl -u fsmon
+sudo systemctl start fsmon@<name>
+sudo systemctl stop fsmon@<name>
+sudo systemctl status fsmon@<name>
+sudo journalctl -u fsmon@<name>
 ```
 
 ## Configuration

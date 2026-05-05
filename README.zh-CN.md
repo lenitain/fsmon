@@ -25,7 +25,7 @@
 - **多种格式**: 人类可读、JSON、CSV 三种终端输出格式（日志文件始终是JSON格式）
 - **TOML 配置**: 持久化配置文件，支持 `~/.fsmon/config.toml`、`~/.config/fsmon/config.toml` 或 `/etc/fsmon/config.toml`（按优先级查找）
 - **日志管理**: 基于时间和大小的日志轮转，支持预览模式
-- **Systemd 服务**: 安装为 systemd 服务，安全加固可配置
+- **Systemd 服务**: 模板单元（`fsmon@.service`）支持多实例监控，安全加固可配置 — 不同路径可分别运行独立实例
 
 ## 为什么选择 fsmon
 
@@ -83,8 +83,16 @@ sudo fsmon monitor ~/myproject --recursive
 # 排除模式
 sudo fsmon monitor /var/log --exclude "*.log"
 
-# 安装为 systemd 服务，长期审计
-sudo fsmon install /var/log /etc -o /var/log/fsmon-audit.log
+# 安装 systemd 模板（一次性）
+sudo fsmon install
+
+# 创建并启动监控实例
+sudo fsmon enable audit --paths /var/log /etc
+sudo fsmon enable web --paths /var/www --types MODIFY,CREATE --recursive
+
+# 实例日志默认写入 /var/log/fsmon/{name}.log
+# 通过 -o 自定义：
+sudo fsmon enable custom --paths /data -o /var/log/fsmon-custom.log
 
 # 查询历史事件
 fsmon query --since 1h --cmd nginx
@@ -92,11 +100,14 @@ fsmon query --since 1h --cmd nginx
 # 预览清理旧日志
 fsmon clean --keep-days 7 --dry-run
 
-# 通过 systemd 管理服务
-sudo systemctl start fsmon
-sudo systemctl stop fsmon
-sudo systemctl status fsmon
-sudo journalctl -u fsmon
+# 通过 systemd 管理实例
+sudo systemctl start fsmon@audit
+sudo systemctl stop fsmon@web
+sudo systemctl status fsmon@audit
+sudo journalctl -u fsmon@web
+
+# 停用并移除实例
+sudo fsmon disable web
 ```
 
 ## 示例
@@ -154,15 +165,17 @@ sudo fsmon monitor /var/www --types CREATE,DELETE --exclude "*.tmp"
 fsmon monitor --help    # 实时监控（fanotify）
 fsmon query --help      # 查询历史日志（支持过滤和排序）
 fsmon clean --help      # 按时间或大小清理旧日志
-fsmon install --help    # 安装 systemd 服务（自动检测二进制路径）
-fsmon uninstall         # 卸载 systemd 服务
+fsmon install           # 安装 systemd 模板单元（fsmon@.service）
+fsmon uninstall         # 卸载 systemd 模板
+fsmon enable <name>     # 创建并启动监控实例
+fsmon disable <name>    # 停用并移除监控实例
 fsmon generate          # 生成默认的配置文件 (~/.config/fsmon/config.toml)
 
-# 通过 systemd 管理服务
-sudo systemctl start fsmon
-sudo systemctl stop fsmon
-sudo systemctl status fsmon
-sudo journalctl -u fsmon
+# 通过 systemd 管理实例
+sudo systemctl start fsmon@<name>
+sudo systemctl stop fsmon@<name>
+sudo systemctl status fsmon@<name>
+sudo journalctl -u fsmon@<name>
 ```
 
 ## 配置文件
