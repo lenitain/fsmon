@@ -307,7 +307,8 @@ fn read_toml_block(reader: &mut BufReader<fs::File>) -> Result<Option<String>> {
     }
 }
 
-pub async fn clean_logs(
+/// Clean a single log file by age and size.
+async fn clean_single_log(
     log_file: &Path,
     keep_days: u32,
     max_size: Option<i64>,
@@ -387,6 +388,40 @@ pub async fn clean_logs(
             utils::format_size(original_size as i64),
             utils::format_size(kept_bytes as i64)
         );
+    }
+
+    Ok(())
+}
+
+/// Clean log files by age and size.
+///
+/// If `ids` is Some, only clean matching `{id}.log` files.
+/// If `ids` is None, clean all `*.log` files in `log_dir`.
+pub async fn clean_logs(
+    log_dir: &Path,
+    ids: Option<&[u64]>,
+    keep_days: u32,
+    max_size: Option<i64>,
+    dry_run: bool,
+) -> Result<()> {
+    if !log_dir.exists() {
+        println!("Log directory not found: {}", log_dir.display());
+        return Ok(());
+    }
+
+    if let Some(ids) = ids {
+        for &id in ids {
+            let log_file = log_dir.join(format!("{}.log", id));
+            clean_single_log(&log_file, keep_days, max_size, dry_run).await?;
+        }
+    } else {
+        for entry in fs::read_dir(log_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "log") {
+                clean_single_log(&path, keep_days, max_size, dry_run).await?;
+            }
+        }
     }
 
     Ok(())
@@ -580,7 +615,9 @@ mod tests {
         }
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(clean_logs(&log_path, 30, None, false)).unwrap();
+        let log_dir = log_path.parent().unwrap();
+        rt.block_on(clean_logs(log_dir, None, 30, None, false))
+            .unwrap();
 
         let content = fs::read_to_string(&log_path).unwrap();
         // Parse by TOML blocks, expect one event
@@ -621,7 +658,9 @@ mod tests {
         let original_content = fs::read_to_string(&log_path).unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(clean_logs(&log_path, 30, None, true)).unwrap();
+        let log_dir = log_path.parent().unwrap();
+        rt.block_on(clean_logs(log_dir, None, 30, None, true))
+            .unwrap();
 
         let after_content = fs::read_to_string(&log_path).unwrap();
         assert_eq!(original_content, after_content);
@@ -631,9 +670,12 @@ mod tests {
 
     #[test]
     fn test_clean_logs_nonexistent_file() {
-        let path = PathBuf::from("/tmp/fsmon_nonexistent_test.log");
+        let path = PathBuf::from("/tmp/fsmon_nonexistent_dir_clean_test");
         let rt = tokio::runtime::Runtime::new().unwrap();
-        assert!(rt.block_on(clean_logs(&path, 30, None, false)).is_ok());
+        assert!(
+            rt.block_on(clean_logs(&path, None, 30, None, false))
+                .is_ok()
+        );
     }
 
     #[test]
@@ -662,7 +704,8 @@ mod tests {
         let original_size = fs::metadata(&log_path).unwrap().len();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(clean_logs(&log_path, 0, Some(500), false))
+        let log_dir = log_path.parent().unwrap();
+        rt.block_on(clean_logs(log_dir, None, 0, Some(500), false))
             .unwrap();
 
         let new_size = fs::metadata(&log_path).unwrap().len();

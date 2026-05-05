@@ -448,10 +448,21 @@ async fn cmd_clean(args: CleanArgs) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
 
-    let log_file = cfg.logging.dir.join("fsmon.log");
+    let ids = if args.id.is_empty() {
+        None
+    } else {
+        Some(parse_query_ids(&args.id)?)
+    };
     let keep_days = args.keep_days.unwrap_or(DEFAULT_KEEP_DAYS);
     let max_size_bytes = args.max_size.map(|s| parse_size(&s)).transpose()?;
-    clean_logs(&log_file, keep_days, max_size_bytes, args.dry_run).await?;
+    clean_logs(
+        &cfg.logging.dir,
+        ids.as_deref(),
+        keep_days,
+        max_size_bytes,
+        args.dry_run,
+    )
+    .await?;
     Ok(())
 }
 
