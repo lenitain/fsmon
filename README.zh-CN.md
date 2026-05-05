@@ -22,8 +22,7 @@
 - **完整删除捕获**: 通过持久化目录句柄缓存，完整捕获 `rm -rf` 递归删除中的每个文件
 - **高性能**: Rust + Tokio 编写，内存占用 <5MB，零拷贝 FID 事件解析，二分查找日志查询
 - **灵活过滤**: 支持按时间、大小、进程、用户、事件类型和排除模式（通配符）过滤
-- **日常操作无需 sudo**: 只有 `sudo fsmon daemon` 需要 root（fanotify）。`fsmon add`、`remove`、`managed`、`query`、`clean` 全都不需要 sudo。
-- **Podman 式架构**: 用户自己管理 daemon，不依赖 systemd。配置按用户隔离。
+- **无systemd架构**: 用户自己管理 daemon，不依赖 systemd。配置按用户隔离。
 
 ## 为什么选择 fsmon
 
@@ -92,7 +91,6 @@ fsmon remove /tmp
 kill %1
 ```
 
-**就这么简单。** 没有 systemd，没有 `/etc/` 配置文件 — 一切都在用户目录下。
 
 ### 文件路径
 
