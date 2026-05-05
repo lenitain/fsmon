@@ -465,6 +465,17 @@ async fn main() -> Result<()> {
             let exclude = exclude.or(base.exclude);
             let all_events = all_events || base.all_events.unwrap_or(false);
             let output = output.or(base.output);
+            if let Some(ref name) = instance
+                && output.is_none()
+            {
+                eprintln!(
+                    "[WARNING] No output file configured for instance '{}'.\n\
+                     Events will only be written to stdout (journald) and will NOT be persisted.\n\
+                     Set output = \"/var/log/fsmon/{}.log\" in /etc/fsmon/fsmon-{}.toml\n\
+                     to enable persistent event logging for query and cleanup.",
+                    name, name, name
+                );
+            }
             let recursive = recursive || base.recursive.unwrap_or(false);
             let buffer_size = if instance.is_some() {
                 None
