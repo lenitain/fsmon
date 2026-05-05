@@ -90,9 +90,12 @@ sudo fsmon install
 sudo fsmon enable audit --paths /var/log /etc
 sudo fsmon enable web --paths /var/www --types MODIFY,CREATE --recursive
 
-# Instance log files default to /var/log/fsmon/{name}.log
+# Instance log files default to /var/log/fsmon/{name}.log (only for systemd instances)
 # Override with -o:
 sudo fsmon enable custom --paths /data -o /var/log/fsmon-custom.log
+
+# Direct CLI usage has no default log — events go to stdout only
+sudo fsmon monitor /tmp --recursive
 
 # Query historical events
 fsmon query --since 1h --cmd nginx

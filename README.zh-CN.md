@@ -90,9 +90,12 @@ sudo fsmon install
 sudo fsmon enable audit --paths /var/log /etc
 sudo fsmon enable web --paths /var/www --types MODIFY,CREATE --recursive
 
-# 实例日志默认写入 /var/log/fsmon/{name}.log
+# 实例日志默认写入 /var/log/fsmon/{name}.log（仅 systemd 后台实例）
 # 通过 -o 自定义：
 sudo fsmon enable custom --paths /data -o /var/log/fsmon-custom.log
+
+# 直接 CLI 使用无默认日志 — 事件仅输出到 stdout
+sudo fsmon monitor /tmp --recursive
 
 # 查询历史事件
 fsmon query --since 1h --cmd nginx
