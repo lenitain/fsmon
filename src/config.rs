@@ -187,13 +187,24 @@ impl Config {
         let parent = path.parent().context("Config path has no parent")?;
         fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create directory {}", parent.display()))?;
-        let content = r#"[store]
+        let content = r#"# fsmon configuration file
+#
+# This file defines infrastructure paths. Monitored paths are managed
+# separately via 'fsmon add' / 'fsmon remove' and stored in [store].file.
+# All paths support ~ expansion. <UID> is replaced at runtime.
+#
+# Usually the defaults are fine. Change only if you need custom locations.
+
+[store]
+# Path to the monitored paths database (auto-managed by add/remove).
 file = "~/.local/share/fsmon/store.toml"
 
 [logging]
+# Directory containing per-entry log files named <id>.log.
 dir = "~/.local/state/fsmon"
 
 [socket]
+# Unix socket for daemon-CLI communication.
 path = "/tmp/fsmon-<UID>.sock"
 "#;
         fs::write(&path, content)
