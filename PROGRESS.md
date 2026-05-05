@@ -89,8 +89,10 @@ all_events = false
 - [x] 保留 `--log-file` override
 
 ### P5 — systemd 集成
-- [x] 更新 `systemd.rs`：单 service（非 template），`RuntimeDirectory`
-- [x] 更新 service template 为 `ExecStart=fsmon daemon`
+- [x] 重写 `systemd.rs`：单 `fsmon.service`（非 template），`RuntimeDirectory`，`CapabilityBoundingSet` + `AmbientCapabilities`
+- [x] `install(force)` 创建配置目录、生成默认配置、systemctl daemon-reload
+- [x] `uninstall()` 移除 service 文件 + daemon-reload
+- [x] 更新 `cmd_install` 调用签名
 
 ### P6 — 清理
 - [ ] 删除旧 `fsmon-cli.rs` 相关逻辑

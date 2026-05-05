@@ -319,10 +319,7 @@ async fn cmd_clean(args: CleanArgs) -> Result<()> {
 }
 
 fn cmd_install(force: bool) -> Result<()> {
-    if !Config::default_config_path().exists() || force {
-        Config::generate_default()?;
-    }
-    fsmon::systemd::install(force, None, None, None, None)?;
+    fsmon::systemd::install(force)?;
     Ok(())
 }
 

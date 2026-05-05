@@ -4,15 +4,18 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+use crate::config::Config;
+
 const SERVICE_NAME: &str = "fsmon";
 
-fn get_template_path() -> PathBuf {
-    PathBuf::from("/etc/systemd/system").join(format!("{}@.service", SERVICE_NAME))
+fn get_service_path() -> PathBuf {
+    PathBuf::from("/etc/systemd/system").join(format!("{SERVICE_NAME}.service"))
 }
 
 const SERVICE_TEMPLATE: &str = r#"[Unit]
-Description=fsmon filesystem monitor (%i)
+Description=fsmon filesystem monitor
 After=network.target
+Wants=network.target
 
 [Service]
 Type=simple
@@ -20,38 +23,32 @@ ExecStart=EXEC_START_PLACEHOLDER daemon
 Restart=on-failure
 RestartPreventExitStatus=78
 RestartSec=5
+RuntimeDirectory=fsmon
+RuntimeDirectoryMode=0755
 StandardOutput=journal
 StandardError=journal
-
-# Security hardening
-NoNewPrivileges=yes
-ProtectSystem={PROTECT_SYSTEM}
-ProtectHome={PROTECT_HOME}
-ReadWritePaths={READ_WRITE_PATHS}
-PrivateTmp={PRIVATE_TMP}
+CapabilityBoundingSet=CAP_SYS_ADMIN
+AmbientCapabilities=CAP_SYS_ADMIN
 
 [Install]
 WantedBy=multi-user.target
 "#;
 
-pub fn install(
-    force: bool,
-    protect_system: Option<&str>,
-    protect_home: Option<&str>,
-    read_write_paths: Option<&[String]>,
-    private_tmp: Option<&str>,
-) -> Result<()> {
+pub fn install(force: bool) -> Result<()> {
     if !is_root() {
         bail!("Installation requires root privileges. Please run with sudo.");
     }
 
-    let service_file = get_template_path();
+    let service_file = get_service_path();
     if service_file.exists() {
         if force {
-            println!("Template already exists, force mode enabled. Reinstalling...");
+            println!(
+                "Service already installed at {}, force mode enabled. Reinstalling...",
+                service_file.display()
+            );
         } else {
             bail!(
-                "Template already installed at {}. Use 'uninstall' first or '--force' to overwrite.",
+                "Service already installed at {}. Use 'uninstall' first or '--force' to overwrite.",
                 service_file.display()
             );
         }
@@ -62,35 +59,36 @@ pub fn install(
         .canonicalize()
         .context("Failed to resolve executable path")?;
 
-    // Service runs the fsmon daemon
-    let cli_path = exe_path.clone();
-
-    let protect_system_val = protect_system.unwrap_or("strict");
-    let protect_home_val = protect_home.unwrap_or("read-only");
-    let read_write_paths_val = read_write_paths
-        .map(|v| v.join(" "))
-        .unwrap_or_else(|| "/var/log".to_string());
-    let private_tmp_val = private_tmp.unwrap_or("yes");
-
     let service_content = SERVICE_TEMPLATE
-        .replace("EXEC_START_PLACEHOLDER", &cli_path.display().to_string())
-        .replace("{PROTECT_SYSTEM}", protect_system_val)
-        .replace("{PROTECT_HOME}", protect_home_val)
-        .replace("{READ_WRITE_PATHS}", &read_write_paths_val)
-        .replace("{PRIVATE_TMP}", private_tmp_val);
+        .replace("EXEC_START_PLACEHOLDER", &exe_path.display().to_string());
 
     fs::write(&service_file, &service_content)
         .with_context(|| format!("Failed to write service file to {}", service_file.display()))?;
+
+    // Create /etc/fsmon/ if not exists
+    let config_dir = Config::default_config_path()
+        .parent()
+        .context("Config path has no parent")?
+        .to_path_buf();
+    fs::create_dir_all(&config_dir)
+        .with_context(|| format!("Failed to create config directory {}", config_dir.display()))?;
+
+    // Generate default config if not exists
+    Config::generate_default()?;
 
     Command::new("systemctl")
         .args(["daemon-reload"])
         .output()
         .context("Failed to reload systemd daemon")?;
 
-    println!("Service template installed to {}", service_file.display());
-    println!("fsmon path: {}", cli_path.display());
-    println!("Usage: systemctl enable fsmon@INSTANCE_NAME --now");
-    println!("       systemctl start fsmon@INSTANCE_NAME");
+    println!("Service installed to {}", service_file.display());
+    println!("fsmon path: {}", exe_path.display());
+    println!("");
+    println!("Usage:");
+    println!("  sudo systemctl enable fsmon --now");
+    println!("  sudo systemctl start fsmon");
+    println!("  sudo systemctl stop fsmon");
+    println!("  sudo systemctl status fsmon");
     Ok(())
 }
 
@@ -102,25 +100,22 @@ pub fn uninstall() -> Result<()> {
 }
 
 fn uninstall_inner() -> Result<()> {
-    let service_file = get_template_path();
+    let service_file = get_service_path();
     if !service_file.exists() {
         return Ok(());
     }
 
-    let _ = fs::remove_file(&service_file)
-        .with_context(|| format!("Failed to remove service file {}", service_file.display()));
+    fs::remove_file(&service_file)
+        .with_context(|| format!("Failed to remove service file {}", service_file.display()))?;
 
     Command::new("systemctl")
         .args(["daemon-reload"])
         .output()
         .context("Failed to reload systemd daemon")?;
 
+    println!("Service uninstalled from {}", service_file.display());
     println!(
-        "Service template uninstalled from {}",
-        service_file.display()
-    );
-    println!(
-        "Note: Running instances were not stopped. Run 'systemctl stop fsmon@<name>' for each."
+        "Note: The running service was not stopped. Run 'systemctl stop fsmon' to stop it."
     );
     Ok(())
 }
