@@ -158,11 +158,17 @@ impl Config {
     }
 
     /// Search config files in priority order:
-    ///   1. ~/.fsmon/config.toml (legacy, backward compat)
-    ///   2. ~/.config/fsmon/config.toml (XDG)
-    ///   3. /etc/fsmon/config.toml (system-wide)
+    ///   1. ~/.fsmon/fsmon.toml (new)
+    ///   2. ~/.config/fsmon/fsmon.toml (new, XDG)
+    ///   3. /etc/fsmon/fsmon.toml (new, system-wide)
+    ///   4. Legacy `config.toml` paths (backward compat): ~/.fsmon, ~/.config/fsmon, /etc/fsmon
     fn find_config_file() -> Option<PathBuf> {
         let candidates = [
+            // New naming: fsmon.toml
+            dirs::home_dir().map(|h| h.join(".fsmon").join("fsmon.toml")),
+            dirs::config_dir().map(|h| h.join("fsmon").join("fsmon.toml")),
+            Some(PathBuf::from("/etc/fsmon/fsmon.toml")),
+            // Legacy: config.toml
             dirs::home_dir().map(|h| h.join(".fsmon").join("config.toml")),
             dirs::config_dir().map(|h| h.join("fsmon").join("config.toml")),
             Some(PathBuf::from("/etc/fsmon/config.toml")),
@@ -171,12 +177,12 @@ impl Config {
         candidates.into_iter().flatten().find(|path| path.exists())
     }
 
-    /// Generate a commented default config file at the XDG path (~/.config/fsmon/config.toml).
+    /// Generate a commented default config file at the XDG path (~/.config/fsmon/fsmon.toml).
     pub fn generate(force: bool) -> Result<PathBuf> {
         let config_dir = dirs::config_dir()
             .context("Cannot determine XDG config directory")?
             .join("fsmon");
-        let config_path = config_dir.join("config.toml");
+        let config_path = config_dir.join("fsmon.toml");
 
         if config_path.exists() && !force {
             anyhow::bail!(
