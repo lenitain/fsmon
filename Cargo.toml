@@ -24,10 +24,6 @@ include = [
 name = "fsmon"
 path = "src/bin/fsmon.rs"
 
-[[bin]]
-name = "fsmon-cli"
-path = "src/bin/fsmon-cli.rs"
-
 [dependencies]
 tokio = { version = "1.35", features = ["full"] }
 fanotify-rs = "0.3.1"

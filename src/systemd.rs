@@ -16,7 +16,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=EXEC_START_PLACEHOLDER monitor --instance %i
+ExecStart=EXEC_START_PLACEHOLDER daemon
 Restart=on-failure
 RestartPreventExitStatus=78
 RestartSec=5
@@ -62,8 +62,8 @@ pub fn install(
         .canonicalize()
         .context("Failed to resolve executable path")?;
 
-    // fsmon@.service needs to run fsmon-cli (the monitoring binary)
-    let cli_path = exe_path.with_file_name("fsmon-cli");
+    // Service runs the fsmon daemon
+    let cli_path = exe_path.clone();
 
     let protect_system_val = protect_system.unwrap_or("strict");
     let protect_home_val = protect_home.unwrap_or("read-only");
@@ -88,7 +88,7 @@ pub fn install(
         .context("Failed to reload systemd daemon")?;
 
     println!("Service template installed to {}", service_file.display());
-    println!("fsmon-cli path: {}", cli_path.display());
+    println!("fsmon path: {}", cli_path.display());
     println!("Usage: systemctl enable fsmon@INSTANCE_NAME --now");
     println!("       systemctl start fsmon@INSTANCE_NAME");
     Ok(())

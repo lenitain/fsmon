@@ -1,15 +1,19 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use fsmon::config::Config;
-use fsmon::help::{self, HelpTopic};
-use fsmon::systemd;
+use fsmon::config::{Config, PathEntry};
+use fsmon::monitor::{Monitor, PathOptions};
+use fsmon::query::Query;
+use fsmon::socket::{self, SocketCmd};
+use fsmon::utils::parse_size;
+use fsmon::{clean_logs, EventType, OutputFormat, SortBy, DEFAULT_KEEP_DAYS};
+use std::fs;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "fsmon")]
 #[command(author = "fsmon contributors")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
-#[command(about = "fsmon daemon manager — install, uninstall, and generate configuration")]
-#[command(after_help = help::daemon_after_help())]
+#[command(about = "Lightweight high-performance file change tracking tool")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -17,71 +21,376 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    #[command(about = help::about(HelpTopic::Install), long_about = help::long_about(HelpTopic::Install))]
-    Install {
-        /// Force overwrite existing service template
-        #[arg(short, long)]
-        force: bool,
+    /// Run the fsmon daemon (background monitoring service)
+    Daemon,
 
-        /// ProtectSystem value (default: strict)
-        #[arg(long, value_name = "VALUE")]
-        protect_system: Option<String>,
+    /// Add a path to monitor
+    Add(AddArgs),
 
-        /// ProtectHome value (default: read-only)
-        #[arg(long, value_name = "VALUE")]
-        protect_home: Option<String>,
+    /// Remove a path from monitoring
+    Remove { path: PathBuf },
 
-        /// ReadWritePaths value (supports multiple, default: /var/log)
-        #[arg(long, value_name = "PATH")]
-        read_write_paths: Vec<String>,
+    /// List all monitored paths
+    Managed,
 
-        /// PrivateTmp value (default: yes)
-        #[arg(long, value_name = "VALUE")]
-        private_tmp: Option<String>,
-    },
+    /// Query historical monitoring logs
+    Query(QueryArgs),
 
-    #[command(about = help::about(HelpTopic::Uninstall), long_about = help::long_about(HelpTopic::Uninstall))]
+    /// Clean historical logs
+    Clean(CleanArgs),
+
+    /// Install systemd service
+    Install { #[arg(short, long)] force: bool },
+
+    /// Uninstall systemd service
     Uninstall,
-
-    #[command(about = "Generate default configuration at /etc/fsmon/fsmon.toml")]
-    Generate {
-        /// Force overwrite existing config file
-        #[arg(short, long)]
-        force: bool,
-    },
 }
 
-fn main() -> Result<()> {
+#[derive(Parser)]
+struct AddArgs {
+    /// Path to monitor
+    path: PathBuf,
+
+    /// Watch subdirectories recursively
+    #[arg(short)]
+    recursive: bool,
+
+    /// Only monitor specified operation types, comma-separated
+    #[arg(short, long, value_name = "TYPES")]
+    types: Option<String>,
+
+    /// Only record events with size change >= specified value
+    #[arg(short = 'm', long, value_name = "SIZE")]
+    min_size: Option<String>,
+
+    /// Paths to exclude from monitoring (wildcards)
+    #[arg(short = 'e', long, value_name = "PATTERN")]
+    exclude: Option<String>,
+
+    /// Capture all 14 fanotify events
+    #[arg(long)]
+    all_events: bool,
+}
+
+#[derive(Parser)]
+struct QueryArgs {
+    #[arg(short, long)]
+    log_file: Option<PathBuf>,
+    #[arg(short = 'S', long)]
+    since: Option<String>,
+    #[arg(short = 'U', long)]
+    until: Option<String>,
+    #[arg(short, long)]
+    pid: Option<String>,
+    #[arg(short, long)]
+    cmd: Option<String>,
+    #[arg(short, long)]
+    user: Option<String>,
+    #[arg(short, long)]
+    types: Option<String>,
+    #[arg(short = 'm', long)]
+    min_size: Option<String>,
+    #[arg(short, long, value_enum)]
+    format: Option<OutputFormat>,
+    #[arg(short = 'r', long, value_enum)]
+    sort: Option<SortBy>,
+}
+
+#[derive(Parser)]
+struct CleanArgs {
+    #[arg(short, long)]
+    log_file: Option<PathBuf>,
+    #[arg(short, long)]
+    keep_days: Option<u32>,
+    #[arg(short = 'm', long)]
+    max_size: Option<String>,
+    #[arg(short, long)]
+    dry_run: bool,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
     let _config = Config::load()?;
 
     match cli.command {
-        Commands::Install {
-            force,
-            protect_system,
-            protect_home,
-            read_write_paths,
-            private_tmp,
-        } => {
-            systemd::install(
-                force,
-                protect_system.as_deref(),
-                protect_home.as_deref(),
-                if read_write_paths.is_empty() {
-                    None
-                } else {
-                    Some(read_write_paths.as_slice())
-                },
-                private_tmp.as_deref(),
-            )?;
-        }
-        Commands::Uninstall => {
-            systemd::uninstall()?;
-        }
-        Commands::Generate { force: _ } => {
-            Config::generate_default()?;
-        }
+        Commands::Daemon => cmd_daemon().await?,
+        Commands::Add(args) => cmd_add(args)?,
+        Commands::Remove { path } => cmd_remove(&path)?,
+        Commands::Managed => cmd_managed()?,
+        Commands::Query(args) => cmd_query(args).await?,
+        Commands::Clean(args) => cmd_clean(args).await?,
+        Commands::Install { force } => cmd_install(force)?,
+        Commands::Uninstall => cmd_uninstall()?,
     }
 
     Ok(())
+}
+
+async fn cmd_daemon() -> Result<()> {
+    let config_path = Config::default_config_path();
+    if !config_path.exists() {
+        Config::generate_default()?;
+    }
+
+    let config = Config::load()?;
+
+    if config.paths.is_empty() {
+        eprintln!(
+            "Warning: No paths configured in {}. Use 'fsmon add <path>' to add paths.",
+            config_path.display()
+        );
+    }
+
+    let socket_path = config
+        .socket_path
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("/var/run/fsmon/fsmon.sock"));
+    let log_file = config
+        .log_file
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("/var/log/fsmon/history.log"));
+
+    for p in [socket_path.parent(), log_file.parent()].into_iter().flatten() {
+        fs::create_dir_all(p)?;
+    }
+
+    if socket_path.exists() {
+        fs::remove_file(&socket_path)?;
+    }
+
+    let socket_listener = tokio::net::UnixListener::bind(&socket_path)
+        .with_context(|| format!("Failed to bind socket at {}", socket_path.display()))?;
+
+    let paths_and_options = parse_path_entries(&config.paths)?;
+
+    let mut monitor = Monitor::new(
+        paths_and_options,
+        Some(log_file),
+        OutputFormat::Json,
+        None,
+        None,
+        Some(socket_listener),
+    )?;
+
+    monitor.run().await?;
+    Ok(())
+}
+
+fn cmd_add(args: AddArgs) -> Result<()> {
+    let socket_path = resolve_socket_path();
+    let cmd = SocketCmd::Add {
+        path: args.path,
+        recursive: if args.recursive { Some(true) } else { None },
+        types: args
+            .types
+            .map(|t| t.split(',').map(|s| s.trim().to_string()).collect()),
+        min_size: args.min_size,
+        exclude: args.exclude,
+        all_events: if args.all_events { Some(true) } else { None },
+    };
+    let resp = socket::send_cmd(&socket_path, &cmd)
+        .with_context(|| "Failed to communicate with fsmon daemon. Is it running?")?;
+    if resp.ok {
+        println!("Path added successfully");
+    } else {
+        eprintln!("Error: {}", resp.error.unwrap_or_default());
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn cmd_remove(path: &std::path::Path) -> Result<()> {
+    let socket_path = resolve_socket_path();
+    let cmd = SocketCmd::Remove {
+        path: path.to_path_buf(),
+    };
+    let resp = socket::send_cmd(&socket_path, &cmd)
+        .with_context(|| "Failed to communicate with fsmon daemon. Is it running?")?;
+    if resp.ok {
+        println!("Path removed successfully");
+    } else {
+        eprintln!("Error: {}", resp.error.unwrap_or_default());
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn cmd_managed() -> Result<()> {
+    let socket_path = resolve_socket_path();
+
+    let entries = match socket::send_cmd(&socket_path, &SocketCmd::List) {
+        Ok(resp) if resp.ok => resp.paths.unwrap_or_default(),
+        _ => {
+            let config = Config::load()?;
+            config.paths
+        }
+    };
+
+    println!(
+        "{:<20} {:<10} {:<12} {:<10} {:<12} {:<12}",
+        "Path", "Recursive", "Types", "Min_size", "Exclude", "All_events"
+    );
+
+    for entry in &entries {
+        let types_str = entry
+            .types
+            .as_ref()
+            .map(|v| v.join(","))
+            .unwrap_or_else(|| "-".to_string());
+        let recursive_str = if entry.recursive.unwrap_or(false) {
+            "\u{2713}"
+        } else {
+            "\u{2717}"
+        };
+        let min_size_str = entry.min_size.as_deref().unwrap_or("-");
+        let exclude_str = entry.exclude.as_deref().unwrap_or("-");
+        let all_events_str = if entry.all_events.unwrap_or(false) {
+            "yes"
+        } else {
+            "no"
+        };
+
+        println!(
+            "{:<20} {:<10} {:<12} {:<10} {:<12} {:<12}",
+            entry.path.display(),
+            recursive_str,
+            types_str,
+            min_size_str,
+            exclude_str,
+            all_events_str,
+        );
+    }
+
+    Ok(())
+}
+
+async fn cmd_query(args: QueryArgs) -> Result<()> {
+    let log_file = resolve_log_file(args.log_file);
+
+    let min_size_bytes = args
+        .min_size
+        .map(|s| parse_size(&s))
+        .transpose()?;
+
+    let pids = args
+        .pid
+        .map(|p| p.split(',').filter_map(|s| s.trim().parse::<u32>().ok()).collect());
+
+    let users = args
+        .user
+        .map(|u| u.split(',').map(|s| s.trim().to_string()).collect());
+
+    let event_types = args
+        .types
+        .map(|t| {
+            t.split(',')
+                .map(|s| s.trim().parse::<EventType>().map_err(|e| anyhow::anyhow!(e)))
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?;
+
+    let format = args.format.unwrap_or(OutputFormat::Human);
+    let sort = args.sort.unwrap_or(SortBy::Time);
+
+    let query = Query::new(
+        log_file,
+        args.since,
+        args.until,
+        pids,
+        args.cmd,
+        users,
+        event_types,
+        min_size_bytes,
+        format,
+        sort,
+    );
+
+    query.execute().await?;
+    Ok(())
+}
+
+async fn cmd_clean(args: CleanArgs) -> Result<()> {
+    let log_file = resolve_log_file(args.log_file);
+    let keep_days = args.keep_days.unwrap_or(DEFAULT_KEEP_DAYS);
+    let max_size_bytes = args.max_size.map(|s| parse_size(&s)).transpose()?;
+    clean_logs(&log_file, keep_days, max_size_bytes, args.dry_run).await?;
+    Ok(())
+}
+
+fn cmd_install(force: bool) -> Result<()> {
+    if !Config::default_config_path().exists() || force {
+        Config::generate_default()?;
+    }
+    fsmon::systemd::install(force, None, None, None, None)?;
+    Ok(())
+}
+
+fn cmd_uninstall() -> Result<()> {
+    fsmon::systemd::uninstall()?;
+    Ok(())
+}
+
+fn resolve_log_file(cli_log_file: Option<PathBuf>) -> PathBuf {
+    if let Some(path) = cli_log_file {
+        return path;
+    }
+    if let Ok(cfg) = Config::load()
+        && let Some(path) = cfg.log_file
+    {
+        return path;
+    }
+    PathBuf::from("/var/log/fsmon/history.log")
+}
+
+fn resolve_socket_path() -> PathBuf {
+    if let Ok(cfg) = Config::load()
+        && let Some(path) = cfg.socket_path
+    {
+        return path;
+    }
+    PathBuf::from("/var/run/fsmon/fsmon.sock")
+}
+
+fn parse_path_entries(entries: &[PathEntry]) -> Result<Vec<(PathBuf, PathOptions)>> {
+    let mut result = Vec::new();
+    for entry in entries {
+        let opts = parse_path_options(entry)?;
+        result.push((entry.path.clone(), opts));
+    }
+    Ok(result)
+}
+
+fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
+    let min_size = entry
+        .min_size
+        .as_ref()
+        .map(|s| parse_size(s))
+        .transpose()?;
+    let event_types = entry
+        .types
+        .as_ref()
+        .map(|v| {
+            v.iter()
+                .map(|s| s.parse::<EventType>())
+                .collect::<std::result::Result<Vec<_>, _>>()
+        })
+        .transpose()
+        .map_err(|e: String| anyhow::anyhow!(e))?;
+    let exclude_regex = entry
+        .exclude
+        .as_ref()
+        .map(|p| {
+            let escaped = regex::escape(p);
+            let pattern = escaped.replace("\\*", ".*");
+            regex::Regex::new(&pattern).with_context(|| "invalid exclude pattern")
+        })
+        .transpose()?;
+    Ok(PathOptions {
+        min_size,
+        event_types,
+        exclude_regex,
+        recursive: entry.recursive.unwrap_or(false),
+        all_events: entry.all_events.unwrap_or(false),
+    })
 }

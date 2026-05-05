@@ -597,12 +597,7 @@ impl Monitor {
             }
         }
 
-        // Update combined mask
-        if all_events {
-            self.mask |= ALL_EVENT_MASK;
-        } else {
-            self.mask |= DEFAULT_EVENT_MASK;
-        }
+        self.recalc_mask();
 
         println!("Added path: {} (recursive={}, all_events={})", path.display(), recursive, all_events);
         Ok(())
@@ -647,8 +642,24 @@ impl Monitor {
         self.canonical_paths.remove(pos);
         self.path_options.remove(path);
 
+        // Close and remove the matching mount fd
+        if pos < self.mount_fds.len() {
+            unsafe { libc::close(self.mount_fds[pos]) };
+            self.mount_fds.remove(pos);
+        }
+
+        self.recalc_mask();
+
         println!("Removed path: {}", path.display());
         Ok(())
+    }
+
+    fn recalc_mask(&mut self) {
+        if self.path_options.values().any(|o| o.all_events) {
+            self.mask = ALL_EVENT_MASK;
+        } else {
+            self.mask = DEFAULT_EVENT_MASK;
+        }
     }
 
     fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> SocketResp {
@@ -735,6 +746,12 @@ impl Monitor {
     }
 
     fn persist_config(&self) -> Result<()> {
+        let config_path = Config::default_config_path();
+        let existing = Config::load_from_path(&config_path).unwrap_or_else(|_| Config {
+            log_file: None,
+            socket_path: None,
+            paths: vec![],
+        });
         let entries: Vec<PathEntry> = self
             .paths
             .iter()
@@ -759,8 +776,8 @@ impl Monitor {
             })
             .collect();
         let cfg = Config {
-            log_file: self.output.clone(),
-            socket_path: None,
+            log_file: self.output.clone().or(existing.log_file),
+            socket_path: existing.socket_path,
             paths: entries,
         };
         cfg.save()

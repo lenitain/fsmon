@@ -55,19 +55,22 @@ all_events = false
 ### P0 — 基础设施
 - [x] 重写 `config.rs`：Config + PathEntry 结构体，`[[paths]]` TOML 格式
 - [x] 创建 `socket.rs`：SocketCmd/SocketResp 协议、send_cmd 客户端、listen 监听器
-- [ ] 删除 `src/bin/fsmon.rs` 和 `src/bin/fsmon-cli.rs`，新建 `src/bin/fsmon.rs`
-- [ ] 重新组织 CLI 命令树（使用 clap enum dispatch）
-- [ ] 更新 `Cargo.toml` 为单 binary
+- [x] 重构 `monitor.rs`：PathOptions 按路径过滤、动态 add/remove socket 集成
+
+### P1 — 单二进制入口
+- [x] 删除 `src/bin/fsmon.rs` 和 `src/bin/fsmon-cli.rs`，新建 `src/bin/fsmon.rs`
+- [x] 重新组织 CLI 命令树（使用 clap enum dispatch）
+- [x] 更新 `Cargo.toml` 为单 binary
 
 ### P1 — 配置系统
 - [x] 重写 `config.rs`：单配置 `/etc/fsmon/fsmon.toml`，`[[paths]]` 条目
 - [x] 改进测试覆盖：添加 save/add/remove 的 IO 测试，修复 `load()` 测试，移除琐碎测试
 - [x] 添加 `#[must_use]` 和 `generate_default()` 成功消息
-- [ ] `install` 子命令：生成 service 文件 + 默认配置
-- [ ] 合并原有的 `InstanceConfig` 逻辑
+- [x] `install` 子命令：生成 service 文件 + 默认配置
+- [x] 合并原有的 `InstanceConfig` 逻辑
 
 ### P2 — daemon 子系统
-- [ ] `fsmon daemon` 命令入口，加载配置，`fanotify_init`
+- [x] `fsmon daemon` 命令入口，加载配置，`fanotify_init`
 - [x] 适配现有 `monitor.rs` 为 daemon 模式（多 path fanotify_mark、PathOptions 逐路径过滤）
 - [x] unix socket listener（tokio::select! 集成到主循环）
 - [x] add/remove/list 命令处理 + 动态 fanotify_mark（FAN_MARK_ADD/FAN_MARK_REMOVE）
@@ -75,19 +78,19 @@ all_events = false
 - [x] 优雅关闭（SIGTERM/SIGINT）
 
 ### P3 — CLI 子系统
-- [ ] `add <path>`：连 socket → 发 add 命令 → 显示结果
-- [ ] `remove <path>`：连 socket → 发 remove 命令 → 显示结果
-- [ ] `managed`：连 socket → list → 表格输出
-- [ ] CLI 在 socket 不可用时给出明确提示
+- [x] `add <path>`：连 socket → 发 add 命令 → 显示结果
+- [x] `remove <path>`：连 socket → 发 remove 命令 → 显示结果
+- [x] `managed`：连 socket → list → 表格输出
+- [x] CLI 在 socket 不可用时给出明确提示
 
 ### P4 — query / clean（移植现有代码）
-- [ ] `query`：读配置获取 log_file 路径，其余逻辑不变
-- [ ] `clean`：同上
-- [ ] 保留 `--log-file` override
+- [x] `query`：读配置获取 log_file 路径，其余逻辑不变
+- [x] `clean`：同上
+- [x] 保留 `--log-file` override
 
 ### P5 — systemd 集成
-- [ ] 更新 `systemd.rs`：单 service（非 template），`RuntimeDirectory`
-- [ ] 更新 service template 为 `ExecStart=fsmon daemon`
+- [x] 更新 `systemd.rs`：单 service（非 template），`RuntimeDirectory`
+- [x] 更新 service template 为 `ExecStart=fsmon daemon`
 
 ### P6 — 清理
 - [ ] 删除旧 `fsmon-cli.rs` 相关逻辑
