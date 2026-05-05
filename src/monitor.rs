@@ -376,7 +376,9 @@ impl Monitor {
                             }
 
                             if self.should_output(&event) {
-                                let _ = self.write_event(&event);
+                                if let Err(e) = self.write_event(&event) {
+                                    eprintln!("[ERROR] Failed to write event: {}", e);
+                                }
                             }
                         }
                     }

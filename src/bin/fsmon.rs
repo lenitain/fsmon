@@ -153,6 +153,11 @@ async fn cmd_daemon() -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
 
+    eprintln!("Config loaded:");
+    eprintln!("  Store file:  {}", cfg.store.file.display());
+    eprintln!("  Log dir:     {}", cfg.logging.dir.display());
+    eprintln!("  Socket:      {}", cfg.socket.path.display());
+
     let store = Store::load(&cfg.store.file)?;
 
     if store.entries.is_empty() {
@@ -174,6 +179,11 @@ async fn cmd_daemon() -> Result<()> {
 
     // Set socket permissions to 0666 so any user can send commands
     set_socket_permissions(&socket_path)?;
+
+    eprintln!("Monitored paths ({}):", store.entries.len());
+    for entry in &store.entries {
+        eprintln!("  [{}] {}", entry.id, entry.path.display());
+    }
 
     let paths_and_options = parse_path_entries(&store.entries)?;
     let path_ids: std::collections::HashMap<_, _> = store
