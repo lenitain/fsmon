@@ -6,6 +6,7 @@ pub enum HelpTopic {
     Managed,
     Query,
     Clean,
+    Generate,
 }
 
 pub const fn about(topic: HelpTopic) -> &'static str {
@@ -17,6 +18,7 @@ pub const fn about(topic: HelpTopic) -> &'static str {
         HelpTopic::Managed => "List all monitored paths with their configuration",
         HelpTopic::Query => "Query historical file change events from log files",
         HelpTopic::Clean => "Clean historical log files, retain by time or size",
+        HelpTopic::Generate => "Generate a default configuration file",
     }
 }
 
@@ -109,6 +111,19 @@ Options:
 Examples:
   fsmon clean --keep-days 7
   fsmon clean --max-size 100MB --dry-run"#
+        }
+        HelpTopic::Generate => {
+            r#"Generate a default configuration file at ~/.config/fsmon/config.toml
+with all fields populated for easy customization.
+
+This command is useful to quickly bootstrap your fsmon setup. You can
+then edit the generated config file to adjust monitored paths, event
+types, size thresholds, and exclusion patterns.
+
+The daemon also auto-generates a default config if none exists when started.
+
+Examples:
+  fsmon generate"#
         }
     }
 }

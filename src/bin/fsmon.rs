@@ -46,6 +46,14 @@ enum Commands {
     /// Clean historical log files
     #[command(about = help::about(HelpTopic::Clean), long_about = help::long_about(HelpTopic::Clean))]
     Clean(CleanArgs),
+
+    /// Generate a default configuration file
+    #[command(about = help::about(HelpTopic::Generate), long_about = help::long_about(HelpTopic::Generate))]
+    Generate {
+        /// Overwrite existing configuration file if it exists
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 #[derive(Parser)]
@@ -121,12 +129,21 @@ async fn main() -> Result<()> {
         Commands::Managed => cmd_managed()?,
         Commands::Query(args) => cmd_query(args).await?,
         Commands::Clean(args) => cmd_clean(args).await?,
+        Commands::Generate { force } => cmd_generate(force)?,
     }
 
     Ok(())
 }
 
 async fn cmd_daemon() -> Result<()> {
+    // Auto-generate config if it doesn't exist
+    let config_path = UserConfig::path();
+    if !config_path.exists() {
+        eprintln!("Config not found at {}, generating default config...", config_path.display());
+        UserConfig::generate_default()?;
+        eprintln!("Default config generated at {}", config_path.display());
+    }
+
     let user_cfg = UserConfig::load()?;
 
     if user_cfg.paths.is_empty() {
@@ -340,6 +357,21 @@ async fn cmd_query(args: QueryArgs) -> Result<()> {
     );
 
     query.execute().await?;
+    Ok(())
+}
+
+fn cmd_generate(force: bool) -> Result<()> {
+    let config_path = UserConfig::path();
+    if config_path.exists() && !force {
+        eprintln!(
+            "Config already exists at {}",
+            config_path.display()
+        );
+        eprintln!("Use -f or --force to overwrite");
+        std::process::exit(1);
+    }
+    UserConfig::generate_default()?;
+    println!("Default config generated at {}", config_path.display());
     Ok(())
 }
 

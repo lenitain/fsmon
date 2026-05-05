@@ -169,6 +169,37 @@ impl UserConfig {
         let uid = resolve_uid();
         PathBuf::from("/tmp").join(format!("fsmon-{}.sock", uid))
     }
+
+    /// Generate a default configuration file with all fields, writing to the user config path.
+    /// Creates parent directories if needed.
+    pub fn generate_default() -> Result<()> {
+        let cfg = UserConfig {
+            paths: vec![
+                PathEntry {
+                    path: PathBuf::from("/etc"),
+                    recursive: Some(true),
+                    types: Some(vec![
+                        "MODIFY".to_string(),
+                        "CREATE".to_string(),
+                        "DELETE".to_string(),
+                    ]),
+                    min_size: Some("1KB".to_string()),
+                    exclude: Some("*.swp".to_string()),
+                    all_events: Some(false),
+                },
+                PathEntry {
+                    path: PathBuf::from("/var/log"),
+                    recursive: Some(true),
+                    types: None,
+                    min_size: None,
+                    exclude: None,
+                    all_events: None,
+                },
+            ],
+        };
+        Self::save(&cfg)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
