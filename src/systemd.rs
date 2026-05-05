@@ -151,10 +151,15 @@ pub fn enable_instance(
         );
     }
 
+    // Default log path if not specified: /var/log/fsmon/{name}.log
+    let output = output
+        .cloned()
+        .or_else(|| Some(PathBuf::from("/var/log/fsmon").join(format!("{}.log", name))));
+
     // Build instance config
     let instance_cfg = crate::config::InstanceConfig {
         paths: paths.to_vec(),
-        output: output.cloned(),
+        output,
         min_size: min_size.map(String::from),
         types: types.map(String::from),
         exclude: exclude.map(String::from),
