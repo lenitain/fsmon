@@ -141,6 +141,21 @@ cargo test         ✅ 67 passed, 7 ignored (fanotify 测试需要 sudo)
   - `monitor.rs::add_path()`: 新增 `self.path_ids.insert(path, entry.id)`
   - `monitor.rs::handle_socket_cmd("add")`: 用 `max(existing IDs) + 1` 分配正确 ID
 
+### 2026-05-05 — 实时添加路径无事件 (mount_fd / cache / fan_fds 三重 bug)
+
+- **问题**: `fsmon add` 实时添加路径后 daemon 不产生任何事件日志。三个 bug 叠加:
+  1. `run()` 初始 fd 只存在 local `fan_groups`，未写入 `self.fan_fds`，
+     导致 `add_path()` → `try_mark_on_existing()` 永远无 fd 可尝试
+  2. `add_path()` 在 `spawn_fd_reader()` 之后才 push mount_fd，
+     新 reader task 的快照里缺少该路径的目录 fd，`open_by_handle_at` 解析失败
+  3. `add_path()` 缓存目录句柄到 `self.dir_cache`（已被 `run()` 的 `mem::take` 掏空），
+     而非 `shared_dir_cache`，reader 的二阶段路径恢复也找不到句柄
+  结果: 事件文件句柄无法解析 → 路径为空 → `is_path_in_scope` 过滤掉 → 无日志
+- **修复**:
+  - `run()`: 初始化后 `self.fan_fds.push(group.fd)` 存入所有 fd
+  - `add_path()`: mount_fd + shared_dir_cache 写入移到 `spawn_fd_reader` 之前
+  - `add_path()`: 目录句柄缓存写入 `shared_dir_cache` 而非 `self.dir_cache`
+
 ## 下一阶段可能的改进
 
 - 找回 query.rs 中丢失的 17 个二进制搜索测试 (代码逻辑未改, 测试函数需恢复)

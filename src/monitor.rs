@@ -359,6 +359,11 @@ impl Monitor {
             bail!("No paths could be monitored. Check warnings above.");
         }
 
+        // Store fds for live-add reuse via socket commands
+        for group in &fan_groups {
+            self.fan_fds.push(group.fd);
+        }
+
         // Open directory fds for open_by_handle_at to resolve file handles.
         // These are shared across all fan_fds (resolve_file_handle tries each).
         for canonical in &self.canonical_paths {
@@ -794,18 +799,8 @@ impl Monitor {
                 }
             };
 
-        // Spawn reader task + confirm monitoring
-        if is_new_fd {
-            self.spawn_fd_reader(fan_fd);
-        } else {
-            eprintln!(
-                "[INFO] Monitoring {} on existing fd {}",
-                canonical.display(),
-                fan_fd
-            );
-        }
-
-        // Open directory fd for handle resolution
+        // Open directory fd for handle resolution BEFORE spawning reader,
+        // so the new reader task can resolve file handles for this path.
         if let Ok(c_path) = CString::new(canonical.to_string_lossy().as_bytes()) {
             let mfd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
             if mfd >= 0 {
@@ -819,13 +814,28 @@ impl Monitor {
         self.path_options.insert(path.clone(), opts);
         self.path_ids.insert(path.clone(), entry.id);
 
-        // Pre-cache directory handles
-        if canonical.is_dir() {
+        // Pre-cache directory handles in the shared cache (used by all reader tasks)
+        // before spawning the reader, so second-pass path recovery works.
+        if canonical.is_dir()
+            && let Some(ref cache) = self.shared_dir_cache
+        {
+            let mut dc = cache.lock().unwrap();
             if recursive {
-                dir_cache::cache_recursive(&mut self.dir_cache, &canonical);
+                dir_cache::cache_recursive(&mut dc, &canonical);
             } else {
-                dir_cache::cache_dir_handle(&mut self.dir_cache, &canonical);
+                dir_cache::cache_dir_handle(&mut dc, &canonical);
             }
+        }
+
+        // Spawn reader task + confirm monitoring (after mount_fd + cache are ready)
+        if is_new_fd {
+            self.spawn_fd_reader(fan_fd);
+        } else {
+            eprintln!(
+                "[INFO] Monitoring {} on existing fd {}",
+                canonical.display(),
+                fan_fd
+            );
         }
 
         println!(
