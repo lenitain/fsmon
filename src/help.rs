@@ -18,7 +18,9 @@ pub const fn about(topic: HelpTopic) -> &'static str {
         HelpTopic::Uninstall => "Uninstall systemd service template",
         HelpTopic::Clean => "Clean historical logs",
         HelpTopic::Generate => "Generate CLI configuration file at ~/.config/fsmon/fsmon.toml",
-        HelpTopic::GenerateInstance => "Generate instance configuration file at /etc/fsmon/fsmon-{name}.toml",
+        HelpTopic::GenerateInstance => {
+            "Generate instance configuration file at /etc/fsmon/fsmon-{name}.toml"
+        }
     }
 }
 

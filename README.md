@@ -99,7 +99,7 @@ Config read from `~/.config/fsmon/fsmon.toml`. CLI flags override config values.
 sudo fsmon install
 
 # 2. Generate instance config template (or create manually)
-sudo fsmon generate --instance web
+sudo fsmon generate --instance web   # generated file uses `{name}` placeholder → replaced with "web"
 
 # Edit the template to set paths and options
 sudo vim /etc/fsmon/fsmon-web.toml
@@ -287,6 +287,8 @@ CLI flags override config file values.
 ### Instance Config (`/etc/fsmon/fsmon-{name}.toml`)
 
 Each systemd instance reads its config from `/etc/fsmon/fsmon-{name}.toml`. Only `paths` is required. Generate a template: `sudo fsmon generate --instance <name>`
+
+The generated template uses `{name}` as a placeholder in the `output` path and replaces it with the actual instance name at generation time (not hardcoded). Example output for instance `web`:
 
 ```toml
 paths = ["/var/www"]

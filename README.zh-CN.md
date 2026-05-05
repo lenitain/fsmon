@@ -99,7 +99,7 @@ sudo fsmon-cli monitor /var/log --exclude "*.log"
 sudo fsmon install
 
 # 2. 生成实例配置模板（或手动创建）
-sudo fsmon generate --instance web
+sudo fsmon generate --instance web   # 模板使用 `{name}` 占位符，生成时替换为 "web"
 
 # 编辑模板设置路径和选项
 sudo vim /etc/fsmon/fsmon-web.toml
@@ -287,6 +287,8 @@ CLI 参数优先级高于配置文件。
 ### 实例配置（`/etc/fsmon/fsmon-{name}.toml`）
 
 每个 systemd 实例读取自己的 `/etc/fsmon/fsmon-{name}.toml`。仅 `paths` 为必需字段。生成模板：`sudo fsmon generate --instance <name>`
+
+生成的模板中 `output` 路径使用 `{name}` 占位符，`fsmon generate --instance <name>` 生成时自动替换为实际实例名（非硬编码）。以实例 `web` 为例：
 
 ```toml
 paths = ["/var/www"]
