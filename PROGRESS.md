@@ -196,6 +196,22 @@ cargo test         ✅ 67 passed, 7 ignored (fanotify 测试需要 sudo)
 - **修复**: 静默忽略 `Err(_)`（daemon 未运行），store 已保存，重启后自动生效。
   仅保留 `Ok(resp)` 非 ok 分支的错误输出（daemon 运行但操作失败）。
 
+### 2026-05-05 — 更新 README 与代码保持同步
+
+两份 README（中英文）全面重写以匹配当前代码架构：
+
+| 旧内容 | 新内容 |
+|--------|--------|
+| `~/.config/fsmon/config.toml` 存路径 | config 仅基础设施，路径在 `~/.local/share/fsmon/store.toml` |
+| `fsmon remove /path` | `fsmon remove <ID>` — 按数字 ID 移除 |
+| `~/.local/state/fsmon/history.log` | `~/.local/state/fsmon/log_<ID>.toml` 按 ID 分文件 |
+| `--log-file` 选项 | `--id` 选项，支持逗号/范围/重复 |
+| 配置示例含 `[[paths]]` | 配置示例为基础设施三段式（store/logging/socket） |
+| 缺失 `fsmon generate` | 新增 `generate` 子命令说明 |
+| 模块列表缺 config/store/systemd | 补全全部 14 个模块 |
+| JSON 输出格式 | 实际为 TOML（`--format json` 别名） |
+| 架构图中 config 放路径 | 架构图更新为 config + store 两层分离 |
+
 ## 下一阶段可能的改进
 
 - 找回 query.rs 中丢失的 17 个二进制搜索测试 (代码逻辑未改, 测试函数需恢复)
