@@ -22,10 +22,8 @@
 - **Complete Deletion Capture**: Captures every file deleted during `rm -rf` via persistent directory handle cache
 - **High Performance**: Rust + Tokio, <5MB memory footprint, zero-copy FID event parsing, binary-search log querying
 - **Flexible Filtering**: Filter by time, size, process, user, event type, and exclude patterns (wildcards)
-- **TOML Configuration**: Persistent config at `/etc/fsmon/fsmon.toml`
-- **Log Management**: Time-based and size-based log rotation with dry-run preview
-- **Dynamic Path Management**: Add/remove monitored paths at runtime via Unix socket (no daemon restart needed)
-- **Systemd Service**: Systemd service with auto-restart, fanotify capabilities, and runtime directory for Unix socket
+- **No Sudo Required for Daily Use**: Only `sudo fsmon daemon` needs root (fanotify). `fsmon add`, `remove`, `managed`, `query`, `clean` all run as a normal user.
+- **Podman-style Architecture**: Run the daemon yourself — no systemd dependency. Config per user.
 
 ## Why fsmon
 
@@ -38,7 +36,7 @@ Traditional file monitoring tools give you events without context — fsmon brid
 ### Prerequisites
 
 - **OS**: Linux 5.9+ (requires fanotify FID mode)
-- **Tested Filesystems**: ext4, XFS, btrfs (Note: Linux 6.18+ recommended for full recursive operation support of btrfs) 
+- **Tested Filesystems**: ext4, XFS, btrfs (Note: Linux 6.18+ recommended for full recursive operation support of btrfs)
 - **Build**: Rust toolchain (`cargo`)
 
 ```bash
@@ -67,40 +65,58 @@ cargo install fsmon
 sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 ```
 
-### Daemon Mode — Interactive Monitoring
+### Usage
 
 ```bash
-# 1. Install systemd service (one-time)
-sudo fsmon install
+# 1. Start the daemon (requires sudo for fanotify)
+sudo fsmon daemon &
 
-# 2. Start the daemon
-sudo systemctl enable fsmon --now
-sudo systemctl status fsmon
+# 2. Add paths to monitor (no sudo needed)
+fsmon add /etc --types MODIFY
+fsmon add /var/www --recursive --types MODIFY,CREATE
+fsmon add /tmp --all-events
 
-# 3. Add paths to monitor (live, no restart needed)
-sudo fsmon add /etc --types MODIFY
-sudo fsmon add /var/www --recursive --types MODIFY,CREATE
-sudo fsmon add /tmp --all-events
+# 3. List monitored paths
+fsmon managed
 
-# 4. List monitored paths
-sudo fsmon managed
-
-# 5. Query historical events
+# 4. Query historical events
 fsmon query --since 1h --cmd nginx
 
-# 6. Clean old logs (dry-run preview)
+# 5. Clean old logs (dry-run preview)
 fsmon clean --keep-days 7 --dry-run
 
-# 7. Remove a path
-sudo fsmon remove /tmp
+# 6. Remove a path
+fsmon remove /tmp
 
-# 8. Stop the daemon
-sudo systemctl stop fsmon
+# 7. Stop the daemon
+kill %1
 ```
 
-Config read from `/etc/fsmon/fsmon.toml`. Paths added via `fsmon add` are persisted in config for automatic monitoring on daemon restart.
+**That's it.** No systemd, no `/etc/` config files — everything is per-user.
 
+### File Locations
 
+| Purpose | Path | Created by | Permissions |
+|---|---|---|---|
+| Config (monitored paths) | `~/.config/fsmon/config.toml` | `fsmon add` / `fsmon remove` | user-owned |
+| Event log | `~/.local/state/fsmon/history.log` | daemon (root) | 644 |
+| Unix socket | `/tmp/fsmon-<UID>.sock` | daemon (root) | 666 |
+
+### Auto-start on Boot (Optional)
+
+fsmon **does not** install a systemd service. If you want the daemon to start automatically on login, add to your crontab:
+
+```bash
+crontab -e
+# Add this line:
+@reboot /usr/local/bin/fsmon daemon &
+```
+
+Or add to your shell profile:
+
+```bash
+echo 'fsmon daemon &' >> ~/.bashrc
+```
 
 ## Examples
 
@@ -108,33 +124,33 @@ Config read from `/etc/fsmon/fsmon.toml`. Paths added via `fsmon add` are persis
 
 ```bash
 # Add /etc for monitoring
-sudo fsmon add /etc --types MODIFY
+fsmon add /etc --types MODIFY
 
 # In another terminal, make a change
 echo "192.168.1.100 newhost" | sudo tee -a /etc/hosts
 
 # Query the results
-sudo fsmon query --since 1h --types MODIFY
+fsmon query --since 1h --types MODIFY
 ```
 
 ### Track Large File Creation
 
 ```bash
 # Watch for files larger than 50MB
-sudo fsmon add /tmp --types CREATE
+fsmon add /tmp --types CREATE
 
 # Trigger
 dd if=/dev/zero of=/tmp/large_test.bin bs=1M count=100
 
 # Query with min-size filter
-sudo fsmon query --since 1m --min-size 50MB --format json
+fsmon query --since 1m --min-size 50MB --format json
 ```
 
 ### Audit Deletion Operations
 
 ```bash
 # Monitor for deletions
-sudo fsmon add ~/.projects --types DELETE --recursive
+fsmon add ~/.projects --types DELETE --recursive
 
 # Trigger
 rm -rf ~/.projects/fsmon-test/
@@ -148,52 +164,69 @@ rm -rf ~/.projects/fsmon-test/
 
 ```bash
 # Query nginx operations in last hour, sorted by file size
-sudo fsmon query --since 1h --cmd nginx* --sort size
+fsmon query --since 1h --cmd nginx* --sort size
 
 # Add monitoring with exclude patterns
-sudo fsmon add /var/www --types CREATE,DELETE --exclude "*.tmp"
+fsmon add /var/www --types CREATE,DELETE --exclude "*.tmp"
 ```
 
 ## Command Reference
 
 ```bash
-fsmon add /var/www -r           # Add a path to monitoring (live + persist)
-sudo fsmon remove /var/www       # Remove a path from monitoring
-sudo fsmon managed               # List all monitored paths with configuration
-fsmon query --since 1h          # Query historical events with filters
-fsmon clean --keep-days 7       # Clean old logs by time or size
-sudo fsmon install               # Install systemd service and config
-sudo fsmon uninstall             # Uninstall systemd service
+fsmon daemon          # Start daemon (requires sudo)
+fsmon add /path -r    # Add path to monitoring (live + persist)
+fsmon remove /path    # Remove path from monitoring
+fsmon managed         # List all monitored paths
+fsmon query --since   # Query historical events
+fsmon clean --keep    # Clean old logs
 ```
 
 Use `fsmon <COMMAND> --help` for detailed help on each subcommand.
 
 ## Architecture
 
-fsmon runs as a systemd-managed background daemon, with persistent config at `/etc/fsmon/fsmon.toml`.
+fsmon runs as a foreground daemon managed directly by the user.
 
-```bash
-sudo fsmon install              # Install systemd service
-sudo systemctl enable fsmon --now
+```
+┌──────────────────────────────────────────────────┐
+│  User runs:  sudo fsmon daemon &                 │
+├──────────────────────────────────────────────────┤
+│  Daemon (root):                                  │
+│  1. Resolve original user via SUDO_UID           │
+│  2. Read ~/.config/fsmon/config.toml (paths)     │
+│  3. fanotify_init → fanotify_mark(paths)         │
+│  4. Bind /tmp/fsmon-<UID>.sock (0666)            │
+│  5. Loop: fanotify events + socket commands      │
+├──────────────────────────────────────────────────┤
+│  CLI (user):  fsmon add /path                    │
+│  1. Write ~/.config/fsmon/config.toml            │
+│  2. Send add command via socket (live update)     │
+└──────────────────────────────────────────────────┘
 ```
 
 | Aspect | Detail |
 |--------|--------|
-| Config file | `/etc/fsmon/fsmon.toml` |
+| Config file | `~/.config/fsmon/config.toml` |
 | Path management | `fsmon add` / `fsmon remove` (live via Unix socket) |
-| Log output | JSON events written to `/var/log/fsmon/history.log` |
+| Log output | JSON events written to `~/.local/state/fsmon/history.log` |
+| Socket | `/tmp/fsmon-<UID>.sock` (mode 0666 for non-root CLI) |
 | Query | `fsmon query --since 1h` to read events |
 | Clean | `fsmon clean --keep-days 7` to rotate old logs |
+| Daemon management | User-managed (`sudo fsmon daemon &`, crontab, etc.) |
 
 ## Configuration
 
-Persistent config at `/etc/fsmon/fsmon.toml` (auto-generated by `sudo fsmon install`).
+Config file at `~/.config/fsmon/config.toml`. No system config needed.
 
-| Field | CLI flag | Type | Description |
-|-------|----------|------|-------------|
-| `log_file` | | `string` | Log file path (default: `/var/log/fsmon/history.log`) |
-| `socket_path` | | `string` | Unix socket for live commands (default: `/var/run/fsmon/fsmon.sock`) |
-| `paths` | `fsmon add` | `PathEntry[]` | Monitored paths |
+```toml
+[[paths]]
+path = "/var/www"
+recursive = true
+types = ["MODIFY", "CREATE"]
+min_size = "100MB"
+exclude = "*.tmp"
+all_events = false
+```
 
 Each path entry:
 
@@ -206,11 +239,11 @@ Each path entry:
 | `all_events` | `--all-events` | `bool` | Capture all 14 event types |
 | `recursive` | `-r, --recursive` | `bool` | Watch subdirectories |
 
-### Query Options (CLI flags only)
+### Query Options
 
 | Flag | Description |
 |------|-------------|
-| `--log-file` | Log to query |
+| `--log-file` | Log to query (default: `~/.local/state/fsmon/history.log`) |
 | `--since` | Start time (relative like `1h`, `30m`, `7d` or absolute timestamp) |
 | `--until` | End time |
 | `--pid` | Filter by PID(s), comma-separated |
@@ -221,20 +254,14 @@ Each path entry:
 | `-f, --format` | Output format: `human` (default), `json`, `csv` |
 | `-r, --sort` | Sort by: `time`, `size`, `pid` |
 
-### Clean Options (CLI flags only)
+### Clean Options
 
 | Flag | Description |
 |------|-------------|
-| `--log-file` | Log to clean |
+| `--log-file` | Log to clean (default: `~/.local/state/fsmon/history.log`) |
 | `--keep-days` | Retention in days (default: 30) |
 | `--max-size` | Max size before truncation (e.g. `100MB`) |
 | `--dry-run` | Preview without making changes |
-
-### Install Options (CLI flags only)
-
-| Flag | Description |
-|------|-------------|
-| `--force` | Reinstall existing service |
 
 ## Technical Architecture
 
@@ -243,14 +270,13 @@ Each path entry:
 | Module | Description |
 |--------|-------------|
 | `lib.rs` | Library crate root — shared types (`FileEvent`, `EventType`), log cleaning engine |
-| `bin/fsmon.rs` | Main binary — `daemon`, `add`, `remove`, `managed`, `query`, `clean`, `install`, `uninstall` |
+| `bin/fsmon.rs` | Main binary — `daemon`, `add`, `remove`, `managed`, `query`, `clean` |
 | `monitor.rs` | Core fanotify monitoring loop, scope filtering, file size tracking (LRU) |
 | `fid_parser.rs` | Low-level FID mode event parsing, two-pass path recovery |
 | `dir_cache.rs` | Directory handle caching via `name_to_handle_at` for deleted file path resolution |
 | `proc_cache.rs` | Netlink proc connector listener — captures short-lived process info at `exec()` |
 | `query.rs` | Log file querying with binary search optimization and combined filters |
-| `config.rs` | TOML-based persistent configuration |
-| `systemd.rs` | Systemd service install and uninstall |
+| `config.rs` | Per-user TOML configuration (`~/.config/fsmon/config.toml`) |
 | `output.rs` | Event output formatting (human, JSON, CSV) |
 | `socket.rs` | Unix socket server (daemon-side) and client (add/remove commands) |
 | `utils.rs` | Size/time parsing, process info helpers, UID lookup |
