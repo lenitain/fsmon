@@ -23,32 +23,29 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Run the fsmon daemon (requires sudo for fanotify)
     #[command(about = help::about(HelpTopic::Daemon), long_about = help::long_about(HelpTopic::Daemon))]
     Daemon,
 
+    /// Add a path to the monitoring list
     #[command(about = help::about(HelpTopic::Add), long_about = help::long_about(HelpTopic::Add))]
     Add(AddArgs),
 
+    /// Remove a path from the monitoring list
     #[command(about = help::about(HelpTopic::Remove), long_about = help::long_about(HelpTopic::Remove))]
     Remove { path: PathBuf },
 
+    /// List all monitored paths with their configuration
     #[command(about = help::about(HelpTopic::Managed), long_about = help::long_about(HelpTopic::Managed))]
     Managed,
 
+    /// Query historical file change events
     #[command(about = help::about(HelpTopic::Query), long_about = help::long_about(HelpTopic::Query))]
     Query(QueryArgs),
 
+    /// Clean historical log files
     #[command(about = help::about(HelpTopic::Clean), long_about = help::long_about(HelpTopic::Clean))]
     Clean(CleanArgs),
-
-    #[command(about = help::about(HelpTopic::Install), long_about = help::long_about(HelpTopic::Install))]
-    Install {
-        #[arg(short, long)]
-        force: bool,
-    },
-
-    #[command(about = help::about(HelpTopic::Uninstall), long_about = help::long_about(HelpTopic::Uninstall))]
-    Uninstall,
 }
 
 #[derive(Parser)]
@@ -124,17 +121,12 @@ async fn main() -> Result<()> {
         Commands::Managed => cmd_managed()?,
         Commands::Query(args) => cmd_query(args).await?,
         Commands::Clean(args) => cmd_clean(args).await?,
-        Commands::Install { force } => cmd_install(force)?,
-        Commands::Uninstall => cmd_uninstall()?,
     }
 
     Ok(())
 }
 
 async fn cmd_daemon() -> Result<()> {
-    // Migrate paths from old /etc/fsmon/fsmon.toml if user config doesn't exist yet
-    UserConfig::migrate_from_etc()?;
-
     let user_cfg = UserConfig::load()?;
 
     if user_cfg.paths.is_empty() {
@@ -144,19 +136,23 @@ async fn cmd_daemon() -> Result<()> {
     let socket_path = UserConfig::default_socket_path();
     let log_file = UserConfig::default_log_file();
 
-    for p in [socket_path.parent(), log_file.parent()]
-        .into_iter()
-        .flatten()
-    {
-        fs::create_dir_all(p)?;
+    // Create parent directories for log and socket
+    if let Some(parent) = log_file.parent() {
+        fs::create_dir_all(parent)?;
     }
 
     if socket_path.exists() {
         fs::remove_file(&socket_path)?;
     }
+    if let Some(parent) = socket_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
 
     let socket_listener = tokio::net::UnixListener::bind(&socket_path)
         .with_context(|| format!("Failed to bind socket at {}", socket_path.display()))?;
+
+    // Set socket permissions to 0666 so any user can send commands
+    set_socket_permissions(&socket_path)?;
 
     let paths_and_options = parse_path_entries(&user_cfg.paths)?;
 
@@ -170,6 +166,15 @@ async fn cmd_daemon() -> Result<()> {
     )?;
 
     monitor.run().await?;
+    Ok(())
+}
+
+/// Set socket permissions to 0666 so non-root users can communicate with the daemon.
+fn set_socket_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let perm = fs::Permissions::from_mode(0o666);
+    fs::set_permissions(path, perm)
+        .with_context(|| format!("Failed to set socket permissions on {}", path.display()))?;
     Ok(())
 }
 
@@ -343,16 +348,6 @@ async fn cmd_clean(args: CleanArgs) -> Result<()> {
     let keep_days = args.keep_days.unwrap_or(DEFAULT_KEEP_DAYS);
     let max_size_bytes = args.max_size.map(|s| parse_size(&s)).transpose()?;
     clean_logs(&log_file, keep_days, max_size_bytes, args.dry_run).await?;
-    Ok(())
-}
-
-fn cmd_install(force: bool) -> Result<()> {
-    fsmon::systemd::install(force)?;
-    Ok(())
-}
-
-fn cmd_uninstall() -> Result<()> {
-    fsmon::systemd::uninstall()?;
     Ok(())
 }
 

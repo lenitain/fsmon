@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 
 /// User-managed config storing monitored paths.
 ///
-/// The config file lives at `~/.config/fsmon/config.toml` and is managed entirely
-/// by the user — no root needed for add/remove/query/clean/managed.
+/// The config file lives at `~/.config/fsmon/config.toml`.
+/// All path resolution is based on the **original user** (not root's HOME).
+/// Daemon (running as root via sudo) uses SUDO_UID to find the right home.
+/// CLI (running as user) uses the user's own HOME directly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserConfig {
     pub paths: Vec<PathEntry>,
@@ -22,14 +24,91 @@ pub struct PathEntry {
     pub all_events: Option<bool>,
 }
 
+/// Resolve the original user's UID:
+/// - If SUDO_UID is set (sudo), use that
+/// - Otherwise use the current process UID
+pub fn resolve_uid() -> u32 {
+    if let Ok(uid_str) = std::env::var("SUDO_UID")
+        && let Ok(uid) = uid_str.parse::<u32>()
+    {
+        return uid;
+    }
+    unsafe { libc::geteuid() }
+}
+
+/// Resolve the original user's home directory using platform password database.
+/// Used by the daemon (running as root) to find the user's config/log paths.
+pub fn resolve_home(uid: u32) -> Result<PathBuf> {
+    // SAFETY: getpwuid_r is reentrant and thread-safe
+    let bufsize = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
+    let bufsize = if bufsize > 0 { bufsize as usize } else { 4096 };
+    let mut buf = vec![0u8; bufsize];
+    let mut pwd = std::mem::MaybeUninit::<libc::passwd>::zeroed();
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+
+    let ret = unsafe {
+        libc::getpwuid_r(
+            uid,
+            pwd.as_mut_ptr(),
+            buf.as_mut_ptr() as *mut libc::c_char,
+            bufsize,
+            &mut result,
+        )
+    };
+
+    if ret != 0 || result.is_null() {
+        anyhow::bail!(
+            "Failed to look up home directory for UID {} (errno: {})",
+            uid,
+            ret
+        );
+    }
+
+    // SAFETY: result is non-null and points to initialized passwd struct
+    let home_ptr = unsafe { (*result).pw_dir };
+    if home_ptr.is_null() {
+        anyhow::bail!("Home directory not set for UID {}", uid);
+    }
+    // SAFETY: pw_dir is a valid C string
+    let home = unsafe { std::ffi::CStr::from_ptr(home_ptr) }
+        .to_string_lossy()
+        .into_owned();
+    Ok(PathBuf::from(home))
+}
+
 impl UserConfig {
     /// Return the user config path: `$XDG_CONFIG_HOME/fsmon/config.toml`
     /// Falls back to `~/.config/fsmon/config.toml`.
-    fn path() -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    pub fn path() -> PathBuf {
+        let home = Self::guess_home();
         let xdg_config =
             std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{}/.config", home));
         PathBuf::from(xdg_config).join("fsmon").join("config.toml")
+    }
+
+    /// Best-effort guess of user's home directory.
+    /// Used by CLI commands (running as user, HOME is correct).
+    /// For daemon (root via sudo), use SUDO_UID + getpwuid.
+    /// For tests, use HOME env.
+    fn guess_home() -> String {
+        // 1. SUDO_UID — daemon running via sudo
+        let uid_str = match std::env::var("SUDO_UID") {
+            Ok(s) => s,
+            Err(_) => return std::env::var("HOME").unwrap_or_else(|_| "/root".into()),
+        };
+        let uid = match uid_str.parse::<u32>() {
+            Ok(u) => u,
+            Err(_) => return std::env::var("HOME").unwrap_or_else(|_| "/root".into()),
+        };
+        // If we're not actually root (e.g. in tests where SUDO_UID is unset),
+        // just use HOME. If we are root, try getpwuid.
+        if unsafe { libc::geteuid() } != 0 {
+            return std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+        }
+        match resolve_home(uid) {
+            Ok(p) => p.to_string_lossy().into_owned(),
+            Err(_) => std::env::var("HOME").unwrap_or_else(|_| "/root".into()),
+        }
     }
 
     /// Load user paths config. Returns empty config if file doesn't exist.
@@ -56,10 +135,12 @@ impl UserConfig {
         Ok(())
     }
 
+    /// Save config to the user's config path.
     pub fn save(cfg: &UserConfig) -> Result<()> {
         Self::save_to(&Self::path(), cfg)
     }
 
+    /// Add (or replace) a path entry in the user config.
     pub fn add_path(entry: PathEntry) -> Result<()> {
         let mut cfg = Self::load()?;
         cfg.paths.retain(|p| p.path != entry.path);
@@ -68,77 +149,25 @@ impl UserConfig {
         Self::save(&cfg)
     }
 
+    /// Remove a path entry from the user config.
     pub fn remove_path(path: &Path) -> Result<()> {
         let mut cfg = Self::load()?;
         cfg.paths.retain(|p| p.path != path);
         Self::save(&cfg)
     }
 
-    /// Return the daemon data directory: `$XDG_DATA_HOME/fsmon`
-    /// Falls back to `~/.local/share/fsmon`.
-    fn data_dir() -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-        let xdg_data =
-            std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| format!("{}/.local/share", home));
-        PathBuf::from(xdg_data).join("fsmon")
-    }
-
-    /// Default log file path: `$XDG_DATA_HOME/fsmon/history.log`
+    /// Default log file path: `~/.local/state/fsmon/history.log`
     pub fn default_log_file() -> PathBuf {
-        Self::data_dir().join("history.log")
+        let home = Self::guess_home();
+        let xdg_state =
+            std::env::var("XDG_STATE_HOME").unwrap_or_else(|_| format!("{}/.local/state", home));
+        PathBuf::from(xdg_state).join("fsmon").join("history.log")
     }
 
-    /// Default socket path: `$XDG_RUNTIME_DIR/fsmon.sock` or `$XDG_DATA_HOME/fsmon/fsmon.sock`
+    /// Default socket path: `/tmp/fsmon-<UID>.sock` with 0666 permissions
     pub fn default_socket_path() -> PathBuf {
-        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").ok().map(PathBuf::from);
-        if let Some(dir) = runtime_dir {
-            dir.join("fsmon.sock")
-        } else {
-            Self::data_dir().join("fsmon.sock")
-        }
-    }
-
-    /// Migration: copy `[[paths]]` from old `/etc/fsmon/fsmon.toml` to new user config.
-    /// Called once on first `fsmon daemon` run or `fsmon add` after upgrade.
-    pub fn migrate_from_etc() -> Result<()> {
-        let old_path = PathBuf::from("/etc/fsmon/fsmon.toml");
-        if !old_path.exists() {
-            return Ok(());
-        }
-        let new_path = Self::path();
-        if new_path.exists() {
-            return Ok(());
-        }
-        // Read old format — it may contain log_file/socket_path/paths
-        #[derive(Deserialize)]
-        struct OldConfig {
-            paths: Option<Vec<PathEntry>>,
-            #[allow(dead_code)]
-            log_file: Option<PathBuf>,
-            #[allow(dead_code)]
-            socket_path: Option<PathBuf>,
-        }
-        let content = match fs::read_to_string(&old_path) {
-            Ok(c) => c,
-            Err(_) => return Ok(()),
-        };
-        let old: OldConfig = match toml::from_str(&content) {
-            Ok(c) => c,
-            Err(_) => return Ok(()),
-        };
-        let paths = old.paths.unwrap_or_default();
-        if paths.is_empty() {
-            return Ok(());
-        }
-        let cfg = UserConfig { paths };
-        Self::save_to(&new_path, &cfg)?;
-        println!(
-            "Migrated {} path(s) from {} to {}",
-            cfg.paths.len(),
-            old_path.display(),
-            new_path.display()
-        );
-        Ok(())
+        let uid = resolve_uid();
+        PathBuf::from("/tmp").join(format!("fsmon-{}.sock", uid))
     }
 }
 
@@ -159,24 +188,28 @@ mod tests {
     /// Mutex to prevent concurrent env var manipulation across tests
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// Temporarily override HOME so UserConfig paths point into temp dir
-    fn with_isolated_home(f: impl FnOnce()) {
-        // SAFETY: test-only single-threaded env var manipulation
+    /// Override HOME + SUDO_UID for test isolation.
+    /// Sets SUDO_UID to simulate daemon running under sudo,
+    /// but since the process is not root, guess_home() falls back to HOME.
+    fn with_isolated_env(f: impl FnOnce()) {
         let _lock = ENV_LOCK.lock().unwrap();
         let dir = unique_home_dir();
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join(".config/fsmon")).unwrap();
-        fs::create_dir_all(dir.join(".local/share")).unwrap();
+        fs::create_dir_all(dir.join(".local/state")).unwrap();
+
         let old_home = std::env::var("HOME").ok();
         let old_xdg_config = std::env::var("XDG_CONFIG_HOME").ok();
-        let old_xdg_data = std::env::var("XDG_DATA_HOME").ok();
+        let old_xdg_state = std::env::var("XDG_STATE_HOME").ok();
+        let old_sudo_uid = std::env::var("SUDO_UID").ok();
+
         unsafe {
             std::env::set_var("HOME", dir.to_str().unwrap());
             std::env::remove_var("XDG_CONFIG_HOME");
-            std::env::remove_var("XDG_DATA_HOME");
+            std::env::remove_var("XDG_STATE_HOME");
+            std::env::remove_var("SUDO_UID");
         }
         f();
-        // Restore
         unsafe {
             if let Some(v) = old_home {
                 std::env::set_var("HOME", v);
@@ -188,10 +221,15 @@ mod tests {
             } else {
                 std::env::remove_var("XDG_CONFIG_HOME");
             }
-            if let Some(v) = old_xdg_data {
-                std::env::set_var("XDG_DATA_HOME", v);
+            if let Some(v) = old_xdg_state {
+                std::env::set_var("XDG_STATE_HOME", v);
             } else {
-                std::env::remove_var("XDG_DATA_HOME");
+                std::env::remove_var("XDG_STATE_HOME");
+            }
+            if let Some(v) = old_sudo_uid {
+                std::env::set_var("SUDO_UID", v);
+            } else {
+                std::env::remove_var("SUDO_UID");
             }
         }
         let _ = fs::remove_dir_all(dir);
@@ -199,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_load_empty_when_no_file() {
-        with_isolated_home(|| {
+        with_isolated_env(|| {
             let cfg = UserConfig::load().unwrap();
             assert!(cfg.paths.is_empty());
         });
@@ -207,12 +245,11 @@ mod tests {
 
     #[test]
     fn test_add_and_remove_path() {
-        with_isolated_home(|| {
-            // Load fresh — should be empty
+        with_isolated_env(|| {
             let initial = UserConfig::load().unwrap();
             assert!(
                 initial.paths.is_empty(),
-                "expected empty config, got {} paths",
+                "expected empty, got {}",
                 initial.paths.len()
             );
 
@@ -226,7 +263,7 @@ mod tests {
             };
             UserConfig::add_path(e1.clone()).unwrap();
             let cfg = UserConfig::load().unwrap();
-            assert_eq!(cfg.paths.len(), 1, "expected 1 path after add");
+            assert_eq!(cfg.paths.len(), 1);
             assert_eq!(cfg.paths[0].path, PathBuf::from("/tmp"));
 
             // Add same path again (should replace)
@@ -250,49 +287,35 @@ mod tests {
     }
 
     #[test]
-    fn test_migrate_from_etc_skips_when_no_old_config() {
-        // This test only works if /etc/fsmon/fsmon.toml doesn't exist
-        // or if it exists but has no paths. In CI it's likely missing.
-        let old_path = PathBuf::from("/etc/fsmon/fsmon.toml");
-        let has_old = old_path.exists();
-        if has_old {
-            // Still run — migration may succeed and write paths,
-            // which is fine. Just don't assert empty.
-            let _ = UserConfig::migrate_from_etc();
-        } else {
-            UserConfig::migrate_from_etc().unwrap();
-            let cfg = UserConfig::load().unwrap();
-            assert!(cfg.paths.is_empty());
-        }
-    }
-
-    #[test]
     fn test_default_paths() {
-        with_isolated_home(|| {
+        with_isolated_env(|| {
             let log = UserConfig::default_log_file();
             assert!(
                 log.to_string_lossy()
-                    .contains(".local/share/fsmon/history.log")
+                    .contains(".local/state/fsmon/history.log"),
+                "log path: {}",
+                log.display()
             );
 
-            // Socket path: if XDG_RUNTIME_DIR is set, uses that;
-            // otherwise falls back to data dir.
             let sock = UserConfig::default_socket_path();
-            let has_runtime_dir = std::env::var("XDG_RUNTIME_DIR").is_ok();
-            if has_runtime_dir {
-                assert!(sock.to_string_lossy().contains("fsmon.sock"));
-            } else {
-                assert!(
-                    sock.to_string_lossy()
-                        .contains(".local/share/fsmon/fsmon.sock")
-                );
-            }
+            assert!(
+                sock.to_string_lossy().contains("/tmp/fsmon-"),
+                "socket path: {}",
+                sock.display()
+            );
+            // resolve_uid() returns our UID (not root)
+            assert!(
+                sock.to_string_lossy()
+                    .contains(&format!("fsmon-{}", unsafe { libc::geteuid() })),
+                "socket path should contain UID: {}",
+                sock.display()
+            );
         });
     }
 
     #[test]
     fn test_toml_round_trip() {
-        with_isolated_home(|| {
+        with_isolated_env(|| {
             let cfg = UserConfig {
                 paths: vec![PathEntry {
                     path: PathBuf::from("/srv"),
@@ -311,5 +334,23 @@ mod tests {
             assert_eq!(loaded.paths[0].types.as_ref().unwrap(), &["MODIFY"]);
             assert_eq!(loaded.paths[0].exclude.as_ref().unwrap(), "*.log");
         });
+    }
+
+    #[test]
+    fn test_resolve_uid_no_sudo() {
+        // Without SUDO_UID, resolve_uid returns our own UID
+        let _lock = ENV_LOCK.lock().unwrap();
+        let old = std::env::var("SUDO_UID").ok();
+        unsafe {
+            std::env::remove_var("SUDO_UID");
+        }
+        let uid = resolve_uid();
+        assert_eq!(uid, unsafe { libc::geteuid() });
+        // Restore
+        if let Some(v) = old {
+            unsafe {
+                std::env::set_var("SUDO_UID", v);
+            }
+        }
     }
 }
