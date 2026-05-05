@@ -53,12 +53,15 @@ all_events = false
 ## 实现计划
 
 ### P0 — 基础设施
+- [x] 重写 `config.rs`：Config + PathEntry 结构体，`[[paths]]` TOML 格式（2026-05-05)
 - [ ] 删除 `src/bin/fsmon.rs` 和 `src/bin/fsmon-cli.rs`，新建 `src/bin/fsmon.rs`
 - [ ] 重新组织 CLI 命令树（使用 clap enum dispatch）
 - [ ] 更新 `Cargo.toml` 为单 binary
 
 ### P1 — 配置系统
-- [ ] 重写 `config.rs`：单配置 `/etc/fsmon/fsmon.toml`，`[[paths]]` 条目
+- [x] 重写 `config.rs`：单配置 `/etc/fsmon/fsmon.toml`，`[[paths]]` 条目
+- [x] 改进测试覆盖：添加 save/add/remove 的 IO 测试，修复 `load()` 测试，移除琐碎测试
+- [x] 添加 `#[must_use]` 和 `generate_default()` 成功消息
 - [ ] `install` 子命令：生成 service 文件 + 默认配置
 - [ ] 合并原有的 `InstanceConfig` 逻辑
 
