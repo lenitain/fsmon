@@ -86,13 +86,17 @@ sudo fsmon monitor /var/log --exclude "*.log"
 # Install systemd template (one-time)
 sudo fsmon install
 
-# Create and start monitoring instances
-sudo fsmon enable audit --paths /var/log /etc
-sudo fsmon enable web --paths /var/www --types MODIFY,CREATE --recursive
+# Create instance config at /etc/fsmon/fsmon-web.toml manually:
+#   paths = ["/var/www"]
+#   types = "MODIFY,CREATE"
+#   output = "/var/log/fsmon/web.log"
 
-# Instance log files default to /var/log/fsmon/{name}.log (only for systemd instances)
-# Override with -o:
-sudo fsmon enable custom --paths /data -o /var/log/fsmon-custom.log
+# Then manage with systemctl directly:
+sudo systemctl enable fsmon@web --now      # Create + start instance
+sudo systemctl enable fsmon@audit --now    # Another instance
+sudo systemctl status fsmon@web            # Check instance status
+sudo journalctl -u fsmon@web               # View instance logs
+sudo systemctl stop fsmon@web && sudo systemctl disable fsmon@web  # Stop + disable
 
 # Direct CLI usage has no default log — events go to stdout only
 sudo fsmon monitor /tmp --recursive
@@ -102,15 +106,6 @@ fsmon query --since 1h --cmd nginx
 
 # Clean old logs (dry-run preview)
 fsmon clean --keep-days 7 --dry-run
-
-# Manage instances via systemd
-sudo systemctl start fsmon@audit
-sudo systemctl stop fsmon@web
-sudo systemctl status fsmon@audit
-sudo journalctl -u fsmon@web
-
-# Disable and remove an instance
-sudo fsmon disable web
 ```
 
 ## Examples
@@ -174,7 +169,8 @@ fsmon enable <name>     # Create and start a monitoring instance
 fsmon disable <name>    # Stop and remove a monitoring instance
 fsmon generate          # Generate default configuration file (~/.config/fsmon/fsmon.toml)
 
-# Service management via systemd
+# Service management via systemd (template unit)
+sudo systemctl enable fsmon@<name> --now
 sudo systemctl start fsmon@<name>
 sudo systemctl stop fsmon@<name>
 sudo systemctl status fsmon@<name>

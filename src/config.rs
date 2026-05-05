@@ -242,35 +242,6 @@ pub struct InstanceConfig {
     pub recursive: Option<bool>,
 }
 
-/// Generate an instance config TOML file and return its path.
-pub fn generate_instance_config(
-    name: &str,
-    config: &InstanceConfig,
-    force: bool,
-) -> Result<PathBuf> {
-    let config_dir = PathBuf::from(INSTANCE_CONFIG_DIR);
-    let config_path = config_dir.join(format!("fsmon-{}.toml", name));
-
-    if config_path.exists() && !force {
-        anyhow::bail!(
-            "Instance config already exists at {}. Use --force to overwrite.",
-            config_path.display()
-        );
-    }
-
-    fs::create_dir_all(&config_dir)
-        .with_context(|| format!("Failed to create {}", config_dir.display()))?;
-
-    let content = toml::to_string_pretty(config).context("Failed to serialize instance config")?;
-    let content = format!("# fsmon instance: {}\n{}\n", name, content);
-
-    fs::write(&config_path, &content)
-        .with_context(|| format!("Failed to write {}", config_path.display()))?;
-
-    println!("Instance config written to {}", config_path.display());
-    Ok(config_path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

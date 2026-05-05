@@ -86,13 +86,17 @@ sudo fsmon monitor /var/log --exclude "*.log"
 # 安装 systemd 模板（一次性）
 sudo fsmon install
 
-# 创建并启动监控实例
-sudo fsmon enable audit --paths /var/log /etc
-sudo fsmon enable web --paths /var/www --types MODIFY,CREATE --recursive
+# 手动创建实例配置 /etc/fsmon/fsmon-web.toml：
+#   paths = ["/var/www"]
+#   types = "MODIFY,CREATE"
+#   output = "/var/log/fsmon/web.log"
 
-# 实例日志默认写入 /var/log/fsmon/{name}.log（仅 systemd 后台实例）
-# 通过 -o 自定义：
-sudo fsmon enable custom --paths /data -o /var/log/fsmon-custom.log
+# 然后直接用 systemctl 管理：
+sudo systemctl enable fsmon@web --now      # 创建+启动实例
+sudo systemctl enable fsmon@audit --now    # 另一个实例
+sudo systemctl status fsmon@web            # 查看状态
+sudo journalctl -u fsmon@web               # 查看日志
+sudo systemctl stop fsmon@web && sudo systemctl disable fsmon@web  # 停用
 
 # 直接 CLI 使用无默认日志 — 事件仅输出到 stdout
 sudo fsmon monitor /tmp --recursive
@@ -102,15 +106,6 @@ fsmon query --since 1h --cmd nginx
 
 # 预览清理旧日志
 fsmon clean --keep-days 7 --dry-run
-
-# 通过 systemd 管理实例
-sudo systemctl start fsmon@audit
-sudo systemctl stop fsmon@web
-sudo systemctl status fsmon@audit
-sudo journalctl -u fsmon@web
-
-# 停用并移除实例
-sudo fsmon disable web
 ```
 
 ## 示例
@@ -174,7 +169,8 @@ fsmon enable <name>     # 创建并启动监控实例
 fsmon disable <name>    # 停用并移除监控实例
 fsmon generate          # 生成默认的配置文件 (~/.config/fsmon/fsmon.toml)
 
-# 通过 systemd 管理实例
+# 通过 systemd 管理实例（模板单元）
+sudo systemctl enable fsmon@<name> --now
 sudo systemctl start fsmon@<name>
 sudo systemctl stop fsmon@<name>
 sudo systemctl status fsmon@<name>

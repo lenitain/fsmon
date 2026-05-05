@@ -155,48 +155,11 @@ enum Commands {
     #[command(about = help::about(HelpTopic::Uninstall), long_about = help::long_about(HelpTopic::Uninstall))]
     Uninstall,
 
-    #[command(about = help::about(HelpTopic::Enable), long_about = help::long_about(HelpTopic::Enable))]
-    Enable {
-        /// Instance name (e.g., "var-log", "web")
-        instance: String,
-
-        /// Directory/file path to monitor (supports multiple)
-        #[arg(required = true, value_name = "PATH")]
-        paths: Vec<PathBuf>,
-
-        /// Write monitoring log to specified file
-        #[arg(short, long, value_name = "FILE")]
-        output: Option<PathBuf>,
-
-        /// Only record events with size change >= specified value
-        #[arg(short, long, value_name = "SIZE")]
-        min_size: Option<String>,
-
-        /// Only monitor specified operation types
-        #[arg(short, long, value_name = "TYPES")]
-        types: Option<String>,
-
-        /// Paths to exclude from monitoring
-        #[arg(short, long, value_name = "PATTERN")]
-        exclude: Option<String>,
-
-        /// Capture all 14 fanotify events
-        #[arg(long)]
-        all_events: bool,
-
-        /// Recursively monitor all subdirectories
-        #[arg(short, long)]
-        recursive: bool,
-
-        /// Force overwrite existing instance config
+    #[command(about = help::about(HelpTopic::Generate))]
+    Generate {
+        /// Force overwrite existing config file
         #[arg(short, long)]
         force: bool,
-    },
-
-    #[command(about = help::about(HelpTopic::Disable), long_about = help::long_about(HelpTopic::Disable))]
-    Disable {
-        /// Instance name to disable
-        instance: String,
     },
 
     #[command(about = help::about(HelpTopic::Clean), long_about = help::long_about(HelpTopic::Clean))]
@@ -216,13 +179,6 @@ enum Commands {
         /// Simulate cleanup, show what would be deleted without actually deleting
         #[arg(short, long)]
         dry_run: bool,
-    },
-
-    #[command(about = help::about(HelpTopic::Generate))]
-    Generate {
-        /// Force overwrite existing config file
-        #[arg(short, long)]
-        force: bool,
     },
 }
 
@@ -632,32 +588,6 @@ async fn main() -> Result<()> {
         }
         Commands::Uninstall => {
             systemd::uninstall()?;
-        }
-        Commands::Enable {
-            instance,
-            paths,
-            output,
-            min_size,
-            types,
-            exclude,
-            all_events,
-            recursive,
-            force,
-        } => {
-            systemd::enable_instance(
-                &instance,
-                &paths,
-                output.as_ref(),
-                min_size.as_deref(),
-                types.as_deref(),
-                exclude.as_deref(),
-                all_events,
-                recursive,
-                force,
-            )?;
-        }
-        Commands::Disable { instance } => {
-            systemd::disable_instance(&instance)?;
         }
         Commands::Generate { force } => {
             Config::generate(force)?;
