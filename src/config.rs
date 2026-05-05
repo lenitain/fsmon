@@ -116,10 +116,10 @@ pub fn guess_home() -> String {
 /// Expand a leading `~` in a path to the given home directory.
 fn expand_tilde(path: &Path, home: &str) -> PathBuf {
     let s = path.to_string_lossy();
-    if let Some(rest) = s.strip_prefix('~') {
-        if rest.is_empty() || rest.starts_with('/') {
-            return PathBuf::from(format!("{}{}", home, rest));
-        }
+    if let Some(rest) = s.strip_prefix('~')
+        && (rest.is_empty() || rest.starts_with('/'))
+    {
+        return PathBuf::from(format!("{}{}", home, rest));
     }
     path.to_path_buf()
 }
@@ -158,8 +158,8 @@ impl Config {
         }
         let content = fs::read_to_string(&p)
             .with_context(|| format!("Failed to read config {}", p.display()))?;
-        let cfg: Config = toml::from_str(&content)
-            .with_context(|| format!("Invalid TOML in {}", p.display()))?;
+        let cfg: Config =
+            toml::from_str(&content).with_context(|| format!("Invalid TOML in {}", p.display()))?;
         Ok(cfg)
     }
 
@@ -266,14 +266,8 @@ mod tests {
                 cfg.store.file.to_string_lossy(),
                 "~/.local/share/fsmon/store.toml"
             );
-            assert_eq!(
-                cfg.logging.dir.to_string_lossy(),
-                "~/.local/state/fsmon"
-            );
-            assert_eq!(
-                cfg.socket.path.to_string_lossy(),
-                "/tmp/fsmon-<UID>.sock"
-            );
+            assert_eq!(cfg.logging.dir.to_string_lossy(), "~/.local/state/fsmon");
+            assert_eq!(cfg.socket.path.to_string_lossy(), "/tmp/fsmon-<UID>.sock");
         });
     }
 
@@ -342,14 +336,8 @@ path = "/tmp/custom.sock"
                 cfg.store.file.to_string_lossy(),
                 "~/.local/share/fsmon/store.toml"
             );
-            assert_eq!(
-                cfg.logging.dir.to_string_lossy(),
-                "~/.local/state/fsmon"
-            );
-            assert_eq!(
-                cfg.socket.path.to_string_lossy(),
-                "/tmp/fsmon-<UID>.sock"
-            );
+            assert_eq!(cfg.logging.dir.to_string_lossy(), "~/.local/state/fsmon");
+            assert_eq!(cfg.socket.path.to_string_lossy(), "/tmp/fsmon-<UID>.sock");
         });
     }
 
@@ -379,20 +367,30 @@ path = "/tmp/custom.sock"
         }
 
         let path = Config::path();
-        assert!(path.to_string_lossy().contains("/custom/xdg/config/fsmon/config.toml"));
+        assert!(
+            path.to_string_lossy()
+                .contains("/custom/xdg/config/fsmon/config.toml")
+        );
 
         unsafe {
             std::env::remove_var("XDG_CONFIG_HOME");
         }
         let path = Config::path();
-        assert!(path.to_string_lossy().contains("/home/test/.config/fsmon/config.toml"));
+        assert!(
+            path.to_string_lossy()
+                .contains("/home/test/.config/fsmon/config.toml")
+        );
 
         // Restore
         if let Some(v) = old {
-            unsafe { std::env::set_var("XDG_CONFIG_HOME", v); }
+            unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", v);
+            }
         }
         if let Some(v) = old_home {
-            unsafe { std::env::set_var("HOME", v); }
+            unsafe {
+                std::env::set_var("HOME", v);
+            }
         }
     }
 

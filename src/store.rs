@@ -60,8 +60,7 @@ impl Store {
         let parent = path.parent().context("Store path has no parent")?;
         fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create directory {}", parent.display()))?;
-        let content = toml::to_string_pretty(self)
-            .context("Failed to serialize store")?;
+        let content = toml::to_string_pretty(self).context("Failed to serialize store")?;
         fs::write(path, content)
             .with_context(|| format!("Failed to write store to {}", path.display()))?;
         Ok(())
@@ -100,7 +99,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("fsmon_store_test_{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        (dir, dir.join("store.toml"))
+        let store_path = dir.join("store.toml");
+        (dir, store_path)
     }
 
     #[test]
@@ -198,7 +198,10 @@ mod tests {
         assert_eq!(loaded.entries.len(), 1);
         assert_eq!(loaded.entries[0].id, 1);
         assert_eq!(loaded.entries[0].path, PathBuf::from("/srv"));
-        assert_eq!(loaded.entries[0].types.as_ref().unwrap(), &["CREATE", "DELETE"]);
+        assert_eq!(
+            loaded.entries[0].types.as_ref().unwrap(),
+            &["CREATE", "DELETE"]
+        );
         assert_eq!(loaded.entries[0].min_size.as_ref().unwrap(), "1KB");
         assert_eq!(loaded.entries[0].exclude.as_ref().unwrap(), "*.tmp");
     }
