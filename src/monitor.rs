@@ -266,14 +266,24 @@ impl Monitor {
             // FAN_MARK_FILESYSTEM, and subsequent inode marks on other
             // filesystems would fail with EXDEV.
             if !ok {
+                eprintln!("[INFO] Cross-filesystem paths detected, switching to inode marks");
                 for canonical in self.canonical_paths.iter().take(marked_count) {
-                    let _ = fanotify_mark(
+                    match fanotify_mark(
                         fan_fd,
                         FAN_MARK_REMOVE | FAN_MARK_FILESYSTEM,
                         self.mask,
                         AT_FDCWD,
                         canonical,
-                    );
+                    ) {
+                        Ok(()) => {
+                            eprintln!("[INFO] Removed filesystem mark for {}", canonical.display())
+                        }
+                        Err(e) => eprintln!(
+                            "[WARNING] Failed to remove filesystem mark for {}: {:#}",
+                            canonical.display(),
+                            e
+                        ),
+                    }
                 }
             }
             ok
@@ -296,8 +306,11 @@ impl Monitor {
                         canonical.display(),
                         e
                     );
-                } else if recursive && canonical.is_dir() {
-                    mark_recursive(fan_fd, path_mask, canonical);
+                } else {
+                    eprintln!("[INFO] Monitoring {} (inode mark)", canonical.display());
+                    if recursive && canonical.is_dir() {
+                        mark_recursive(fan_fd, path_mask, canonical);
+                    }
                 }
             }
         }
