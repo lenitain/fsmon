@@ -453,42 +453,46 @@ async fn main() -> Result<()> {
                 },
             };
 
-            // Merge priority: CLI args > instance config > user config
-            let paths = if !paths.is_empty() {
-                paths
-            } else if !instance_config.paths.is_empty() {
-                instance_config.paths.clone()
+            // Pick base config: instance config for systemd mode, user config for CLI mode
+            // They are independent — never merged.
+            let base = if instance.is_some() {
+                instance_config
             } else {
-                user_config.paths.unwrap_or_default()
+                config::InstanceConfig {
+                    paths: user_config.paths.unwrap_or_default(),
+                    output: user_config.output,
+                    min_size: user_config.min_size,
+                    types: user_config.types,
+                    exclude: user_config.exclude,
+                    all_events: user_config.all_events,
+                    recursive: user_config.recursive,
+                }
             };
 
+            let paths = if !paths.is_empty() { paths } else { base.paths };
             if paths.is_empty() {
                 eprintln!("Error: Please specify at least one monitor path");
                 process::exit(1);
             }
 
-            let min_size = min_size
-                .or(instance_config.min_size.clone())
-                .or(user_config.min_size.clone());
-            let types = types
-                .or(instance_config.types.clone())
-                .or(user_config.types.clone());
-            let exclude = exclude
-                .or(instance_config.exclude.clone())
-                .or(user_config.exclude.clone());
-            let all_events = all_events
-                || instance_config.all_events.unwrap_or(false)
-                || user_config.all_events.unwrap_or(false);
-            let output = output
-                .or(instance_config.output.clone())
-                .or(user_config.output.clone());
-            let recursive = recursive
-                || instance_config.recursive.unwrap_or(false)
-                || user_config.recursive.unwrap_or(false);
-            let buffer_size = user_config.buffer_size;
-            let format = format
-                .or(user_config.format.as_deref().and_then(parse_output_format))
-                .unwrap_or(OutputFormat::Human);
+            let min_size = min_size.or(base.min_size);
+            let types = types.or(base.types);
+            let exclude = exclude.or(base.exclude);
+            let all_events = all_events || base.all_events.unwrap_or(false);
+            let output = output.or(base.output);
+            let recursive = recursive || base.recursive.unwrap_or(false);
+            let buffer_size = if instance.is_some() {
+                None
+            } else {
+                user_config.buffer_size
+            };
+            let format = if instance.is_some() {
+                OutputFormat::Human
+            } else {
+                format
+                    .or(user_config.format.as_deref().and_then(parse_output_format))
+                    .unwrap_or(OutputFormat::Human)
+            };
 
             let min_size_bytes = min_size.map(|s| parse_size(&s)).transpose()?;
 
