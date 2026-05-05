@@ -380,7 +380,11 @@ async fn cmd_query(args: QueryArgs) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
 
-    let log_file = cfg.logging.dir.join("fsmon.log");
+    let ids = if args.id.is_empty() {
+        None
+    } else {
+        Some(parse_query_ids(&args.id)?)
+    };
 
     let min_size_bytes = args.min_size.map(|s| parse_size(&s)).transpose()?;
 
@@ -411,7 +415,8 @@ async fn cmd_query(args: QueryArgs) -> Result<()> {
     let sort = args.sort.unwrap_or(SortBy::Time);
 
     let query = Query::new(
-        log_file,
+        cfg.logging.dir,
+        ids,
         args.since,
         args.until,
         pids,
@@ -448,6 +453,39 @@ async fn cmd_clean(args: CleanArgs) -> Result<()> {
     let max_size_bytes = args.max_size.map(|s| parse_size(&s)).transpose()?;
     clean_logs(&log_file, keep_days, max_size_bytes, args.dry_run).await?;
     Ok(())
+}
+
+/// Parse --id argument: comma-separated IDs and/or ranges, e.g. "1,3,5-8"
+/// Also handles repeated: --id 1 --id 3
+fn parse_query_ids(raw: &[String]) -> Result<Vec<u64>> {
+    let mut ids = Vec::new();
+    for part in raw {
+        for segment in part.split(',') {
+            let segment = segment.trim();
+            if segment.is_empty() {
+                continue;
+            }
+            if let Some((start, end)) = segment.split_once('-') {
+                let s: u64 = start
+                    .trim()
+                    .parse()
+                    .with_context(|| format!("Invalid ID range start: {}", start))?;
+                let e: u64 = end
+                    .trim()
+                    .parse()
+                    .with_context(|| format!("Invalid ID range end: {}", end))?;
+                ids.extend(s..=e);
+            } else {
+                let v: u64 = segment
+                    .parse()
+                    .with_context(|| format!("Invalid ID: {}", segment))?;
+                ids.push(v);
+            }
+        }
+    }
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
 }
 
 fn parse_path_entries(entries: &[PathEntry]) -> Result<Vec<(PathBuf, PathOptions)>> {

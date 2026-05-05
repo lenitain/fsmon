@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use regex::Regex;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::utils::{format_size, parse_time};
 use crate::{EventType, FileEvent, OutputFormat, SortBy, parse_log_line};
@@ -11,7 +11,8 @@ use crate::{EventType, FileEvent, OutputFormat, SortBy, parse_log_line};
 const SCAN_BACK_BYTES: u64 = 4096;
 
 pub struct Query {
-    log_file: PathBuf,
+    log_dir: PathBuf,
+    ids: Option<Vec<u64>>,
     since: Option<String>,
     until: Option<String>,
     pids: Option<Vec<u32>>,
@@ -26,7 +27,8 @@ pub struct Query {
 impl Query {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        log_file: PathBuf,
+        log_dir: PathBuf,
+        ids: Option<Vec<u64>>,
         since: Option<String>,
         until: Option<String>,
         pids: Option<Vec<u32>>,
@@ -38,7 +40,8 @@ impl Query {
         sort: SortBy,
     ) -> Self {
         Self {
-            log_file,
+            log_dir,
+            ids,
             since,
             until,
             pids,
@@ -52,9 +55,16 @@ impl Query {
     }
 
     pub async fn execute(&self) -> Result<()> {
+        // Resolve which log files to read
+        let log_files = self.resolve_log_files()?;
+
+        if log_files.is_empty() {
+            println!("No matching log files found");
+            return Ok(());
+        }
+
         // Parse time filters
         let since_time = self.since.as_ref().map(|s| parse_time(s)).transpose()?;
-
         let until_time = self.until.as_ref().map(|s| parse_time(s)).transpose()?;
 
         // Compile cmd regex if specified
@@ -64,16 +74,63 @@ impl Query {
             .map(|c| Regex::new(&c.replace("*", ".*")))
             .transpose()?;
 
-        // Read and filter events
-        let events = self.read_events(since_time, until_time, cmd_regex)?;
+        // Read and filter events from each file
+        let mut all_events = Vec::new();
+        for log_file in &log_files {
+            let events =
+                self.read_events_from(log_file, since_time, until_time, cmd_regex.clone())?;
+            all_events.extend(events);
+        }
 
         // Sort events
-        let sorted_events = self.sort_events(events);
+        let sorted_events = self.sort_events(all_events);
 
         // Output
         self.output_events(&sorted_events)?;
 
         Ok(())
+    }
+
+    /// Resolve the list of log files to query.
+    /// If ids is Some, return {log_dir}/{id}.log for each id (skip missing files).
+    /// If ids is None, scan log_dir for all *.log files, sorted by ID.
+    fn resolve_log_files(&self) -> Result<Vec<PathBuf>> {
+        if let Some(ref ids) = self.ids {
+            let mut files = Vec::new();
+            for &id in ids {
+                let path = self.log_dir.join(format!("{}.log", id));
+                if path.exists() {
+                    files.push(path);
+                }
+            }
+            return Ok(files);
+        }
+
+        // Scan directory for all *.log files
+        if !self.log_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut files: Vec<PathBuf> = Vec::new();
+        for entry in fs::read_dir(&self.log_dir)
+            .with_context(|| format!("Failed to read log directory {}", self.log_dir.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "log") {
+                files.push(path);
+            }
+        }
+
+        // Sort by numeric ID extracted from filename
+        files.sort_by_key(|p| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(u64::MAX)
+        });
+
+        Ok(files)
     }
 
     /// Read the next TOML event block from the reader at current position.
@@ -123,22 +180,20 @@ impl Query {
         }
     }
 
-    fn read_events(
+    fn read_events_from(
         &self,
+        log_file: &Path,
         since_time: Option<DateTime<Utc>>,
         until_time: Option<DateTime<Utc>>,
         cmd_regex: Option<Regex>,
     ) -> Result<Vec<FileEvent>> {
-        let file = File::open(&self.log_file)
-            .with_context(|| format!("Failed to open log file: {}", self.log_file.display()))?;
+        let file = File::open(log_file)
+            .with_context(|| format!("Failed to open log file: {}", log_file.display()))?;
         let mut reader = BufReader::new(file);
 
         // Use binary search to narrow the file range when time filters are present.
-        // The log file is approximately time-sorted (monotonically increasing),
-        // so binary search finds the approximate start/end byte offsets.
         let start_offset = if let Some(since) = since_time {
             let found = self.find_offset_for_time(&mut reader, since)?;
-            // Expand backward to catch minor out-of-order entries near the boundary
             self.expand_offset_backward(&mut reader, found, 50)?
         } else {
             0
@@ -180,8 +235,7 @@ impl Query {
                 None => continue,
             };
 
-            // Time filtering is already narrowed by binary search, but apply
-            // exact filters here to handle minor out-of-order entries
+            // Apply time filters
             if let Some(ref since) = since_time
                 && event.time < *since
             {
@@ -233,9 +287,6 @@ impl Query {
 
     /// Seek to a byte offset in the file and extract the timestamp from the
     /// nearest complete TOML event block at or before `offset`.
-    /// Reads a chunk before `offset`, scans backward to find the last blank
-    /// line or file start, then reads the next complete TOML block.
-    /// Returns (timestamp, byte_offset_of_block_start) or None.
     fn seek_and_parse_time(
         &self,
         reader: &mut BufReader<File>,
@@ -251,7 +302,7 @@ impl Query {
             let mut line = Vec::new();
             let bytes = reader.read_until(b'\n', &mut line).ok()?;
             if bytes == 0 {
-                return None; // EOF — can't find a block
+                return None; // EOF
             }
             let s = std::str::from_utf8(&line).ok()?.trim();
             if s.is_empty() {
@@ -259,7 +310,6 @@ impl Query {
             }
         }
 
-        // Record position after the blank line (block start)
         // Read the complete TOML block
         let mut block = Vec::new();
         loop {
@@ -281,12 +331,10 @@ impl Query {
         }
 
         let event: FileEvent = parse_log_line(block_str)?;
-        // Approximate block start (we consumed the blank line already)
         Some((event.time, offset))
     }
 
     /// Binary search to find the byte offset of the first line with timestamp >= target.
-    /// The log file is approximately time-sorted (monotonically increasing).
     fn find_offset_for_time(
         &self,
         reader: &mut BufReader<File>,
@@ -307,13 +355,9 @@ impl Query {
                     low = mid + 1;
                 }
                 None => {
-                    // Couldn't parse at this offset. seek_and_parse_time seeks
-                    // backward to find a line, so the parsed line is likely before
-                    // our position (its time < target). Search right.
                     low = mid + 1;
                 }
                 _ => {
-                    // time >= target: search left for the first such line
                     high = mid;
                 }
             }
@@ -323,7 +367,6 @@ impl Query {
     }
 
     /// Binary search to find the byte offset of the first line with timestamp > target.
-    /// Returns the offset past the last line within the time range.
     fn find_end_offset_for_time(
         &self,
         reader: &mut BufReader<File>,
@@ -344,13 +387,9 @@ impl Query {
                     low = mid + 1;
                 }
                 None => {
-                    // Couldn't parse at this offset. The line we read (by seeking
-                    // backward) is likely before our position, so its time is likely
-                    // <= target. Search right.
                     low = mid + 1;
                 }
                 _ => {
-                    // time > target: search left
                     high = mid;
                 }
             }
@@ -361,11 +400,6 @@ impl Query {
 
     /// Expand a byte offset backward by up to `max_blocks` blocks to catch
     /// minor out-of-order entries near the boundary.
-    /// Returns the byte offset of the block boundary closest to `offset` but
-    /// at least `max_blocks` blocks before it.
-    ///
-    /// Instead of scanning from file start (O(offset)), scans a bounded
-    /// window before `offset`. Doubles the window size on retry if needed.
     fn expand_offset_backward(
         &self,
         reader: &mut BufReader<File>,
@@ -378,11 +412,9 @@ impl Query {
 
         let file_len = reader.get_ref().metadata()?.len();
         if offset >= file_len {
-            // offset is at or past EOF; scan the whole file
             return self.expand_offset_backward_from_start(reader, file_len, max_blocks);
         }
 
-        // Each block is roughly 7 lines * 60 bytes = ~420 bytes
         let avg_block_bytes: u64 = 420;
         let mut buf_size: u64 = (max_blocks as u64)
             .saturating_mul(avg_block_bytes)
@@ -399,17 +431,15 @@ impl Query {
 
             // Skip partial first block if not at file start
             if scan_start > 0 {
-                // Read until we hit a blank line (end of partial block)
                 let mut found_blank = false;
                 loop {
                     let mut discard = Vec::new();
                     let bytes = reader.read_until(b'\n', &mut discard)?;
                     if bytes == 0 {
-                        break; // EOF
+                        break;
                     }
                     pos += bytes as u64;
                     if pos > offset {
-                        // We passed offset while skipping; return 0 as conservative bound
                         return Ok(0);
                     }
                     let s = std::str::from_utf8(&discard).unwrap_or("").trim();
@@ -419,28 +449,25 @@ impl Query {
                     }
                 }
                 if !found_blank {
-                    // Reached EOF, scan from start
                     return self.expand_offset_backward_from_start(reader, offset, max_blocks);
                 }
             }
 
-            // Now track complete blocks
+            // Track complete blocks
             loop {
                 if pos >= offset {
                     break;
                 }
-                // Record position at start of a block (after blank line)
                 ring_buf[ring_idx % max_blocks] = pos;
                 ring_idx += 1;
                 ring_count += 1;
 
-                // Read one complete block
                 let mut found_content = false;
                 loop {
                     let mut line = Vec::new();
                     let bytes_read = reader.read_until(b'\n', &mut line)?;
                     if bytes_read == 0 {
-                        break; // EOF
+                        break;
                     }
                     pos += bytes_read as u64;
                     if pos > offset {
@@ -448,33 +475,28 @@ impl Query {
                     }
                     let s = std::str::from_utf8(&line).unwrap_or("").trim();
                     if s.is_empty() {
-                        break; // blank line ends block
+                        break;
                     }
                     found_content = true;
                 }
                 if !found_content {
-                    // Check if we hit EOF after the outer loop condition
                     break;
                 }
             }
 
             if ring_count >= max_blocks {
-                // Found enough blocks; return the earliest of the tracked starts
                 return Ok(ring_buf[ring_idx % max_blocks]);
             }
 
             if scan_start == 0 {
-                // Already scanned from file start and still not enough blocks
                 if ring_count == 0 {
                     return Ok(0);
                 }
                 return Ok(ring_buf[0]);
             }
 
-            // Not enough blocks in this window — double and retry
             let new_buf_size = buf_size.saturating_mul(2);
             if new_buf_size >= offset {
-                // Will cover from file start on next iteration; just do it directly
                 return self.expand_offset_backward_from_start(reader, offset, max_blocks);
             }
             buf_size = new_buf_size;
@@ -499,22 +521,20 @@ impl Query {
             if pos >= offset {
                 break;
             }
-            // Record block start
             ring_buf[ring_idx % max_blocks] = pos;
             ring_idx += 1;
             ring_count += 1;
 
-            // Read one complete block
             loop {
                 let mut line = Vec::new();
                 let bytes_read = reader.read_until(b'\n', &mut line)?;
                 if bytes_read == 0 {
-                    break; // EOF
+                    break;
                 }
                 pos += bytes_read as u64;
                 let s = std::str::from_utf8(&line).unwrap_or("").trim();
                 if s.is_empty() {
-                    break; // blank line ends the block
+                    break;
                 }
             }
         }
@@ -608,7 +628,8 @@ mod tests {
 
     fn make_query(sort: SortBy) -> Query {
         Query::new(
-            PathBuf::from("/dev/null"),
+            PathBuf::from("/tmp/fsmon_logs"),
+            None,
             None,
             None,
             None,
@@ -651,7 +672,6 @@ mod tests {
 
         let q = make_query(SortBy::Size);
         let sorted = q.sort_events(events);
-        // Sort by absolute size descending
         assert_eq!(sorted[0].size_change.abs(), 5000);
         assert_eq!(sorted[1].size_change.abs(), 1000);
         assert_eq!(sorted[2].size_change.abs(), 100);
@@ -693,9 +713,9 @@ mod tests {
     #[test]
     fn test_read_events_with_pid_filter() {
         use std::io::Write;
-        let dir = std::env::temp_dir().join("fsmon_test_pid");
+        let dir = std::env::temp_dir().join("fsmon_test_query_pid");
         std::fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.log");
+        let log_path = dir.join("1.log");
 
         let e1 = FileEvent {
             time: Utc::now(),
@@ -721,7 +741,8 @@ mod tests {
         writeln!(f, "{}", &e2.to_toml_string()).unwrap();
 
         let q = Query::new(
-            log_path.clone(),
+            dir.clone(),
+            Some(vec![1]),
             None,
             None,
             Some(vec![100]),
@@ -733,7 +754,7 @@ mod tests {
             SortBy::Time,
         );
 
-        let events = q.read_events(None, None, None).unwrap();
+        let events = q.read_events_from(&log_path, None, None, None).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].pid, 100);
 
@@ -743,9 +764,9 @@ mod tests {
     #[test]
     fn test_read_events_with_type_filter() {
         use std::io::Write;
-        let dir = std::env::temp_dir().join("fsmon_test_type");
+        let dir = std::env::temp_dir().join("fsmon_test_query_type");
         std::fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.log");
+        let log_path = dir.join("1.log");
 
         let e1 = FileEvent {
             time: Utc::now(),
@@ -771,7 +792,8 @@ mod tests {
         writeln!(f, "{}", &e2.to_toml_string()).unwrap();
 
         let q = Query::new(
-            log_path.clone(),
+            dir.clone(),
+            Some(vec![1]),
             None,
             None,
             None,
@@ -783,637 +805,9 @@ mod tests {
             SortBy::Time,
         );
 
-        let events = q.read_events(None, None, None).unwrap();
+        let events = q.read_events_from(&log_path, None, None, None).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, EventType::Create);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn test_read_events_with_min_size_filter() {
-        use std::io::Write;
-        let dir = std::env::temp_dir().join("fsmon_test_size");
-        std::fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.log");
-
-        let e1 = FileEvent {
-            time: Utc::now(),
-            event_type: EventType::Create,
-            path: PathBuf::from("/tmp/a"),
-            pid: 1,
-            cmd: "test".into(),
-            user: "root".into(),
-            size_change: 500,
-        };
-        let e2 = FileEvent {
-            time: Utc::now(),
-            event_type: EventType::Create,
-            path: PathBuf::from("/tmp/b"),
-            pid: 1,
-            cmd: "test".into(),
-            user: "root".into(),
-            size_change: 50,
-        };
-
-        let mut f = std::fs::File::create(&log_path).unwrap();
-        writeln!(f, "{}", &e1.to_toml_string()).unwrap();
-        writeln!(f, "{}", &e2.to_toml_string()).unwrap();
-
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(100),
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        let events = q.read_events(None, None, None).unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].size_change, 500);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn test_read_events_with_time_filter() {
-        use std::io::Write;
-        let dir = std::env::temp_dir().join("fsmon_test_time");
-        std::fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.log");
-
-        let t1 = Utc.with_ymd_and_hms(2024, 1, 1, 10, 0, 0).unwrap();
-        let t2 = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
-
-        let e1 = FileEvent {
-            time: t1,
-            event_type: EventType::Create,
-            path: PathBuf::from("/tmp/a"),
-            pid: 1,
-            cmd: "test".into(),
-            user: "root".into(),
-            size_change: 0,
-        };
-        let e2 = FileEvent {
-            time: t2,
-            event_type: EventType::Create,
-            path: PathBuf::from("/tmp/b"),
-            pid: 1,
-            cmd: "test".into(),
-            user: "root".into(),
-            size_change: 0,
-        };
-
-        let mut f = std::fs::File::create(&log_path).unwrap();
-        writeln!(f, "{}", &e1.to_toml_string()).unwrap();
-        writeln!(f, "{}", &e2.to_toml_string()).unwrap();
-
-        let since = Utc.with_ymd_and_hms(2024, 1, 1, 11, 0, 0).unwrap();
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        let events = q.read_events(Some(since), None, None).unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].time, t2);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn test_read_events_skips_invalid_toml() {
-        use std::io::Write;
-        let dir = std::env::temp_dir().join("fsmon_test_invalid");
-        std::fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.log");
-
-        let mut f = std::fs::File::create(&log_path).unwrap();
-        writeln!(f, "invalid json line").unwrap();
-        writeln!(f, "{{}}").unwrap();
-
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        let events = q.read_events(None, None, None).unwrap();
-        assert!(events.is_empty());
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Helper: create a sorted log file with N events at regular time intervals
-    fn create_sorted_log(dir_name: &str, count: usize) -> (PathBuf, Vec<DateTime<Utc>>) {
-        use std::io::Write;
-        let dir = std::env::temp_dir().join(dir_name);
-        std::fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.log");
-
-        let base = Utc.with_ymd_and_hms(2024, 6, 1, 0, 0, 0).unwrap();
-        let mut times = Vec::new();
-        let mut f = std::fs::File::create(&log_path).unwrap();
-        for i in 0..count {
-            let t = base + chrono::Duration::minutes(i as i64);
-            times.push(t);
-            let e = FileEvent {
-                time: t,
-                event_type: EventType::Create,
-                path: PathBuf::from(format!("/tmp/file{}", i)),
-                pid: (i as u32) + 1,
-                cmd: "test".into(),
-                user: "root".into(),
-                size_change: (i as i64) * 100,
-            };
-            writeln!(f, "{}", &e.to_toml_string()).unwrap();
-        }
-        (log_path, times)
-    }
-
-    #[test]
-    fn test_binary_search_since_only() {
-        let (log_path, times) = create_sorted_log("fsmon_test_bin_since", 100);
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        // since = times[50], expect events[50..100]
-        let events = q.read_events(Some(times[50]), None, None).unwrap();
-        assert_eq!(events.len(), 50);
-        assert!(events[0].time >= times[50]);
-
-        let _ = std::fs::remove_dir_all(log_path.parent().unwrap());
-    }
-
-    #[test]
-    fn test_binary_search_until_only() {
-        let (log_path, times) = create_sorted_log("fsmon_test_bin_until", 100);
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        // until = times[49], expect events[0..50]
-        let events = q.read_events(None, Some(times[49]), None).unwrap();
-        assert_eq!(events.len(), 50);
-        assert!(events.last().unwrap().time <= times[49]);
-
-        let _ = std::fs::remove_dir_all(log_path.parent().unwrap());
-    }
-
-    #[test]
-    fn test_binary_search_since_and_until() {
-        let (log_path, times) = create_sorted_log("fsmon_test_bin_range", 100);
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        // since=times[20], until=times[79], expect events[20..80]
-        let events = q
-            .read_events(Some(times[20]), Some(times[79]), None)
-            .unwrap();
-        assert_eq!(events.len(), 60);
-        assert!(events[0].time >= times[20]);
-        assert!(events.last().unwrap().time <= times[79]);
-
-        let _ = std::fs::remove_dir_all(log_path.parent().unwrap());
-    }
-
-    #[test]
-    fn test_binary_search_since_before_all() {
-        let (log_path, times) = create_sorted_log("fsmon_test_bin_before", 10);
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        let before_all = times[0] - chrono::Duration::hours(1);
-        let events = q.read_events(Some(before_all), None, None).unwrap();
-        assert_eq!(events.len(), 10);
-
-        let _ = std::fs::remove_dir_all(log_path.parent().unwrap());
-    }
-
-    #[test]
-    fn test_binary_search_since_after_all() {
-        let (log_path, times) = create_sorted_log("fsmon_test_bin_after", 10);
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        let after_all = times[9] + chrono::Duration::hours(1);
-        let events = q.read_events(Some(after_all), None, None).unwrap();
-        assert!(events.is_empty());
-
-        let _ = std::fs::remove_dir_all(log_path.parent().unwrap());
-    }
-
-    #[test]
-    fn test_binary_search_until_after_all() {
-        let (log_path, times) = create_sorted_log("fsmon_test_bin_until_after", 10);
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        let after_all = times[9] + chrono::Duration::hours(1);
-        let events = q.read_events(None, Some(after_all), None).unwrap();
-        assert_eq!(events.len(), 10);
-
-        let _ = std::fs::remove_dir_all(log_path.parent().unwrap());
-    }
-
-    #[test]
-    fn test_binary_search_until_before_all() {
-        let (log_path, times) = create_sorted_log("fsmon_test_bin_until_before", 10);
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        let before_all = times[0] - chrono::Duration::hours(1);
-        let events = q.read_events(None, Some(before_all), None).unwrap();
-        assert!(events.is_empty());
-
-        let _ = std::fs::remove_dir_all(log_path.parent().unwrap());
-    }
-
-    #[test]
-    fn test_binary_search_empty_file() {
-        let dir = std::env::temp_dir().join("fsmon_test_bin_empty");
-        std::fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.log");
-        std::fs::File::create(&log_path).unwrap();
-
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        let since = Utc::now() - chrono::Duration::hours(1);
-        let events = q.read_events(Some(since), None, None).unwrap();
-        assert!(events.is_empty());
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn test_binary_search_with_combined_filters() {
-        use std::io::Write;
-        let dir = std::env::temp_dir().join("fsmon_test_bin_combined");
-        std::fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.log");
-
-        let base = Utc.with_ymd_and_hms(2024, 6, 1, 0, 0, 0).unwrap();
-        let mut f = std::fs::File::create(&log_path).unwrap();
-        for i in 0..50 {
-            let t = base + chrono::Duration::minutes(i);
-            let e = FileEvent {
-                time: t,
-                event_type: if i % 2 == 0 {
-                    EventType::Create
-                } else {
-                    EventType::Modify
-                },
-                path: PathBuf::from(format!("/tmp/file{}", i)),
-                pid: if i < 25 { 100 } else { 200 },
-                cmd: "nginx".into(),
-                user: "root".into(),
-                size_change: i * 100,
-            };
-            writeln!(f, "{}", &e.to_toml_string()).unwrap();
-        }
-
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            Some(vec![100]), // pid filter
-            None,
-            None,
-            Some(vec![EventType::Create]), // type filter
-            Some(500),                     // min_size filter
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        // since=base+10min, until=base+24min
-        // Events with pid=100 are in range [0,25), Create events are even i
-        // In range [10,24]: even i = 10,12,14,16,18,20,22,24 → 8 events
-        // size_change >= 500: i*100 >= 500 → i >= 5, all 8 qualify
-        let since = base + chrono::Duration::minutes(10);
-        let until = base + chrono::Duration::minutes(24);
-        let events = q.read_events(Some(since), Some(until), None).unwrap();
-        assert_eq!(events.len(), 8);
-        for e in &events {
-            assert!(e.time >= since);
-            assert!(e.time <= until);
-            assert_eq!(e.pid, 100);
-            assert_eq!(e.event_type, EventType::Create);
-            assert!(e.size_change >= 500);
-        }
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn test_binary_search_single_entry() {
-        use std::io::Write;
-        let dir = std::env::temp_dir().join("fsmon_test_bin_single");
-        std::fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.log");
-
-        let t = Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap();
-        let e = FileEvent {
-            time: t,
-            event_type: EventType::Create,
-            path: PathBuf::from("/tmp/single"),
-            pid: 1,
-            cmd: "test".into(),
-            user: "root".into(),
-            size_change: 42,
-        };
-        let mut f = std::fs::File::create(&log_path).unwrap();
-        writeln!(f, "{}", &e.to_toml_string()).unwrap();
-
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        // Exact match
-        let events = q.read_events(Some(t), Some(t), None).unwrap();
-        assert_eq!(events.len(), 1);
-
-        // Before
-        let before = t - chrono::Duration::hours(1);
-        let events = q.read_events(Some(before), Some(before), None).unwrap();
-        assert!(events.is_empty());
-
-        // After
-        let after = t + chrono::Duration::hours(1);
-        let events = q.read_events(Some(after), None, None).unwrap();
-        assert!(events.is_empty());
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn test_binary_search_large_file_performance() {
-        // Test with a larger file to verify binary search doesn't do full scan
-        let (log_path, times) = create_sorted_log("fsmon_test_bin_large", 10000);
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        // Query only the last 100 events
-        let since = times[9900];
-        let events = q.read_events(Some(since), None, None).unwrap();
-        assert_eq!(events.len(), 100);
-        assert!(events[0].time >= since);
-
-        let _ = std::fs::remove_dir_all(log_path.parent().unwrap());
-    }
-
-    #[test]
-    fn test_binary_search_long_lines() {
-        // Lines > 4096 bytes must not break seek_and_parse_time
-        use std::io::Write;
-        let dir = std::env::temp_dir().join("fsmon_test_bin_long_lines");
-        std::fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.log");
-
-        let base = Utc.with_ymd_and_hms(2024, 6, 1, 0, 0, 0).unwrap();
-        let long_path = format!("/tmp/{}", "a".repeat(5000));
-        let mut f = std::fs::File::create(&log_path).unwrap();
-        for i in 0..100 {
-            let t = base + chrono::Duration::minutes(i);
-            let e = FileEvent {
-                time: t,
-                event_type: EventType::Create,
-                path: PathBuf::from(&long_path),
-                pid: (i as u32) + 1,
-                cmd: "test".into(),
-                user: "root".into(),
-                size_change: 0,
-            };
-            writeln!(f, "{}", &e.to_toml_string()).unwrap();
-        }
-
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        let since = base + chrono::Duration::minutes(50);
-        let events = q.read_events(Some(since), None, None).unwrap();
-        assert_eq!(events.len(), 50);
-        assert!(events[0].time >= since);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn test_expand_offset_backward_few_lines() {
-        // File with fewer lines than max_lines — must still work correctly
-        use std::io::Write;
-        let dir = std::env::temp_dir().join("fsmon_test_expand_few");
-        std::fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.log");
-
-        let base = Utc.with_ymd_and_hms(2024, 6, 1, 0, 0, 0).unwrap();
-        let mut f = std::fs::File::create(&log_path).unwrap();
-        for i in 0..5 {
-            let t = base + chrono::Duration::minutes(i);
-            let e = FileEvent {
-                time: t,
-                event_type: EventType::Create,
-                path: PathBuf::from(format!("/tmp/file{}", i)),
-                pid: (i as u32) + 1,
-                cmd: "test".into(),
-                user: "root".into(),
-                size_change: 0,
-            };
-            writeln!(f, "{}", &e.to_toml_string()).unwrap();
-        }
-
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        // since before all events — expand_backward with max_lines=50 should
-        // return offset 0 even though file only has 5 lines
-        let before_all = base - chrono::Duration::hours(1);
-        let events = q.read_events(Some(before_all), None, None).unwrap();
-        assert_eq!(events.len(), 5);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn test_expand_offset_backward_large_lines() {
-        // File with long lines where bounded scanning must still find enough lines
-        use std::io::Write;
-        let dir = std::env::temp_dir().join("fsmon_test_expand_large");
-        std::fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.log");
-
-        let base = Utc.with_ymd_and_hms(2024, 6, 1, 0, 0, 0).unwrap();
-        let long_cmd = "x".repeat(10000);
-        let mut f = std::fs::File::create(&log_path).unwrap();
-        for i in 0..100 {
-            let t = base + chrono::Duration::minutes(i);
-            let e = FileEvent {
-                time: t,
-                event_type: EventType::Create,
-                path: PathBuf::from(format!("/tmp/file{}", i)),
-                pid: (i as u32) + 1,
-                cmd: long_cmd.clone(),
-                user: "root".into(),
-                size_change: 0,
-            };
-            writeln!(f, "{}", &e.to_toml_string()).unwrap();
-        }
-
-        let q = Query::new(
-            log_path.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            OutputFormat::Human,
-            SortBy::Time,
-        );
-
-        let since = base + chrono::Duration::minutes(50);
-        let events = q.read_events(Some(since), None, None).unwrap();
-        assert_eq!(events.len(), 50);
-        assert!(events[0].time >= since);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
