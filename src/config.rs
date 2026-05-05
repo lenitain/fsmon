@@ -21,6 +21,7 @@ pub struct PathEntry {
 }
 
 impl Config {
+    #[must_use]
     pub fn default_config_path() -> PathBuf {
         PathBuf::from("/etc/fsmon/fsmon.toml")
     }
@@ -67,7 +68,9 @@ impl Config {
             socket_path: Some(PathBuf::from("/var/run/fsmon/fsmon.sock")),
             paths: vec![],
         };
-        config.save()
+        config.save()?;
+        println!("Generated default config at {}", path.display());
+        Ok(())
     }
 
     pub fn add_path(entry: PathEntry) -> Result<()> {
@@ -158,20 +161,10 @@ all_events = false
 
     #[test]
     fn test_load_returns_default_when_no_file() {
-        let dir = std::env::temp_dir().join("fsmon_test_load_default");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-
-        let config = Config {
-            log_file: None,
-            socket_path: None,
-            paths: vec![],
-        };
+        let config = Config::load().unwrap();
         assert!(config.log_file.is_none());
         assert!(config.socket_path.is_none());
         assert!(config.paths.is_empty());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -201,23 +194,94 @@ all_events = false
     }
 
     #[test]
-    fn test_empty_paths() {
-        let config = Config {
-            log_file: None,
-            socket_path: None,
-            paths: vec![],
+    fn test_save_and_load_round_trip() {
+        let dir = std::env::temp_dir().join("fsmon_test_save_roundtrip");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let config_path = dir.join("fsmon.toml");
+
+        let original = Config {
+            log_file: Some(PathBuf::from("/var/log/fsmon/history.log")),
+            socket_path: Some(PathBuf::from("/var/run/fsmon/fsmon.sock")),
+            paths: vec![PathEntry {
+                path: PathBuf::from("/test"),
+                recursive: Some(true),
+                types: None,
+                min_size: None,
+                exclude: None,
+                all_events: None,
+            }],
         };
-        assert!(config.paths.is_empty());
+
+        let content = toml::to_string_pretty(&original).unwrap();
+        fs::write(&config_path, content).unwrap();
+
+        let loaded = Config::load_from_path(&config_path).unwrap();
+        assert_eq!(original.log_file, loaded.log_file);
+        assert_eq!(original.socket_path, loaded.socket_path);
+        assert_eq!(original.paths.len(), loaded.paths.len());
+        assert_eq!(original.paths[0].path, loaded.paths[0].path);
+        assert_eq!(original.paths[0].recursive, loaded.paths[0].recursive);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn test_multiple_paths() {
+    fn test_add_path_persists() {
+        let dir = std::env::temp_dir().join("fsmon_test_add_path");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let config_path = dir.join("fsmon.toml");
+
+        let config = Config {
+            log_file: None,
+            socket_path: None,
+            paths: vec![PathEntry {
+                path: PathBuf::from("/existing"),
+                recursive: None,
+                types: None,
+                min_size: None,
+                exclude: None,
+                all_events: None,
+            }],
+        };
+        let content = toml::to_string_pretty(&config).unwrap();
+        fs::write(&config_path, content).unwrap();
+
+        let mut loaded: Config =
+            toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+        loaded.paths.push(PathEntry {
+            path: PathBuf::from("/new"),
+            recursive: None,
+            types: None,
+            min_size: None,
+            exclude: None,
+            all_events: None,
+        });
+        let new_content = toml::to_string_pretty(&loaded).unwrap();
+        fs::write(&config_path, new_content).unwrap();
+
+        let reloaded = Config::load_from_path(&config_path).unwrap();
+        assert_eq!(reloaded.paths.len(), 2);
+        assert!(reloaded.paths.iter().any(|p| p.path == Path::new("/existing")));
+        assert!(reloaded.paths.iter().any(|p| p.path == Path::new("/new")));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_remove_path_removes() {
+        let dir = std::env::temp_dir().join("fsmon_test_remove_path");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let config_path = dir.join("fsmon.toml");
+
         let config = Config {
             log_file: None,
             socket_path: None,
             paths: vec![
                 PathEntry {
-                    path: PathBuf::from("/a"),
+                    path: PathBuf::from("/keep"),
                     recursive: None,
                     types: None,
                     min_size: None,
@@ -225,7 +289,7 @@ all_events = false
                     all_events: None,
                 },
                 PathEntry {
-                    path: PathBuf::from("/b"),
+                    path: PathBuf::from("/remove"),
                     recursive: None,
                     types: None,
                     min_size: None,
@@ -234,24 +298,19 @@ all_events = false
                 },
             ],
         };
-        assert_eq!(config.paths.len(), 2);
-    }
+        let content = toml::to_string_pretty(&config).unwrap();
+        fs::write(&config_path, content).unwrap();
 
-    #[test]
-    fn test_path_entry_all_fields_none() {
-        let entry = PathEntry {
-            path: PathBuf::from("/test"),
-            recursive: None,
-            types: None,
-            min_size: None,
-            exclude: None,
-            all_events: None,
-        };
-        assert_eq!(entry.path, PathBuf::from("/test"));
-        assert!(entry.recursive.is_none());
-        assert!(entry.types.is_none());
-        assert!(entry.min_size.is_none());
-        assert!(entry.exclude.is_none());
-        assert!(entry.all_events.is_none());
+        let mut loaded: Config =
+            toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+        loaded.paths.retain(|p| p.path != Path::new("/remove"));
+        let new_content = toml::to_string_pretty(&loaded).unwrap();
+        fs::write(&config_path, new_content).unwrap();
+
+        let reloaded = Config::load_from_path(&config_path).unwrap();
+        assert_eq!(reloaded.paths.len(), 1);
+        assert_eq!(reloaded.paths[0].path, PathBuf::from("/keep"));
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
