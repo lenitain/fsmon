@@ -265,9 +265,8 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
             eprintln!("Path will be monitored after daemon restart");
         }
-        Err(e) => {
-            eprintln!("Daemon not reachable: {}", e);
-            eprintln!("Path will be monitored after daemon restart");
+        Err(_) => {
+            // daemon not running — store already saved, change applies on restart
         }
     }
     Ok(())
@@ -309,9 +308,8 @@ fn cmd_remove(id: u64) -> Result<()> {
             eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
             eprintln!("Change will apply after daemon restart");
         }
-        Err(e) => {
-            eprintln!("Daemon not reachable: {}", e);
-            eprintln!("Change will apply after daemon restart");
+        Err(_) => {
+            // daemon not running — store already saved, change applies on restart
         }
     }
     Ok(())
