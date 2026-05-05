@@ -156,6 +156,14 @@ cargo test         ✅ 67 passed, 7 ignored (fanotify 测试需要 sudo)
   - `add_path()`: mount_fd + shared_dir_cache 写入移到 `spawn_fd_reader` 之前
   - `add_path()`: 目录句柄缓存写入 `shared_dir_cache` 而非 `self.dir_cache`
 
+### 2026-05-05 — 重复 `fsmon add <path>` 产生重复 entry
+
+- **问题**: `Store::add_entry()` 直接 `push`，不检查 path 是否已存在。
+  连续 `fsmon add ~/.config` 产生多个同路径 entry，daemon 启动时全部加载，
+  `managed` 也全部列出。不同 add 的参数互不覆盖。
+- **修复**: `add_entry()` 先 `retain(|e| e.path != entry.path)` 移除旧 entry，
+  再 `push` 新 entry。重复 add 同一路径时后者取代前者，获得最新 ID。
+
 ### 2026-05-05 — store.next_id 因 daemon persist_config 回退导致 ID 不唯一
 
 - **问题**: 三个 bug 叠加导致 ID 不唯一：
