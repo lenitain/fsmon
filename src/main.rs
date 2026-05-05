@@ -24,6 +24,7 @@ use help::HelpTopic;
 
 const DEFAULT_LOG_PATH: &str = "history.log";
 const DEFAULT_KEEP_DAYS: u32 = 30;
+const EXIT_CONFIG: i32 = 78; // sysexits.h EX_CONFIG — configuration error
 
 use config::Config;
 use monitor::Monitor;
@@ -395,13 +396,18 @@ async fn main() -> Result<()> {
 
             // Load instance config if --instance is given (systemd template mode)
             let instance_config = match instance {
-                Some(ref name) => Config::load_instance(name)?
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "Instance config not found for '{}'. Create with 'fsmon enable {} ...' or manually at /etc/fsmon/fsmon-{}.toml",
+                Some(ref name) => match Config::load_instance(name)? {
+                    Some(cfg) => cfg,
+                    None => {
+                        eprintln!(
+                            "Error: Instance config not found for '{}'.\n\
+                             Create /etc/fsmon/fsmon-{}.toml first.\n\
+                             See: fsmon generate --instance {}",
                             name, name, name
-                        )
-                    })?,
+                        );
+                        process::exit(EXIT_CONFIG);
+                    }
+                },
                 None => config::InstanceConfig {
                     paths: vec![],
                     output: None,

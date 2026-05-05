@@ -28,6 +28,7 @@ ProtectSystem={PROTECT_SYSTEM}
 ProtectHome={PROTECT_HOME}
 ReadWritePaths={READ_WRITE_PATHS}
 PrivateTmp={PRIVATE_TMP}
+RestartPreventExitStatus=78
 
 [Install]
 WantedBy=multi-user.target
