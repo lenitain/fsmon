@@ -94,6 +94,15 @@ cargo test         ✅ 67 passed, 7 ignored (fanotify 测试需要 sudo)
 - **修复**: 改为 `let mut cfg = Config::load()?; cfg.resolve_paths()?;`
   与其他命令一致。
 
+### 2026-05-05 — daemon 运行时 `fsmon managed` 输出为空
+
+- **根因**: CLI 与 daemon 的 socket 协议用空行做消息分隔符，但 TOML 序列化
+  `Vec<PathEntry>` 时会在 array-of-tables (`[[paths]]`) 之间插入空行。
+  `send_cmd()` 读取响应时一遇到第一个空行就停止，只读到 `ok = true`
+  就 break，`paths` 字段全部丢失。
+- **修复**: `socket.rs::send_cmd()` 响应读取改为 EOF 终止，不再依赖空行分隔。
+  TOML 本身可包含空行，解析器正确处理。
+
 ## 下一阶段可能的改进
 
 - 找回 query.rs 中丢失的 17 个二进制搜索测试 (代码逻辑未改, 测试函数需恢复)

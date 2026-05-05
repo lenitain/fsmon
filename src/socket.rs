@@ -73,15 +73,14 @@ pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResp> {
 
     let mut reader = BufReader::new(stream);
     let mut response = String::new();
-    // Read until blank line (TOML document boundary)
+    // Read until EOF — the server closes the connection after sending the response.
+    // Don't break on blank lines because TOML serialization of Vec fields contains
+    // embedded blank lines between array-of-tables entries (e.g., [[paths]]).
     loop {
         let mut line = String::new();
         let bytes = reader.read_line(&mut line)?;
         if bytes == 0 {
             break; // EOF
-        }
-        if line.trim().is_empty() && !response.is_empty() {
-            break; // blank line ends the response
         }
         response.push_str(&line);
     }
