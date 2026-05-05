@@ -205,8 +205,7 @@ paths = []
 #all_events = false
 "#;
         let disp = path.display().to_string();
-        fs::write(&path, content)
-            .with_context(|| format!("Failed to write config to {}", disp))?;
+        fs::write(&path, content).with_context(|| format!("Failed to write config to {}", disp))?;
         Ok(())
     }
 }
@@ -302,7 +301,8 @@ mod tests {
                 min_size: None,
                 exclude: None,
                 all_events: None,
-            }).unwrap();
+            })
+            .unwrap();
             assert_eq!(id1, 1);
 
             let cfg = UserConfig::load().unwrap();
@@ -320,7 +320,8 @@ mod tests {
                 min_size: None,
                 exclude: None,
                 all_events: None,
-            }).unwrap();
+            })
+            .unwrap();
             assert_eq!(id2, 2);
 
             let cfg = UserConfig::load().unwrap();

@@ -442,16 +442,27 @@ impl Monitor {
                             let (stream, _) = listener.accept().await?;
                             let (reader, writer) = stream.into_split();
                             let mut buf_reader = tokio::io::BufReader::new(reader);
-                            let mut line = String::new();
-                            buf_reader.read_line(&mut line).await?;
-                            Ok::<(tokio::net::unix::OwnedWriteHalf, String), std::io::Error>((writer, line.trim().to_string()))
+                            // Read TOML message (separated by blank line)
+                            let mut message = String::new();
+                            loop {
+                                let mut line = String::new();
+                                let bytes = buf_reader.read_line(&mut line).await?;
+                                if bytes == 0 {
+                                    break;
+                                }
+                                if line.trim().is_empty() && !message.is_empty() {
+                                    break;
+                                }
+                                message.push_str(&line);
+                            }
+                            Ok::<(tokio::net::unix::OwnedWriteHalf, String), std::io::Error>((writer, message.trim().to_string()))
                         }
                         None => std::future::pending().await,
                     }
                 } => {
                     match accept_result {
                         Ok((mut writer, cmd_str)) => {
-                            let resp = match serde_json::from_str::<SocketCmd>(&cmd_str) {
+                            let resp = match toml::from_str::<SocketCmd>(&cmd_str) {
                                 Ok(cmd) => self.handle_socket_cmd(cmd),
                                 Err(e) => SocketResp {
                                     ok: false,
@@ -460,8 +471,8 @@ impl Monitor {
                                     paths: None,
                                 },
                             };
-                            if let Ok(json) = serde_json::to_string(&resp) {
-                                let resp_bytes = format!("{json}\n");
+                            if let Ok(toml_str) = toml::to_string(&resp) {
+                                let resp_bytes = format!("{toml_str}\n");
                                 let _ = writer.write_all(resp_bytes.as_bytes()).await;
                             }
                         }
@@ -698,19 +709,26 @@ impl Monitor {
     }
 
     fn path_for_id(&self, id: u64) -> Option<&PathBuf> {
-        self.path_ids.iter().find(|&(_, &v)| v == id).map(|(k, _)| k)
+        self.path_ids
+            .iter()
+            .find(|&(_, &v)| v == id)
+            .map(|(k, _)| k)
     }
 
     fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> SocketResp {
-        match cmd {
-            SocketCmd::Add {
-                path,
-                recursive,
-                types,
-                min_size,
-                exclude,
-                all_events,
-            } => {
+        match cmd.cmd.as_str() {
+            "add" => {
+                let path = match &cmd.path {
+                    Some(p) => p.clone(),
+                    None => {
+                        return SocketResp {
+                            ok: false,
+                            error: Some("Missing 'path' field".to_string()),
+                            id: None,
+                            paths: None,
+                        };
+                    }
+                };
                 // Remove first if already monitored, then add with new options
                 if self.path_options.contains_key(&path) {
                     let _ = self.remove_path(&path);
@@ -718,11 +736,11 @@ impl Monitor {
                 let entry = PathEntry {
                     id: 0,
                     path,
-                    recursive,
-                    types,
-                    min_size,
-                    exclude,
-                    all_events,
+                    recursive: cmd.recursive,
+                    types: cmd.types.clone(),
+                    min_size: cmd.min_size.clone(),
+                    exclude: cmd.exclude.clone(),
+                    all_events: cmd.all_events,
                 };
                 let id = entry.id;
                 match self.add_path(&entry) {
@@ -743,7 +761,18 @@ impl Monitor {
                     },
                 }
             }
-            SocketCmd::Remove { id } => {
+            "remove" => {
+                let id = match cmd.id {
+                    Some(id) => id,
+                    None => {
+                        return SocketResp {
+                            ok: false,
+                            error: Some("Missing 'id' field".to_string()),
+                            id: None,
+                            paths: None,
+                        };
+                    }
+                };
                 let path = match self.path_for_id(id) {
                     Some(p) => p.clone(),
                     None => {
@@ -752,7 +781,7 @@ impl Monitor {
                             error: Some(format!("No path with ID {}", id)),
                             id: None,
                             paths: None,
-                        }
+                        };
                     }
                 };
                 match self.remove_path(&path) {
@@ -773,7 +802,7 @@ impl Monitor {
                     },
                 }
             }
-            SocketCmd::List => {
+            "list" => {
                 let paths: Vec<PathEntry> = self
                     .paths
                     .iter()
@@ -804,6 +833,12 @@ impl Monitor {
                     paths: Some(paths),
                 }
             }
+            _ => SocketResp {
+                ok: false,
+                error: Some(format!("Unknown command: {}", cmd.cmd)),
+                id: None,
+                paths: None,
+            },
         }
     }
 
@@ -1153,9 +1188,16 @@ mod tests {
 
     #[test]
     fn test_add_path_and_remove_path() {
-        let mut m =
-            Monitor::new(vec![], HashMap::new(), None, OutputFormat::Human, None, None, None)
-                .unwrap();
+        let mut m = Monitor::new(
+            vec![],
+            HashMap::new(),
+            None,
+            OutputFormat::Human,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         m.fan_fd = Some(-1); // dummy fd for log path test
 
         let entry = PathEntry {

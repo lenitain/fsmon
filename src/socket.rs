@@ -1,5 +1,5 @@
 //! Unix socket protocol for daemon-CLI communication.
-//! Uses JSON lines over unix stream sockets.
+//! Uses TOML over unix stream sockets, with each message separated by a blank line.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -13,21 +13,22 @@ use tokio::net::UnixListener;
 use crate::config::PathEntry;
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "cmd")]
-pub enum SocketCmd {
-    #[serde(rename = "add")]
-    Add {
-        path: PathBuf,
-        recursive: Option<bool>,
-        types: Option<Vec<String>>,
-        min_size: Option<String>,
-        exclude: Option<String>,
-        all_events: Option<bool>,
-    },
-    #[serde(rename = "remove")]
-    Remove { id: u64 },
-    #[serde(rename = "list")]
-    List,
+pub struct SocketCmd {
+    pub cmd: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recursive: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub types: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_size: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exclude: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all_events: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>, // For "remove" commands
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -41,6 +42,16 @@ pub struct SocketResp {
     pub paths: Option<Vec<PathEntry>>,
 }
 
+/// Serialize a value to a single TOML document string.
+fn to_toml_string<T: Serialize>(value: &T) -> Result<String> {
+    Ok(toml::to_string(value)?)
+}
+
+/// Deserialize a value from a TOML document string.
+fn from_toml_str<T: serde::de::DeserializeOwned>(s: &str) -> Result<T> {
+    Ok(toml::from_str(s)?)
+}
+
 /// Send a command to the running daemon and get the response.
 pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResp> {
     let stream = UnixStream::connect(socket_path).with_context(|| {
@@ -51,25 +62,56 @@ pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResp> {
         )
     })?;
 
-    let json = serde_json::to_string(cmd)?;
+    let toml = to_toml_string(cmd)?;
 
     {
         let mut writer = stream.try_clone()?;
-        writeln!(writer, "{json}")?;
+        // Write TOML document followed by blank line as delimiter
+        write!(writer, "{toml}\n\n")?;
         writer.flush()?;
     }
 
     let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
+    let mut response = String::new();
+    // Read until blank line (TOML document boundary)
+    loop {
+        let mut line = String::new();
+        let bytes = reader.read_line(&mut line)?;
+        if bytes == 0 {
+            break; // EOF
+        }
+        if line.trim().is_empty() && !response.is_empty() {
+            break; // blank line ends the response
+        }
+        response.push_str(&line);
+    }
 
-    if line.trim().is_empty() {
+    if response.trim().is_empty() {
         bail!("Empty response from daemon");
     }
 
     let resp: SocketResp =
-        serde_json::from_str(line.trim()).with_context(|| "Failed to parse daemon response")?;
+        from_toml_str(response.trim()).with_context(|| "Failed to parse daemon response")?;
     Ok(resp)
+}
+
+/// Read a complete TOML message (separated by blank line) from an async buffered reader.
+async fn read_toml_message(
+    reader: &mut AsyncBufReader<tokio::net::unix::OwnedReadHalf>,
+) -> Result<String> {
+    let mut message = String::new();
+    loop {
+        let mut line = String::new();
+        let bytes = reader.read_line(&mut line).await?;
+        if bytes == 0 {
+            break; // EOF
+        }
+        if line.trim().is_empty() && !message.is_empty() {
+            break; // blank line ends the message
+        }
+        message.push_str(&line);
+    }
+    Ok(message)
 }
 
 /// Listen for client connections on a unix socket, parse commands,
@@ -92,13 +134,11 @@ pub async fn listen(
             Ok((stream, _addr)) => {
                 let (reader, mut writer) = stream.into_split();
                 let mut buf_reader = AsyncBufReader::new(reader);
-                let mut line = String::new();
 
-                match buf_reader.read_line(&mut line).await {
-                    Ok(0) => continue,
-                    Ok(_) => {
-                        let trimmed = line.trim();
-                        let resp = match serde_json::from_str::<SocketCmd>(trimmed) {
+                match read_toml_message(&mut buf_reader).await {
+                    Ok(message) if message.trim().is_empty() => continue,
+                    Ok(message) => {
+                        let resp = match from_toml_str::<SocketCmd>(message.trim()) {
                             Ok(cmd) => match handler(cmd) {
                                 Ok(resp) => resp,
                                 Err(e) => SocketResp {
@@ -116,15 +156,16 @@ pub async fn listen(
                             },
                         };
 
-                        let resp_json = match serde_json::to_string(&resp) {
-                            Ok(j) => j,
+                        let resp_toml = match to_toml_string(&resp) {
+                            Ok(t) => t,
                             Err(e) => {
                                 eprintln!("Failed to serialize response: {e}");
                                 continue;
                             }
                         };
 
-                        let resp_bytes = format!("{resp_json}\n");
+                        // Write TOML response followed by blank line delimiter
+                        let resp_bytes = format!("{resp_toml}\n");
                         if let Err(e) = writer.write_all(resp_bytes.as_bytes()).await {
                             eprintln!("Failed to write response: {e}");
                         }

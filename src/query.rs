@@ -9,7 +9,6 @@ use crate::utils::{format_size, parse_time};
 use crate::{EventType, FileEvent, OutputFormat, SortBy, parse_log_line};
 
 const SCAN_BACK_BYTES: u64 = 4096;
-const BYTES_PER_LINE: u64 = 512;
 
 pub struct Query {
     log_file: PathBuf,
@@ -77,6 +76,53 @@ impl Query {
         Ok(())
     }
 
+    /// Read the next TOML event block from the reader at current position.
+    /// Each event is a TOML document (multi-line) separated by blank lines.
+    /// Skips leading blank lines, then reads until a blank line or EOF.
+    /// Returns (block_bytes, total_bytes_consumed) or None at EOF.
+    fn read_next_block(reader: &mut BufReader<File>) -> Result<Option<(Vec<u8>, usize)>> {
+        let mut block = Vec::new();
+        let mut total_bytes = 0usize;
+
+        // Skip leading blank lines, collect first content line
+        loop {
+            let mut line = Vec::new();
+            let bytes_read = reader.read_until(b'\n', &mut line)?;
+            if bytes_read == 0 {
+                return Ok(None); // EOF
+            }
+            total_bytes += bytes_read;
+            let trimmed = std::str::from_utf8(&line).unwrap_or("").trim();
+            if !trimmed.is_empty() {
+                // First content line — start of the block
+                block.extend_from_slice(&line);
+                break;
+            }
+            // Blank line, skip
+        }
+
+        // Read the rest of the TOML block until a blank line or EOF
+        loop {
+            let mut line = Vec::new();
+            let bytes_read = reader.read_until(b'\n', &mut line)?;
+            if bytes_read == 0 {
+                break; // EOF
+            }
+            total_bytes += bytes_read;
+            let trimmed = std::str::from_utf8(&line).unwrap_or("").trim();
+            if trimmed.is_empty() {
+                break; // blank line ends the block
+            }
+            block.extend_from_slice(&line);
+        }
+
+        if block.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some((block, total_bytes)))
+        }
+    }
+
     fn read_events(
         &self,
         since_time: Option<DateTime<Utc>>,
@@ -106,7 +152,7 @@ impl Query {
 
         let mut events = Vec::new();
 
-        // Seek to start_offset and read lines within [start_offset, end_offset]
+        // Seek to start_offset and read TOML blocks within [start_offset, end_offset]
         reader.seek(SeekFrom::Start(start_offset))?;
         let mut offset = start_offset;
 
@@ -115,22 +161,21 @@ impl Query {
                 break;
             }
 
-            let mut line = Vec::new();
-            let bytes_read = reader.read_until(b'\n', &mut line)?;
-            if bytes_read == 0 {
-                break; // EOF
-            }
-            offset += bytes_read as u64;
+            let (block_bytes, block_len) = match Self::read_next_block(&mut reader)? {
+                Some(b) => b,
+                None => break,
+            };
+            offset += block_len as u64;
 
-            let line_str = match std::str::from_utf8(&line) {
+            let block_str = match std::str::from_utf8(&block_bytes) {
                 Ok(s) => s.trim(),
                 Err(_) => continue,
             };
-            if line_str.is_empty() {
+            if block_str.is_empty() {
                 continue;
             }
 
-            let event: FileEvent = match parse_log_line(line_str) {
+            let event: FileEvent = match parse_log_line(block_str) {
                 Some(e) => e,
                 None => continue,
             };
@@ -187,48 +232,57 @@ impl Query {
     }
 
     /// Seek to a byte offset in the file and extract the timestamp from the
-    /// nearest complete line. When the offset lands mid-line, seeks backward
-    /// to find the line start, then reads forward.
-    /// Returns (timestamp, byte_offset_of_line_start) or None if no valid line found.
+    /// nearest complete TOML event block at or before `offset`.
+    /// Reads a chunk before `offset`, scans backward to find the last blank
+    /// line or file start, then reads the next complete TOML block.
+    /// Returns (timestamp, byte_offset_of_block_start) or None.
     fn seek_and_parse_time(
         &self,
         reader: &mut BufReader<File>,
         offset: u64,
     ) -> Option<(DateTime<Utc>, u64)> {
-        // Seek backward to find the start of the line containing `offset`.
-        // Read a small chunk before `offset` and scan backward for a newline.
-        // 4096 bytes handles most JSON log lines; if a line is longer, the
-        // binary search may land inside the previous line but will still
-        // converge correctly because timestamps are monotonically increasing.
         let scan_back = SCAN_BACK_BYTES;
         let read_start = offset.saturating_sub(scan_back);
 
         reader.seek(SeekFrom::Start(read_start)).ok()?;
-        let mut pre_buf = Vec::new();
-        let pre_bytes = reader.read_until(b'\n', &mut pre_buf).ok()?;
-        if pre_bytes == 0 {
-            return None; // empty region
+
+        // Skip forward until we find a blank line (block boundary) or EOF
+        loop {
+            let mut line = Vec::new();
+            let bytes = reader.read_until(b'\n', &mut line).ok()?;
+            if bytes == 0 {
+                return None; // EOF — can't find a block
+            }
+            let s = std::str::from_utf8(&line).ok()?.trim();
+            if s.is_empty() {
+                break; // Found blank line, next content is a complete block
+            }
         }
 
-        // After read_until, the reader is positioned right after the first '\n'.
-        // If read_start == 0, the first line is in pre_buf; read_until consumed
-        // up to and including the first '\n'. So the next read starts at the second line.
-        // If read_start > 0, we consumed a partial line + '\n', reader is at second line.
-        // Either way, read the complete line from the current position.
-        let line_start = read_start + pre_bytes as u64;
-        let mut line_buf = Vec::new();
-        let line_bytes = reader.read_until(b'\n', &mut line_buf).ok()?;
-        if line_bytes == 0 {
-            return None; // EOF after the pre-read
+        // Record position after the blank line (block start)
+        // Read the complete TOML block
+        let mut block = Vec::new();
+        loop {
+            let mut line = Vec::new();
+            let bytes = reader.read_until(b'\n', &mut line).ok()?;
+            if bytes == 0 {
+                break; // EOF
+            }
+            let s = std::str::from_utf8(&line).ok()?.trim();
+            if s.is_empty() {
+                break; // blank line ends the block
+            }
+            block.extend_from_slice(&line);
         }
 
-        let line = std::str::from_utf8(&line_buf).ok()?.trim();
-        if line.is_empty() {
+        let block_str = std::str::from_utf8(&block).ok()?.trim();
+        if block_str.is_empty() {
             return None;
         }
 
-        let event: FileEvent = parse_log_line(line)?;
-        Some((event.time, line_start))
+        let event: FileEvent = parse_log_line(block_str)?;
+        // Approximate block start (we consumed the blank line already)
+        Some((event.time, offset))
     }
 
     /// Binary search to find the byte offset of the first line with timestamp >= target.
@@ -305,9 +359,10 @@ impl Query {
         Ok(low)
     }
 
-    /// Expand a byte offset backward by up to `max_lines` lines to catch
+    /// Expand a byte offset backward by up to `max_blocks` blocks to catch
     /// minor out-of-order entries near the boundary.
-    /// Returns the byte offset of the line that is `max_lines` before `offset`.
+    /// Returns the byte offset of the block boundary closest to `offset` but
+    /// at least `max_blocks` blocks before it.
     ///
     /// Instead of scanning from file start (O(offset)), scans a bounded
     /// window before `offset`. Doubles the window size on retry if needed.
@@ -315,92 +370,127 @@ impl Query {
         &self,
         reader: &mut BufReader<File>,
         offset: u64,
-        max_lines: usize,
+        max_blocks: usize,
     ) -> Result<u64> {
-        if offset == 0 || max_lines == 0 {
+        if offset == 0 || max_blocks == 0 {
             return Ok(offset);
         }
 
         let file_len = reader.get_ref().metadata()?.len();
         if offset >= file_len {
             // offset is at or past EOF; scan the whole file
-            return self.expand_offset_backward_from_start(reader, file_len, max_lines);
+            return self.expand_offset_backward_from_start(reader, file_len, max_blocks);
         }
 
-        // Start with a reasonable window: 512 bytes per line on average.
-        // Retry with larger windows if we don't find enough lines.
-        let mut buf_size: u64 = (max_lines as u64)
-            .saturating_mul(BYTES_PER_LINE)
+        // Each block is roughly 7 lines * 60 bytes = ~420 bytes
+        let avg_block_bytes: u64 = 420;
+        let mut buf_size: u64 = (max_blocks as u64)
+            .saturating_mul(avg_block_bytes)
             .max(SCAN_BACK_BYTES);
 
         loop {
             let scan_start = offset.saturating_sub(buf_size);
 
             reader.seek(SeekFrom::Start(scan_start))?;
-            let mut ring_buf = vec![0u64; max_lines];
+            let mut ring_buf = vec![0u64; max_blocks];
             let mut ring_idx = 0usize;
             let mut ring_count = 0usize;
             let mut pos = scan_start;
 
-            // If not starting at file start, skip the partial first line
+            // Skip partial first block if not at file start
             if scan_start > 0 {
-                let mut discard = Vec::new();
-                let bytes = reader.read_until(b'\n', &mut discard)?;
-                if bytes == 0 {
-                    // Empty region — fall back to reading from start
-                    return self.expand_offset_backward_from_start(reader, offset, max_lines);
+                // Read until we hit a blank line (end of partial block)
+                let mut found_blank = false;
+                loop {
+                    let mut discard = Vec::new();
+                    let bytes = reader.read_until(b'\n', &mut discard)?;
+                    if bytes == 0 {
+                        break; // EOF
+                    }
+                    pos += bytes as u64;
+                    if pos > offset {
+                        // We passed offset while skipping; return 0 as conservative bound
+                        return Ok(0);
+                    }
+                    let s = std::str::from_utf8(&discard).unwrap_or("").trim();
+                    if s.is_empty() {
+                        found_blank = true;
+                        break;
+                    }
                 }
-                pos += bytes as u64;
+                if !found_blank {
+                    // Reached EOF, scan from start
+                    return self.expand_offset_backward_from_start(reader, offset, max_blocks);
+                }
             }
 
+            // Now track complete blocks
             loop {
                 if pos >= offset {
                     break;
                 }
-                let mut line = Vec::new();
-                let bytes_read = reader.read_until(b'\n', &mut line)?;
-                if bytes_read == 0 {
-                    break;
-                }
-                ring_buf[ring_idx % max_lines] = pos;
+                // Record position at start of a block (after blank line)
+                ring_buf[ring_idx % max_blocks] = pos;
                 ring_idx += 1;
                 ring_count += 1;
-                pos += bytes_read as u64;
+
+                // Read one complete block
+                let mut found_content = false;
+                loop {
+                    let mut line = Vec::new();
+                    let bytes_read = reader.read_until(b'\n', &mut line)?;
+                    if bytes_read == 0 {
+                        break; // EOF
+                    }
+                    pos += bytes_read as u64;
+                    if pos > offset {
+                        break;
+                    }
+                    let s = std::str::from_utf8(&line).unwrap_or("").trim();
+                    if s.is_empty() {
+                        break; // blank line ends block
+                    }
+                    found_content = true;
+                }
+                if !found_content {
+                    // Check if we hit EOF after the outer loop condition
+                    break;
+                }
             }
 
-            if ring_count >= max_lines {
-                // Found enough lines; return the earliest of the last max_lines
-                return Ok(ring_buf[ring_idx % max_lines]);
+            if ring_count >= max_blocks {
+                // Found enough blocks; return the earliest of the tracked starts
+                return Ok(ring_buf[ring_idx % max_blocks]);
             }
 
             if scan_start == 0 {
-                // Already scanning from file start and still not enough lines
+                // Already scanned from file start and still not enough blocks
                 if ring_count == 0 {
                     return Ok(0);
                 }
                 return Ok(ring_buf[0]);
             }
 
-            // Not enough lines in this window — double and retry
+            // Not enough blocks in this window — double and retry
             let new_buf_size = buf_size.saturating_mul(2);
             if new_buf_size >= offset {
                 // Will cover from file start on next iteration; just do it directly
-                return self.expand_offset_backward_from_start(reader, offset, max_lines);
+                return self.expand_offset_backward_from_start(reader, offset, max_blocks);
             }
             buf_size = new_buf_size;
         }
     }
 
     /// Fallback: scan from file start up to `offset`, tracking the last
-    /// `max_lines` line start positions.
+    /// `max_blocks` block start positions.
     fn expand_offset_backward_from_start(
         &self,
         reader: &mut BufReader<File>,
         offset: u64,
-        max_lines: usize,
+        max_blocks: usize,
     ) -> Result<u64> {
         reader.seek(SeekFrom::Start(0))?;
-        let mut ring_buf = vec![0u64; max_lines];
+        let mut ring_buf = vec![0u64; max_blocks];
         let mut ring_idx = 0usize;
         let mut ring_count = 0usize;
         let mut pos = 0u64;
@@ -409,27 +499,36 @@ impl Query {
             if pos >= offset {
                 break;
             }
-            let mut line = Vec::new();
-            let bytes_read = reader.read_until(b'\n', &mut line)?;
-            if bytes_read == 0 {
-                break;
-            }
-            ring_buf[ring_idx % max_lines] = pos;
+            // Record block start
+            ring_buf[ring_idx % max_blocks] = pos;
             ring_idx += 1;
             ring_count += 1;
-            pos += bytes_read as u64;
+
+            // Read one complete block
+            loop {
+                let mut line = Vec::new();
+                let bytes_read = reader.read_until(b'\n', &mut line)?;
+                if bytes_read == 0 {
+                    break; // EOF
+                }
+                pos += bytes_read as u64;
+                let s = std::str::from_utf8(&line).unwrap_or("").trim();
+                if s.is_empty() {
+                    break; // blank line ends the block
+                }
+            }
         }
 
         if ring_count == 0 {
             return Ok(0);
         }
 
-        let start_idx = if ring_count >= max_lines {
-            ring_idx % max_lines
+        let start_idx = if ring_count >= max_blocks {
+            ring_idx % max_blocks
         } else {
             0
         };
-        Ok(ring_buf[start_idx % max_lines])
+        Ok(ring_buf[start_idx % max_blocks])
     }
 
     fn sort_events(&self, mut events: Vec<FileEvent>) -> Vec<FileEvent> {
@@ -459,9 +558,10 @@ impl Query {
                     println!("{}", event.to_human_string());
                 }
             }
-            OutputFormat::Json => {
+            OutputFormat::Toml => {
                 for event in events {
-                    println!("{}", serde_json::to_string(event)?);
+                    print!("{}", event.to_toml_string());
+                    println!(); // blank line separator
                 }
             }
             OutputFormat::Csv => {
@@ -617,8 +717,8 @@ mod tests {
         };
 
         let mut f = std::fs::File::create(&log_path).unwrap();
-        writeln!(f, "{}", serde_json::to_string(&e1).unwrap()).unwrap();
-        writeln!(f, "{}", serde_json::to_string(&e2).unwrap()).unwrap();
+        writeln!(f, "{}", &e1.to_toml_string()).unwrap();
+        writeln!(f, "{}", &e2.to_toml_string()).unwrap();
 
         let q = Query::new(
             log_path.clone(),
@@ -667,8 +767,8 @@ mod tests {
         };
 
         let mut f = std::fs::File::create(&log_path).unwrap();
-        writeln!(f, "{}", serde_json::to_string(&e1).unwrap()).unwrap();
-        writeln!(f, "{}", serde_json::to_string(&e2).unwrap()).unwrap();
+        writeln!(f, "{}", &e1.to_toml_string()).unwrap();
+        writeln!(f, "{}", &e2.to_toml_string()).unwrap();
 
         let q = Query::new(
             log_path.clone(),
@@ -717,8 +817,8 @@ mod tests {
         };
 
         let mut f = std::fs::File::create(&log_path).unwrap();
-        writeln!(f, "{}", serde_json::to_string(&e1).unwrap()).unwrap();
-        writeln!(f, "{}", serde_json::to_string(&e2).unwrap()).unwrap();
+        writeln!(f, "{}", &e1.to_toml_string()).unwrap();
+        writeln!(f, "{}", &e2.to_toml_string()).unwrap();
 
         let q = Query::new(
             log_path.clone(),
@@ -770,8 +870,8 @@ mod tests {
         };
 
         let mut f = std::fs::File::create(&log_path).unwrap();
-        writeln!(f, "{}", serde_json::to_string(&e1).unwrap()).unwrap();
-        writeln!(f, "{}", serde_json::to_string(&e2).unwrap()).unwrap();
+        writeln!(f, "{}", &e1.to_toml_string()).unwrap();
+        writeln!(f, "{}", &e2.to_toml_string()).unwrap();
 
         let since = Utc.with_ymd_and_hms(2024, 1, 1, 11, 0, 0).unwrap();
         let q = Query::new(
@@ -795,7 +895,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_events_skips_invalid_json() {
+    fn test_read_events_skips_invalid_toml() {
         use std::io::Write;
         let dir = std::env::temp_dir().join("fsmon_test_invalid");
         std::fs::create_dir_all(&dir).unwrap();
@@ -846,7 +946,7 @@ mod tests {
                 user: "root".into(),
                 size_change: (i as i64) * 100,
             };
-            writeln!(f, "{}", serde_json::to_string(&e).unwrap()).unwrap();
+            writeln!(f, "{}", &e.to_toml_string()).unwrap();
         }
         (log_path, times)
     }
@@ -1069,7 +1169,7 @@ mod tests {
                 user: "root".into(),
                 size_change: i * 100,
             };
-            writeln!(f, "{}", serde_json::to_string(&e).unwrap()).unwrap();
+            writeln!(f, "{}", &e.to_toml_string()).unwrap();
         }
 
         let q = Query::new(
@@ -1122,7 +1222,7 @@ mod tests {
             size_change: 42,
         };
         let mut f = std::fs::File::create(&log_path).unwrap();
-        writeln!(f, "{}", serde_json::to_string(&e).unwrap()).unwrap();
+        writeln!(f, "{}", &e.to_toml_string()).unwrap();
 
         let q = Query::new(
             log_path.clone(),
@@ -1202,7 +1302,7 @@ mod tests {
                 user: "root".into(),
                 size_change: 0,
             };
-            writeln!(f, "{}", serde_json::to_string(&e).unwrap()).unwrap();
+            writeln!(f, "{}", &e.to_toml_string()).unwrap();
         }
 
         let q = Query::new(
@@ -1247,7 +1347,7 @@ mod tests {
                 user: "root".into(),
                 size_change: 0,
             };
-            writeln!(f, "{}", serde_json::to_string(&e).unwrap()).unwrap();
+            writeln!(f, "{}", &e.to_toml_string()).unwrap();
         }
 
         let q = Query::new(
@@ -1294,7 +1394,7 @@ mod tests {
                 user: "root".into(),
                 size_change: 0,
             };
-            writeln!(f, "{}", serde_json::to_string(&e).unwrap()).unwrap();
+            writeln!(f, "{}", &e.to_toml_string()).unwrap();
         }
 
         let q = Query::new(

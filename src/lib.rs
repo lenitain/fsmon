@@ -21,12 +21,15 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 pub const DEFAULT_KEEP_DAYS: u32 = 30;
+pub const TOML_SEPARATOR: &str = "\n\n";
 pub const EXIT_CONFIG: i32 = 78;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum OutputFormat {
     Human,
-    Json,
+    /// Alias for TOML output format
+    #[clap(name = "json")]
+    Toml,
     Csv,
 }
 
@@ -150,6 +153,63 @@ impl FileEvent {
         )
     }
 
+    pub fn to_toml_string(&self) -> String {
+        format!(
+            r#"time = "{}"
+event_type = "{}"
+path = "{}"
+pid = {}
+cmd = "{}"
+user = "{}"
+size_change = {}
+"#,
+            self.time.to_rfc3339(),
+            self.event_type,
+            self.path
+                .display()
+                .to_string()
+                .replace('\\', "\\\\")
+                .replace('"', "\\\""),
+            self.pid,
+            self.cmd.replace('\\', "\\\\").replace('"', "\\\""),
+            self.user.replace('\\', "\\\\").replace('"', "\\\""),
+            self.size_change,
+        )
+    }
+
+    pub fn from_toml_str(s: &str) -> Option<Self> {
+        // Parse a TOML document into a FileEvent.
+        // Accepts both inline and multi-line TOML.
+        let value: toml::Value = s.parse().ok()?;
+        let table = value.as_table()?;
+
+        let time_str = table.get("time")?.as_str()?;
+        let time = DateTime::parse_from_rfc3339(time_str)
+            .ok()?
+            .with_timezone(&Utc);
+
+        let event_type_str = table.get("event_type")?.as_str()?;
+        let event_type: EventType = event_type_str.parse().ok()?;
+
+        let path_str = table.get("path")?.as_str()?;
+        let path = PathBuf::from(path_str);
+
+        let pid = table.get("pid")?.as_integer()? as u32;
+        let cmd = table.get("cmd")?.as_str()?.to_string();
+        let user = table.get("user")?.as_str()?.to_string();
+        let size_change = table.get("size_change")?.as_integer()?;
+
+        Some(FileEvent {
+            time,
+            event_type,
+            path,
+            pid,
+            cmd,
+            user,
+            size_change,
+        })
+    }
+
     pub fn to_csv_string(&self) -> String {
         use csv::WriterBuilder;
         let mut wtr = WriterBuilder::new().has_headers(false).from_writer(vec![]);
@@ -199,15 +259,50 @@ impl FileEvent {
     }
 }
 
+/// Parse a log line (or multi-line block) into a FileEvent.
+/// Supports TOML format (multi-line, separated by blank lines) and CSV (single-line).
 pub fn parse_log_line(line: &str) -> Option<FileEvent> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return None;
     }
-    if trimmed.starts_with('{') {
-        serde_json::from_str(trimmed).ok()
+    // Try TOML first, fall back to CSV
+    FileEvent::from_toml_str(trimmed).or_else(|| FileEvent::from_csv_str(trimmed))
+}
+
+/// Read the next TOML event block from the reader.
+/// Each event is a TOML document (multi-line) separated by blank lines.
+/// Returns the block content (trimmed) or None at EOF.
+fn read_toml_block(reader: &mut BufReader<fs::File>) -> Result<Option<String>> {
+    let mut block = String::new();
+    let mut found_start = false;
+
+    loop {
+        let mut line = String::new();
+        let bytes = reader.read_line(&mut line)?;
+        if bytes == 0 {
+            // EOF
+            break;
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            // Blank line = end of current block
+            if found_start {
+                break;
+            }
+            // Skip leading blank lines
+            continue;
+        }
+
+        found_start = true;
+        block.push_str(&line);
+    }
+
+    if block.trim().is_empty() {
+        Ok(None)
     } else {
-        FileEvent::from_csv_str(trimmed)
+        Ok(Some(block))
     }
 }
 
@@ -231,27 +326,33 @@ pub async fn clean_logs(
 
     {
         let file = fs::File::open(log_file)?;
-        let reader = BufReader::new(file);
+        let mut reader = BufReader::new(file);
         let writer = fs::File::create(&temp_file)?;
         let mut writer = BufWriter::new(writer);
 
-        for line in reader.lines() {
-            let line = line?;
-            if line.trim().is_empty() {
-                continue;
-            }
+        loop {
+            let block = read_toml_block(&mut reader)?;
+            match block {
+                Some(content) => {
+                    let should_keep = if let Some(event) = parse_log_line(&content) {
+                        event.time >= cutoff_time
+                    } else {
+                        true
+                    };
 
-            let should_keep = if let Some(event) = parse_log_line(&line) {
-                event.time >= cutoff_time
-            } else {
-                true
-            };
-
-            if should_keep {
-                writeln!(writer, "{}", line)?;
-                kept_bytes += line.len() + 1;
-            } else {
-                time_deleted += 1;
+                    if should_keep {
+                        write!(writer, "{}", content)?;
+                        if !content.ends_with('\n') {
+                            writeln!(writer)?;
+                        }
+                        // Blank line separator between events
+                        writeln!(writer)?;
+                        kept_bytes += content.len() + 2; // +2 for blank line
+                    } else {
+                        time_deleted += 1;
+                    }
+                }
+                None => break,
             }
         }
     }
@@ -271,13 +372,13 @@ pub async fn clean_logs(
 
     if dry_run {
         let _ = fs::remove_file(temp_file);
-        println!("Dry run: Would delete {} lines", total_deleted);
+        println!("Dry run: Would delete {} blocks", total_deleted);
         println!("No changes made (--dry-run enabled)");
     } else {
         fs::rename(&temp_file, log_file)?;
         println!("Cleaning {}...", log_file.display());
         println!(
-            "Deleted {} lines (logs older than {} days)",
+            "Deleted {} blocks (logs older than {} days)",
             total_deleted, keep_days
         );
         println!(
@@ -471,17 +572,24 @@ mod tests {
 
         {
             let mut f = fs::File::create(&log_path).unwrap();
-            writeln!(f, "{}", serde_json::to_string(&old_event).unwrap()).unwrap();
-            writeln!(f, "{}", serde_json::to_string(&new_event).unwrap()).unwrap();
+            write!(f, "{}", old_event.to_toml_string()).unwrap();
+            writeln!(f).unwrap(); // blank line separator
+            write!(f, "{}", new_event.to_toml_string()).unwrap();
+            writeln!(f).unwrap(); // trailing blank line
         }
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(clean_logs(&log_path, 30, None, false)).unwrap();
 
         let content = fs::read_to_string(&log_path).unwrap();
-        let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
-        assert_eq!(lines.len(), 1);
-        let remaining: FileEvent = serde_json::from_str(lines[0]).unwrap();
+        // Parse by TOML blocks, expect one event
+        let blocks: Vec<&str> = content
+            .split("\n\n")
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert_eq!(blocks.len(), 1, "expected 1 event block, got {:?}", blocks);
+        let remaining = FileEvent::from_toml_str(blocks[0]).unwrap();
         assert_eq!(remaining.path, PathBuf::from("/tmp/new"));
 
         let _ = fs::remove_dir_all(&dir);
@@ -505,7 +613,8 @@ mod tests {
 
         {
             let mut f = fs::File::create(&log_path).unwrap();
-            writeln!(f, "{}", serde_json::to_string(&old_event).unwrap()).unwrap();
+            write!(f, "{}", old_event.to_toml_string()).unwrap();
+            writeln!(f).unwrap(); // trailing blank line
         }
 
         let original_content = fs::read_to_string(&log_path).unwrap();
@@ -544,7 +653,8 @@ mod tests {
                     user: "root".into(),
                     size_change: 0,
                 };
-                writeln!(f, "{}", serde_json::to_string(&event).unwrap()).unwrap();
+                write!(f, "{}", event.to_toml_string()).unwrap();
+                writeln!(f).unwrap(); // blank line separator
             }
         }
 

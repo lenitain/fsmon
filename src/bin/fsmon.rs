@@ -139,7 +139,10 @@ async fn cmd_daemon() -> Result<()> {
     // Auto-generate config if it doesn't exist
     let config_path = UserConfig::path();
     if !config_path.exists() {
-        eprintln!("Config not found at {}, generating default config...", config_path.display());
+        eprintln!(
+            "Config not found at {}, generating default config...",
+            config_path.display()
+        );
         UserConfig::generate_default()?;
         eprintln!("Default config generated at {}", config_path.display());
     }
@@ -182,7 +185,7 @@ async fn cmd_daemon() -> Result<()> {
         paths_and_options,
         path_ids,
         Some(log_file),
-        OutputFormat::Json,
+        OutputFormat::Toml,
         None,
         None,
         Some(socket_listener),
@@ -227,13 +230,15 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     let socket_path = UserConfig::default_socket_path();
     match socket::send_cmd(
         &socket_path,
-        &SocketCmd::Add {
-            path,
+        &SocketCmd {
+            cmd: "add".to_string(),
+            path: Some(path),
             recursive,
             types,
             min_size,
             exclude,
             all_events,
+            id: None,
         },
     ) {
         Ok(resp) if resp.ok => {
@@ -258,7 +263,19 @@ fn cmd_remove(id: u64) -> Result<()> {
 
     // Try live update via socket (non-fatal if fails)
     let socket_path = UserConfig::default_socket_path();
-    match socket::send_cmd(&socket_path, &SocketCmd::Remove { id }) {
+    match socket::send_cmd(
+        &socket_path,
+        &SocketCmd {
+            cmd: "remove".to_string(),
+            path: None,
+            recursive: None,
+            types: None,
+            min_size: None,
+            exclude: None,
+            all_events: None,
+            id: Some(id),
+        },
+    ) {
         Ok(resp) if resp.ok => {
             println!("Daemon updated live");
         }
@@ -277,7 +294,19 @@ fn cmd_remove(id: u64) -> Result<()> {
 fn cmd_managed() -> Result<()> {
     let socket_path = UserConfig::default_socket_path();
     // Try live list first, fall back to user config
-    let entries = match socket::send_cmd(&socket_path, &SocketCmd::List) {
+    let entries = match socket::send_cmd(
+        &socket_path,
+        &SocketCmd {
+            cmd: "list".to_string(),
+            path: None,
+            recursive: None,
+            types: None,
+            min_size: None,
+            exclude: None,
+            all_events: None,
+            id: None,
+        },
+    ) {
         Ok(resp) if resp.ok => resp.paths.unwrap_or_default(),
         _ => {
             UserConfig::load()
@@ -374,10 +403,7 @@ async fn cmd_query(args: QueryArgs) -> Result<()> {
 fn cmd_generate(force: bool) -> Result<()> {
     let config_path = UserConfig::path();
     if config_path.exists() && !force {
-        eprintln!(
-            "Config already exists at {}",
-            config_path.display()
-        );
+        eprintln!("Config already exists at {}", config_path.display());
         eprintln!("Use -f or --force to overwrite");
         std::process::exit(1);
     }
