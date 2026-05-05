@@ -44,15 +44,78 @@ impl Default for Store {
 
 impl Store {
     /// Load Store from file. Returns empty Store if file doesn't exist.
+    /// Automatically validates and repairs common consistency issues:
+    ///   - Duplicate paths: keeps the last entry per unique path
+    ///   - Duplicate IDs: reassigns new IDs to duplicates
+    ///   - next_id: ensures it is at least max(id)+1
+    ///
+    /// If repairs were made, callers should re-save the store.
     pub fn load(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Store::default());
         }
         let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read store {}", path.display()))?;
-        let store: Store = toml::from_str(&content)
+        let mut store: Store = toml::from_str(&content)
             .with_context(|| format!("Invalid TOML in {}", path.display()))?;
+        store.validate();
         Ok(store)
+    }
+
+    /// Validate and repair consistency issues in-place.
+    ///
+    /// 1. Deduplicate paths — if multiple entries share the same path,
+    ///    only the last one survives (later add = newer config).
+    /// 2. Deduplicate IDs — if multiple entries share the same ID,
+    ///    the first occurrence keeps the ID, later ones get new IDs
+    ///    from `next_id`.
+    /// 3. Ensure `next_id` is at least `max(all_ids) + 1`.
+    ///
+    /// Returns `true` if any repairs were made.
+    pub fn validate(&mut self) -> bool {
+        let mut repaired = false;
+
+        // 1. Dedup by path: keep the last entry per path (reverse scan)
+        if self.entries.len() > 1 {
+            let mut seen = std::collections::HashSet::new();
+            let mut deduped: Vec<PathEntry> = Vec::with_capacity(self.entries.len());
+            for entry in self.entries.drain(..).rev() {
+                if seen.insert(entry.path.clone()) {
+                    deduped.push(entry);
+                } else {
+                    repaired = true;
+                }
+            }
+            deduped.reverse();
+            self.entries = deduped;
+        }
+
+        // 2. Dedup by ID: first occurrence keeps the ID
+        if self.entries.len() > 1 {
+            let mut seen = std::collections::HashSet::new();
+            for entry in &mut self.entries {
+                if !seen.insert(entry.id) {
+                    // Duplicate ID — assign a fresh one
+                    entry.id = self.next_id;
+                    self.next_id += 1;
+                    repaired = true;
+                }
+            }
+        }
+
+        // 3. Ensure next_id >= max(id) + 1
+        if let Some(max_id) = self.entries.iter().map(|e| e.id).max() {
+            let min_next = max_id + 1;
+            if self.next_id < min_next {
+                self.next_id = min_next;
+                repaired = true;
+            }
+        } else if self.next_id < 1 {
+            self.next_id = 1;
+            repaired = true;
+        }
+
+        repaired
     }
 
     /// Save Store to file. Creates parent directories if needed.
@@ -271,5 +334,164 @@ mod tests {
         let store = Store::default();
         assert_eq!(store.next_id, 1);
         assert!(store.entries.is_empty());
+    }
+
+    #[test]
+    fn test_validate_dedup_path_keeps_last() {
+        let mut store = Store {
+            next_id: 5,
+            entries: vec![
+                PathEntry {
+                    id: 1,
+                    path: PathBuf::from("/home"),
+                    recursive: Some(true),
+                    types: None,
+                    min_size: None,
+                    exclude: None,
+                    all_events: None,
+                },
+                PathEntry {
+                    id: 2,
+                    path: PathBuf::from("/tmp"),
+                    recursive: Some(false),
+                    types: None,
+                    min_size: None,
+                    exclude: None,
+                    all_events: None,
+                },
+                PathEntry {
+                    id: 3,
+                    path: PathBuf::from("/home"), // dup path, should replace id=1
+                    recursive: Some(false),
+                    types: Some(vec!["MODIFY".into()]),
+                    min_size: None,
+                    exclude: None,
+                    all_events: None,
+                },
+            ],
+        };
+        assert!(store.validate());
+        assert_eq!(store.entries.len(), 2);
+        // /home entry should be the LAST one (newer wins)
+        let target: &Path = "/home".as_ref();
+        let home = store.entries.iter().find(|e| e.path == target).unwrap();
+        assert_eq!(home.id, 3);
+        assert_eq!(home.recursive, Some(false));
+    }
+
+    #[test]
+    fn test_validate_dedup_id_reassigns_duplicates() {
+        let mut store = Store {
+            next_id: 10,
+            entries: vec![
+                PathEntry {
+                    id: 1,
+                    path: PathBuf::from("/a"),
+                    recursive: None,
+                    types: None,
+                    min_size: None,
+                    exclude: None,
+                    all_events: None,
+                },
+                PathEntry {
+                    id: 1, // dup
+                    path: PathBuf::from("/b"),
+                    recursive: None,
+                    types: None,
+                    min_size: None,
+                    exclude: None,
+                    all_events: None,
+                },
+                PathEntry {
+                    id: 1, // dup
+                    path: PathBuf::from("/c"),
+                    recursive: None,
+                    types: None,
+                    min_size: None,
+                    exclude: None,
+                    all_events: None,
+                },
+            ],
+        };
+        assert!(store.validate());
+        assert_eq!(store.entries.len(), 3);
+        let ids: Vec<u64> = store.entries.iter().map(|e| e.id).collect();
+        assert_eq!(ids, vec![1, 10, 11]);
+        assert_eq!(store.next_id, 12);
+    }
+
+    #[test]
+    fn test_validate_fixes_next_id_too_low() {
+        let mut store = Store {
+            next_id: 2,
+            entries: vec![
+                PathEntry {
+                    id: 1,
+                    path: PathBuf::from("/a"),
+                    recursive: None,
+                    types: None,
+                    min_size: None,
+                    exclude: None,
+                    all_events: None,
+                },
+                PathEntry {
+                    id: 5,
+                    path: PathBuf::from("/b"),
+                    recursive: None,
+                    types: None,
+                    min_size: None,
+                    exclude: None,
+                    all_events: None,
+                },
+            ],
+        };
+        assert!(store.validate());
+        assert_eq!(store.next_id, 6); // max(5)+1 = 6
+    }
+
+    #[test]
+    fn test_validate_clean_store_unchanged() {
+        let mut store = Store {
+            next_id: 4,
+            entries: vec![
+                PathEntry {
+                    id: 1,
+                    path: PathBuf::from("/a"),
+                    recursive: None,
+                    types: None,
+                    min_size: None,
+                    exclude: None,
+                    all_events: None,
+                },
+                PathEntry {
+                    id: 2,
+                    path: PathBuf::from("/b"),
+                    recursive: None,
+                    types: None,
+                    min_size: None,
+                    exclude: None,
+                    all_events: None,
+                },
+            ],
+        };
+        assert!(!store.validate()); // no repairs needed
+        assert_eq!(store.next_id, 4);
+        assert_eq!(store.entries.len(), 2);
+    }
+
+    #[test]
+    fn test_validate_empty_noop() {
+        let mut store = Store::default();
+        assert!(!store.validate());
+    }
+
+    #[test]
+    fn test_validate_next_id_too_low_when_empty() {
+        let mut store = Store {
+            next_id: 0,
+            entries: vec![],
+        };
+        assert!(store.validate());
+        assert_eq!(store.next_id, 1);
     }
 }
