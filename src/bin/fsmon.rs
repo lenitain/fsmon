@@ -265,11 +265,6 @@ fn cmd_managed() -> Result<()> {
         Ok(_) | Err(_) => Config::load().unwrap_or(Config { log_file: None, socket_path: None, paths: vec![] }).paths,
     };
 
-    println!(
-        "{:<20} {:<10} {:<12} {:<10} {:<12} {:<12}",
-        "Path", "Recursive", "Types", "Min_size", "Exclude", "All_events"
-    );
-
     for entry in &entries {
         let types_str = entry
             .types
@@ -277,23 +272,23 @@ fn cmd_managed() -> Result<()> {
             .map(|v| v.join(","))
             .unwrap_or_else(|| "-".to_string());
         let recursive_str = if entry.recursive.unwrap_or(false) {
-            "\u{2713}"
+            "recursive"
         } else {
-            "\u{2717}"
+            "non-recursive"
         };
         let min_size_str = entry.min_size.as_deref().unwrap_or("-");
         let exclude_str = entry.exclude.as_deref().unwrap_or("-");
         let all_events_str = if entry.all_events.unwrap_or(false) {
-            "yes"
+            "all"
         } else {
-            "no"
+            "filtered"
         };
 
         println!(
-            "{:<20} {:<10} {:<12} {:<10} {:<12} {:<12}",
+            "{} | types={} | {} | min_size={} | exclude={} | events={}",
             entry.path.display(),
-            recursive_str,
             types_str,
+            recursive_str,
             min_size_str,
             exclude_str,
             all_events_str,
