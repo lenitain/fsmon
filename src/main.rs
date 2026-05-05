@@ -460,6 +460,24 @@ async fn main() -> Result<()> {
                 process::exit(1);
             }
 
+            // Check all paths exist before fanotify init — prevents restart loop
+            let nonexistent: Vec<_> = paths.iter().filter(|p| !p.exists()).collect();
+            if !nonexistent.is_empty() {
+                eprintln!(
+                    "========================================\n\
+                     ERROR: The following monitored paths do not exist:\n"
+                );
+                for p in &nonexistent {
+                    eprintln!("         {}", p.display());
+                }
+                eprintln!(
+                    "\n\
+                     Please verify the paths in your configuration.\n\
+                     ========================================"
+                );
+                process::exit(EXIT_CONFIG);
+            }
+
             let min_size = min_size.or(base.min_size);
             let types = types.or(base.types);
             let exclude = exclude.or(base.exclude);
