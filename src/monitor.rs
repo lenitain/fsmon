@@ -263,7 +263,11 @@ impl Monitor {
             for (i, canonical) in self.canonical_paths.iter().enumerate() {
                 let opts = self.paths.get(i).and_then(|p| self.path_options.get(p));
                 let recursive = opts.is_some_and(|o| o.recursive);
-                let path_mask = if opts.is_some_and(|o| o.all_events) { ALL_EVENT_MASK } else { DEFAULT_EVENT_MASK };
+                let path_mask = if opts.is_some_and(|o| o.all_events) {
+                    ALL_EVENT_MASK
+                } else {
+                    DEFAULT_EVENT_MASK
+                };
                 mark_directory(fan_fd, path_mask, canonical)?;
                 if recursive && canonical.is_dir() {
                     mark_recursive(fan_fd, path_mask, canonical);
@@ -513,9 +517,7 @@ impl Monitor {
                     if path.starts_with(watched) {
                         return Some(opts);
                     }
-                } else if path == watched.as_path()
-                    || path.parent() == Some(watched.as_path())
-                {
+                } else if path == watched.as_path() || path.parent() == Some(watched.as_path()) {
                     return Some(opts);
                 }
             }
@@ -536,14 +538,21 @@ impl Monitor {
         };
 
         let event_types = entry.types.as_ref().map(|types| {
-            types.iter().filter_map(|s| s.parse::<EventType>().ok()).collect()
+            types
+                .iter()
+                .filter_map(|s| s.parse::<EventType>().ok())
+                .collect()
         });
         let min_size = entry.min_size.as_ref().map(|s| parse_size(s)).transpose()?;
-        let exclude_regex = entry.exclude.as_ref().map(|p| {
-            let escaped = regex::escape(p);
-            let pattern = escaped.replace("\\*", ".*");
-            regex::Regex::new(&pattern).with_context(|| "invalid exclude pattern")
-        }).transpose()?;
+        let exclude_regex = entry
+            .exclude
+            .as_ref()
+            .map(|p| {
+                let escaped = regex::escape(p);
+                let pattern = escaped.replace("\\*", ".*");
+                regex::Regex::new(&pattern).with_context(|| "invalid exclude pattern")
+            })
+            .transpose()?;
         let recursive = entry.recursive.unwrap_or(false);
         let all_events = entry.all_events.unwrap_or(false);
 
@@ -556,7 +565,11 @@ impl Monitor {
         };
 
         let fan_fd = self.fan_fd.context("Monitor not running")?;
-        let path_mask = if all_events { ALL_EVENT_MASK } else { DEFAULT_EVENT_MASK };
+        let path_mask = if all_events {
+            ALL_EVENT_MASK
+        } else {
+            DEFAULT_EVENT_MASK
+        };
 
         match fanotify_mark(
             fan_fd,
@@ -599,19 +612,33 @@ impl Monitor {
 
         self.recalc_mask();
 
-        println!("Added path: {} (recursive={}, all_events={})", path.display(), recursive, all_events);
+        println!(
+            "Added path: {} (recursive={}, all_events={})",
+            path.display(),
+            recursive,
+            all_events
+        );
         Ok(())
     }
 
     pub fn remove_path(&mut self, path: &Path) -> Result<()> {
-        let pos = self.paths.iter().position(|p| p == path)
+        let pos = self
+            .paths
+            .iter()
+            .position(|p| p == path)
             .ok_or_else(|| anyhow::anyhow!("Path not being monitored: {}", path.display()))?;
 
         let canonical = &self.canonical_paths[pos];
         let fan_fd = self.fan_fd.context("Monitor not running")?;
-        let opts = self.path_options.get(path)
+        let opts = self
+            .path_options
+            .get(path)
             .ok_or_else(|| anyhow::anyhow!("No options for path: {}", path.display()))?;
-        let path_mask = if opts.all_events { ALL_EVENT_MASK } else { DEFAULT_EVENT_MASK };
+        let path_mask = if opts.all_events {
+            ALL_EVENT_MASK
+        } else {
+            DEFAULT_EVENT_MASK
+        };
 
         // Try to remove filesystem mark
         match fanotify_mark(
@@ -725,12 +752,9 @@ impl Monitor {
                                     .as_ref()
                                     .map(|v| v.iter().map(|t| t.to_string()).collect())
                             }),
-                            min_size: opts
-                                .and_then(|o| o.min_size.map(|s| s.to_string())),
+                            min_size: opts.and_then(|o| o.min_size.map(|s| s.to_string())),
                             exclude: opts.and_then(|o| {
-                                o.exclude_regex
-                                    .as_ref()
-                                    .map(|r| r.as_str().to_string())
+                                o.exclude_regex.as_ref().map(|r| r.as_str().to_string())
                             }),
                             all_events: opts.map(|o| o.all_events),
                         }
@@ -766,11 +790,8 @@ impl Monitor {
                             .map(|v| v.iter().map(|t| t.to_string()).collect())
                     }),
                     min_size: opts.and_then(|o| o.min_size.map(|s| s.to_string())),
-                    exclude: opts.and_then(|o| {
-                        o.exclude_regex
-                            .as_ref()
-                            .map(|r| r.as_str().to_string())
-                    }),
+                    exclude: opts
+                        .and_then(|o| o.exclude_regex.as_ref().map(|r| r.as_str().to_string())),
                     all_events: opts.map(|o| o.all_events),
                 }
             })
@@ -790,10 +811,7 @@ impl Monitor {
             if !self.path_options.contains_key(&entry.path)
                 && let Err(e) = self.add_path(entry)
             {
-                eprintln!(
-                    "Failed to add path {} on reload: {e}",
-                    entry.path.display()
-                );
+                eprintln!("Failed to add path {} on reload: {e}", entry.path.display());
             }
         }
         // Remove paths no longer in config
@@ -850,9 +868,7 @@ impl Monitor {
                 if path.starts_with(watched) {
                     return true;
                 }
-            } else if path == watched.as_path()
-                || path.parent() == Some(watched.as_path())
-            {
+            } else if path == watched.as_path() || path.parent() == Some(watched.as_path()) {
                 return true;
             }
         }
@@ -918,9 +934,21 @@ mod tests {
         all_events: bool,
     ) -> Monitor {
         Monitor::new(
-            paths.into_iter().map(|p| {
-                (PathBuf::from(p), options(min_size, event_types.clone(), exclude, recursive, all_events))
-            }).collect(),
+            paths
+                .into_iter()
+                .map(|p| {
+                    (
+                        PathBuf::from(p),
+                        options(
+                            min_size,
+                            event_types.clone(),
+                            exclude,
+                            recursive,
+                            all_events,
+                        ),
+                    )
+                })
+                .collect(),
             None,
             OutputFormat::Human,
             None,
@@ -1016,10 +1044,7 @@ mod tests {
 
     #[test]
     fn test_is_path_in_scope_multiple_paths() {
-        let m = make_monitor(
-            vec!["/tmp", "/var/log"],
-            None, None, None, true, false,
-        );
+        let m = make_monitor(vec!["/tmp", "/var/log"], None, None, None, true, false);
         let watched = vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")];
         assert!(m.is_path_in_scope(Path::new("/tmp/file"), &watched));
         assert!(m.is_path_in_scope(Path::new("/var/log/syslog"), &watched));
@@ -1089,15 +1114,7 @@ mod tests {
 
     #[test]
     fn test_add_path_and_remove_path() {
-        let mut m = Monitor::new(
-            vec![],
-            None,
-            OutputFormat::Human,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let mut m = Monitor::new(vec![], None, OutputFormat::Human, None, None, None).unwrap();
         m.fan_fd = Some(-1); // dummy fd for log path test
 
         let entry = PathEntry {

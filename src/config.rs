@@ -263,7 +263,12 @@ all_events = false
 
         let reloaded = Config::load_from_path(&config_path).unwrap();
         assert_eq!(reloaded.paths.len(), 2);
-        assert!(reloaded.paths.iter().any(|p| p.path == Path::new("/existing")));
+        assert!(
+            reloaded
+                .paths
+                .iter()
+                .any(|p| p.path == Path::new("/existing"))
+        );
         assert!(reloaded.paths.iter().any(|p| p.path == Path::new("/new")));
 
         let _ = fs::remove_dir_all(&dir);

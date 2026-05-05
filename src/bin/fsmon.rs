@@ -6,7 +6,7 @@ use fsmon::monitor::{Monitor, PathOptions};
 use fsmon::query::Query;
 use fsmon::socket::{self, SocketCmd};
 use fsmon::utils::parse_size;
-use fsmon::{clean_logs, EventType, OutputFormat, SortBy, DEFAULT_KEEP_DAYS};
+use fsmon::{DEFAULT_KEEP_DAYS, EventType, OutputFormat, SortBy, clean_logs};
 use std::fs;
 use std::path::PathBuf;
 
@@ -42,7 +42,10 @@ enum Commands {
     Clean(CleanArgs),
 
     #[command(about = help::about(HelpTopic::Install), long_about = help::long_about(HelpTopic::Install))]
-    Install { #[arg(short, long)] force: bool },
+    Install {
+        #[arg(short, long)]
+        force: bool,
+    },
 
     #[command(about = help::about(HelpTopic::Uninstall), long_about = help::long_about(HelpTopic::Uninstall))]
     Uninstall,
@@ -153,7 +156,10 @@ async fn cmd_daemon() -> Result<()> {
         .clone()
         .unwrap_or_else(|| PathBuf::from("/var/log/fsmon/history.log"));
 
-    for p in [socket_path.parent(), log_file.parent()].into_iter().flatten() {
+    for p in [socket_path.parent(), log_file.parent()]
+        .into_iter()
+        .flatten()
+    {
         fs::create_dir_all(p)?;
     }
 
@@ -270,14 +276,13 @@ fn cmd_managed() -> Result<()> {
 async fn cmd_query(args: QueryArgs) -> Result<()> {
     let log_file = resolve_log_file(args.log_file);
 
-    let min_size_bytes = args
-        .min_size
-        .map(|s| parse_size(&s))
-        .transpose()?;
+    let min_size_bytes = args.min_size.map(|s| parse_size(&s)).transpose()?;
 
-    let pids = args
-        .pid
-        .map(|p| p.split(',').filter_map(|s| s.trim().parse::<u32>().ok()).collect());
+    let pids = args.pid.map(|p| {
+        p.split(',')
+            .filter_map(|s| s.trim().parse::<u32>().ok())
+            .collect()
+    });
 
     let users = args
         .user
@@ -287,7 +292,11 @@ async fn cmd_query(args: QueryArgs) -> Result<()> {
         .types
         .map(|t| {
             t.split(',')
-                .map(|s| s.trim().parse::<EventType>().map_err(|e| anyhow::anyhow!(e)))
+                .map(|s| {
+                    s.trim()
+                        .parse::<EventType>()
+                        .map_err(|e| anyhow::anyhow!(e))
+                })
                 .collect::<Result<Vec<_>>>()
         })
         .transpose()?;
@@ -361,11 +370,7 @@ fn parse_path_entries(entries: &[PathEntry]) -> Result<Vec<(PathBuf, PathOptions
 }
 
 fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
-    let min_size = entry
-        .min_size
-        .as_ref()
-        .map(|s| parse_size(s))
-        .transpose()?;
+    let min_size = entry.min_size.as_ref().map(|s| parse_size(s)).transpose()?;
     let event_types = entry
         .types
         .as_ref()

@@ -65,8 +65,8 @@ pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResp> {
         bail!("Empty response from daemon");
     }
 
-    let resp: SocketResp = serde_json::from_str(line.trim())
-        .with_context(|| "Failed to parse daemon response")?;
+    let resp: SocketResp =
+        serde_json::from_str(line.trim()).with_context(|| "Failed to parse daemon response")?;
     Ok(resp)
 }
 
@@ -77,8 +77,9 @@ pub async fn listen(
     handler: impl Fn(SocketCmd) -> Result<SocketResp>,
 ) -> Result<()> {
     if socket_path.exists() {
-        std::fs::remove_file(socket_path)
-            .with_context(|| format!("Failed to remove existing socket {}", socket_path.display()))?;
+        std::fs::remove_file(socket_path).with_context(|| {
+            format!("Failed to remove existing socket {}", socket_path.display())
+        })?;
     }
 
     let listener = UnixListener::bind(socket_path)

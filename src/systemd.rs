@@ -59,8 +59,8 @@ pub fn install(force: bool) -> Result<()> {
         .canonicalize()
         .context("Failed to resolve executable path")?;
 
-    let service_content = SERVICE_TEMPLATE
-        .replace("EXEC_START_PLACEHOLDER", &exe_path.display().to_string());
+    let service_content =
+        SERVICE_TEMPLATE.replace("EXEC_START_PLACEHOLDER", &exe_path.display().to_string());
 
     fs::write(&service_file, &service_content)
         .with_context(|| format!("Failed to write service file to {}", service_file.display()))?;
@@ -113,9 +113,7 @@ fn uninstall_inner() -> Result<()> {
         .context("Failed to reload systemd daemon")?;
 
     println!("Service uninstalled from {}", service_file.display());
-    println!(
-        "Note: The running service was not stopped. Run 'systemctl stop fsmon' to stop it."
-    );
+    println!("Note: The running service was not stopped. Run 'systemctl stop fsmon' to stop it.");
     Ok(())
 }
 
