@@ -375,10 +375,10 @@ impl Monitor {
                                 continue;
                             }
 
-                            if self.should_output(&event) {
-                                if let Err(e) = self.write_event(&event) {
-                                    eprintln!("[ERROR] Failed to write event: {}", e);
-                                }
+                            if self.should_output(&event)
+                                && let Err(e) = self.write_event(&event)
+                            {
+                                eprintln!("[ERROR] Failed to write event: {}", e);
                             }
                         }
                     }
@@ -556,8 +556,16 @@ impl Monitor {
         ) {
             Ok(()) => {}
             Err(ref e) if e.raw_os_error() == Some(libc::EXDEV) => {
-                mark_directory(fan_fd, path_mask, &canonical)?;
-                if recursive && canonical.is_dir() {
+                // EXDEV: path is on a different mount (e.g., btrfs subvol, bind mount).
+                // Fall back to inode-level mark. If that also fails, warn and continue
+                // so the path is still tracked and will work after daemon restart.
+                if let Err(e) = mark_directory(fan_fd, path_mask, &canonical) {
+                    eprintln!(
+                        "[WARNING] Cannot monitor {} (inode mark fallback): {}",
+                        canonical.display(),
+                        e
+                    );
+                } else if recursive && canonical.is_dir() {
                     mark_recursive(fan_fd, path_mask, &canonical);
                 }
             }
