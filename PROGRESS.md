@@ -103,18 +103,22 @@ cargo test         ✅ 67 passed, 7 ignored (fanotify 测试需要 sudo)
 - **修复**: `socket.rs::send_cmd()` 响应读取改为 EOF 终止，不再依赖空行分隔。
   TOML 本身可包含空行，解析器正确处理。
 
+### 2026-05-05 — fanotify fd 跨文件系统 EXDEV 导致 log 目录为空
+
+- **根因**: 内核不允许同一 fanotify fd 上有跨文件系统的**任何** mark（包括 inode mark）。
+  第一个路径的 mark 成功后 fd 绑定在该文件系统上，其他文件系统的路径返回 EXDEV。
+  单 fd 架构无法同时监控 `/tmp`（根文件系统）和 `/home/pilot/.config`（独立 /home 分区）。
+- **修复**: 改为多 fd 架构 — 每个文件系统独立一个 fanotify fd，各 spawn tokio 读取任务，
+  事件通过 mpsc channel 汇集到主循环处理。
+  - 移除 `Monitor.fan_fd` / `mask` / `use_fs_mark` 字段，改为 `fan_fds: Vec<i32>`
+  - `run()`: 每个路径探测已有 fd，EXDEV 则创建新 fd
+  - 主循环从 channel 收事件（代替原先单 AsyncFd readable）
+  - 动态 inode mark 暂不可用（已知限制，重启 daemon 后生效）
+
 ### 2026-05-05 — 日志文件名格式改为 log_<id>.toml
 
 - **原因**: 之前 `<id>.log` 格式不易区分，改为 `log_<id>.toml`（带前缀 + .toml 后缀更明确）
 - **改动**: `monitor.rs`, `query.rs`, `lib.rs` 中 3 处文件名拼接 + `help.rs` 文档
-
-### 2026-05-05 — fanotify fd 跨文件系统 EXDEV 导致 inode mark 失败
-
-- **问题**: 跨文件系统路径（如 `/tmp` 在 `/`, `/home` 独立分区）。
-  第一个路径 `FAN_MARK_FILESYSTEM` 成功后 fanotify fd 绑定在第一个文件系统上，
-  后续其他文件系统的 inode mark 被内核拒绝返回 EXDEV。
-- **修复**: EXDEV 时先 `FAN_MARK_REMOVE` 移除已加的 filesystem mark，
-  再统一用 inode mark（无跨文件系统限制）。
 
 ### 2026-05-05 — 事件路径 canonical 不匹配导致 log 目录为空
 
