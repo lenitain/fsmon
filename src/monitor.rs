@@ -1073,18 +1073,12 @@ impl Monitor {
                 }
             })
             .collect();
-        let max_id = self.path_ids.values().max().copied().unwrap_or(0);
         // Persist to store.toml using the stored path
+        // next_id is not stored — it is derived from max(entries.id) + 1 on load.
         if let Some(ref store_path) = self.store_path
             && let Ok(mut store) = Store::load(store_path)
         {
             store.entries = entries;
-            // Preserve monotonically-increasing next_id: when entries are removed,
-            // max_id drops, but next_id must never regress.
-            let calculated = max_id + 1;
-            if calculated > store.next_id {
-                store.next_id = calculated;
-            }
             let _ = store.save(store_path);
         }
         Ok(())

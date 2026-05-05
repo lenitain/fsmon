@@ -6,10 +6,8 @@ use std::path::{Path, PathBuf};
 /// The monitored paths database, stored in the file configured by `[store].file`.
 ///
 /// Managed automatically by `fsmon add` and `fsmon remove`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Store {
-    /// Auto-incrementing ID counter. Monotonically increasing, never reused.
-    pub next_id: u64,
     /// Monitored path entries.
     pub entries: Vec<PathEntry>,
 }
@@ -33,21 +31,11 @@ pub struct PathEntry {
     pub all_events: Option<bool>,
 }
 
-impl Default for Store {
-    fn default() -> Self {
-        Store {
-            next_id: 1,
-            entries: Vec::new(),
-        }
-    }
-}
-
 impl Store {
     /// Load Store from file. Returns empty Store if file doesn't exist.
     /// Automatically validates and repairs common consistency issues:
     ///   - Duplicate paths: keeps the last entry per unique path
     ///   - Duplicate IDs: reassigns new IDs to duplicates
-    ///   - next_id: ensures it is at least max(id)+1
     ///
     /// If repairs were made, callers should re-save the store.
     pub fn load(path: &Path) -> Result<Self> {
@@ -62,14 +50,19 @@ impl Store {
         Ok(store)
     }
 
+    /// Compute the next available unique ID: `max(existing ids) + 1`.
+    /// Returns 1 when there are no entries.
+    pub fn next_id(&self) -> u64 {
+        self.entries.iter().map(|e| e.id).max().unwrap_or(0) + 1
+    }
+
     /// Validate and repair consistency issues in-place.
     ///
     /// 1. Deduplicate paths — if multiple entries share the same path,
     ///    only the last one survives (later add = newer config).
     /// 2. Deduplicate IDs — if multiple entries share the same ID,
     ///    the first occurrence keeps the ID, later ones get new IDs
-    ///    from `next_id`.
-    /// 3. Ensure `next_id` is at least `max(all_ids) + 1`.
+    ///    (max existing + 1, +2, ...).
     ///
     /// Returns `true` if any repairs were made.
     pub fn validate(&mut self) -> bool {
@@ -91,28 +84,17 @@ impl Store {
         }
 
         // 2. Dedup by ID: first occurrence keeps the ID
+        let mut next_id = self.next_id();
         if self.entries.len() > 1 {
             let mut seen = std::collections::HashSet::new();
             for entry in &mut self.entries {
                 if !seen.insert(entry.id) {
                     // Duplicate ID — assign a fresh one
-                    entry.id = self.next_id;
-                    self.next_id += 1;
+                    entry.id = next_id;
+                    next_id += 1;
                     repaired = true;
                 }
             }
-        }
-
-        // 3. Ensure next_id >= max(id) + 1
-        if let Some(max_id) = self.entries.iter().map(|e| e.id).max() {
-            let min_next = max_id + 1;
-            if self.next_id < min_next {
-                self.next_id = min_next;
-                repaired = true;
-            }
-        } else if self.next_id < 1 {
-            self.next_id = 1;
-            repaired = true;
         }
 
         repaired
@@ -134,10 +116,9 @@ impl Store {
     /// (all old entries with that path are removed first).
     /// Returns the assigned ID.
     pub fn add_entry(&mut self, mut entry: PathEntry) -> u64 {
+        let id = self.next_id(); // capture before removal so removal doesn't drop max
         // Remove all existing entries with the same path so the new one replaces them
         self.entries.retain(|e| e.path != entry.path);
-        let id = self.next_id;
-        self.next_id += 1;
         entry.id = id;
         self.entries.push(entry);
         id
@@ -175,7 +156,7 @@ mod tests {
         let (_dir, path) = temp_path();
         assert!(!path.exists());
         let store = Store::load(&path).unwrap();
-        assert_eq!(store.next_id, 1);
+        assert_eq!(store.next_id(), 1);
         assert!(store.entries.is_empty());
     }
 
@@ -194,7 +175,7 @@ mod tests {
             all_events: None,
         });
         assert_eq!(id1, 1);
-        assert_eq!(store.next_id, 2);
+        assert_eq!(store.next_id(), 2);
         assert_eq!(store.entries.len(), 1);
 
         let id2 = store.add_entry(PathEntry {
@@ -207,7 +188,7 @@ mod tests {
             all_events: None,
         });
         assert_eq!(id2, 2);
-        assert_eq!(store.next_id, 3);
+        assert_eq!(store.next_id(), 3);
         assert_eq!(store.entries.len(), 2);
     }
 
@@ -295,7 +276,7 @@ mod tests {
         store.save(&path).unwrap();
 
         let loaded = Store::load(&path).unwrap();
-        assert_eq!(loaded.next_id, 2);
+        assert_eq!(loaded.next_id(), 2);
         assert_eq!(loaded.entries.len(), 1);
         assert_eq!(loaded.entries[0].id, 1);
         assert_eq!(loaded.entries[0].path, PathBuf::from("/srv"));
@@ -332,14 +313,13 @@ mod tests {
     #[test]
     fn test_empty_store_defaults() {
         let store = Store::default();
-        assert_eq!(store.next_id, 1);
+        assert_eq!(store.next_id(), 1);
         assert!(store.entries.is_empty());
     }
 
     #[test]
     fn test_validate_dedup_path_keeps_last() {
         let mut store = Store {
-            next_id: 5,
             entries: vec![
                 PathEntry {
                     id: 1,
@@ -382,7 +362,6 @@ mod tests {
     #[test]
     fn test_validate_dedup_id_reassigns_duplicates() {
         let mut store = Store {
-            next_id: 10,
             entries: vec![
                 PathEntry {
                     id: 1,
@@ -416,43 +395,14 @@ mod tests {
         assert!(store.validate());
         assert_eq!(store.entries.len(), 3);
         let ids: Vec<u64> = store.entries.iter().map(|e| e.id).collect();
-        assert_eq!(ids, vec![1, 10, 11]);
-        assert_eq!(store.next_id, 12);
-    }
-
-    #[test]
-    fn test_validate_fixes_next_id_too_low() {
-        let mut store = Store {
-            next_id: 2,
-            entries: vec![
-                PathEntry {
-                    id: 1,
-                    path: PathBuf::from("/a"),
-                    recursive: None,
-                    types: None,
-                    min_size: None,
-                    exclude: None,
-                    all_events: None,
-                },
-                PathEntry {
-                    id: 5,
-                    path: PathBuf::from("/b"),
-                    recursive: None,
-                    types: None,
-                    min_size: None,
-                    exclude: None,
-                    all_events: None,
-                },
-            ],
-        };
-        assert!(store.validate());
-        assert_eq!(store.next_id, 6); // max(5)+1 = 6
+        // first dup keeps id=1, rest get max(1)+1=2, +1=3
+        assert_eq!(ids, vec![1, 2, 3]);
+        assert_eq!(store.next_id(), 4);
     }
 
     #[test]
     fn test_validate_clean_store_unchanged() {
         let mut store = Store {
-            next_id: 4,
             entries: vec![
                 PathEntry {
                     id: 1,
@@ -475,7 +425,7 @@ mod tests {
             ],
         };
         assert!(!store.validate()); // no repairs needed
-        assert_eq!(store.next_id, 4);
+        assert_eq!(store.next_id(), 3);
         assert_eq!(store.entries.len(), 2);
     }
 
@@ -485,13 +435,29 @@ mod tests {
         assert!(!store.validate());
     }
 
+    /// Old-format store.toml had a `next_id` field — serde ignores it on load.
     #[test]
-    fn test_validate_next_id_too_low_when_empty() {
-        let mut store = Store {
-            next_id: 0,
-            entries: vec![],
-        };
-        assert!(store.validate());
-        assert_eq!(store.next_id, 1);
+    fn test_old_format_with_next_id_field() {
+        let toml_str = concat!(
+            "next_id = 10\n",
+            "\n",
+            "[[entries]]\n",
+            "id = 3\n",
+            "path = \"/tmp\"\n",
+            "recursive = true\n",
+            "\n",
+            "[[entries]]\n",
+            "id = 3\n",
+            "path = \"/home\"\n",
+            "recursive = false\n",
+        );
+        let mut store: Store = toml::from_str(toml_str).unwrap();
+        assert_eq!(store.entries.len(), 2);
+        let r = store.validate();
+        assert!(r);
+        // ID dedup: first keeps 3, second gets next_id = max(3)+1 = 4
+        let ids: Vec<u64> = store.entries.iter().map(|e| e.id).collect();
+        assert_eq!(ids, vec![3, 4]);
+        assert_eq!(store.next_id(), 5);
     }
 }

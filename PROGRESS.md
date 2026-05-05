@@ -156,6 +156,16 @@ cargo test         ✅ 67 passed, 7 ignored (fanotify 测试需要 sudo)
   - `add_path()`: mount_fd + shared_dir_cache 写入移到 `spawn_fd_reader` 之前
   - `add_path()`: 目录句柄缓存写入 `shared_dir_cache` 而非 `self.dir_cache`
 
+### 2026-05-05 — Store::load 自动校验 path/ID 唯一性 + next_id
+
+- **问题**: 用户手动编辑 `store.toml` 可绕过所有应用层约束，产生重复 path、重复 ID、
+  next_id 低于实际 max_id 等问题。
+- **修复**: 新增 `Store::validate()`，在 `load()` 时自动修复：
+  1. 重复 path：反向扫描，同 path 只保留最后一个（新配置覆盖旧配置）
+  2. 重复 ID：第一个保留原 ID，后续重新分配 `next_id` 的递增 ID
+  3. next_id：确保 `>= max(id) + 1`，空表时 `>= 1`
+- 返回 `bool` 表示是否修复，调用方可重新 `save()`
+
 ### 2026-05-05 — 重复 `fsmon add <path>` 产生重复 entry
 
 - **问题**: `Store::add_entry()` 直接 `push`，不检查 path 是否已存在。
