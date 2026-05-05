@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`fsmon` is a Rust tool for real-time Linux filesystem change monitoring with process attribution, built on fanotify (FID mode). Edition 2024. Two binaries: `fsmon` (daemon management) and `fsmon-cli` (CLI operations). Requires `sudo` for monitoring operations.
+`fsmon` is a Rust tool for real-time Linux filesystem change monitoring with process attribution, built on fanotify (FID mode). Edition 2024. Single binary with daemon + CLI subcommands. Requires `sudo` for monitoring operations.
 
 ## Build / Lint / Test Commands
 
@@ -21,7 +21,8 @@ cargo test test_parse_size     # run a single test by name
 cargo test -- --nocapture      # show stdout from tests
 
 # Run
-sudo ./target/debug/fsmon-cli monitor /tmp
+sudo ./target/debug/fsmon daemon
+sudo ./target/debug/fsmon add /tmp
 sudo ./target/debug/fsmon install
 ```
 
@@ -31,8 +32,7 @@ sudo ./target/debug/fsmon install
 src/
   lib.rs        — Library crate root — shared types (FileEvent, EventType), log cleaning engine
   bin/
-    fsmon.rs    — Daemon binary: install, uninstall, generate --instance
-    fsmon-cli.rs — CLI binary: monitor, query, clean, generate
+    fsmon.rs    — Main binary: daemon, add, remove, managed, query, clean, install, uninstall
   monitor.rs    — Core fanotify monitoring loop, FID event parsing, directory handle caching
   query.rs      — Log file querying with filters and sorting
   proc_cache.rs — Netlink proc connector listener for short-lived process attribution
@@ -95,8 +95,10 @@ src/
 - `dashmap` — concurrent hash map for proc cache
 - `fanotify-rs` — fanotify bindings
 - `libc` — raw Linux syscalls
+- `lru` — LRU cache for file sizes
 - `smallvec` — stack-allocated vectors for handle keys
 - `regex` — path and cmd filtering
+- `toml` — config serialization
 - `tokio` — async runtime
 
 ### Testing

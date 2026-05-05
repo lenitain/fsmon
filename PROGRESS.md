@@ -95,8 +95,11 @@ all_events = false
 - [x] 更新 `cmd_install` 调用签名
 
 ### P6 — 清理
-- [ ] 删除旧 `fsmon-cli.rs` 相关逻辑
-- [ ] 删除 `InstanceConfig`（已合并到主配置）
-- [ ] 删除 `generate` 命令
-- [x] 更新 help 文档（`help.rs` + `fsmon.rs` clap 引用）
+- [x] 删除旧 `fsmon-cli.rs` 相关逻辑
+- [x] 删除 `InstanceConfig`（已合并到主配置）
+- [x] 删除 `generate` 命令
+- [x] 删除死代码（`DEFAULT_LOG_PATH`, `parse_output_format`, `parse_sort_by`）
+- [x] 移除未使用依赖（`directories`, `dirs`）
+- [x] 更新 AGENTS.md 反映单二进制架构
+- [x] 修复 clippy warning（空 `println!`）
 - [x] 测试通过（78 passed, 7 ignored）

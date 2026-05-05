@@ -20,7 +20,6 @@ use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-pub const DEFAULT_LOG_PATH: &str = "history.log";
 pub const DEFAULT_KEEP_DAYS: u32 = 30;
 pub const EXIT_CONFIG: i32 = 78;
 
@@ -209,24 +208,6 @@ pub fn parse_log_line(line: &str) -> Option<FileEvent> {
         serde_json::from_str(trimmed).ok()
     } else {
         FileEvent::from_csv_str(trimmed)
-    }
-}
-
-pub fn parse_output_format(s: &str) -> Option<OutputFormat> {
-    match s.to_lowercase().as_str() {
-        "human" => Some(OutputFormat::Human),
-        "json" => Some(OutputFormat::Json),
-        "csv" => Some(OutputFormat::Csv),
-        _ => None,
-    }
-}
-
-pub fn parse_sort_by(s: &str) -> Option<SortBy> {
-    match s.to_lowercase().as_str() {
-        "time" => Some(SortBy::Time),
-        "size" => Some(SortBy::Size),
-        "pid" => Some(SortBy::Pid),
-        _ => None,
     }
 }
 

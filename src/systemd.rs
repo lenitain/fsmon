@@ -83,7 +83,6 @@ pub fn install(force: bool) -> Result<()> {
 
     println!("Service installed to {}", service_file.display());
     println!("fsmon path: {}", exe_path.display());
-    println!("");
     println!("Usage:");
     println!("  sudo systemctl enable fsmon --now");
     println!("  sudo systemctl start fsmon");
