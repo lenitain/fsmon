@@ -318,11 +318,9 @@ fn cmd_remove(id: u64) -> Result<()> {
 }
 
 fn cmd_managed() -> Result<()> {
-    let cfg = Config::load().ok();
-    let socket_path = cfg
-        .as_ref()
-        .map(|c| c.socket.path.clone())
-        .unwrap_or_else(|| PathBuf::from("/tmp/fsmon-0.sock"));
+    let mut cfg = Config::load()?;
+    cfg.resolve_paths()?;
+    let socket_path = cfg.socket.path.clone();
 
     // Try live list first, fall back to store file
     let entries = match socket::send_cmd(
@@ -340,12 +338,8 @@ fn cmd_managed() -> Result<()> {
     ) {
         Ok(resp) if resp.ok => resp.paths.unwrap_or_default(),
         _ => {
-            if let Some(ref cfg) = cfg {
-                if let Ok(store) = Store::load(&cfg.store.file) {
-                    store.entries
-                } else {
-                    vec![]
-                }
+            if let Ok(store) = Store::load(&cfg.store.file) {
+                store.entries
             } else {
                 vec![]
             }

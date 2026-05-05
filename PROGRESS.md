@@ -87,6 +87,13 @@ cargo test         ✅ 67 passed, 7 ignored (fanotify 测试需要 sudo)
   - `monitor.rs::add_path()`: 同上修复，live add 返回 `ok: true`。
 - **额外**: 修复一个 `collapsible_if` clippy 警告。
 
+### 2026-05-05 — `fsmon managed` 输出为空
+
+- **问题**: `cmd_managed()` 用 `Config::load().ok()` 加载配置后未调用
+  `resolve_paths()`，导致 socket 路径保持 `/tmp/fsmon-<UID>.sock`（`<UID>` 未替换），\  socket 连接失败；store 路径保持 `~/.local/...`（`~` 未展开），\  store 读取失败。两项都失败，最终输出空列表。
+- **修复**: 改为 `let mut cfg = Config::load()?; cfg.resolve_paths()?;`
+  与其他命令一致。
+
 ## 下一阶段可能的改进
 
 - 找回 query.rs 中丢失的 17 个二进制搜索测试 (代码逻辑未改, 测试函数需恢复)
