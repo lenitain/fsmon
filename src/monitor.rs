@@ -10,6 +10,7 @@ use fanotify::low_level::{
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::num::NonZeroUsize;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
 use std::path::{Path, PathBuf};
@@ -19,16 +20,14 @@ use tokio::io::unix::AsyncFd;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::signal::unix::{SignalKind, signal};
 
-use crate::config::Config;
 use crate::dir_cache;
 use crate::fid_parser::{self, FAN_FS_ERROR};
-use crate::output;
 use crate::proc_cache::{self, ProcCache};
 use crate::socket::{SocketCmd, SocketResp};
 use crate::store::PathEntry;
 use crate::store::Store;
 use crate::utils::{get_process_info_by_pid, parse_size};
-use crate::{EventType, FileEvent, OutputFormat};
+use crate::{EventType, FileEvent};
 
 // ---- FanFd wrapper for AsyncFd ----
 
@@ -100,12 +99,11 @@ pub struct Monitor {
     canonical_paths: Vec<PathBuf>,
     path_ids: HashMap<PathBuf, u64>,
     path_options: HashMap<PathBuf, PathOptions>,
-    output: Option<PathBuf>,
-    format: OutputFormat,
+    log_dir: Option<PathBuf>,
+    store_path: Option<PathBuf>,
     proc_cache: Option<ProcCache>,
     file_size_cache: LruCache<PathBuf, u64>,
     buffer_size: usize,
-    instance_name: Option<String>,
     socket_listener: Option<tokio::net::UnixListener>,
     fan_fd: Option<i32>,
     mask: u64,
@@ -118,10 +116,9 @@ impl Monitor {
     pub fn new(
         paths_and_options: Vec<(PathBuf, PathOptions)>,
         path_ids: HashMap<PathBuf, u64>,
-        output: Option<PathBuf>,
-        format: OutputFormat,
+        log_dir: Option<PathBuf>,
+        store_path: Option<PathBuf>,
         buffer_size: Option<usize>,
-        instance_name: Option<String>,
         socket_listener: Option<tokio::net::UnixListener>,
     ) -> Result<Self> {
         let buffer_size = buffer_size.unwrap_or(4096 * 8); // Default 32KB
@@ -145,12 +142,12 @@ impl Monitor {
             canonical_paths: Vec::new(),
             path_ids,
             path_options,
-            output,
-            format,
+            log_dir,
+            store_path,
             proc_cache: None,
             file_size_cache: LruCache::new(NonZeroUsize::new(FILE_SIZE_CACHE_CAP).unwrap()),
             buffer_size,
-            instance_name,
+
             socket_listener,
             fan_fd: None,
             mask: 0,
@@ -292,52 +289,11 @@ impl Monitor {
             }
         }
 
-        // Setup output file if specified
-        let mut output_file = if let Some(ref path) = self.output {
-            let parent = path.parent().unwrap_or(Path::new("."));
-            fs::create_dir_all(parent)?;
-            let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-
-            // Acquire exclusive file lock to prevent concurrent writes from multiple instances
-            let lock_ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-            if lock_ret != 0 {
-                let err = std::io::Error::last_os_error();
-                if err.raw_os_error() == Some(libc::EWOULDBLOCK) {
-                    eprintln!(
-                        "[WARNING] Another fsmon instance is already writing to {}.\n\
-                         Concurrent writes may corrupt the log file.\n\
-                         Consider using separate output paths per instance.",
-                        path.display()
-                    );
-                }
-            }
-
-            // Write a header comment line for traceability
-            let paths_str = self
-                .paths
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(" ");
-            let started = Utc::now().to_rfc3339();
-
-            let header = format!(
-                "# fsmon{instance} paths=\"{paths}\" started=\"{started}\"\n",
-                instance = self
-                    .instance_name
-                    .as_ref()
-                    .map(|n| format!(" instance=\"{}\"", n))
-                    .unwrap_or_default(),
-                paths = paths_str,
-            );
-
-            use std::io::Write;
-            let _ = file.write_all(header.as_bytes());
-
-            Some(file)
-        } else {
-            None
-        };
+        // Ensure log directory exists
+        if let Some(ref dir) = self.log_dir {
+            fs::create_dir_all(dir)
+                .with_context(|| format!("Failed to create log directory {}", dir.display()))?;
+        }
 
         println!("Starting file trace monitor...");
         println!(
@@ -420,7 +376,7 @@ impl Monitor {
                             }
 
                             if self.should_output(&event) {
-                                output::output_event(&event, self.format, &mut output_file)?;
+                                let _ = self.write_event(&event);
                             }
                         }
                     }
@@ -868,22 +824,23 @@ impl Monitor {
             })
             .collect();
         let max_id = self.path_ids.values().max().copied().unwrap_or(0);
-        // CLI already persists to store.toml before notifying daemon.
-        // Socket commands update in-memory state only; persistence is optional.
-        if let Ok(cfg) = Config::load()
-            && let Ok(mut store) = Store::load(&cfg.store.file)
+        // Persist to store.toml using the stored path
+        if let Some(ref store_path) = self.store_path
+            && let Ok(mut store) = Store::load(store_path)
         {
             store.entries = entries;
             store.next_id = max_id + 1;
-            let _ = store.save(&cfg.store.file);
+            let _ = store.save(store_path);
         }
         Ok(())
     }
 
     fn reload_config(&mut self) -> Result<()> {
-        // Reload from store.toml — resolve store path via Config
-        let cfg = Config::load()?;
-        let store = Store::load(&cfg.store.file)?;
+        let store_path = self
+            .store_path
+            .as_ref()
+            .context("No store path configured")?;
+        let store = Store::load(store_path)?;
         // Add new paths that appear in store
         for entry in &store.entries {
             if !self.path_options.contains_key(&entry.path)
@@ -930,6 +887,41 @@ impl Monitor {
         }
 
         true
+    }
+
+    /// Find the entry ID for a given event path by checking path_ids (direct match or recursive).
+    fn entry_id_for_path(&self, path: &Path) -> Option<u64> {
+        // Direct match first
+        if let Some(&id) = self.path_ids.get(path) {
+            return Some(id);
+        }
+        // Recursive match: find watched path that is a prefix of event path
+        for (watched, &id) in &self.path_ids {
+            if path.starts_with(watched) {
+                return Some(id);
+            }
+        }
+        None
+    }
+
+    /// Write an event to its per-ID log file.
+    fn write_event(&self, event: &FileEvent) -> std::io::Result<()> {
+        let log_dir = match self.log_dir.as_ref() {
+            Some(d) => d,
+            None => return Ok(()),
+        };
+        let entry_id = match self.entry_id_for_path(&event.path) {
+            Some(id) => id,
+            None => return Ok(()),
+        };
+        let log_path = log_dir.join(format!("{}.log", entry_id));
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)?;
+        writeln!(file, "{}", event.to_toml_string())?;
+        writeln!(file)?; // blank line separator
+        Ok(())
     }
 
     /// Check if path is within monitoring scope
@@ -1030,7 +1022,6 @@ mod tests {
                 .collect(),
             HashMap::new(),
             None,
-            OutputFormat::Human,
             None,
             None,
             None,
@@ -1163,9 +1154,8 @@ mod tests {
             vec![(PathBuf::from("/tmp"), opts.clone())],
             HashMap::new(),
             None,
-            OutputFormat::Human,
-            Some(1024),
             None,
+            Some(1024),
             None,
         );
         assert!(result.is_err());
@@ -1175,9 +1165,8 @@ mod tests {
             vec![(PathBuf::from("/tmp"), opts.clone())],
             HashMap::new(),
             None,
-            OutputFormat::Human,
-            Some(2 * 1024 * 1024),
             None,
+            Some(2 * 1024 * 1024),
             None,
         );
         assert!(result.is_err());
@@ -1187,9 +1176,8 @@ mod tests {
             vec![(PathBuf::from("/tmp"), opts.clone())],
             HashMap::new(),
             None,
-            OutputFormat::Human,
-            Some(65536),
             None,
+            Some(65536),
             None,
         );
         assert!(result.is_ok());
@@ -1197,16 +1185,7 @@ mod tests {
 
     #[test]
     fn test_add_path_and_remove_path() {
-        let mut m = Monitor::new(
-            vec![],
-            HashMap::new(),
-            None,
-            OutputFormat::Human,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let mut m = Monitor::new(vec![], HashMap::new(), None, None, None, None).unwrap();
         m.fan_fd = Some(-1); // dummy fd for log path test
 
         let entry = PathEntry {

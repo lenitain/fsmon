@@ -160,13 +160,8 @@ async fn cmd_daemon() -> Result<()> {
     }
 
     let socket_path = cfg.socket.path.clone();
-    let log_file = cfg.logging.dir.join("fsmon.log");
 
-    // Create parent directories for log and socket
-    if let Some(parent) = log_file.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
+    // Create parent directories for socket
     if socket_path.exists() {
         fs::remove_file(&socket_path)?;
     }
@@ -187,12 +182,12 @@ async fn cmd_daemon() -> Result<()> {
         .map(|e| (e.path.clone(), e.id))
         .collect();
 
+    let store_path = cfg.store.file.clone();
     let mut monitor = Monitor::new(
         paths_and_options,
         path_ids,
-        Some(log_file),
-        OutputFormat::Toml,
-        None,
+        Some(cfg.logging.dir.clone()),
+        Some(store_path),
         None,
         Some(socket_listener),
     )?;
