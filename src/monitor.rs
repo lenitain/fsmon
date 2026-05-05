@@ -110,6 +110,9 @@ pub struct Monitor {
     fan_fds: Vec<i32>,
     mount_fds: Vec<RawFd>,
     dir_cache: HashMap<fid_parser::HandleKey, PathBuf>,
+    /// Shared state for spawning reader tasks during live-add (set in run())
+    event_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<fid_parser::FidEvent>>>,
+    shared_dir_cache: Option<Arc<Mutex<HashMap<fid_parser::HandleKey, PathBuf>>>>,
 }
 
 impl Monitor {
@@ -152,6 +155,8 @@ impl Monitor {
             fan_fds: Vec::new(),
             mount_fds: Vec::new(),
             dir_cache: HashMap::new(),
+            event_tx: None,
+            shared_dir_cache: None,
         })
     }
 
@@ -399,6 +404,10 @@ impl Monitor {
         let dir_cache = Arc::new(Mutex::new(std::mem::take(&mut self.dir_cache)));
         let buf_size = self.buffer_size;
 
+        // Store for live-add (add_path may need to spawn reader tasks)
+        self.event_tx = Some(event_tx.clone());
+        self.shared_dir_cache = Some(Arc::clone(&dir_cache));
+
         for group in &fan_groups {
             let fd = group.fd;
             let tx = event_tx.clone();
@@ -600,6 +609,75 @@ impl Monitor {
         None
     }
 
+    /// Try to add a path to an existing fan_fd via FAN_MARK_FILESYSTEM.
+    /// Returns Ok(fd) on success, Err(()) if no fd accepts this path.
+    fn try_mark_on_existing(fds: &[i32], mask: u64, path: &Path) -> std::result::Result<i32, ()> {
+        for &fd in fds {
+            match fanotify_mark(fd, FAN_MARK_ADD | FAN_MARK_FILESYSTEM, mask, AT_FDCWD, path) {
+                Ok(()) => return Ok(fd),
+                Err(ref e) if e.raw_os_error() == Some(libc::EXDEV) => continue,
+                Err(e) => {
+                    eprintln!(
+                        "[WARNING] Cannot monitor {} on fd {}: {:#}",
+                        path.display(),
+                        fd,
+                        e
+                    );
+                }
+            }
+        }
+        Err(())
+    }
+
+    /// Spawn a tokio reader task for a newly created fanotify fd.
+    fn spawn_fd_reader(&self, fd: i32) {
+        let tx = match self.event_tx.as_ref() {
+            Some(t) => t.clone(),
+            None => {
+                eprintln!("[ERROR] Cannot spawn reader: event_tx not initialized");
+                return;
+            }
+        };
+        let dc = match self.shared_dir_cache.as_ref() {
+            Some(d) => Arc::clone(d),
+            None => {
+                eprintln!("[ERROR] Cannot spawn reader: shared_dir_cache not initialized");
+                return;
+            }
+        };
+        let mfds = Arc::new(self.mount_fds.clone());
+        let buf_size = self.buffer_size;
+        tokio::spawn(async move {
+            let afd = match AsyncFd::new(FanFd(fd)) {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!("[ERROR] AsyncFd for fd {}: {}", fd, e);
+                    return;
+                }
+            };
+            let mut buf = vec![0u8; buf_size];
+            loop {
+                let result = afd.readable().await;
+                let mut guard = match result {
+                    Ok(g) => g,
+                    Err(e) => {
+                        eprintln!("[ERROR] fd {} readable: {}", fd, e);
+                        break;
+                    }
+                };
+                let events =
+                    fid_parser::read_fid_events(fd, &mfds, &mut dc.lock().unwrap(), &mut buf);
+                if !events.is_empty() && tx.send(events).is_err() {
+                    break;
+                }
+                guard.clear_ready();
+            }
+            unsafe {
+                libc::close(fd);
+            }
+        });
+    }
+
     pub fn add_path(&mut self, entry: &PathEntry) -> Result<()> {
         let path = &entry.path;
         if self.path_options.contains_key(path) {
@@ -639,53 +717,81 @@ impl Monitor {
             all_events,
         };
 
-        let fan_fd = if let Some(&fd) = self.fan_fds.first() {
-            fd
-        } else {
-            let fd = fanotify_init(
-                FAN_CLOEXEC
-                    | FAN_NONBLOCK
-                    | FAN_CLASS_NOTIF
-                    | FAN_REPORT_FID
-                    | FAN_REPORT_DIR_FID
-                    | FAN_REPORT_NAME,
-                (O_CLOEXEC | O_RDONLY) as u32,
-            )
-            .context("fanotify_init failed")?;
-            self.fan_fds.push(fd);
-            fd
-        };
         let path_mask = if all_events {
             ALL_EVENT_MASK
         } else {
             DEFAULT_EVENT_MASK
         };
 
-        match fanotify_mark(
-            fan_fd,
-            FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
-            path_mask,
-            AT_FDCWD,
-            &canonical,
-        ) {
-            Ok(()) => {}
-            Err(ref e) if e.raw_os_error() == Some(libc::EXDEV) => {
-                // EXDEV: path is on a different mount (e.g., btrfs subvol, bind mount).
-                // Fall back to inode-level mark. If that also fails, warn and continue
-                // so the path is still tracked and will work after daemon restart.
-                if let Err(e) = mark_directory(fan_fd, path_mask, &canonical) {
-                    eprintln!(
-                        "[WARNING] Cannot monitor {} (inode mark fallback): {:#}",
-                        canonical.display(),
-                        e
-                    );
-                } else if recursive && canonical.is_dir() {
-                    mark_recursive(fan_fd, path_mask, &canonical);
+        // Find or create a fanotify fd for this path's filesystem.
+        // Try each existing fd first (same filesystem → OK, EXDEV → try next).
+        let (fan_fd, is_new_fd) =
+            match Self::try_mark_on_existing(&self.fan_fds, path_mask, &canonical) {
+                Ok(fd) => (fd, false),
+                Err(()) => {
+                    // No existing fd works — create a new one
+                    let fd = fanotify_init(
+                        FAN_CLOEXEC
+                            | FAN_NONBLOCK
+                            | FAN_CLASS_NOTIF
+                            | FAN_REPORT_FID
+                            | FAN_REPORT_DIR_FID
+                            | FAN_REPORT_NAME,
+                        (O_CLOEXEC | O_RDONLY) as u32,
+                    )
+                    .with_context(|| {
+                        format!(
+                            "fanotify_init failed for {} (requires Linux 5.9+ kernel)",
+                            canonical.display()
+                        )
+                    })?;
+                    self.fan_fds.push(fd);
+
+                    // Try filesystem mark on the new fd
+                    match fanotify_mark(
+                        fd,
+                        FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
+                        path_mask,
+                        AT_FDCWD,
+                        &canonical,
+                    ) {
+                        Ok(()) => {
+                            eprintln!(
+                                "[INFO] Monitoring {} (fs mark) on new fd {}",
+                                canonical.display(),
+                                fd
+                            );
+                        }
+                        Err(ref e) if e.raw_os_error() == Some(libc::EXDEV) => {
+                            // Fall back to inode mark
+                            if let Err(e) = mark_directory(fd, path_mask, &canonical) {
+                                eprintln!(
+                                    "[WARNING] Cannot monitor {} (inode mark): {:#}",
+                                    canonical.display(),
+                                    e
+                                );
+                            } else {
+                                eprintln!(
+                                    "[INFO] Monitoring {} (inode mark) on new fd {}",
+                                    canonical.display(),
+                                    fd
+                                );
+                                if recursive && canonical.is_dir() {
+                                    mark_recursive(fd, path_mask, &canonical);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("[WARNING] Cannot monitor {}: {:#}", canonical.display(), e);
+                        }
+                    }
+                    (fd, true)
                 }
-            }
-            Err(e) => {
-                eprintln!("[WARNING] Cannot monitor {}: {:#}", canonical.display(), e);
-            }
+            };
+
+        // Spawn reader task if we created a new fd
+        if is_new_fd {
+            self.spawn_fd_reader(fan_fd);
         }
 
         // Open directory fd for handle resolution

@@ -112,8 +112,8 @@ cargo test         ✅ 67 passed, 7 ignored (fanotify 测试需要 sudo)
   事件通过 mpsc channel 汇集到主循环处理。
   - 移除 `Monitor.fan_fd` / `mask` / `use_fs_mark` 字段，改为 `fan_fds: Vec<i32>`
   - `run()`: 每个路径探测已有 fd，EXDEV 则创建新 fd
+  - `add_path()`: 遍历所有 fd，都不匹配则创新 fd + spawn reader
   - 主循环从 channel 收事件（代替原先单 AsyncFd readable）
-  - 动态 inode mark 暂不可用（已知限制，重启 daemon 后生效）
 
 ### 2026-05-05 — 日志文件名格式改为 log_<id>.toml
 
