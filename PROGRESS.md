@@ -1,92 +1,136 @@
-# PROGRESS.md — fsmon 全面审查与规划
-
-## README Update
-
-- R10 ✅ README 更新: 反映完整项目架构（新增模块、proc connector、FID 解析器、配置系统、二分查询等）
+# fsmon PROGRESS
 
 ## 当前状态
 
-- 编译通过，72 单元测试全绿，7 集成测试 `#[ignore]`
-- Clippy 无警告（R1 已修复）
-- P2 已完成：非 CREATE/MODIFY/CLOSE_WRITE 事件跳过 metadata syscall
-- R5 已完成：fsmon.toml 配置文件支持
-- H1 已完成：systemd 服务模板二进制路径动态检测
-- H3/H4/H7 已完成：magic number 提取常量
-- H5 已完成：proc connector 启动等待改为就绪信号 + 退避轮询
-- H6 已完成：fanotify 缓冲区大小可配置
+基础功能已完成：fanotify 实时监控、进程缓存、日志查询、systemd 集成、日志清理。
 
-## 硬编码清理
+---
 
-全项目扫描发现约 20 处有修改价值的硬编码，分类如下：
+## 后台模式（systemd 模板）边界问题与解决方案
 
-### H1 [高] systemd 服务模板二进制路径 ✅ 动态生成(已完成)
-`systemd.rs:7-28` — `ExecStart=/usr/local/bin/fsmon monitor %i`
-- 二进制实际位置可能不同（`~/.cargo/bin/fsmon`, `/usr/bin/fsmon` 等）
-- 安装时未检测 `current_exe()` 自动填充
-- **修改**: 使用 `std::env::current_exe()` 在 `install` 时动态检测二进制路径
-- **新增**: `--force` 选项支持覆盖已存在的 service 文件
+### D1 [高] 实例配置不存在 ⇒ systemd 无限重启
 
-### H2 [中] 默认日志路径重复定义 ✅ 提取常量(已完成)
-`main.rs:438-439` 和 `main.rs:527-528` — `~/.fsmon/history.log`
-- `query clean` 和 `clean` 命令各自独立写死默认路径
-- 应提取为 `const DEFAULT_LOG_PATH: &str`
+**问题**：`systemctl enable fsmon@web --now` 时 `/etc/fsmon/fsmon-web.toml` 不存在 → `exit(EXIT_CONFIG)` (78) → `Restart=on-abnormal` 判定为非正常退出 → 每 5s 无限重启循环，错误信息一闪而过难以追溯。
 
-### H3 [低] 默认 keep_days 30 硬编码 ✅ 提取常量(已完成)
-`main.rs:541` — `keep_days.unwrap_or(DEFAULT_KEEP_DAYS)`
-- 已提取为 `const DEFAULT_KEEP_DAYS: u32 = 30`
+**方案**：
+1. **区分退出码语义**：在生成的 systemd template 中添加 `RestartPreventExitStatus=78`，阻止 systemd 重启配置类错误
+2. **醒目提示**：启动失败时用醒目的格式（=== BORDER ===）打印修复指引，告诉用户运行 `fsmon generate --instance <name>`
 
-### H4 [低] LRU 缓存容量硬编码 ✅ 提取常量(已完成)
-`monitor.rs:48` — `FILE_SIZE_CACHE_CAP = 10_000`
-- 已确认为命名常量，无需修改
+**涉及文件**：`src/systemd.rs`、`src/main.rs:398-410`
 
-### H5 [低] proc connector 启动等待时间硬编码 ✅ 就绪信号+退避轮询(已完成)
-`monitor.rs:119` — `Duration::from_millis(50)` → `AtomicBool` ready flag + exponential backoff poll
-- `proc_cache.rs`: `start_proc_listener()` 返回 `(ProcCache, Arc<AtomicBool>)`，订阅成功后置 `ready=true`
-- `monitor.rs`: 退避轮询（1ms→2ms→4ms→…→50ms cap），2s 超时 bail 报错
+### D2 [高] 实例配置路径为空 / TOML 格式错误 ⇒ 无限重启
 
-### H6 [低] fanotify 读取缓冲区大小硬编码 ✅ 可配置(已完成)
-`monitor.rs:259` — `4096 * 8` (32KB)
-- 高频场景需要更大缓冲区减少 read 次数
-- 低频场景浪费内存
+**问题**：实例 TOML 中 `paths = []` 或文件内容非法 → 同样 `exit(78)` → 无限重启。
 
-### H7 [低] query 回退扫描 / seek 参数硬编码 ✅ 提取常量(已完成)
-- `query.rs:200` — `scan_back = SCAN_BACK_BYTES` (4096)
-- `query.rs:329` — `max_lines * BYTES_PER_LINE` (512 bytes/line)
-- `proc_cache.rs:98` — netlink recv buffer `NETLINK_RECV_BUF_SIZE` (4096)
+**方案**：
+- 和 D1 统一处理：`RestartPreventExitStatus=78` 覆盖所有配置类错误
+- 错误消息中明确区分"格式错误"和"路径未配置"两种场景
 
-### H8 [低] uid_passwd_map OnceLock 永不过期（R7 已有记录）
-`utils.rs:167-186` — `/etc/passwd` 初次加载后静态缓存，运行时新增用户不体现
-- **提议**: 可配置刷新间隔或 inotify 监听
+**涉及文件**：`src/config.rs:219-236`、`src/main.rs:398-410`
 
-### H9 [低] systemd 安全加固策略可配置 ✅  CLI + 配置文件(已完成)
-`systemd.rs:20-23` — `ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths=/var/log`, `PrivateTmp=yes`
-- 支持 `--protect-system` / `--protect-home` / `--read-write-paths` / `--private-tmp` CLI 参数
-- 支持 `[install]` 配置文件节: `protect_system`, `protect_home`, `read_write_paths`, `private_tmp`
-- 优先级: CLI > 配置文件 > 硬编码默认值
+### D3 [高] 监控路径不存在 ⇒ 启动失败 ⇒ 无限重启
 
-## 系统多实例支持（已完成）
+**问题**：实例配置中 `paths = ["/nonexistent"]` → `fanotify_mark` 在不存在路径上失败 → `bail!` → `exit(1)` → 触发重启循环。
 
-- **systemd template unit**: `systemd.rs` 重写为 `fsmon@.service` template，用 `%i` 传实例名
-- **InstanceConfig**: `config.rs` 新增 `InstanceConfig` 结构体 + `/etc/fsmon/fsmon-{name}.toml` 配置读写
-- **enable/disable**: 新增子命令，自动生成实例配置 + `systemctl enable/disable --now`
-- **Log header**: 日志文件首行写入 `# fsmon instance="xxx" paths="..." ...` 注释行，用于追溯
-- **`--instance`**: `monitor` 命令支持 `--instance NAME` 模式，读取实例配置
+**方案**：
+- 在 `Monitor::run` 启动阶段显式检查路径存在性
+- 不存在的路径给出清晰错误（exit 78 而非 exit 1），纳入 RestartPreventExitStatus
+- 同时检查所有 paths，一次性报告所有问题路径
 
-### H10 [低] Cargo.toml 元数据占位符
-- `version = "0.1.4"`（发布前需更新）
-- `authors = ["lenitain <xt.zhu@qq.com>"]`
-- `homepage` / `repository` / `documentation` URL
+**涉及文件**：`src/monitor.rs:203-210`
 
-| 优先级 | 类别 | 项 | 预估复杂度 |
-|--------|------|----|-----------|
-| P0 | 硬编码 | H1 systemd 服务模板二进制路径 | 小 |
-| P1 | 硬编码 | H2 默认日志路径重复定义 | 极小 |
-| P2 | 硬编码 | H3-H4,H7 magic number 提取常量 ✅ | 小 |
-| P2 | 硬编码 | H5 proc connector 就绪信号 ✅ | 小 |
-| P2 | 硬编码 | H6 fanotify 缓冲区大小 ✅ | 小 |
-| P3 | 多实例 | systemd template unit 支持 | 大 |
-| P3 | 多实例 | InstanceConfig + enable/disable | 中 |
-| P3 | 多实例 | Log 文件 header 追溯 | 小 |
-| P3 | 硬编码 | H8 uid_passwd_map 刷新 | 中 |
-| P3 | 硬编码 | H9 systemd 安全加固可配置 ✅ | 中 |
-| P4 | 硬编码 | H10-H11 元数据/CI 分支 | 极小 |
+### D4 [高] 未配置 output ⇒ 事件日志静默丢失
+
+**问题**：实例模式下未设 `output` → 事件仅输出到 stdout (journald) → journald 有大小限制和自动清理 → 用户用 `fsmon query` 查不到历史事件，且无任何提示。
+
+**方案**：
+- 实例模式启动时，若 `output` 为 None，向 stderr 打印 WARNING 提示用户事件不会被持久化
+- 可选：实例模式下默认使用 `/var/log/fsmon/{name}.log` 作为 output
+
+**涉及文件**：`src/main.rs:448-450`、`src/monitor.rs:258-314`
+
+### D5 [中] 多实例写同一 output 文件 ⇒ 日志交错损坏
+
+**问题**：两个 systemd 实例（如 `fsmon@web`、`fsmon@db`）若配置了相同 `output` 路径 → 两个进程同时 append 写 → 无文件锁 → JSON 行交错 → 文件损坏。
+
+**方案**：
+- 启动时检查 output 文件是否可写，尝试获取 `flock`（文件锁）
+- 或在 output 路径中自动注入 instance name：`/var/log/fsmon/{name}.log`，在 header 中推荐此用法
+- 添加启动时冲突检测：读取 output 文件最后一行 header，若 instance name 不同则 warning
+
+**涉及文件**：`src/monitor.rs:258-314`
+
+### D6 [中] SIGTERM 无优雅关闭
+
+**问题**：systemd 停服务发 SIGTERM，但代码只处理了 `ctrl_c()` (SIGINT)。SIGTERM 直接杀进程，`fan_fd`/`mount_fds` 清理代码不执行。
+
+**方案**：
+- 添加 `tokio::signal::sigterm()` 处理，与 ctrl_c 走同一清理路径
+
+**涉及文件**：`src/monitor.rs:392-395`
+
+### D7 [中] Proc connector 超时 ⇒ 启动失败
+
+**问题**：`proc_cache` 订阅最多等 2s，在 systemd 冷启动或高负载环境下可能超时 → `bail!` → exit(1) → 触发重启。
+
+**方案**：
+- 超时后不 bail，改为 warn 降级：打印 warning 继续运行（proc_cache 是优化组件，非核心功能）
+- 短生命周期进程的进程名归因在超时期间可能不准确，但监控仍然正常工作
+
+**涉及文件**：`src/monitor.rs:136-152`
+
+### D8 [中] 日志文件无限增长
+
+**问题**：`output` 日志文件只 append 不轮转。`fsmon clean` 是手动 CLI 命令，无人值守运行时日志持续膨胀直至占满磁盘。
+
+**方案**：
+- 实例模式下支持自动轮转配置（如 `max_log_size = "500MB"`），写入前检查文件大小
+- 或提供可选的 `log_rotate` 配置项，超出大小后自动 truncate 尾部
+
+**涉及文件**：`src/config.rs`、`src/monitor.rs`
+
+### D9 [中] Restart=on-abnormal 语义与配置错误不匹配
+
+**问题**：`EXIT_CONFIG` (78) 在应用语义上是预期内的"配置错误"，不是"进程崩溃"。但 exit code ≠ 0 即被 systemd 判定为 abnormal → restart loop。
+
+**方案**：
+- 在 `SERVICE_TEMPLATE` 中添加 `RestartPreventExitStatus=78`
+- 同时调整 `Restart=on-abnormal` 为 `Restart=on-failure` + `RestartPreventExitStatus=78`，明确区分可恢复错误和配置错误
+
+**涉及文件**：`src/systemd.rs:13-34`
+
+### D10 [低] 容器/非标准环境 fanotify 不可用
+
+**问题**：fanotify FID 模式需要 Linux 5.9+ 且容器需 `CAP_SYS_ADMIN`。在不支持的环境下 `fanotify_init` 失败 → bail → exit(1) → 重启循环。
+
+**方案**：
+- 检测到 `fanotify_init` 失败时明确提示内核版本要求和缺少的 capability
+- 纳入 D9 的 `RestartPreventExitStatus` 处理
+
+**涉及文件**：`src/monitor.rs:154-164`
+
+---
+
+## 优先级与工作顺序
+
+| 优先级 | 类别 | 问题 | 工作量 |
+|--------|------|------|--------|
+| P0 | 配置错误 | D1/D2/D9 systemd 无限重启 + Restart 策略 | 小 |
+| P0 | 事件丢失 | D4 output 未配置静默丢事件 | 小 |
+| P1 | 启动验证 | D3 路径不存在检查 | 小 |
+| P1 | 优雅关闭 | D6 SIGTERM 处理 | 小 |
+| P1 | 启动降级 | D7 proc_cache 超时降级 | 小 |
+| P2 | 文件冲突 | D5 多实例 output 冲突 | 中 |
+| P2 | 磁盘管理 | D8 日志自动轮转 | 中 |
+| P3 | 可移植性 | D10 容器环境检测 | 小 |
+
+## 实现顺序建议
+
+1. **D1/D2/D9** — 配置错误不重启（exit code 78 保护 + 醒目提示），这是最严重的生产问题
+2. **D4** — output 未配置时 warning 提示
+3. **D3** — 启动时验证路径存在性
+4. **D6** — SIGTERM 优雅关闭
+5. **D7** — proc_cache 超时降级为 warning
+6. **D5** — output 文件冲突检测
+7. **D8** — 日志自动轮转
+8. **D10** — 容器环境友好提示
