@@ -19,7 +19,7 @@ use tokio::io::unix::AsyncFd;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::signal::unix::{SignalKind, signal};
 
-use crate::config::{Config, PathEntry};
+use crate::config::{PathEntry, UserConfig};
 use crate::dir_cache;
 use crate::fid_parser::{self, FAN_FS_ERROR};
 use crate::output;
@@ -251,11 +251,7 @@ impl Monitor {
                         break;
                     }
                     Err(e) => {
-                        eprintln!(
-                            "[WARNING] Cannot monitor {}: {}",
-                            canonical.display(),
-                            e
-                        );
+                        eprintln!("[WARNING] Cannot monitor {}: {}", canonical.display(), e);
                     }
                 }
             }
@@ -591,11 +587,7 @@ impl Monitor {
                 }
             }
             Err(e) => {
-                eprintln!(
-                    "[WARNING] Cannot monitor {}: {}",
-                    canonical.display(),
-                    e
-                );
+                eprintln!("[WARNING] Cannot monitor {}: {}", canonical.display(), e);
             }
         }
 
@@ -725,9 +717,17 @@ impl Monitor {
                 match self.add_path(&entry) {
                     Ok(()) => {
                         let _ = self.persist_config();
-                        SocketResp { ok: true, error: None, paths: None }
+                        SocketResp {
+                            ok: true,
+                            error: None,
+                            paths: None,
+                        }
                     }
-                    Err(e) => SocketResp { ok: false, error: Some(e.to_string()), paths: None },
+                    Err(e) => SocketResp {
+                        ok: false,
+                        error: Some(e.to_string()),
+                        paths: None,
+                    },
                 }
             }
             SocketCmd::Remove { path } => match self.remove_path(&path) {
@@ -777,12 +777,6 @@ impl Monitor {
     }
 
     fn persist_config(&self) -> Result<()> {
-        let config_path = Config::default_config_path();
-        let existing = Config::load_from_path(&config_path).unwrap_or_else(|_| Config {
-            log_file: None,
-            socket_path: None,
-            paths: vec![],
-        });
         let entries: Vec<PathEntry> = self
             .paths
             .iter()
@@ -803,18 +797,14 @@ impl Monitor {
                 }
             })
             .collect();
-        let cfg = Config {
-            log_file: self.output.clone().or(existing.log_file),
-            socket_path: existing.socket_path,
-            paths: entries,
-        };
-        cfg.save()
+        let cfg = UserConfig { paths: entries };
+        UserConfig::save(&cfg)
     }
 
     fn reload_config(&mut self) -> Result<()> {
-        let config = Config::load()?;
+        let user_cfg = UserConfig::load()?;
         // Add new paths that appear in config
-        for entry in &config.paths {
+        for entry in &user_cfg.paths {
             if !self.path_options.contains_key(&entry.path)
                 && let Err(e) = self.add_path(entry)
             {
@@ -824,7 +814,7 @@ impl Monitor {
         // Remove paths no longer in config
         let current_paths: Vec<PathBuf> = self.paths.clone();
         for path in &current_paths {
-            if !config.paths.iter().any(|p| p.path == *path)
+            if !user_cfg.paths.iter().any(|p| p.path == *path)
                 && let Err(e) = self.remove_path(path)
             {
                 eprintln!("Failed to remove path {} on reload: {e}", path.display());

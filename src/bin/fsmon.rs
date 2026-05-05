@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use fsmon::config::{Config, PathEntry};
+use fsmon::config::{PathEntry, UserConfig};
 use fsmon::help::{self, HelpTopic};
 use fsmon::monitor::{Monitor, PathOptions};
 use fsmon::query::Query;
@@ -116,7 +116,6 @@ struct CleanArgs {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let _config = Config::load()?;
 
     match cli.command {
         Commands::Daemon => cmd_daemon().await?,
@@ -133,28 +132,17 @@ async fn main() -> Result<()> {
 }
 
 async fn cmd_daemon() -> Result<()> {
-    let config_path = Config::default_config_path();
-    if !config_path.exists() {
-        Config::generate_default()?;
+    // Migrate paths from old /etc/fsmon/fsmon.toml if user config doesn't exist yet
+    UserConfig::migrate_from_etc()?;
+
+    let user_cfg = UserConfig::load()?;
+
+    if user_cfg.paths.is_empty() {
+        eprintln!("Warning: No paths configured. Use 'fsmon add <path>' to add paths.");
     }
 
-    let config = Config::load()?;
-
-    if config.paths.is_empty() {
-        eprintln!(
-            "Warning: No paths configured in {}. Use 'fsmon add <path>' to add paths.",
-            config_path.display()
-        );
-    }
-
-    let socket_path = config
-        .socket_path
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("/var/run/fsmon/fsmon.sock"));
-    let log_file = config
-        .log_file
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("/var/log/fsmon/history.log"));
+    let socket_path = UserConfig::default_socket_path();
+    let log_file = UserConfig::default_log_file();
 
     for p in [socket_path.parent(), log_file.parent()]
         .into_iter()
@@ -170,7 +158,7 @@ async fn cmd_daemon() -> Result<()> {
     let socket_listener = tokio::net::UnixListener::bind(&socket_path)
         .with_context(|| format!("Failed to bind socket at {}", socket_path.display()))?;
 
-    let paths_and_options = parse_path_entries(&config.paths)?;
+    let paths_and_options = parse_path_entries(&user_cfg.paths)?;
 
     let mut monitor = Monitor::new(
         paths_and_options,
@@ -195,8 +183,8 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     let recursive = if args.recursive { Some(true) } else { None };
     let all_events = if args.all_events { Some(true) } else { None };
 
-    // Always persist to config first
-    Config::add_path(PathEntry {
+    // Always persist to user config first
+    UserConfig::add_path(PathEntry {
         path: path.clone(),
         recursive,
         types: types.clone(),
@@ -207,7 +195,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     println!("Path added to config: {}", path.display());
 
     // Try live update via socket (non-fatal if fails)
-    let socket_path = resolve_socket_path();
+    let socket_path = UserConfig::default_socket_path();
     match socket::send_cmd(
         &socket_path,
         &SocketCmd::Add {
@@ -235,12 +223,12 @@ fn cmd_add(args: AddArgs) -> Result<()> {
 }
 
 fn cmd_remove(path: &Path) -> Result<()> {
-    // Always persist to config first
-    Config::remove_path(path)?;
+    // Always persist to user config first
+    UserConfig::remove_path(path)?;
     println!("Path removed from config: {}", path.display());
 
     // Try live update via socket (non-fatal if fails)
-    let socket_path = resolve_socket_path();
+    let socket_path = UserConfig::default_socket_path();
     match socket::send_cmd(&socket_path, &SocketCmd::Remove { path: path.into() }) {
         Ok(resp) if resp.ok => {
             println!("Daemon updated live");
@@ -258,11 +246,15 @@ fn cmd_remove(path: &Path) -> Result<()> {
 }
 
 fn cmd_managed() -> Result<()> {
-    let socket_path = resolve_socket_path();
-
+    let socket_path = UserConfig::default_socket_path();
+    // Try live list first, fall back to user config
     let entries = match socket::send_cmd(&socket_path, &SocketCmd::List) {
         Ok(resp) if resp.ok => resp.paths.unwrap_or_default(),
-        Ok(_) | Err(_) => Config::load().unwrap_or(Config { log_file: None, socket_path: None, paths: vec![] }).paths,
+        _ => {
+            UserConfig::load()
+                .unwrap_or(UserConfig { paths: vec![] })
+                .paths
+        }
     };
 
     for entry in &entries {
@@ -368,21 +360,7 @@ fn resolve_log_file(cli_log_file: Option<PathBuf>) -> PathBuf {
     if let Some(path) = cli_log_file {
         return path;
     }
-    if let Ok(cfg) = Config::load()
-        && let Some(path) = cfg.log_file
-    {
-        return path;
-    }
-    PathBuf::from("/var/log/fsmon/history.log")
-}
-
-fn resolve_socket_path() -> PathBuf {
-    if let Ok(cfg) = Config::load()
-        && let Some(path) = cfg.socket_path
-    {
-        return path;
-    }
-    PathBuf::from("/var/run/fsmon/fsmon.sock")
+    UserConfig::default_log_file()
 }
 
 fn parse_path_entries(entries: &[PathEntry]) -> Result<Vec<(PathBuf, PathOptions)>> {

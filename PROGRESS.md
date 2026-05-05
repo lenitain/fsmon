@@ -2,54 +2,29 @@
 
 ## 当前状态
 
-✅ **单二进制重构完成**（2026-05-05）：`fsmon` 合并 `fsmon-cli`，单 daemon 架构。
-所有 8 个任务已完成，78 测试通过，0 失败，7 忽略（需要 root 权限）。
+✅ **最小权限重构完成**（2026-05-05）：config 从 `/etc/fsmon/fsmon.toml` 迁移到用户路径。
+所有测试通过，clippy clean。
 
-### V2 新设计
+### V3 架构变更
 
-**架构**：单 `fsmon` 二进制，一个常驻 daemon（systemd 管理），通过 unix socket 接受 CLI 命令。
+**移除 `/etc/fsmon/fsmon.toml`**，不再需要 root 读写配置。
 
-**命令树**：
-```
-fsmon
-├── daemon          # systemd ExecStart，常驻监控
-├── add <path>      # 添加监控路径（--recursive/-r, --types, --min-size, --exclude, --all-events）
-├── remove <path>   # 移除监控路径
-├── managed         # 列出所有受管路径及详情
-├── query           # 查询历史事件（--since, --until, --pid, --cmd, --user, --types, --min-size, --format, --sort）
-├── clean           # 清理旧日志（--keep-days, --max-size, --dry-run）
-├── install         # 安装 systemd 服务 + 初始化配置
-└── uninstall       # 卸载 systemd 服务
-```
-
-**配置文件**：`/etc/fsmon/fsmon.toml`
+**新配置文件**：`~/.config/fsmon/config.toml`
 ```toml
-log_file = "/var/log/fsmon/history.log"
-socket_path = "/var/run/fsmon/fsmon.sock"
 [[paths]]
-path = "/var/www"
+path = "/home/user/project"
 recursive = true
-types = ["MODIFY", "CREATE"]
-min_size = "100MB"
-exclude = "*.tmp"
 all_events = false
 ```
 
-**Socket 协议**（`/var/run/fsmon/fsmon.sock`，JSON 行）：
-```
-→ {"cmd":"add","path":"/var/www","recursive":true,"types":["MODIFY"]}
-← {"ok":true}
-→ {"cmd":"remove","path":"/var/www"}
-← {"ok":true}
-→ {"cmd":"list"}
-← {"paths":[{"path":"/var/www","recursive":true,...}]}
-```
+**日志文件**：`~/.local/share/fsmon/history.log`
+**Socket**：`$XDG_RUNTIME_DIR/fsmon.sock` 或 `~/.local/share/fsmon/fsmon.sock`
 
-**daemon 生命周期**：启动 → 读配置 → fanotify_init → mark(paths) → bind socket → 主循环（fan_fd + socket + SIGHUP + SIGTERM）。add/remove 不重启 fanotify，动态 mark_add/mark_remove。
+**权限分离**：
+- **需要 sudo**：`fsmon daemon`（fanotify 必须 root），`fsmon install/uninstall`（systemd 必须 root）
+- **不需要 sudo**：`fsmon add/remove/managed/query/clean`
 
-**保留原有 flag**：monitor 的参数保留到 `add` 中（`-r`, `--types`, `--min-size`, `--exclude`, `--all-events`）。query/clean 保留所有原参数。
-
----
+**自动迁移**：`fsmon daemon` 首次启动时自动从旧的 `/etc/fsmon/fsmon.toml` 读取 `[[paths]]` 并写入新的用户配置，然后删除（设计上保留旧文件不做破坏）。
 
 ## 实现计划
 
@@ -90,7 +65,7 @@ all_events = false
 - [x] 保留 `--log-file` override
 
 ### P5 — systemd 集成
-- [x] 重写 `systemd.rs`：单 `fsmon.service`（非 template），`RuntimeDirectory`，`CapabilityBoundingSet` + `AmbientCapabilities`
+- [x] 重写 `systemd.rs`：单 `fsmon.service`，`RuntimeDirectory`，`CapabilityBoundingSet` + `AmbientCapabilities`
 - [x] `install(force)` 创建配置目录、生成默认配置、systemctl daemon-reload
 - [x] `uninstall()` 移除 service 文件 + daemon-reload
 - [x] 更新 `cmd_install` 调用签名
@@ -105,3 +80,12 @@ all_events = false
 - [x] 修复 clippy warning（空 `println!`）
 - [x] 测试通过（78 passed, 7 ignored）
 - [x] 同步 README.md 和 README.zh-CN.md 到最新代码（2026-05-05）
+
+### V7 — 最小权限重构
+- [x] config.rs 改为 `UserConfig`，路径为 `~/.config/fsmon/config.toml`
+- [x] log_file/socket_path 使用 XDG 标准路径
+- [x] systemd.rs 不再生成配置，只写 unit 文件
+- [x] add/remove/managed/query/clean 不再需要 sudo
+- [x] 自动迁移旧 `/etc/fsmon/fsmon.toml` 中的 paths
+- [x] 测试通过（75 passed, 7 ignored），clippy clean
+- [ ] 更新 README 反映新配置架构

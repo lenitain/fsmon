@@ -4,8 +4,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::config::Config;
-
 const SERVICE_NAME: &str = "fsmon";
 
 fn get_service_path() -> PathBuf {
@@ -23,8 +21,6 @@ ExecStart=EXEC_START_PLACEHOLDER daemon
 Restart=on-failure
 RestartPreventExitStatus=78
 RestartSec=5
-RuntimeDirectory=fsmon
-RuntimeDirectoryMode=0755
 StandardOutput=journal
 StandardError=journal
 CapabilityBoundingSet=CAP_SYS_ADMIN
@@ -65,17 +61,6 @@ pub fn install(force: bool) -> Result<()> {
 
     fs::write(&service_file, &service_content)
         .with_context(|| format!("Failed to write service file to {}", service_file.display()))?;
-
-    // Create /etc/fsmon/ if not exists
-    let config_dir = Config::default_config_path()
-        .parent()
-        .context("Config path has no parent")?
-        .to_path_buf();
-    fs::create_dir_all(&config_dir)
-        .with_context(|| format!("Failed to create config directory {}", config_dir.display()))?;
-
-    // Generate default config if not exists
-    Config::generate_default()?;
 
     Command::new("systemctl")
         .args(["daemon-reload"])
