@@ -931,7 +931,7 @@ impl Monitor {
             Some(id) => id,
             None => return Ok(()),
         };
-        let log_path = log_dir.join(format!("{}.log", entry_id));
+        let log_path = log_dir.join(format!("log_{}.toml", entry_id));
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)

@@ -40,7 +40,7 @@ Usage:
 
 Config:           ~/.config/fsmon/config.toml
 Store:            ~/.local/share/fsmon/store.toml (managed by add/remove)
-Log dir:          ~/.local/state/fsmon/ (one .log file per entry ID)
+Log dir:          ~/.local/state/fsmon/ (one log_<id>.toml file per entry ID)
 Socket:           /tmp/fsmon-<UID>.sock"#
         }
         HelpTopic::Add => {

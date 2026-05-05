@@ -98,7 +98,7 @@ impl Query {
         if let Some(ref ids) = self.ids {
             let mut files = Vec::new();
             for &id in ids {
-                let path = self.log_dir.join(format!("{}.log", id));
+                let path = self.log_dir.join(format!("log_{}.toml", id));
                 if path.exists() {
                     files.push(path);
                 }
@@ -715,7 +715,7 @@ mod tests {
         use std::io::Write;
         let dir = std::env::temp_dir().join("fsmon_test_query_pid");
         std::fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("1.log");
+        let log_path = dir.join("log_1.toml");
 
         let e1 = FileEvent {
             time: Utc::now(),
@@ -766,7 +766,7 @@ mod tests {
         use std::io::Write;
         let dir = std::env::temp_dir().join("fsmon_test_query_type");
         std::fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("1.log");
+        let log_path = dir.join("log_1.toml");
 
         let e1 = FileEvent {
             time: Utc::now(),

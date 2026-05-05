@@ -411,7 +411,7 @@ pub async fn clean_logs(
 
     if let Some(ids) = ids {
         for &id in ids {
-            let log_file = log_dir.join(format!("{}.log", id));
+            let log_file = log_dir.join(format!("log_{}.toml", id));
             clean_single_log(&log_file, keep_days, max_size, dry_run).await?;
         }
     } else {

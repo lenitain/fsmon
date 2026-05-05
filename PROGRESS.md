@@ -11,7 +11,7 @@
 |------|------|----------|
 | `~/.config/fsmon/config.toml` | 基础设施路径 (store/log/socket) | 手动编辑 + `fsmon generate` |
 | `~/.local/share/fsmon/store.toml` | 受监控路径数据库 | `fsmon add` / `fsmon remove` |
-| `~/.local/state/fsmon/<id>.log` | 每个 entry 独立的日志文件 | daemon 写入, `fsmon clean` 管理 |
+| `~/.local/state/fsmon/log_<id>.toml` | 每个 entry 独立的日志文件 | daemon 写入, `fsmon clean` 管理 |
 
 ### config.toml 格式
 
@@ -102,6 +102,11 @@ cargo test         ✅ 67 passed, 7 ignored (fanotify 测试需要 sudo)
   就 break，`paths` 字段全部丢失。
 - **修复**: `socket.rs::send_cmd()` 响应读取改为 EOF 终止，不再依赖空行分隔。
   TOML 本身可包含空行，解析器正确处理。
+
+### 2026-05-05 — 日志文件名格式改为 log_<id>.toml
+
+- **原因**: 之前 `<id>.log` 格式不易区分，改为 `log_<id>.toml`（带前缀 + .toml 后缀更明确）
+- **改动**: `monitor.rs`, `query.rs`, `lib.rs` 中 3 处文件名拼接 + `help.rs` 文档
 
 ### 2026-05-05 — 实时添加路径不生成 .log 文件
 
