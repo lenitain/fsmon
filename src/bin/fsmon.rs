@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use fsmon::config::{PathEntry, UserConfig};
+use fsmon::config::Config;
 use fsmon::help::{self, HelpTopic};
 use fsmon::monitor::{Monitor, PathOptions};
 use fsmon::query::Query;
 use fsmon::socket::{self, SocketCmd};
+use fsmon::store::{PathEntry, Store};
 use fsmon::utils::parse_size;
 use fsmon::{DEFAULT_KEEP_DAYS, EventType, OutputFormat, SortBy, clean_logs};
 use std::fs;
@@ -84,8 +85,9 @@ struct AddArgs {
 
 #[derive(Parser)]
 struct QueryArgs {
-    #[arg(short, long)]
-    log_file: Option<PathBuf>,
+    /// Entry ID(s) to query. Comma-separated and/or ranges. Repeatable. Default: all.
+    #[arg(short, long, value_name = "IDS")]
+    id: Vec<String>,
     #[arg(short = 'S', long)]
     since: Option<String>,
     #[arg(short = 'U', long)]
@@ -108,8 +110,9 @@ struct QueryArgs {
 
 #[derive(Parser)]
 struct CleanArgs {
-    #[arg(short, long)]
-    log_file: Option<PathBuf>,
+    /// Entry ID(s) to clean. Comma-separated and/or ranges. Repeatable. Default: all.
+    #[arg(short, long, value_name = "IDS")]
+    id: Vec<String>,
     #[arg(short, long)]
     keep_days: Option<u32>,
     #[arg(short = 'm', long)]
@@ -137,24 +140,27 @@ async fn main() -> Result<()> {
 
 async fn cmd_daemon() -> Result<()> {
     // Auto-generate config if it doesn't exist
-    let config_path = UserConfig::path();
+    let config_path = Config::path();
     if !config_path.exists() {
         eprintln!(
             "Config not found at {}, generating default config...",
             config_path.display()
         );
-        UserConfig::generate_default()?;
+        Config::generate_default()?;
         eprintln!("Default config generated at {}", config_path.display());
     }
 
-    let user_cfg = UserConfig::load()?;
+    let mut cfg = Config::load()?;
+    cfg.resolve_paths()?;
 
-    if user_cfg.paths.is_empty() {
+    let store = Store::load(&cfg.store.file)?;
+
+    if store.entries.is_empty() {
         eprintln!("Warning: No paths configured. Use 'fsmon add <path>' to add paths.");
     }
 
-    let socket_path = UserConfig::default_socket_path();
-    let log_file = UserConfig::default_log_file();
+    let socket_path = cfg.socket.path.clone();
+    let log_file = cfg.logging.dir.join("fsmon.log");
 
     // Create parent directories for log and socket
     if let Some(parent) = log_file.parent() {
@@ -174,9 +180,9 @@ async fn cmd_daemon() -> Result<()> {
     // Set socket permissions to 0666 so any user can send commands
     set_socket_permissions(&socket_path)?;
 
-    let paths_and_options = parse_path_entries(&user_cfg.paths)?;
-    let path_ids: std::collections::HashMap<_, _> = user_cfg
-        .paths
+    let paths_and_options = parse_path_entries(&store.entries)?;
+    let path_ids: std::collections::HashMap<_, _> = store
+        .entries
         .iter()
         .map(|e| (e.path.clone(), e.id))
         .collect();
@@ -205,6 +211,11 @@ fn set_socket_permissions(path: &Path) -> Result<()> {
 }
 
 fn cmd_add(args: AddArgs) -> Result<()> {
+    let mut cfg = Config::load()?;
+    cfg.resolve_paths()?;
+
+    let mut store = Store::load(&cfg.store.file)?;
+
     let path = args.path.clone();
     let types: Option<Vec<String>> = args
         .types
@@ -214,8 +225,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     let recursive = if args.recursive { Some(true) } else { None };
     let all_events = if args.all_events { Some(true) } else { None };
 
-    // Always persist to user config first
-    let id = UserConfig::add_path(PathEntry {
+    let id = store.add_entry(PathEntry {
         id: 0,
         path: path.clone(),
         recursive,
@@ -223,11 +233,13 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         min_size: min_size.clone(),
         exclude: exclude.clone(),
         all_events,
-    })?;
-    println!("Path added to config (ID: {}): {}", id, path.display());
+    });
+
+    store.save(&cfg.store.file)?;
+    println!("Path added (ID: {}): {}", id, path.display());
 
     // Try live update via socket (non-fatal if fails)
-    let socket_path = UserConfig::default_socket_path();
+    let socket_path = cfg.socket.path.clone();
     match socket::send_cmd(
         &socket_path,
         &SocketCmd {
@@ -257,12 +269,21 @@ fn cmd_add(args: AddArgs) -> Result<()> {
 }
 
 fn cmd_remove(id: u64) -> Result<()> {
-    // Always persist to user config first
-    UserConfig::remove_path(id)?;
+    let mut cfg = Config::load()?;
+    cfg.resolve_paths()?;
+
+    let mut store = Store::load(&cfg.store.file)?;
+
+    if !store.remove_entry(id) {
+        eprintln!("No monitored path with ID {}", id);
+        std::process::exit(1);
+    }
+
+    store.save(&cfg.store.file)?;
     println!("Path removed from config (ID: {})", id);
 
     // Try live update via socket (non-fatal if fails)
-    let socket_path = UserConfig::default_socket_path();
+    let socket_path = cfg.socket.path.clone();
     match socket::send_cmd(
         &socket_path,
         &SocketCmd {
@@ -292,8 +313,13 @@ fn cmd_remove(id: u64) -> Result<()> {
 }
 
 fn cmd_managed() -> Result<()> {
-    let socket_path = UserConfig::default_socket_path();
-    // Try live list first, fall back to user config
+    let cfg = Config::load().ok();
+    let socket_path = cfg
+        .as_ref()
+        .map(|c| c.socket.path.clone())
+        .unwrap_or_else(|| PathBuf::from("/tmp/fsmon-0.sock"));
+
+    // Try live list first, fall back to store file
     let entries = match socket::send_cmd(
         &socket_path,
         &SocketCmd {
@@ -309,12 +335,15 @@ fn cmd_managed() -> Result<()> {
     ) {
         Ok(resp) if resp.ok => resp.paths.unwrap_or_default(),
         _ => {
-            UserConfig::load()
-                .unwrap_or(UserConfig {
-                    next_id: 1,
-                    paths: vec![],
-                })
-                .paths
+            if let Some(ref cfg) = cfg {
+                if let Ok(store) = Store::load(&cfg.store.file) {
+                    store.entries
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![]
+            }
         }
     };
 
@@ -353,7 +382,10 @@ fn cmd_managed() -> Result<()> {
 }
 
 async fn cmd_query(args: QueryArgs) -> Result<()> {
-    let log_file = resolve_log_file(args.log_file);
+    let mut cfg = Config::load()?;
+    cfg.resolve_paths()?;
+
+    let log_file = cfg.logging.dir.join("fsmon.log");
 
     let min_size_bytes = args.min_size.map(|s| parse_size(&s)).transpose()?;
 
@@ -401,30 +433,26 @@ async fn cmd_query(args: QueryArgs) -> Result<()> {
 }
 
 fn cmd_generate(force: bool) -> Result<()> {
-    let config_path = UserConfig::path();
+    let config_path = Config::path();
     if config_path.exists() && !force {
         eprintln!("Config already exists at {}", config_path.display());
         eprintln!("Use -f or --force to overwrite");
         std::process::exit(1);
     }
-    UserConfig::generate_default()?;
+    Config::generate_default()?;
     println!("Default config generated at {}", config_path.display());
     Ok(())
 }
 
 async fn cmd_clean(args: CleanArgs) -> Result<()> {
-    let log_file = resolve_log_file(args.log_file);
+    let mut cfg = Config::load()?;
+    cfg.resolve_paths()?;
+
+    let log_file = cfg.logging.dir.join("fsmon.log");
     let keep_days = args.keep_days.unwrap_or(DEFAULT_KEEP_DAYS);
     let max_size_bytes = args.max_size.map(|s| parse_size(&s)).transpose()?;
     clean_logs(&log_file, keep_days, max_size_bytes, args.dry_run).await?;
     Ok(())
-}
-
-fn resolve_log_file(cli_log_file: Option<PathBuf>) -> PathBuf {
-    if let Some(path) = cli_log_file {
-        return path;
-    }
-    UserConfig::default_log_file()
 }
 
 fn parse_path_entries(entries: &[PathEntry]) -> Result<Vec<(PathBuf, PathOptions)>> {

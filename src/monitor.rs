@@ -19,12 +19,14 @@ use tokio::io::unix::AsyncFd;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::signal::unix::{SignalKind, signal};
 
-use crate::config::{PathEntry, UserConfig};
+use crate::config::Config;
 use crate::dir_cache;
 use crate::fid_parser::{self, FAN_FS_ERROR};
 use crate::output;
 use crate::proc_cache::{self, ProcCache};
 use crate::socket::{SocketCmd, SocketResp};
+use crate::store::PathEntry;
+use crate::store::Store;
 use crate::utils::{get_process_info_by_pid, parse_size};
 use crate::{EventType, FileEvent, OutputFormat};
 
@@ -866,27 +868,34 @@ impl Monitor {
             })
             .collect();
         let max_id = self.path_ids.values().max().copied().unwrap_or(0);
-        let cfg = UserConfig {
-            next_id: max_id + 1,
-            paths: entries,
-        };
-        UserConfig::save(&cfg)
+        // CLI already persists to store.toml before notifying daemon.
+        // Socket commands update in-memory state only; persistence is optional.
+        if let Ok(cfg) = Config::load()
+            && let Ok(mut store) = Store::load(&cfg.store.file)
+        {
+            store.entries = entries;
+            store.next_id = max_id + 1;
+            let _ = store.save(&cfg.store.file);
+        }
+        Ok(())
     }
 
     fn reload_config(&mut self) -> Result<()> {
-        let user_cfg = UserConfig::load()?;
-        // Add new paths that appear in config
-        for entry in &user_cfg.paths {
+        // Reload from store.toml — resolve store path via Config
+        let cfg = Config::load()?;
+        let store = Store::load(&cfg.store.file)?;
+        // Add new paths that appear in store
+        for entry in &store.entries {
             if !self.path_options.contains_key(&entry.path)
                 && let Err(e) = self.add_path(entry)
             {
                 eprintln!("Failed to add path {} on reload: {e}", entry.path.display());
             }
         }
-        // Remove paths no longer in config
+        // Remove paths no longer in store
         let current_paths: Vec<PathBuf> = self.paths.clone();
         for path in &current_paths {
-            if !user_cfg.paths.iter().any(|p| p.path == *path)
+            if !store.entries.iter().any(|p| p.path == *path)
                 && let Err(e) = self.remove_path(path)
             {
                 eprintln!("Failed to remove path {} on reload: {e}", path.display());
