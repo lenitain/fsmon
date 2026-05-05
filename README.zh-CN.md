@@ -101,19 +101,7 @@ sudo systemctl stop fsmon
 
 配置读取自 `/etc/fsmon/fsmon.toml`。通过 `fsmon add` 添加的路径会持久化到配置中，守护进程重启后自动恢复。
 
-### 前台模式 — 无需 systemd
 
-```bash
-# 直接在前台运行守护进程
-sudo fsmon daemon
-
-# 另一个终端添加路径
-sudo fsmon add /etc --types MODIFY
-sudo fsmon add /tmp --recursive
-
-# 查询和清理等操作在守护进程运行时同样可用
-fsmon query --since 5m
-```
 
 ## 示例
 
@@ -170,7 +158,6 @@ sudo fsmon add /var/www --types CREATE,DELETE --exclude "*.tmp"
 ## 命令参考
 
 ```bash
-fsmon daemon                    # 前台运行守护进程
 fsmon add /var/www -r           # 添加监控路径（实时 + 持久化）
 sudo fsmon remove /var/www       # 移除监控路径
 sudo fsmon managed               # 列出所有监控路径及配置
@@ -184,9 +171,7 @@ sudo fsmon uninstall             # 卸载 systemd 服务
 
 ## 架构
 
-fsmon 是单个二进制程序，支持两种运行模式：
-
-### 守护进程模式（后台 — systemd）
+fsmon 以 systemd 管理的后台守护进程运行，持久化配置位于 `/etc/fsmon/fsmon.toml`。
 
 ```bash
 sudo fsmon install              # 安装 systemd 服务
@@ -197,21 +182,9 @@ sudo systemctl enable fsmon --now
 |------|------|
 | 配置文件 | `/etc/fsmon/fsmon.toml` |
 | 路径管理 | `fsmon add` / `fsmon remove`（通过 Unix socket 实时生效） |
-| 用途 | 长期后台监控 |
-
-### 前台模式（一次性的调试 — 无需 systemd）
-
-```bash
-sudo fsmon daemon
-```
-
-| 项目 | 说明 |
-|------|------|
-| 配置文件 | `/etc/fsmon/fsmon.toml` |
-| 路径管理 | `fsmon add` / `fsmon remove`（通过 Unix socket 实时生效） |
-| 用途 | 临时排查、交互式调试 |
-
-两种模式共享 `/etc/fsmon/fsmon.toml`，都支持运行时动态添加/移除路径。
+| 日志输出 | JSON 事件写入 `/var/log/fsmon/history.log` |
+| 查询 | `fsmon query --since 1h` 读取事件 |
+| 清理 | `fsmon clean --keep-days 7` 轮转旧日志 |
 
 ## 配置文件
 
@@ -292,13 +265,13 @@ Linux Kernel (fanotify)
     → tokio::select 异步读取事件
     → fid_parser 解析 FID 记录（两阶段：解析 + 缓存恢复）
     → Monitor 过滤（类型、大小、排除模式、作用域）
-    → output 格式化（human/json/csv）→ stdout + 可选文件
+    → output 格式化（JSON）→ 日志文件
 ```
 
 - **fanotify (FID 模式 + FAN_REPORT_NAME)**：内核推送文件事件时携带目录文件句柄和文件名。无需轮询，事件通过非阻塞 read 即时送达。
 - **Proc Connector**：后台线程订阅 netlink `PROC_EVENT_EXEC` 通知，在每个进程 exec 时缓存 `(pid, cmd, user)`。确保短命进程（`touch`、`rm`、`mv`）即使退出后也能被归因。
 - **FID 解析器 + 目录缓存**：两阶段事件处理：(1) 通过 `open_by_handle_at` 解析文件句柄，(2) 使用持久化目录句柄缓存恢复父目录已被删除的事件路径。处理多层嵌套的 `rm -rf` 场景。
-- **二分查找查询**：`fsmon-cli query` 在大致按时间排序的日志文件上使用二分查找，将扫描范围缩小到 O(log N) 次 seek。配合 `expand_offset_backward` 处理边界附近的轻微乱序。
+- **二分查找查询**：`fsmon query` 在大致按时间排序的日志文件上使用二分查找，将扫描范围缩小到 O(log N) 次 seek。配合 `expand_offset_backward` 处理边界附近的轻微乱序。
 - **Rust + Tokio**：单线程异步循环（`tokio::select` 在 fanotify fd 和 Ctrl+C 信号之间）。proc connector 使用独立后台线程。无需复杂并发 — 高效优先。
 
 ### 事件挂载策略

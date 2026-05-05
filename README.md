@@ -101,19 +101,7 @@ sudo systemctl stop fsmon
 
 Config read from `/etc/fsmon/fsmon.toml`. Paths added via `fsmon add` are persisted in config for automatic monitoring on daemon restart.
 
-### CLI Mode — One-shot Monitoring (without systemd)
 
-```bash
-# Run daemon directly in foreground
-sudo fsmon daemon
-
-# In another terminal, add paths
-sudo fsmon add /etc --types MODIFY
-sudo fsmon add /tmp --recursive
-
-# Query, clean, etc. all work while daemon runs
-fsmon query --since 5m
-```
 
 ## Examples
 
@@ -170,23 +158,20 @@ sudo fsmon add /var/www --types CREATE,DELETE --exclude "*.tmp"
 ## Command Reference
 
 ```bash
-fsmon daemon                    # Run the fsmon daemon in foreground
 fsmon add /var/www -r           # Add a path to monitoring (live + persist)
-fsmon remove /var/www           # Remove a path from monitoring
-fsmon managed                   # List all monitored paths with configuration
+sudo fsmon remove /var/www       # Remove a path from monitoring
+sudo fsmon managed               # List all monitored paths with configuration
 fsmon query --since 1h          # Query historical events with filters
 fsmon clean --keep-days 7       # Clean old logs by time or size
-fsmon install                   # Install systemd service and config
-fsmon uninstall                 # Uninstall systemd service
+sudo fsmon install               # Install systemd service and config
+sudo fsmon uninstall             # Uninstall systemd service
 ```
 
 Use `fsmon <COMMAND> --help` for detailed help on each subcommand.
 
 ## Architecture
 
-fsmon is a single binary with two operating modes:
-
-### Daemon Mode (background — systemd)
+fsmon runs as a systemd-managed background daemon, with persistent config at `/etc/fsmon/fsmon.toml`.
 
 ```bash
 sudo fsmon install              # Install systemd service
@@ -197,21 +182,9 @@ sudo systemctl enable fsmon --now
 |--------|--------|
 | Config file | `/etc/fsmon/fsmon.toml` |
 | Path management | `fsmon add` / `fsmon remove` (live via Unix socket) |
-| Use case | Long-running background monitoring |
-
-### Foreground Mode (one-shot — no systemd)
-
-```bash
-sudo fsmon daemon
-```
-
-| Aspect | Detail |
-|--------|--------|
-| Config file | `/etc/fsmon/fsmon.toml` |
-| Path management | `fsmon add` / `fsmon remove` (live via Unix socket) |
-| Use case | Ad-hoc debugging, interactive investigation |
-
-Both modes share the same config at `/etc/fsmon/fsmon.toml` and support dynamic path management at runtime.
+| Log output | JSON events written to `/var/log/fsmon/history.log` |
+| Query | `fsmon query --since 1h` to read events |
+| Clean | `fsmon clean --keep-days 7` to rotate old logs |
 
 ## Configuration
 
@@ -292,13 +265,13 @@ Linux Kernel (fanotify)
     → tokio::select reads events asynchronously
     → fid_parser parses FID records (two-pass: resolve + cache recover)
     → Monitor filters (type, size, exclude, scope)
-    → output formats (human/json/csv) → stdout + optional file
+    → output formats (JSON) → log file
 ```
 
 - **fanotify (FID mode + FAN_REPORT_NAME)**: Kernel pushes file events with directory file handles and filenames. No polling — events delivered immediately via non-blocking read.
 - **Proc Connector**: Background thread subscribes to netlink `PROC_EVENT_EXEC` notifications, caching every process's `(pid, cmd, user)` at the instant it execs. This ensures short-lived processes (`touch`, `rm`, `mv`) are attributable even after they exit.
 - **FID Parser + Dir Cache**: Two-pass event processing: (1) resolve file handles via `open_by_handle_at`, (2) use persistent directory handle cache to recover paths for events where the parent directory was already deleted. Handles multi-level nested `rm -rf` scenarios.
-- **Binary Search Query**: `fsmon-cli query` uses binary search on approximately time-sorted log files, narrowing the scan range to O(log N) seek operations. Combined with `expand_offset_backward` to catch minor out-of-order entries.
+- **Binary Search Query**: `fsmon query` uses binary search on approximately time-sorted log files, narrowing the scan range to O(log N) seek operations. Combined with `expand_offset_backward` to catch minor out-of-order entries.
 - **Rust + Tokio**: Single-threaded async loop (`tokio::select` between fanotify fd and Ctrl+C signal). Background thread for proc connector. No complex concurrency — high efficiency instead.
 
 ### Event Mask Strategy

@@ -830,7 +830,7 @@ impl Monitor {
                 eprintln!("Failed to remove path {} on reload: {e}", path.display());
             }
         }
-        println!("Config reloaded");
+
         Ok(())
     }
 
