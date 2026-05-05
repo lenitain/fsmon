@@ -63,7 +63,7 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
   --min-size  Filter by size change (e.g., 100MB, 1GB)
 
 [Examples]
-  fsmon query                              # Query default log (~/.fsmon/history.log)
+  fsmon query                              # Query default log (~/.config/fsmon/history.log)
   fsmon query --since 1h                   # Last 1 hour
   fsmon query --cmd nginx                  # Only nginx operations
   fsmon query --since 1h --cmd java --types MODIFY --min-size 100MB  # Combined filters
@@ -132,12 +132,11 @@ Each instance reads its own config from /etc/fsmon/fsmon-{NAME}.toml.
 Without --instance: creates ~/.config/fsmon/fsmon.toml for CLI mode.\n\
 With --instance <name>: creates /etc/fsmon/fsmon-{name}.toml for systemd instance mode.\n\
 \n\
-[CLI Config Search Order]\n\
-  1. ~/.fsmon/fsmon.toml\n\
-  2. ~/.config/fsmon/fsmon.toml (XDG, created by `fsmon generate`)\n\
-  3. /etc/fsmon/fsmon.toml (system-wide)\n\
+[CLI Config]\n\
+  Reads from ~/.config/fsmon/fsmon.toml\n\
 \n\
 [Instance Config]\n\
+  Reads from /etc/fsmon/fsmon-{name}.toml\n\
   fsmon generate --instance web   # Generate /etc/fsmon/fsmon-web.toml template\n\
   fsmon generate --instance web --force  # Overwrite existing\n\
 \n\

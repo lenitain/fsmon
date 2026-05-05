@@ -22,7 +22,7 @@ mod utils;
 
 use help::HelpTopic;
 
-const DEFAULT_LOG_PATH: &str = ".fsmon/history.log";
+const DEFAULT_LOG_PATH: &str = "history.log";
 const DEFAULT_KEEP_DAYS: u32 = 30;
 
 use config::Config;
@@ -498,9 +498,9 @@ async fn main() -> Result<()> {
             let config = config.query.unwrap_or_default();
 
             let log_file = log_file.or(config.log_file).unwrap_or_else(|| {
-                dirs::home_dir()
-                    .map(|h: PathBuf| h.join(DEFAULT_LOG_PATH))
-                    .unwrap_or_else(|| PathBuf::from(DEFAULT_LOG_PATH))
+                dirs::config_dir()
+                    .map(|h: PathBuf| h.join("fsmon").join(DEFAULT_LOG_PATH))
+                    .unwrap_or_else(|| PathBuf::from("fsmon").join(DEFAULT_LOG_PATH))
             });
 
             let since = since.or(config.since);
@@ -609,9 +609,9 @@ async fn main() -> Result<()> {
             let config = config.clean.unwrap_or_default();
 
             let log_file = log_file.or(config.log_file).unwrap_or_else(|| {
-                dirs::home_dir()
-                    .map(|h: PathBuf| h.join(DEFAULT_LOG_PATH))
-                    .unwrap_or_else(|| PathBuf::from(DEFAULT_LOG_PATH))
+                dirs::config_dir()
+                    .map(|h: PathBuf| h.join("fsmon").join(DEFAULT_LOG_PATH))
+                    .unwrap_or_else(|| PathBuf::from("fsmon").join(DEFAULT_LOG_PATH))
             });
 
             let keep_days = keep_days.or(config.keep_days).unwrap_or(DEFAULT_KEEP_DAYS);

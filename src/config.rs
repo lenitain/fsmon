@@ -184,21 +184,13 @@ impl Config {
         Ok(config)
     }
 
-    /// Search config files in priority order:
-    ///   1. ~/.fsmon/fsmon.toml
-    ///   2. ~/.config/fsmon/fsmon.toml (XDG)
-    ///   3. /etc/fsmon/fsmon.toml (system-wide)
+    /// Find CLI config at ~/.config/fsmon/fsmon.toml
     fn find_config_file() -> Option<PathBuf> {
-        let candidates = [
-            dirs::home_dir().map(|h| h.join(".fsmon").join("fsmon.toml")),
-            dirs::config_dir().map(|h| h.join("fsmon").join("fsmon.toml")),
-            Some(PathBuf::from("/etc/fsmon/fsmon.toml")),
-        ];
-
-        candidates.into_iter().flatten().find(|path| path.exists())
+        let path = dirs::config_dir()?.join("fsmon").join("fsmon.toml");
+        if path.exists() { Some(path) } else { None }
     }
 
-    /// Generate a commented default config file at the XDG path (~/.config/fsmon/fsmon.toml).
+    /// Generate a commented default config file at ~/.config/fsmon/fsmon.toml.
     pub fn generate(force: bool) -> Result<PathBuf> {
         let config_dir = dirs::config_dir()
             .context("Cannot determine XDG config directory")?
@@ -223,35 +215,22 @@ impl Config {
         Ok(config_path)
     }
 
-    /// Load instance config by name.
-    /// Search order: /etc/fsmon/fsmon-{name}.toml, ~/.config/fsmon/fsmon-{name}.toml
+    /// Load instance config from /etc/fsmon/fsmon-{name}.toml
     pub fn load_instance(name: &str) -> Result<Option<InstanceConfig>> {
-        let mut candidates: Vec<PathBuf> =
-            vec![PathBuf::from(INSTANCE_CONFIG_DIR).join(format!("fsmon-{}.toml", name))];
-        if let Some(config_dir) = dirs::config_dir() {
-            candidates.push(
-                config_dir
-                    .join("fsmon")
-                    .join(format!("fsmon-{}.toml", name)),
-            );
-        }
-
-        for path in &candidates {
-            if path.exists() {
-                let content = fs::read_to_string(path).with_context(|| {
-                    format!("Failed to read instance config {}", path.display())
-                })?;
-                let config: InstanceConfig = toml::from_str(&content)
-                    .with_context(|| format!("Invalid TOML in {}: {}", path.display(), content))?;
-                if config.paths.is_empty() {
-                    anyhow::bail!(
-                        "Instance '{}' config {} has no paths configured",
-                        name,
-                        path.display()
-                    );
-                }
-                return Ok(Some(config));
+        let path = PathBuf::from(INSTANCE_CONFIG_DIR).join(format!("fsmon-{}.toml", name));
+        if path.exists() {
+            let content = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read instance config {}", path.display()))?;
+            let config: InstanceConfig = toml::from_str(&content)
+                .with_context(|| format!("Invalid TOML in {}: {}", path.display(), content))?;
+            if config.paths.is_empty() {
+                anyhow::bail!(
+                    "Instance '{}' config {} has no paths configured",
+                    name,
+                    path.display()
+                );
             }
+            return Ok(Some(config));
         }
         Ok(None)
     }
@@ -303,11 +282,33 @@ mod tests {
 
     #[test]
     fn test_config_load_nonexistent() {
+        let dir = std::env::temp_dir().join("fsmon_test_nonexistent");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        // Prevent interference from actual user config
+        let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &dir);
+        }
+
         let config = Config::load().unwrap();
         assert!(config.monitor.is_none());
         assert!(config.query.is_none());
         assert!(config.clean.is_none());
         assert!(config.install.is_none());
+
+        // Restore original
+        if let Some(val) = prev_xdg {
+            unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", val);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

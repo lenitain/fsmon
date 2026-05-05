@@ -88,7 +88,7 @@ sudo fsmon monitor /tmp --recursive -o /tmp/events.log
 sudo fsmon monitor /var/log --exclude "*.log"
 ```
 
-读取 `fsmon.toml`（搜索顺序：`~/.fsmon/` → `~/.config/fsmon/` → `/etc/fsmon/`）。CLI 参数覆盖配置文件。
+读取 `~/.config/fsmon/fsmon.toml`。CLI 参数覆盖配置文件。
 
 ### 实例模式 — Systemd 后台监控
 
@@ -202,8 +202,8 @@ fsmon 有两种完全独立的运行模式，各自有自己的配置文件：
 
 | 项目 | 说明 |
 |------|------|
-| 配置文件 | `fsmon.toml`（搜索顺序如下） |
-| 配置位置 | `~/.fsmon/` → `~/.config/fsmon/` → `/etc/fsmon/` |
+| 配置文件 | `~/.config/fsmon/fsmon.toml` |
+| 配置位置 | `~/.config/fsmon/` |
 | 日志 | stdout，或 `-o` 指定文件 |
 | 用途 | 临时调试、交互式排查 |
 
@@ -245,126 +245,63 @@ sudo journalctl -u fsmon@web
 ### CLI 配置（`fsmon.toml`）
 
 按以下优先级查找（首个存在的文件生效）：
+读取 `~/.config/fsmon/fsmon.toml`（`fsmon generate` 生成于此）。
 
-1. `~/.fsmon/fsmon.toml`
-2. `~/.config/fsmon/fsmon.toml`（`fsmon generate` 生成于此）
-3. `/etc/fsmon/fsmon.toml`
+生成模板：`fsmon generate`
 
-默认配置（`fsmon generate`）：
-
-```toml
-[monitor]
-# Directories to watch for filesystem events
-paths = []
-
-# Minimum file size to report (supports KB, MB, GB suffixes, e.g. "100MB", "1GB")
-# min_size = "100MB"
-
-# Comma-separated event types to filter (ACCESS, MODIFY, CREATE, DELETE, ...)
-# types = "MODIFY,CREATE"
-
-# Glob patterns to exclude from monitoring
-# exclude = "*.tmp"
-
-# Report all 14 event types regardless of the 'types' filter
-all_events = false
-
-# Path to the event log file
-# output = "/var/log/fsmon.log"
-
-# stdout format: "human", "json", or "csv" (log file is always JSON)
-format = "human"
-
-# Watch subdirectories recursively
-recursive = false
-
-# Fanotify read buffer size in bytes
-buffer_size = 32768
-
-[query]
-# Event log file to query
-# log_file = "/var/log/fsmon.log"
-
-# Start time: relative ("1h", "30m", "7d") or absolute ("2024-05-01 10:00")
-# since = "1h"
-
-# End time: same format as since
-# until = "2h"
-
-# Filter by process IDs (comma-separated)
-# pid = "1234,5678"
-
-# Filter by process name (wildcard support: nginx*, python)
-# cmd = "nginx"
-
-# Filter by usernames (comma-separated)
-# user = "root,admin"
-
-# Filter by event types (comma-separated)
-# types = "MODIFY,CREATE"
-
-# Minimum size change to include
-# min_size = "100MB"
-
-# stdout format: "human", "json", or "csv" (log file is always JSON)
-format = "human"
-
-# Sort results: "time", "size", or "pid"
-sort = "time"
-
-[clean]
-# Event log file to clean
-# log_file = "/var/log/fsmon.log"
-
-# Number of days to retain log entries
-keep_days = 30
-
-# Maximum log file size before tail truncation (e.g. "100MB", "1GB")
-# max_size = "500MB"
-
-[install]
-# systemd ProtectSystem value ("yes", "no", "strict", "full")
-protect_system = "strict"
-
-# systemd ProtectHome value ("yes", "no", "read-only")
-protect_home = "read-only"
-
-# Additional read-write paths for systemd service (used when ProtectSystem is strict)
-read_write_paths = ["/var/log"]
-
-# systemd PrivateTmp value ("yes" or "no")
-private_tmp = "yes"
-```
+| 区域 | 字段 | CLI 参数 | 类型 | 说明 |
+|------|------|---------|------|------|
+| `[monitor]` | `paths` | `PATH` 参数 | `string[]` | 监控的目录/文件 |
+| | `types` | `-t, --types` | `string` | 事件过滤，逗号分隔 |
+| | `min_size` | `-s, --min-size` | `string` | 最小大小（如 "100MB"） |
+| | `exclude` | `-e, --exclude` | `string` | 排除模式（通配符） |
+| | `all_events` | `--all-events` | `bool` | 开启全部 14 种事件 |
+| | `output` | `-o, --output` | `string` | 日志文件路径 |
+| | `format` | `-f, --format` | `string` | 输出格式：human/json/csv |
+| | `recursive` | `-r, --recursive` | `bool` | 递归监控子目录 |
+| | `buffer_size` | | `int` | fanotify 缓冲区（字节） |
+| `[query]` | `log_file` | `--log-file` | `string` | 待查询的日志 |
+| | `since` | `--since` | `string` | 起始时间（相对/绝对） |
+| | `until` | `--until` | `string` | 结束时间 |
+| | `pid` | `--pid` | `string` | 按 PID 过滤 |
+| | `cmd` | `--cmd` | `string` | 按进程名过滤 |
+| | `user` | `--user` | `string` | 按用户名过滤 |
+| | `types` | `-t, --types` | `string` | 按事件类型过滤 |
+| | `min_size` | `-s, --min-size` | `string` | 最小变更大小 |
+| | `format` | `-f, --format` | `string` | 输出格式 |
+| | `sort` | `--sort` | `string` | 排序：time/size/pid |
+| `[clean]` | `log_file` | `--log-file` | `string` | 待清理的日志 |
+| | `keep_days` | `--keep-days` | `int` | 保留天数 |
+| | `max_size` | `--max-size` | `string` | 截断前最大大小 |
+| `[install]` | `protect_system` | | `string` | systemd ProtectSystem |
+| | `protect_home` | | `string` | systemd ProtectHome |
+| | `read_write_paths` | | `string[]` | systemd 额外读写路径 |
+| | `private_tmp` | | `string` | systemd PrivateTmp |
 
 CLI 参数优先级高于配置文件。
 
 ### 实例配置（`/etc/fsmon/fsmon-{name}.toml`）
 
-每个 systemd 实例读取自己的 `/etc/fsmon/fsmon-{name}.toml`：
+每个 systemd 实例读取自己的 `/etc/fsmon/fsmon-{name}.toml`。仅 `paths` 为必需字段。生成模板：`sudo fsmon generate --instance <name>`
 
 ```toml
-# 必需：监控路径
 paths = ["/var/www"]
-
-# 可选字段
-output = "/var/log/fsmon/web.log"   # 日志文件路径（不写则无文件日志）
-types = "MODIFY,CREATE"              # 事件类型过滤
-min_size = "100MB"                   # 最小变更大小
-exclude = "*.tmp"                    # 排除模式
-all_events = false                   # 开启全部 14 种事件
-recursive = true                     # 递归监控子目录
+# output = "/var/log/fsmon/web.log"
+# types = "MODIFY,CREATE"
+# min_size = "100MB"
+# exclude = "*.tmp"
+# all_events = false
+# recursive = true
 ```
-
-可选字段说明（除 `paths` 外均为可选）：
 
 | 字段 | CLI 对应 | 说明 |
 |------|---------|------|
 | `paths` | `PATH` 参数 | **必需。** 监控的目录/文件 |
-| `output` | `-o, --output` | 日志文件路径。不设则无文件日志（事件仅进 journald） |
-| `types` | `-t, --types` | 事件类型过滤，逗号分隔 |
+| `output` | `-o, --output` | 日志路径。不设则仅 journald |
+| `types` | `-t, --types` | 事件过滤，逗号分隔 |
 | `min_size` | `-s, --min-size` | 最小变更大小 |
-| `exclude` | `-e, --exclude` | 排除模式，支持通配符 |
-| `all_events` | `--all-events` | 开启全部 14 种事件 |
+| `exclude` | `-e, --exclude` | 排除模式（通配符） |
+| `all_events` | `--all-events` | 全部 14 种事件 |
 | `recursive` | `-r, --recursive` | 递归监控子目录 |
 
 实例配置没有搜索优先级 — 按实例名精确加载 `/etc/fsmon/fsmon-{name}.toml`。CLI 参数（与 `--instance` 同时传入时）会覆盖实例配置。
