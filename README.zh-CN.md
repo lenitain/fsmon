@@ -23,7 +23,10 @@
 - **高性能**: Rust + Tokio 编写，内存占用 <5MB，零拷贝 FID 事件解析，二分查找日志查询
 - **灵活过滤**: 支持按时间、大小、进程、用户、事件类型和排除模式（通配符）过滤
 - **多种格式**: 人类可读、JSON、CSV 三种终端输出格式（日志文件始终是JSON格式）
-- **Systemd 服务**: 模板单元（`fsmon@.service`）支持多实例后台监控
+- **TOML 配置**: 持久化配置位于 `/etc/fsmon/fsmon.toml`
+- **日志管理**: 基于时间和大小的日志轮转，支持 dry-run 预览
+- **动态路径管理**: 通过 Unix socket 运行时添加/移除监控路径（无需重启守护进程）
+- **Systemd 服务**: 单实例 systemd 服务，支持自动重启和 fanotify 能力集
 
 ## 为什么选择 fsmon
 
@@ -62,72 +65,54 @@ cargo install fsmon
 
 **注意：Fanotify需要管理员权限**
 ```bash
-# 方法1：复制到 /usr/local/bin（推荐）
 sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
-sudo cp ~/.cargo/bin/fsmon-cli /usr/local/bin/
-
-# 方法2：直接使用完整路径
-sudo ~/.cargo/bin/fsmon install ...
-sudo ~/.cargo/bin/fsmon-cli monitor ...
 ```
 
-### CLI 模式 — 交互式监控
+### 守护进程模式 — 后台监控
 
 ```bash
-# 监控目录（输出到 stdout）
-sudo fsmon-cli monitor /etc --types MODIFY
-
-# 递归监控
-sudo fsmon-cli monitor ~/myproject --recursive
-
-# 写入日志文件
-sudo fsmon-cli monitor /tmp --recursive -o /tmp/events.log
-
-# 排除模式
-sudo fsmon-cli monitor /var/log --exclude "*.log"
-```
-
-读取 `~/.config/fsmon/fsmon.toml`。CLI 参数覆盖配置文件。
-
-### 实例模式 — Systemd 后台监控
-
-```bash
-# 1. 安装 systemd 模板（一次性）
+# 1. 安装 systemd 服务（一次性）
 sudo fsmon install
 
-# 2. 生成实例配置模板（或手动创建）
-sudo fsmon generate --instance {name}
+# 2. 启动守护进程
+sudo systemctl enable fsmon --now
+sudo systemctl status fsmon
 
-# 编辑模板设置路径和选项
-sudo vim /etc/fsmon/fsmon-{name}.toml
+# 3. 添加监控路径（实时生效，无需重启）
+sudo fsmon add /etc --types MODIFY
+sudo fsmon add /var/www --recursive --types MODIFY,CREATE
+sudo fsmon add /tmp --all-events
 
-# 或手动创建：
-sudo mkdir -p /etc/fsmon
-cat > /etc/fsmon/fsmon-{name}.toml << 'EOF'
-paths = ["/var/www"]
-types = "MODIFY,CREATE"
-output = "/var/log/fsmon/{name}.log"
-EOF
+# 4. 列出已监控路径
+sudo fsmon managed
 
-# 3. 用 systemd 启动
-sudo systemctl enable fsmon@{name} --now
-sudo systemctl status fsmon@{name}
-sudo journalctl -u fsmon@{name}
+# 5. 查询历史事件
+fsmon query --since 1h --cmd nginx
 
-# 4. 停用
-sudo systemctl stop fsmon@{name} && sudo systemctl disable fsmon@{name}
+# 6. 清理旧日志（dry-run 预览）
+fsmon clean --keep-days 7 --dry-run
+
+# 7. 移除监控路径
+sudo fsmon remove /tmp
+
+# 8. 停止守护进程
+sudo systemctl stop fsmon
 ```
 
-读取 `/etc/fsmon/fsmon-{name}.toml`。**此模式下 `fsmon.toml` 不生效。** 每个实例完全独立。
+配置读取自 `/etc/fsmon/fsmon.toml`。通过 `fsmon add` 添加的路径会持久化到配置中，守护进程重启后自动恢复。
 
-### 其他命令
+### 前台模式 — 无需 systemd
 
 ```bash
-# 查询历史事件
-fsmon-cli query --since 1h --cmd nginx
+# 直接在前台运行守护进程
+sudo fsmon daemon
 
-# 预览清理旧日志
-fsmon-cli clean --keep-days 7 --dry-run
+# 另一个终端添加路径
+sudo fsmon add /etc --types MODIFY
+sudo fsmon add /tmp --recursive
+
+# 查询和清理等操作在守护进程运行时同样可用
+fsmon query --since 5m
 ```
 
 ## 示例
@@ -135,31 +120,34 @@ fsmon-cli clean --keep-days 7 --dry-run
 ### 排查配置文件变更
 
 ```bash
-# 监控 /etc 的修改
-sudo fsmon-cli monitor /etc --types MODIFY --output /tmp/etc-monitor.log
+# 添加 /etc 监控
+sudo fsmon add /etc --types MODIFY
 
 # 另一个终端执行修改
 echo "192.168.1.100 newhost" | sudo tee -a /etc/hosts
 
 # 查询结果
-fsmon-cli query --log-file /tmp/etc-monitor.log --since 1h --types MODIFY
+sudo fsmon query --since 1h --types MODIFY
 ```
 
 ### 追踪大文件创建
 
 ```bash
-# 监控大于 50MB 的文件创建
-sudo fsmon-cli monitor /tmp --types CREATE --min-size 50MB --format json
+# 监控大文件创建
+sudo fsmon add /tmp --types CREATE
 
 # 触发
 dd if=/dev/zero of=/tmp/large_test.bin bs=1M count=100
+
+# 查询时按最小大小过滤
+sudo fsmon query --since 1m --min-size 50MB --format json
 ```
 
 ### 审计删除操作
 
 ```bash
-# 捕获完整的递归删除
-sudo fsmon-cli monitor ~/.projects --types DELETE --recursive --output /tmp/deletes.log
+# 添加删除事件监控
+sudo fsmon add ~/.projects --types DELETE --recursive
 
 # 触发
 rm -rf ~/.projects/fsmon-test/
@@ -173,141 +161,108 @@ rm -rf ~/.projects/fsmon-test/
 
 ```bash
 # 查询最近 1 小时 nginx 的操作，按文件大小排序
-fsmon-cli query --since 1h --cmd nginx* --sort size
+sudo fsmon query --since 1h --cmd nginx* --sort size
 
-# 仅监控 CREATE 和 DELETE 事件，排除临时文件
-sudo fsmon-cli monitor /var/www --types CREATE,DELETE --exclude "*.tmp"
+# 添加监控并排除临时文件
+sudo fsmon add /var/www --types CREATE,DELETE --exclude "*.tmp"
 ```
 
 ## 命令参考
 
-**fsmon-cli**（命令行操作）：
 ```bash
-fsmon-cli monitor --help     # 实时监控（fanotify）
-fsmon-cli query --help       # 查询历史日志（支持过滤和排序）
-fsmon-cli clean --help       # 按时间或大小清理旧日志
-fsmon-cli generate           # 生成 CLI 配置 (~/.config/fsmon/fsmon.toml)
+fsmon daemon                    # 前台运行守护进程
+fsmon add /var/www -r           # 添加监控路径（实时 + 持久化）
+sudo fsmon remove /var/www       # 移除监控路径
+sudo fsmon managed               # 列出所有监控路径及配置
+fsmon query --since 1h          # 查询历史事件（支持过滤）
+fsmon clean --keep-days 7       # 按时间或大小清理日志
+sudo fsmon install               # 安装 systemd 服务和默认配置
+sudo fsmon uninstall             # 卸载 systemd 服务
 ```
 
-**fsmon**（后台管理）：
+使用 `fsmon <COMMAND> --help` 查看每个子命令的详细帮助。
+
+## 架构
+
+fsmon 是单个二进制程序，支持两种运行模式：
+
+### 守护进程模式（后台 — systemd）
+
 ```bash
-fsmon install                       # 安装 systemd 模板单元（fsmon@.service）
-fsmon uninstall                     # 卸载 systemd 模板
-fsmon generate --instance {name}       # 生成实例配置模板 (/etc/fsmon/fsmon-web.toml)
+sudo fsmon install              # 安装 systemd 服务
+sudo systemctl enable fsmon --now
 ```
-
-## 两种模式：CLI vs Systemd 实例
-
-fsmon 有两种完全独立的运行模式，各自有自己的配置文件和二进制程序：
-
-### CLI 模式（`fsmon-cli monitor /path ...`）
 
 | 项目 | 说明 |
 |------|------|
-| 配置文件 | `~/.config/fsmon/fsmon.toml` |
-| 配置位置 | `~/.config/fsmon/` |
-| 日志 | stdout，或 `-o` 指定文件 |
-| 用途 | 临时调试、交互式排查 |
+| 配置文件 | `/etc/fsmon/fsmon.toml` |
+| 路径管理 | `fsmon add` / `fsmon remove`（通过 Unix socket 实时生效） |
+| 用途 | 长期后台监控 |
+
+### 前台模式（一次性的调试 — 无需 systemd）
 
 ```bash
-# CLI 模式：读 fsmon.toml，命令行参数覆盖配置值
-sudo fsmon-cli monitor /var/www --types MODIFY
-sudo fsmon-cli monitor /tmp --recursive -o /tmp/events.log
+sudo fsmon daemon
 ```
-
-### 实例模式（`fsmon-cli monitor --instance <name>`）
 
 | 项目 | 说明 |
 |------|------|
-| 配置文件 | `fsmon-{name}.toml`（每个实例独立） |
-| 配置位置 | 仅 `/etc/fsmon/fsmon-{name}.toml` |
-| 日志 | 实例配置中的 `output` 字段指定。不写则无文件日志（事件仅进 journald） |
-| 用途 | 长期运行的 systemd 后台监控 |
+| 配置文件 | `/etc/fsmon/fsmon.toml` |
+| 路径管理 | `fsmon add` / `fsmon remove`（通过 Unix socket 实时生效） |
+| 用途 | 临时排查、交互式调试 |
 
-```bash
-# 1. 安装 systemd 模板（一次性）
-sudo fsmon install
-
-# 2. 手动创建实例配置
-#    /etc/fsmon/fsmon-{name}.toml：
-#      paths = ["/var/www"]
-#      types = "MODIFY,CREATE"
-#      output = "/var/log/fsmon/{name}.log"
-
-# 3. 用 systemd 启动
-sudo systemctl enable fsmon@{name} --now
-sudo systemctl status fsmon@{name}
-sudo journalctl -u fsmon@{name}
-```
-
-**核心原则：两种配置永不合并。** CLI 模式不读实例配置；实例模式不读 `fsmon.toml`。改一个不会影响另一个。
+两种模式共享 `/etc/fsmon/fsmon.toml`，都支持运行时动态添加/移除路径。
 
 ## 配置文件
 
-### CLI 配置（`fsmon.toml`）
+持久化配置位于 `/etc/fsmon/fsmon.toml`（`sudo fsmon install` 自动生成）。
 
-读取 `~/.config/fsmon/fsmon.toml`（`fsmon-cli generate` 生成于此）。
+| 字段 | CLI 对应 | 类型 | 说明 |
+|------|---------|------|------|
+| `log_file` | | `string` | 日志文件路径（默认：`/var/log/fsmon/history.log`） |
+| `socket_path` | | `string` | Unix socket 路径，用于实时命令（默认：`/var/run/fsmon/fsmon.sock`） |
+| `paths` | `fsmon add` | `PathEntry[]` | 监控的路径列表 |
 
-生成模板：`fsmon-cli generate`
+每个路径条目（`PathEntry`）：
 
-| 区域 | 字段 | CLI 参数 | 类型 | 说明 |
-|------|------|---------|------|------|
-| `[monitor]` | `paths` | `PATH` 参数 | `string[]` | 监控的目录/文件 |
-| | `types` | `-t, --types` | `string` | 事件过滤，逗号分隔 |
-| | `min_size` | `-s, --min-size` | `string` | 最小大小（如 "100MB"） |
-| | `exclude` | `-e, --exclude` | `string` | 排除模式（通配符） |
-| | `all_events` | `--all-events` | `bool` | 开启全部 14 种事件 |
-| | `output` | `-o, --output` | `string` | 日志文件路径 |
-| | `format` | `-f, --format` | `string` | 输出格式：human/json/csv |
-| | `recursive` | `-r, --recursive` | `bool` | 递归监控子目录 |
-| | `buffer_size` | | `int` | fanotify 缓冲区（字节） |
-| `[query]` | `log_file` | `--log-file` | `string` | 待查询的日志 |
-| | `since` | `--since` | `string` | 起始时间（相对/绝对） |
-| | `until` | `--until` | `string` | 结束时间 |
-| | `pid` | `--pid` | `string` | 按 PID 过滤 |
-| | `cmd` | `--cmd` | `string` | 按进程名过滤 |
-| | `user` | `--user` | `string` | 按用户名过滤 |
-| | `types` | `-t, --types` | `string` | 按事件类型过滤 |
-| | `min_size` | `-s, --min-size` | `string` | 最小变更大小 |
-| | `format` | `-f, --format` | `string` | 输出格式 |
-| | `sort` | `--sort` | `string` | 排序：time/size/pid |
-| `[clean]` | `log_file` | `--log-file` | `string` | 待清理的日志 |
-| | `keep_days` | `--keep-days` | `int` | 保留天数 |
-| | `max_size` | `--max-size` | `string` | 截断前最大大小 |
-| `[install]` | `protect_system` | | `string` | systemd ProtectSystem |
-| | `protect_home` | | `string` | systemd ProtectHome |
-| | `read_write_paths` | | `string[]` | systemd 额外读写路径 |
-| | `private_tmp` | | `string` | systemd PrivateTmp |
+| 字段 | CLI 参数 | 类型 | 说明 |
+|------|---------|------|------|
+| `path` | `PATH` 参数 | `string` | 监控的目录/文件 |
+| `types` | `-t, --types` | `string[]` | 事件过滤，逗号分隔 |
+| `min_size` | `-m, --min-size` | `string` | 最小变更大小（如 "100MB"） |
+| `exclude` | `-e, --exclude` | `string` | 排除模式（通配符） |
+| `all_events` | `--all-events` | `bool` | 开启全部 14 种事件 |
+| `recursive` | `-r, --recursive` | `bool` | 递归监控子目录 |
 
-CLI 参数优先级高于配置文件。
+### 查询选项（仅 CLI 参数）
 
-### 实例配置（`/etc/fsmon/fsmon-{name}.toml`）
+| 参数 | 说明 |
+|------|------|
+| `--log-file` | 待查询的日志文件 |
+| `--since` | 起始时间（相对如 `1h`、`30m`、`7d`，或绝对时间戳） |
+| `--until` | 结束时间 |
+| `--pid` | 按 PID 过滤，逗号分隔 |
+| `--cmd` | 按进程名过滤（支持通配符，如 `nginx*`） |
+| `--user` | 按用户名过滤，逗号分隔 |
+| `-t, --types` | 按事件类型过滤，逗号分隔 |
+| `-m, --min-size` | 最小变更大小 |
+| `-f, --format` | 输出格式：`human`（默认）、`json`、`csv` |
+| `-r, --sort` | 排序：`time`、`size`、`pid` |
 
-每个 systemd 实例读取自己的 `/etc/fsmon/fsmon-{name}.toml`。仅 `paths` 为必需字段。生成模板：`sudo fsmon generate --instance <name>`
+### 清理选项（仅 CLI 参数）
 
-生成的模板中 `output` 路径使用 `{name}` 占位符，`fsmon generate --instance <name>` 生成时自动替换为实际实例名（非硬编码）。以实例 `{name}` 为例：
+| 参数 | 说明 |
+|------|------|
+| `--log-file` | 待清理的日志文件 |
+| `--keep-days` | 保留天数（默认：30） |
+| `--max-size` | 截断前最大大小（如 `100MB`） |
+| `--dry-run` | 预览模式，不实际删除 |
 
-```toml
-paths = ["/var/www"]
-# output = "/var/log/fsmon/{name}.log"
-# types = "MODIFY,CREATE"
-# min_size = "100MB"
-# exclude = "*.tmp"
-# all_events = false
-# recursive = true
-```
+### 安装选项（仅 CLI 参数）
 
-| 字段 | CLI 对应 | 说明 |
-|------|---------|------|
-| `paths` | `PATH` 参数 | **必需。** 监控的目录/文件 |
-| `output` | `-o, --output` | 日志路径。不设则仅 journald |
-| `types` | `-t, --types` | 事件过滤，逗号分隔 |
-| `min_size` | `-s, --min-size` | 最小变更大小 |
-| `exclude` | `-e, --exclude` | 排除模式（通配符） |
-| `all_events` | `--all-events` | 全部 14 种事件 |
-| `recursive` | `-r, --recursive` | 递归监控子目录 |
-
-实例配置没有搜索优先级 — 按实例名精确加载 `/etc/fsmon/fsmon-{name}.toml`。CLI 参数（与 `--instance` 同时传入时）会覆盖实例配置。
+| 参数 | 说明 |
+|------|------|
+| `--force` | 重新安装已存在的服务 |
 
 ## 技术架构
 
@@ -316,8 +271,7 @@ paths = ["/var/www"]
 | 模块 | 说明 |
 |------|------|
 | `lib.rs` | 库根 — 共享类型（`FileEvent`、`EventType`），日志清理引擎 |
-| `bin/fsmon.rs` | 守护进程二进制 — `install`、`uninstall`、`generate --instance` |
-| `bin/fsmon-cli.rs` | 命令行二进制 — `monitor`、`query`、`clean`、`generate` |
+| `bin/fsmon.rs` | 主二进制 — `daemon`、`add`、`remove`、`managed`、`query`、`clean`、`install`、`uninstall` |
 | `monitor.rs` | 核心 fanotify 监控循环，作用域过滤，LRU 文件大小追踪 |
 | `fid_parser.rs` | 底层 FID 模式事件解析，两阶段路径恢复 |
 | `dir_cache.rs` | 基于 `name_to_handle_at` 的目录句柄缓存，恢复已删除文件路径 |
@@ -325,6 +279,7 @@ paths = ["/var/www"]
 | `query.rs` | 日志文件查询，二分查找优化，多条件组合过滤 |
 | `config.rs` | TOML 持久化配置管理 |
 | `systemd.rs` | Systemd 服务安装和卸载 |
+| `socket.rs` | Unix socket 服务器（守护进程端）和客户端（add/remove 命令） |
 | `output.rs` | 事件输出格式化（人类可读、JSON、CSV） |
 | `utils.rs` | 大小/时间解析、进程信息获取、UID 查询 |
 | `help.rs` | 所有命令的集中帮助文本 |

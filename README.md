@@ -23,10 +23,10 @@
 - **High Performance**: Rust + Tokio, <5MB memory footprint, zero-copy FID event parsing, binary-search log querying
 - **Flexible Filtering**: Filter by time, size, process, user, event type, and exclude patterns (wildcards)
 - **Multiple Formats**: Human-readable, JSON, and CSV terminal output (log file always uses JSON for queryability)
-- **TOML Configuration**: Persistent config at `~/.config/fsmon/fsmon.toml`
+- **TOML Configuration**: Persistent config at `/etc/fsmon/fsmon.toml`
 - **Log Management**: Time-based and size-based log rotation with dry-run preview
-- **Two Modes**: CLI mode (reads `fsmon.toml`, interactive) and systemd instance mode (reads `/etc/fsmon/fsmon-{name}.toml`, background) — fully independent configs
-- **Systemd Service**: Template unit (`fsmon@.service`) for multi-instance monitoring with configurable security hardening — run separate instances for different paths
+- **Dynamic Path Management**: Add/remove monitored paths at runtime via Unix socket (no daemon restart needed)
+- **Systemd Service**: Systemd service with auto-restart, fanotify capabilities, and runtime directory for Unix socket
 
 ## Why fsmon
 
@@ -65,72 +65,54 @@ cargo install fsmon
 
 **Important: Fanotify requires root privileges**
 ```bash
-# Method 1: Copy to /usr/local/bin (recommended)
 sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
-sudo cp ~/.cargo/bin/fsmon-cli /usr/local/bin/
-
-# Method 2: Use full path directly
-sudo ~/.cargo/bin/fsmon install ...
-sudo ~/.cargo/bin/fsmon-cli monitor ... 
 ```
 
-### CLI Mode — Interactive Monitoring
+### Daemon Mode — Interactive Monitoring
 
 ```bash
-# Monitor a directory (output to stdout)
-sudo fsmon-cli monitor /etc --types MODIFY
-
-# Monitor with recursive watching
-sudo fsmon-cli monitor ~/myproject --recursive
-
-# Write to a log file
-sudo fsmon-cli monitor /tmp --recursive -o /tmp/events.log
-
-# Exclude patterns
-sudo fsmon-cli monitor /var/log --exclude "*.log"
-```
-
-Config read from `~/.config/fsmon/fsmon.toml`. CLI flags override config values.
-
-### Instance Mode — Systemd Background Monitoring
-
-```bash
-# 1. Install systemd template (one-time)
+# 1. Install systemd service (one-time)
 sudo fsmon install
 
-# 2. Generate instance config template (or create manually)
-sudo fsmon generate --instance web   # generated file uses `{name}` placeholder → replaced with "web"
+# 2. Start the daemon
+sudo systemctl enable fsmon --now
+sudo systemctl status fsmon
 
-# Edit the template to set paths and options
-sudo vim /etc/fsmon/fsmon-web.toml
+# 3. Add paths to monitor (live, no restart needed)
+sudo fsmon add /etc --types MODIFY
+sudo fsmon add /var/www --recursive --types MODIFY,CREATE
+sudo fsmon add /tmp --all-events
 
-# Or create manually:
-sudo mkdir -p /etc/fsmon
-cat > /etc/fsmon/fsmon-web.toml << 'EOF'
-paths = ["/var/www"]
-types = "MODIFY,CREATE"
-output = "/var/log/fsmon/web.log"
-EOF
+# 4. List monitored paths
+sudo fsmon managed
 
-# 3. Start with systemd
-sudo systemctl enable fsmon@web --now
-sudo systemctl status fsmon@web
-sudo journalctl -u fsmon@web
+# 5. Query historical events
+fsmon query --since 1h --cmd nginx
 
-# 4. Stop and disable
-sudo systemctl stop fsmon@web && sudo systemctl disable fsmon@web
+# 6. Clean old logs (dry-run preview)
+fsmon clean --keep-days 7 --dry-run
+
+# 7. Remove a path
+sudo fsmon remove /tmp
+
+# 8. Stop the daemon
+sudo systemctl stop fsmon
 ```
 
-Config read from `/etc/fsmon/fsmon-{name}.toml`. **`fsmon.toml` is ignored in this mode.** Each instance is fully independent.
+Config read from `/etc/fsmon/fsmon.toml`. Paths added via `fsmon add` are persisted in config for automatic monitoring on daemon restart.
 
-### Other Commands
+### CLI Mode — One-shot Monitoring (without systemd)
 
 ```bash
-# Query historical events
-fsmon-cli query --since 1h --cmd nginx
+# Run daemon directly in foreground
+sudo fsmon daemon
 
-# Clean old logs (dry-run preview)
-fsmon-cli clean --keep-days 7 --dry-run
+# In another terminal, add paths
+sudo fsmon add /etc --types MODIFY
+sudo fsmon add /tmp --recursive
+
+# Query, clean, etc. all work while daemon runs
+fsmon query --since 5m
 ```
 
 ## Examples
@@ -138,31 +120,34 @@ fsmon-cli clean --keep-days 7 --dry-run
 ### Investigate Configuration Changes
 
 ```bash
-# Monitor /etc for modifications
-sudo fsmon-cli monitor /etc --types MODIFY --output /tmp/etc-monitor.log
+# Add /etc for monitoring
+sudo fsmon add /etc --types MODIFY
 
 # In another terminal, make a change
 echo "192.168.1.100 newhost" | sudo tee -a /etc/hosts
 
 # Query the results
-fsmon-cli query --log-file /tmp/etc-monitor.log --since 1h --types MODIFY
+sudo fsmon query --since 1h --types MODIFY
 ```
 
 ### Track Large File Creation
 
 ```bash
 # Watch for files larger than 50MB
-sudo fsmon-cli monitor /tmp --types CREATE --min-size 50MB --format json
+sudo fsmon add /tmp --types CREATE
 
 # Trigger
 dd if=/dev/zero of=/tmp/large_test.bin bs=1M count=100
+
+# Query with min-size filter
+sudo fsmon query --since 1m --min-size 50MB --format json
 ```
 
 ### Audit Deletion Operations
 
 ```bash
-# Capture complete recursive deletion
-sudo fsmon-cli monitor ~/.projects --types DELETE --recursive --output /tmp/deletes.log
+# Monitor for deletions
+sudo fsmon add ~/.projects --types DELETE --recursive
 
 # Trigger
 rm -rf ~/.projects/fsmon-test/
@@ -176,141 +161,108 @@ rm -rf ~/.projects/fsmon-test/
 
 ```bash
 # Query nginx operations in last hour, sorted by file size
-fsmon-cli query --since 1h --cmd nginx* --sort size
+sudo fsmon query --since 1h --cmd nginx* --sort size
 
-# Monitor only CREATE and DELETE events, exclude temp files
-sudo fsmon-cli monitor /var/www --types CREATE,DELETE --exclude "*.tmp"
+# Add monitoring with exclude patterns
+sudo fsmon add /var/www --types CREATE,DELETE --exclude "*.tmp"
 ```
 
 ## Command Reference
 
-**fsmon-cli** (CLI operations):
 ```bash
-fsmon-cli monitor --help     # Real-time monitoring with fanotify
-fsmon-cli query --help       # Query history logs with filters and sorting
-fsmon-cli clean --help       # Cleanup old logs by time or size
-fsmon-cli generate           # Generate CLI config (~/.config/fsmon/fsmon.toml)
+fsmon daemon                    # Run the fsmon daemon in foreground
+fsmon add /var/www -r           # Add a path to monitoring (live + persist)
+fsmon remove /var/www           # Remove a path from monitoring
+fsmon managed                   # List all monitored paths with configuration
+fsmon query --since 1h          # Query historical events with filters
+fsmon clean --keep-days 7       # Clean old logs by time or size
+fsmon install                   # Install systemd service and config
+fsmon uninstall                 # Uninstall systemd service
 ```
 
-**fsmon** (daemon management):
+Use `fsmon <COMMAND> --help` for detailed help on each subcommand.
+
+## Architecture
+
+fsmon is a single binary with two operating modes:
+
+### Daemon Mode (background — systemd)
+
 ```bash
-fsmon install                       # Install systemd template unit (fsmon@.service)
-fsmon uninstall                     # Uninstall systemd template
-fsmon generate --instance web       # Generate instance config template (/etc/fsmon/fsmon-web.toml)
+sudo fsmon install              # Install systemd service
+sudo systemctl enable fsmon --now
 ```
-
-## Two Modes: CLI vs Systemd Instance
-
-fsmon has two completely independent operating modes, each with its own config file and binary:
-
-### CLI Mode (`fsmon-cli monitor /path ...`)
 
 | Aspect | Detail |
 |--------|--------|
-| Config file | `~/.config/fsmon/fsmon.toml` |
-| Config location | `~/.config/fsmon/` |
-| Log file | stdout only, or `-o` flag |
+| Config file | `/etc/fsmon/fsmon.toml` |
+| Path management | `fsmon add` / `fsmon remove` (live via Unix socket) |
+| Use case | Long-running background monitoring |
+
+### Foreground Mode (one-shot — no systemd)
+
+```bash
+sudo fsmon daemon
+```
+
+| Aspect | Detail |
+|--------|--------|
+| Config file | `/etc/fsmon/fsmon.toml` |
+| Path management | `fsmon add` / `fsmon remove` (live via Unix socket) |
 | Use case | Ad-hoc debugging, interactive investigation |
 
-```bash
-# CLI mode: reads fsmon.toml, flags override config values
-sudo fsmon-cli monitor /var/www --types MODIFY
-sudo fsmon-cli monitor /tmp --recursive -o /tmp/events.log
-```
-
-### Instance Mode (`fsmon-cli monitor --instance <name>`)
-
-| Aspect | Detail |
-|--------|--------|
-| Config file | `fsmon-{name}.toml` (per-instance) |
-| Config location | `/etc/fsmon/fsmon-web.toml` only |
-| Log file | Defined in instance config (`output` field). If omitted, no file log (events go to journald only) |
-| Use case | Long-running systemd background monitoring |
-
-```bash
-# 1. Install systemd template (one-time)
-sudo fsmon install
-
-# 2. Create instance config manually
-#    /etc/fsmon/fsmon-web.toml:
-#      paths = ["/var/www"]
-#      types = "MODIFY,CREATE"
-#      output = "/var/log/fsmon/web.log"
-
-# 3. Start with systemd
-sudo systemctl enable fsmon@web --now
-sudo systemctl status fsmon@web
-sudo journalctl -u fsmon@web
-```
-
-**Key rule: the two configs never merge.** CLI mode ignores instance configs; instance mode ignores `fsmon.toml`. Changing one has zero effect on the other.
+Both modes share the same config at `/etc/fsmon/fsmon.toml` and support dynamic path management at runtime.
 
 ## Configuration
 
-### CLI Config (`fsmon.toml`)
+Persistent config at `/etc/fsmon/fsmon.toml` (auto-generated by `sudo fsmon install`).
 
-Reads from `~/.config/fsmon/fsmon.toml` (generated by `fsmon-cli generate`).
+| Field | CLI flag | Type | Description |
+|-------|----------|------|-------------|
+| `log_file` | | `string` | Log file path (default: `/var/log/fsmon/history.log`) |
+| `socket_path` | | `string` | Unix socket for live commands (default: `/var/run/fsmon/fsmon.sock`) |
+| `paths` | `fsmon add` | `PathEntry[]` | Monitored paths |
 
-Generate a template: `fsmon-cli generate`
+Each path entry:
 
-| Section | Field | CLI flag | Type | Description |
-|---------|-------|----------|------|-------------|
-| `[monitor]` | `paths` | `PATH` args | `string[]` | Directories/files to watch |
-| | `types` | `-t, --types` | `string` | Event filter, comma-separated |
-| | `min_size` | `-s, --min-size` | `string` | Min size (e.g. "100MB") |
-| | `exclude` | `-e, --exclude` | `string` | Glob exclude pattern |
-| | `all_events` | `--all-events` | `bool` | Capture all 14 event types |
-| | `output` | `-o, --output` | `string` | Log file path |
-| | `format` | `-f, --format` | `string` | Output: human/json/csv |
-| | `recursive` | `-r, --recursive` | `bool` | Watch subdirectories |
-| | `buffer_size` | | `int` | Fanotify buffer (bytes) |
-| `[query]` | `log_file` | `--log-file` | `string` | Log to query |
-| | `since` | `--since` | `string` | Start time (rel/abs) |
-| | `until` | `--until` | `string` | End time |
-| | `pid` | `--pid` | `string` | Filter by PID(s) |
-| | `cmd` | `--cmd` | `string` | Filter by process name |
-| | `user` | `--user` | `string` | Filter by username(s) |
-| | `types` | `-t, --types` | `string` | Filter by event type(s) |
-| | `min_size` | `-s, --min-size` | `string` | Min size change |
-| | `format` | `-f, --format` | `string` | Output format |
-| | `sort` | `--sort` | `string` | Sort: time/size/pid |
-| `[clean]` | `log_file` | `--log-file` | `string` | Log to clean |
-| | `keep_days` | `--keep-days` | `int` | Retention in days |
-| | `max_size` | `--max-size` | `string` | Max size before truncation |
-| `[install]` | `protect_system` | | `string` | systemd ProtectSystem |
-| | `protect_home` | | `string` | systemd ProtectHome |
-| | `read_write_paths` | | `string[]` | Extra r/w paths for systemd |
-| | `private_tmp` | | `string` | systemd PrivateTmp |
+| Field | CLI flag | Type | Description |
+|-------|----------|------|-------------|
+| `path` | `PATH` arg | `string` | Directory/file to watch |
+| `types` | `-t, --types` | `string[]` | Event type filter (comma-separated) |
+| `min_size` | `-m, --min-size` | `string` | Minimum size change (e.g. "100MB") |
+| `exclude` | `-e, --exclude` | `string` | Glob exclude pattern |
+| `all_events` | `--all-events` | `bool` | Capture all 14 event types |
+| `recursive` | `-r, --recursive` | `bool` | Watch subdirectories |
 
-CLI flags override config file values.
+### Query Options (CLI flags only)
 
-### Instance Config (`/etc/fsmon/fsmon-{name}.toml`)
+| Flag | Description |
+|------|-------------|
+| `--log-file` | Log to query |
+| `--since` | Start time (relative like `1h`, `30m`, `7d` or absolute timestamp) |
+| `--until` | End time |
+| `--pid` | Filter by PID(s), comma-separated |
+| `--cmd` | Filter by process name (wildcards like `nginx*`) |
+| `--user` | Filter by username(s), comma-separated |
+| `-t, --types` | Filter by event type(s), comma-separated |
+| `-m, --min-size` | Minimum size change |
+| `-f, --format` | Output format: `human` (default), `json`, `csv` |
+| `-r, --sort` | Sort by: `time`, `size`, `pid` |
 
-Each systemd instance reads its config from `/etc/fsmon/fsmon-{name}.toml`. Only `paths` is required. Generate a template: `sudo fsmon generate --instance <name>`
+### Clean Options (CLI flags only)
 
-The generated template uses `{name}` as a placeholder in the `output` path and replaces it with the actual instance name at generation time (not hardcoded). Example output for instance `web`:
+| Flag | Description |
+|------|-------------|
+| `--log-file` | Log to clean |
+| `--keep-days` | Retention in days (default: 30) |
+| `--max-size` | Max size before truncation (e.g. `100MB`) |
+| `--dry-run` | Preview without making changes |
 
-```toml
-paths = ["/var/www"]
-# output = "/var/log/fsmon/web.log"
-# types = "MODIFY,CREATE"
-# min_size = "100MB"
-# exclude = "*.tmp"
-# all_events = false
-# recursive = true
-```
+### Install Options (CLI flags only)
 
-| Field | CLI flag | Description |
-|-------|----------|-------------|
-| `paths` | `PATH` args | **Required.** Directories/files to monitor |
-| `output` | `-o, --output` | Log path. Not set → journald only |
-| `types` | `-t, --types` | Event filter, comma-separated |
-| `min_size` | `-s, --min-size` | Min size change |
-| `exclude` | `-e, --exclude` | Glob exclude pattern |
-| `all_events` | `--all-events` | All 14 event types |
-| `recursive` | `-r, --recursive` | Watch subdirectories |
-
-Instance configs have no search priority — loaded by exact name from `/etc/fsmon/`. CLI flags alongside `--instance` override instance config fields.
+| Flag | Description |
+|------|-------------|
+| `--force` | Reinstall existing service |
 
 ## Technical Architecture
 
@@ -319,8 +271,7 @@ Instance configs have no search priority — loaded by exact name from `/etc/fsm
 | Module | Description |
 |--------|-------------|
 | `lib.rs` | Library crate root — shared types (`FileEvent`, `EventType`), log cleaning engine |
-| `bin/fsmon.rs` | Daemon binary — `install`, `uninstall`, `generate --instance` |
-| `bin/fsmon-cli.rs` | CLI binary — `monitor`, `query`, `clean`, `generate` |
+| `bin/fsmon.rs` | Main binary — `daemon`, `add`, `remove`, `managed`, `query`, `clean`, `install`, `uninstall` |
 | `monitor.rs` | Core fanotify monitoring loop, scope filtering, file size tracking (LRU) |
 | `fid_parser.rs` | Low-level FID mode event parsing, two-pass path recovery |
 | `dir_cache.rs` | Directory handle caching via `name_to_handle_at` for deleted file path resolution |
@@ -329,6 +280,7 @@ Instance configs have no search priority — loaded by exact name from `/etc/fsm
 | `config.rs` | TOML-based persistent configuration |
 | `systemd.rs` | Systemd service install and uninstall |
 | `output.rs` | Event output formatting (human, JSON, CSV) |
+| `socket.rs` | Unix socket server (daemon-side) and client (add/remove commands) |
 | `utils.rs` | Size/time parsing, process info helpers, UID lookup |
 | `help.rs` | Centralized help text for all commands |
 

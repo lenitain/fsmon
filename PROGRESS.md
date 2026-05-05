@@ -104,3 +104,4 @@ all_events = false
 - [x] 更新 AGENTS.md 反映单二进制架构
 - [x] 修复 clippy warning（空 `println!`）
 - [x] 测试通过（78 passed, 7 ignored）
+- [x] 同步 README.md 和 README.zh-CN.md 到最新代码（2026-05-05）
