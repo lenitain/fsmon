@@ -149,12 +149,9 @@ Stops the systemd unit, disables it, and removes the instance config file.
 Generates a TOML config file at ~/.config/fsmon/fsmon.toml (XDG config path).\n\
 \n\
 [Config Search Order]\n\
-  1. ~/.fsmon/fsmon.toml           (new)\n\
-  2. ~/.config/fsmon/fsmon.toml    (new, XDG)\n\
-  3. /etc/fsmon/fsmon.toml         (new, system-wide)\n\
-  4. ~/.fsmon/config.toml          (legacy)\n\
-  5. ~/.config/fsmon/config.toml   (legacy, XDG)\n\
-  6. /etc/fsmon/config.toml        (legacy, system-wide)\n\
+  1. ~/.fsmon/fsmon.toml\n\
+  2. ~/.config/fsmon/fsmon.toml (XDG)\n\
+  3. /etc/fsmon/fsmon.toml (system-wide)\n\
 \n\
 [Examples]\n\
   fsmon generate                  # Generate config (fails if exists)\n\

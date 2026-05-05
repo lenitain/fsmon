@@ -23,7 +23,7 @@
 - **高性能**: Rust + Tokio 编写，内存占用 <5MB，零拷贝 FID 事件解析，二分查找日志查询
 - **灵活过滤**: 支持按时间、大小、进程、用户、事件类型和排除模式（通配符）过滤
 - **多种格式**: 人类可读、JSON、CSV 三种终端输出格式（日志文件始终是JSON格式）
-- **TOML 配置**: 持久化配置文件，支持 `~/.config/fsmon/fsmon.toml`（或旧版 `config.toml` 向后兼容）
+- **TOML 配置**: 持久化配置文件，支持 `~/.config/fsmon/fsmon.toml`
 - **日志管理**: 基于时间和大小的日志轮转，支持预览模式
 - **Systemd 服务**: 模板单元（`fsmon@.service`）支持多实例监控，安全加固可配置 — 不同路径可分别运行独立实例
 
@@ -185,12 +185,9 @@ sudo journalctl -u fsmon@<name>
 
 fsmon 支持 TOML 配置文件，按以下优先级查找（首个存在的文件生效）：
 
-1. `~/.fsmon/fsmon.toml` — 家目录（新命名）
-2. `~/.config/fsmon/fsmon.toml` — XDG 标准路径（`fsmon generate` 生成于此）
-3. `/etc/fsmon/fsmon.toml` — 系统级配置（新命名）
-4. `~/.fsmon/config.toml` — 旧版兼容
-5. `~/.config/fsmon/config.toml` — 旧版 XDG
-6. `/etc/fsmon/config.toml` — 旧版系统级
+1. `~/.fsmon/fsmon.toml`
+2. `~/.config/fsmon/fsmon.toml`（`fsmon generate` 生成于此）
+3. `/etc/fsmon/fsmon.toml`
 
 默认配置（`fsmon generate`）：
 

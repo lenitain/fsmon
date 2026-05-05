@@ -158,20 +158,14 @@ impl Config {
     }
 
     /// Search config files in priority order:
-    ///   1. ~/.fsmon/fsmon.toml (new)
-    ///   2. ~/.config/fsmon/fsmon.toml (new, XDG)
-    ///   3. /etc/fsmon/fsmon.toml (new, system-wide)
-    ///   4. Legacy `config.toml` paths (backward compat): ~/.fsmon, ~/.config/fsmon, /etc/fsmon
+    ///   1. ~/.fsmon/fsmon.toml
+    ///   2. ~/.config/fsmon/fsmon.toml (XDG)
+    ///   3. /etc/fsmon/fsmon.toml (system-wide)
     fn find_config_file() -> Option<PathBuf> {
         let candidates = [
-            // New naming: fsmon.toml
             dirs::home_dir().map(|h| h.join(".fsmon").join("fsmon.toml")),
             dirs::config_dir().map(|h| h.join("fsmon").join("fsmon.toml")),
             Some(PathBuf::from("/etc/fsmon/fsmon.toml")),
-            // Legacy: config.toml
-            dirs::home_dir().map(|h| h.join(".fsmon").join("config.toml")),
-            dirs::config_dir().map(|h| h.join("fsmon").join("config.toml")),
-            Some(PathBuf::from("/etc/fsmon/config.toml")),
         ];
 
         candidates.into_iter().flatten().find(|path| path.exists())
