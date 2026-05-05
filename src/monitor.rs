@@ -542,8 +542,8 @@ impl Monitor {
         let exclude_regex = entry.exclude.as_ref().map(|p| {
             let escaped = regex::escape(p);
             let pattern = escaped.replace("\\*", ".*");
-            regex::Regex::new(&pattern).expect("invalid exclude pattern")
-        });
+            regex::Regex::new(&pattern).with_context(|| "invalid exclude pattern")
+        }).transpose()?;
         let recursive = entry.recursive.unwrap_or(false);
         let all_events = entry.all_events.unwrap_or(false);
 
