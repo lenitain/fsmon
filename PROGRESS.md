@@ -10,7 +10,7 @@
 
 | 领域 | 旧 | 新 |
 |------|-----|-----|
-| 日志文件名 | `log_{id}.toml` | 路径 hash → `{hash16}.toml` |
+| 日志文件名 | `log_{id}.toml` | 路径编码 → `_tmp.toml`（`/` → `_`） |
 | 路径标识 | `id: u64` 字段 | 路径自身 (`PathBuf`) |
 | CLI 删除 | `fsmon remove <ID>` | `fsmon remove <path>` |
 | CLI 查询 | `--id 1,3-5` (范围语法) | `--path /tmp --path /var` (重复) |
@@ -24,9 +24,9 @@
 |------|------|
 | `store.rs` | `PathEntry` 移除 `id`，`add_entry`/`remove_entry`/`get` 改用路径 |
 | `socket.rs` | `SocketCmd` + `SocketResp` 移除 `id` 字段 |
-| `utils.rs` | 新增 `path_to_log_name()` (路径 hash → 文件名) |
+| `utils.rs` | 新增 `path_to_log_name()` (路径编码 → 文件名，如 `_tmp.toml`) |
 | `lib.rs` | `clean_logs` 签名改用 `paths: Option<&[PathBuf]>` |
-| `monitor.rs` | 移除 `path_ids`，`write_event` 用路径 hash 日志文件，`matching_path` 取代 `entry_id_for_path` |
+| `monitor.rs` | 移除 `path_ids`，`write_event` 用路径编码日志文件，`matching_path` 取代 `entry_id_for_path` |
 | `query.rs` | `ids: Option<Vec<u64>>` → `paths: Option<Vec<PathBuf>>`，日志扫描 `.toml` |
 | `bin/fsmon.rs` | `remove` 取路径，`query --path`，`clean --path`，移除 `parse_query_ids` |
 | `help.rs` | 所有 ID 相关帮助文本更新为路径 |
