@@ -127,7 +127,7 @@ pub struct FileEvent {
     pub pid: u32,
     pub cmd: String,
     pub user: String,
-    pub file_size: i64,
+    pub file_size: u64,
     /// The monitored (watched) path this event belongs to.
     /// Allows filtering events by which watched path triggered the log entry.
     pub monitored_path: PathBuf,
@@ -185,7 +185,7 @@ file_size = {}
         let pid = table.get("pid")?.as_integer()? as u32;
         let cmd = table.get("cmd")?.as_str()?.to_string();
         let user = table.get("user")?.as_str()?.to_string();
-        let file_size = table.get("file_size")?.as_integer()?;
+        let file_size = table.get("file_size")?.as_integer()? as u64;
 
         Some(FileEvent {
             time,

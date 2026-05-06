@@ -611,14 +611,14 @@ impl Monitor {
             EventType::Create | EventType::Modify | EventType::CloseWrite => {
                 let size = fs::metadata(&raw.path).map(|m| m.len()).unwrap_or(0);
                 self.file_size_cache.put(raw.path.clone(), size);
-                size as i64
+                size
             }
             // For DELETE/DELETE_SELF/MOVED_FROM: use cached size (file already gone)
             EventType::Delete | EventType::DeleteSelf | EventType::MovedFrom => {
-                self.file_size_cache.pop(&raw.path).unwrap_or(0) as i64
+                self.file_size_cache.pop(&raw.path).unwrap_or(0)
             }
             // For other events (OPEN, ACCESS, ATTRIB, etc.): use cached size if available
-            _ => self.file_size_cache.get(&raw.path).map_or(0, |&s| s as i64),
+            _ => self.file_size_cache.get(&raw.path).map_or(0, |&s| s ),
         };
 
         FileEvent {
@@ -1134,7 +1134,7 @@ impl Monitor {
         }
 
         if let Some(min) = opts.min_size
-            && event.file_size.abs() < min
+            && event.file_size < min as u64
         {
             return false;
         }
@@ -1325,9 +1325,7 @@ mod tests {
     fn test_should_output_min_size_filter() {
         let m = make_monitor(vec!["/tmp"], Some(1000), None, None, false, false);
         assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, 2000)));
-        assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, -2000)));
         assert!(!m.should_output(&make_event("/tmp/a", EventType::Create, 1, 500)));
-        assert!(!m.should_output(&make_event("/tmp/a", EventType::Create, 1, -500)));
     }
 
     #[test]
@@ -1474,7 +1472,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    fn make_event(path: &str, event_type: EventType, pid: u32, size: i64) -> FileEvent {
+    fn make_event(path: &str, event_type: EventType, pid: u32, size: u64) -> FileEvent {
         FileEvent {
             time: Utc::now(),
             event_type,

@@ -268,7 +268,7 @@ impl Query {
             }
 
             if let Some(min) = self.min_size
-                && event.file_size.abs() < min
+                && event.file_size < min as u64
             {
                 continue;
             }
@@ -551,7 +551,7 @@ impl Query {
                 events.sort_by_key(|a| a.time);
             }
             SortBy::Size => {
-                events.sort_by_key(|b| std::cmp::Reverse(b.file_size.abs()));
+                events.sort_by_key(|b| std::cmp::Reverse(b.file_size));
             }
             SortBy::Pid => {
                 events.sort_by_key(|a| a.pid);
@@ -584,7 +584,7 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
-    fn make_event(time: DateTime<Utc>, size: i64, pid: u32) -> FileEvent {
+    fn make_event(time: DateTime<Utc>, size: u64, pid: u32) -> FileEvent {
         FileEvent {
             time,
             event_type: EventType::Create,
@@ -637,15 +637,15 @@ mod tests {
         let t = Utc::now();
         let events = vec![
             make_event(t, 100, 1),
-            make_event(t, -5000, 2),
+            make_event(t, 5000, 2),
             make_event(t, 1000, 3),
         ];
 
         let q = make_query(SortBy::Size);
         let sorted = q.sort_events(events);
-        assert_eq!(sorted[0].file_size.abs(), 5000);
-        assert_eq!(sorted[1].file_size.abs(), 1000);
-        assert_eq!(sorted[2].file_size.abs(), 100);
+        assert_eq!(sorted[0].file_size, 5000);
+        assert_eq!(sorted[1].file_size, 1000);
+        assert_eq!(sorted[2].file_size, 100);
     }
 
     #[test]

@@ -189,10 +189,17 @@ TOML 字段名为 `file_size`，`size_change` 已全部替换。
 
 ---
 
-### D2 - `file_size: i64` 负数语义不清
+### D2 — `file_size: u64`  ✅ 已修复 (2026-05-06)
 
-Delete 事件 `file_size` 恒为非负(`cached_size as i64`)。
-`format_size` 的 `-` prefix 只在前端展示时有效。
+**文件**: `src/lib.rs`
+
+**问题**: `size_change: i64` 暗示可能存在负值，但实际文件大小永不为负。
+`i64` 是历史遗留（原名 `size_change` 时可能存增量）。
+
+**修复**: 
+- 类型改为 `file_size: u64`，与绝对大小语义一致
+- 删除所有 `abs()` 调用和负数测试用例
+- TOML 字段名同步为 `file_size`
 
 ---
 
