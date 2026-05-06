@@ -100,7 +100,7 @@ kill %1
 |---|---|---|---|
 | 基础设施配置 | `~/.config/fsmon/config.toml` | `fsmon generate` / daemon 自动创建 | 用户 |
 | 路径数据库 (store) | `~/.local/share/fsmon/store.toml` | `fsmon add` / `fsmon remove` | 用户 |
-| 事件日志（按路径分文件） | `~/.local/state/fsmon/_路径名.toml` | daemon (root)¹ | 644 |
+| 事件日志（按路径分文件） | `~/.local/state/fsmon/<hash>.toml` | daemon (root)¹ | 644 |
 | Unix socket | `/tmp/fsmon-<UID>.sock` | daemon (root)¹ | 666 |
 
 ¹ daemon 以 root 运行（通过 sudo），但会通过 `SUDO_UID` + `getpwuid_r` 自动解析原始用户的 home 目录，
@@ -192,13 +192,16 @@ fsmon generate        # 生成默认配置文件
 
 日志文件以监控路径命名，便于查找：
 
-| 路径 | 日志文件名 |
-|---|---|
-| `/tmp/foo` | `_tmp_foo.toml` |
-| `/etc` | `_etc.toml` |
-| `/home/my_docs/a_b` | `_home_my!_docs_a!_b.toml` |
+| 监控路径 | 日志文件名 | 文件头注释 |
+|---|---|---|
+| `/tmp/foo` | `a1b2c3d4e5f6a7b8.toml` | `# monitored_path = "/tmp/foo"` |
+| `/etc` | `c9d0e1f2a3b4c5d6.toml` | `# monitored_path = "/etc"` |
+| `/var/log` | `e7f8a9b0c1d2e3f4.toml` | `# monitored_path = "/var/log"` |
 
-方案：`_` 表示路径分隔符 `/`，`!` 作为转义前缀表示字面下划线。双向可逆。
+> **注意**：哈希是确定性的——相同路径始终产生相同文件名。
+> 因此 `--path` 查找（`query`、`clean`）在守护进程重启后仍能正常工作。
+
+文件名使用 FNV-1a 64 位哈希（16 位十六进制 + `.toml`），避免旧版路径编码可能超出 Linux 255 字节文件名限制的问题。原始路径保留在文件头注释和每个事件的 `path` 字段中。
 
 ## 架构
 
@@ -230,7 +233,7 @@ fsmon 以用户自己管理的前台守护进程运行。
 | 基础设施配置 | `~/.config/fsmon/config.toml` — store 路径、日志目录、socket 路径 |
 | 路径数据库 | `~/.local/share/fsmon/store.toml` — 由 `add`/`remove` 自动管理 |
 | 路径管理 | `fsmon add` / `fsmon remove /path`（通过 Unix socket 实时生效） |
-| 日志输出 | TOML 格式，按路径分文件：`~/.local/state/fsmon/_路径.toml` |
+| 日志输出 | TOML 格式，按路径分文件：`~/.local/state/fsmon/<hash>.toml` |
 | Socket | `/tmp/fsmon-<UID>.sock`（权限 0666，普通用户可用） |
 | 错误分类 | Socket 协议区分 `Permanent`（永久）和 `Transient`（临时）错误 |
 | 查询 | `fsmon query --since 1h` — 二分查找优化 |
@@ -328,7 +331,7 @@ Linux Kernel (fanotify)
 - **Proc Connector**：后台线程订阅 netlink `PROC_EVENT_EXEC` 通知，在每个进程 exec 时缓存 `(pid, cmd, user)`。确保短命进程（`touch`、`rm`、`mv`）即使退出后也能被归因。
 - **FID 解析器 + 目录缓存**：两阶段事件处理：(1) 通过 `open_by_handle_at` 解析文件句柄，(2) 使用持久化目录句柄缓存恢复父目录已被删除的事件路径。处理多层嵌套的 `rm -rf` 场景。
 - **二分查找查询**：`fsmon query` 在大致按时间排序的日志文件上使用二分查找，将扫描范围缩小到 O(log N) 次 seek。配合 `expand_offset_backward` 处理边界附近的轻微乱序。
-- **按路径分文件日志**：日志以监控路径命名（如 `_tmp_foo.toml`），用 `!` 转义字面下划线。无集中日志文件，`ls`/`grep` 友好。
+- **按路径分文件日志**：日志以监控路径的确定性哈希命名（如 `a1b2c3d4.toml`）。原始路径保留在文件头注释和每个事件的 `path` 字段中。无集中日志文件，`ls` 和过滤友好。
 - **错误分类**：Socket 协议区分 `Permanent` 错误（路径冲突、配置无效——CLI 回滚 store）和 `Transient` 错误（运行时问题——重启后生效）。
 - **Rust + Tokio**：多 fd 异步读取任务通过 mpsc channel 通信。独立后台线程处理 proc connector。信号处理支持优雅关闭和 SIGHUP 配置重载。
 

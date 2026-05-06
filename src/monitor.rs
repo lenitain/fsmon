@@ -516,8 +516,11 @@ impl Monitor {
 
                         let event_types = fid_parser::mask_to_event_types(raw.mask);
 
+                        // Resolve monitored path once per event (used by build + write)
+                        let matched_path = self.matching_path(&raw.path).cloned();
+
                         for event_type in event_types {
-                            let event = self.build_file_event(raw, event_type);
+                            let event = self.build_file_event(raw, event_type, matched_path.as_deref());
 
                             if !self.is_path_in_scope(&event.path, &self.canonical_paths) {
                                 continue;
@@ -594,7 +597,12 @@ impl Monitor {
         Ok(())
     }
 
-    fn build_file_event(&mut self, raw: &fid_parser::FidEvent, event_type: EventType) -> FileEvent {
+    fn build_file_event(
+        &mut self,
+        raw: &fid_parser::FidEvent,
+        event_type: EventType,
+        matched_path: Option<&Path>,
+    ) -> FileEvent {
         let pid = raw.pid.unsigned_abs();
         let (cmd, user) = get_process_info_by_pid(pid, &raw.path, self.proc_cache.as_ref());
 
@@ -621,6 +629,7 @@ impl Monitor {
             cmd,
             user,
             size_change,
+            monitored_path: matched_path.map_or(PathBuf::new(), |p| p.to_path_buf()),
         }
     }
 
@@ -1171,17 +1180,7 @@ impl Monitor {
             Some(d) => d,
             None => return Ok(()),
         };
-        let matched_path = match self.matching_path(&event.path) {
-            Some(p) => p,
-            None => {
-                // Warn once per unique unmatched path to avoid log spam
-                eprintln!(
-                    "[WARNING] Event not matched to any monitored path: {}",
-                    event.path.display()
-                );
-                return Ok(());
-            }
-        };
+        let matched_path = &event.monitored_path;
         let log_path = log_dir.join(crate::utils::path_to_log_name(matched_path));
         let is_new = !log_path.exists();
         let mut file = OpenOptions::new()
@@ -1484,6 +1483,7 @@ mod tests {
             cmd: "test".to_string(),
             user: "root".to_string(),
             size_change: size,
+            monitored_path: PathBuf::from("/watched"),
         }
     }
 

@@ -133,6 +133,9 @@ pub struct FileEvent {
     pub cmd: String,
     pub user: String,
     pub size_change: i64,
+    /// The monitored (watched) path this event belongs to.
+    /// Allows filtering events by which watched path triggered the log entry.
+    pub monitored_path: PathBuf,
 }
 
 impl FileEvent {
@@ -141,10 +144,11 @@ impl FileEvent {
         let size_str = utils::format_size(self.size_change);
         let size_prefix = if self.size_change >= 0 { "+" } else { "" };
         format!(
-            "[{}] [{}] {} (PID: {}, CMD: {}, USER: {}, SIZE: {}{})",
+            "[{}] [{}] {} (MONITORED: {}, PID: {}, CMD: {}, USER: {}, SIZE: {}{})",
             time_str,
             self.event_type,
             self.path.display(),
+            self.monitored_path.display(),
             self.pid,
             self.cmd,
             self.user,
@@ -155,7 +159,8 @@ impl FileEvent {
 
     pub fn to_toml_string(&self) -> String {
         format!(
-            r#"time = "{}"
+            r#"monitored_path = "{}"
+time = "{}"
 event_type = "{}"
 path = "{}"
 pid = {}
@@ -163,6 +168,11 @@ cmd = "{}"
 user = "{}"
 size_change = {}
 "#,
+            self.monitored_path
+                .display()
+                .to_string()
+                .replace('\\', "\\\\")
+                .replace('"', "\\\""),
             self.time.to_rfc3339(),
             self.event_type,
             self.path
@@ -178,10 +188,11 @@ size_change = {}
     }
 
     pub fn from_toml_str(s: &str) -> Option<Self> {
-        // Parse a TOML document into a FileEvent.
-        // Accepts both inline and multi-line TOML.
         let value: toml::Value = s.parse().ok()?;
         let table = value.as_table()?;
+
+        let mp_str = table.get("monitored_path")?.as_str()?;
+        let monitored_path = PathBuf::from(mp_str);
 
         let time_str = table.get("time")?.as_str()?;
         let time = DateTime::parse_from_rfc3339(time_str)
@@ -207,6 +218,7 @@ size_change = {}
             cmd,
             user,
             size_change,
+            monitored_path,
         })
     }
 
@@ -255,6 +267,8 @@ size_change = {}
             cmd,
             user,
             size_change,
+            // CSV format has no monitored_path column — fill dummy for compat
+            monitored_path: PathBuf::from(""),
         })
     }
 }
@@ -594,6 +608,7 @@ mod tests {
             cmd: "test".into(),
             user: "root".into(),
             size_change: 0,
+            monitored_path: PathBuf::from("/tmp"),
         };
         let new_event = FileEvent {
             time: Utc::now(),
@@ -603,6 +618,7 @@ mod tests {
             cmd: "test".into(),
             user: "root".into(),
             size_change: 0,
+            monitored_path: PathBuf::from("/tmp"),
         };
 
         {
@@ -646,6 +662,7 @@ mod tests {
             cmd: "test".into(),
             user: "root".into(),
             size_change: 0,
+            monitored_path: PathBuf::from("/tmp"),
         };
 
         {
@@ -694,6 +711,7 @@ mod tests {
                     cmd: "test".into(),
                     user: "root".into(),
                     size_change: 0,
+                    monitored_path: PathBuf::from("/tmp"),
                 };
                 write!(f, "{}", event.to_toml_string()).unwrap();
                 writeln!(f).unwrap(); // blank line separator

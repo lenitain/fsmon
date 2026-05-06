@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Duration, Local, NaiveDateTime, Utc};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::OnceLock;
 
 use crate::proc_cache::ProcCache;
@@ -189,42 +189,38 @@ pub fn uid_to_username(uid: u32) -> Option<String> {
     uid_passwd_map().get(&uid).cloned()
 }
 
-/// Convert a monitored path to a deterministic, reversible log filename.
+/// Convert a monitored path to a deterministic, fixed-length log filename.
 ///
-/// Uses `!` as escape prefix to avoid collision between literal `_` and `_` as separator:
-///   1. `!` → `!!` (escape the escape char itself)
-///   2. `_` → `!_` (escape literal underscores)
-///   3. `/` → `_`   (replace path separators)
+/// Uses FNV-1a 64-bit hash (stable across runs, no dependencies) to avoid
+/// the 255-byte filename limit that the old escape-based encoding could exceed.
+/// The original path is preserved in the log file's header comment
+/// (`# monitored_path = "..."`) and in every event's `path` field.
 ///
 /// Examples:
-/// - `/tmp/foo`          → `_tmp_foo.toml`
-/// - `/home/my_docs/a_b` → `_home_my!_docs_a!_b.toml`
-/// - `!/tmp`             → `!!_tmp.toml`
+/// - `/tmp/foo`          → `a1b2c3d4e5f6a7b8.toml`
+/// - `/home/my_docs/a_b` → `c9d0e1f2a3b4c5d6.toml`
 pub fn path_to_log_name(path: &Path) -> String {
     let s = path.to_string_lossy();
-    // Order matters: escape `!` first, then `_`, then replace `/`
-    let name = s.replace('!', "!!").replace('_', "!_").replace('/', "_");
-    format!("{}.toml", name)
+    let hash = fnv1a_64(s.as_bytes());
+    format!("{:016x}.toml", hash)
 }
 
-/// Reverse of [`path_to_log_name`]: decode a log filename back to the monitored path.
-pub fn log_name_to_path(log_name: &str) -> Option<PathBuf> {
-    let stem = log_name.strip_suffix(".toml")?;
-    // Use sentinel-based decoding (null bytes can't appear in paths)
-    let step1 = stem.replace("!!", "\0");   // `!!` → sentinel
-    let step2 = step1.replace("!_", "\x01"); // `!_` → sentinel
-    let step3 = step2.replace('_', "/");       // `_` → separator
-    let step4 = step3.replace('\x01', "_");    // sentinel → literal `_`
-    let step5 = step4.replace('\0', "!");      // sentinel → `!`
-    Some(PathBuf::from(step5))
+/// FNV-1a 64-bit hash — deterministic, dependency-free, good for this use case.
+fn fnv1a_64(bytes: &[u8]) -> u64 {
+    const FNV_OFFSET: u64 = 14695981039346656037;
+    const FNV_PRIME: u64 = 1099511628211;
+    let mut hash = FNV_OFFSET;
+    for &b in bytes {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::{Datelike, TimeZone, Timelike};
-    use std::path::PathBuf;
-
     #[test]
     fn test_parse_size() {
         assert_eq!(parse_size("100").unwrap(), 100);
@@ -394,107 +390,60 @@ mod tests {
     }
 
     #[test]
-    fn test_path_to_log_name_simple() {
-        assert_eq!(path_to_log_name(Path::new("/tmp/foo")), "_tmp_foo.toml");
-        assert_eq!(path_to_log_name(Path::new("/")), "_.toml");
-        assert_eq!(path_to_log_name(Path::new("/a/b/c")), "_a_b_c.toml");
+    fn test_path_to_log_name() {
+        // Hash-based: fixed 16-char hex + .toml suffix
+        let name = path_to_log_name(Path::new("/tmp/foo"));
+        assert!(name.ends_with(".toml"));
+        assert_eq!(name.len(), 16 + 5); // 16 hex chars + ".toml"
+        assert!(name.chars().take(16).all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
-    fn test_path_to_log_name_with_underscores() {
-        // Literal underscores get `!` prefix to avoid collision with path separators
-        assert_eq!(
+    fn test_path_to_log_name_deterministic() {
+        // Same path always produces same hash
+        let a = path_to_log_name(Path::new("/tmp/foo"));
+        let b = path_to_log_name(Path::new("/tmp/foo"));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_path_to_log_name_different_paths() {
+        // Different paths produce different hashes (extremely unlikely to collide)
+        let a = path_to_log_name(Path::new("/tmp/foo"));
+        let b = path_to_log_name(Path::new("/tmp/bar"));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_path_to_log_name_deep_path() {
+        // Deep/nested paths should produce same-length output (no 255-byte limit issue)
+        let deep = Path::new(
+            "/a/very/deep/nested/path/with/lots/of/components/that/would/have/caused/issues/before/with/the/old/encoding/scheme/because/it/exceeds/255/bytes/easily/with/all/the/underscores/and/slashes/foo_bar_baz_qux_quux_corge_grault_garply_waldo_fred_plugh_xyzzy_thud"
+        );
+        let name = path_to_log_name(deep);
+        assert_eq!(name.len(), 16 + 5); // Still 21 chars
+        assert!(name.ends_with(".toml"));
+    }
+
+    #[test]
+    fn test_path_to_log_name_special_chars() {
+        // Paths with underscores, exclamation marks, etc. all produce valid short hashes
+        let names = [
             path_to_log_name(Path::new("/home/my_docs/a_b")),
-            "_home_my!_docs_a!_b.toml"
-        );
-        assert_eq!(
             path_to_log_name(Path::new("/tmp/_test")),
-            "_tmp_!_test.toml"
-        );
-        assert_eq!(
             path_to_log_name(Path::new("/__test__")),
-            "_!_!_test!_!_.toml"
-        );
-    }
-
-    #[test]
-    fn test_path_to_log_name_with_exclamation() {
-        assert_eq!(
             path_to_log_name(Path::new("!/tmp")),
-            "!!_tmp.toml"
-        );
-        assert_eq!(
             path_to_log_name(Path::new("/tmp/foo!bar")),
-            "_tmp_foo!!bar.toml"
-        );
-    }
-
-    #[test]
-    fn test_log_name_to_path_simple() {
-        assert_eq!(
-            log_name_to_path("_tmp_foo.toml"),
-            Some(PathBuf::from("/tmp/foo"))
-        );
-        assert_eq!(log_name_to_path("_.toml"), Some(PathBuf::from("/")));
-        assert_eq!(
-            log_name_to_path("_a_b_c.toml"),
-            Some(PathBuf::from("/a/b/c"))
-        );
-    }
-
-    #[test]
-    fn test_log_name_to_path_with_underscores() {
-        assert_eq!(
-            log_name_to_path("_home_my!_docs_a!_b.toml"),
-            Some(PathBuf::from("/home/my_docs/a_b"))
-        );
-        assert_eq!(
-            log_name_to_path("_tmp_!_test.toml"),
-            Some(PathBuf::from("/tmp/_test"))
-        );
-        assert_eq!(
-            log_name_to_path("_!_!_test!_!_.toml"),
-            Some(PathBuf::from("/__test__"))
-        );
-    }
-
-    #[test]
-    fn test_log_name_to_path_with_exclamation() {
-        assert_eq!(
-            log_name_to_path("!!_tmp.toml"),
-            Some(PathBuf::from("!/tmp"))
-        );
-        assert_eq!(
-            log_name_to_path("_tmp_foo!!bar.toml"),
-            Some(PathBuf::from("/tmp/foo!bar"))
-        );
-    }
-
-    #[test]
-    fn test_path_log_name_roundtrip() {
-        let paths = [
-            "/",
-            "/tmp",
-            "/tmp/foo",
-            "/home/my_docs/a_b",
-            "/tmp/_test",
-            "/__test__",
-            "/a/b/c/d/e/f",
-            "/home/user/with_underscore/deep_path",
-            "!/tmp",
-            "/tmp/foo!bar",
-            "/a!_b/c!!d/e_",
+            path_to_log_name(Path::new("/a!_b/c!!d/e_")),
         ];
-        for p in &paths {
-            let encoded = path_to_log_name(Path::new(p));
-            let decoded = log_name_to_path(&encoded).unwrap();
-            assert_eq!(decoded, PathBuf::from(p), "roundtrip failed for {}", p);
+        for name in &names {
+            assert_eq!(name.len(), 16 + 5);
+            assert!(name.ends_with(".toml"));
         }
-    }
-
-    #[test]
-    fn test_log_name_to_path_invalid() {
-        assert!(log_name_to_path("no_extension").is_none());
-        assert!(log_name_to_path(".toml").is_some()); // valid: empty stem
+        // Ensure they're all different
+        let mut sorted = names.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), names.len());
     }
 }

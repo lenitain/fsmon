@@ -617,6 +617,7 @@ mod tests {
             cmd: "test".to_string(),
             user: "root".to_string(),
             size_change: size,
+            monitored_path: PathBuf::from("/watched"),
         }
     }
 
@@ -720,6 +721,7 @@ mod tests {
             cmd: "test".into(),
             user: "root".into(),
             size_change: 0,
+            monitored_path: PathBuf::from("/tmp/test_pid"),
         };
         let e2 = FileEvent {
             time: Utc::now(),
@@ -729,6 +731,7 @@ mod tests {
             cmd: "test".into(),
             user: "root".into(),
             size_change: 0,
+            monitored_path: PathBuf::from("/tmp/test_pid"),
         };
 
         let mut f = std::fs::File::create(&log_path).unwrap();
@@ -772,6 +775,7 @@ mod tests {
             cmd: "test".into(),
             user: "root".into(),
             size_change: 0,
+            monitored_path: PathBuf::from("/tmp/test"),
         };
         let e2 = FileEvent {
             time: Utc::now(),
@@ -781,6 +785,7 @@ mod tests {
             cmd: "test".into(),
             user: "root".into(),
             size_change: 0,
+            monitored_path: PathBuf::from("/tmp/test"),
         };
 
         let mut f = std::fs::File::create(&log_path).unwrap();

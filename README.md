@@ -192,15 +192,18 @@ Use `fsmon <COMMAND> --help` for detailed help on each subcommand.
 
 ## Log File Naming
 
-Log files are named after the monitored path for easy discovery:
+Log filenames are a hash of the monitored path (FNV-1a 64-bit, 16 hex chars + `.toml`).
+This avoids the Linux 255-byte filename limit that an encoding-based scheme could exceed.
+The original path is preserved in the file's header comment and in every event's `path` field:
 
-| Path | Log filename |
-|---|---|
-| `/tmp/foo` | `_tmp_foo.toml` |
-| `/etc` | `_etc.toml` |
-| `/home/my_docs/a_b` | `_home_my!_docs_a!_b.toml` |
+| Monitored path | Log filename | File header |
+|---|---|---|
+| `/tmp/foo` | `a1b2c3d4e5f6a7b8.toml` | `# monitored_path = "/tmp/foo"` |
+| `/etc` | `c9d0e1f2a3b4c5d6.toml` | `# monitored_path = "/etc"` |
+| `/var/log` | `e7f8a9b0c1d2e3f4.toml` | `# monitored_path = "/var/log"` |
 
-The scheme uses `_` as path separator and `!` as escape prefix for literal underscores in path names. This is fully reversible — see `fsmon::utils::log_name_to_path`.
+> **Note**: The hash is deterministic — the same path always produces the same filename.
+> This means `--path` lookups (`query`, `clean`) work correctly across daemon restarts.
 
 ## Architecture
 
@@ -330,7 +333,7 @@ Linux Kernel (fanotify)
 - **Proc Connector**: Background thread subscribes to netlink `PROC_EVENT_EXEC` notifications, caching every process's `(pid, cmd, user)` at the instant it execs. This ensures short-lived processes (`touch`, `rm`, `mv`) are attributable even after they exit.
 - **FID Parser + Dir Cache**: Two-pass event processing: (1) resolve file handles via `open_by_handle_at`, (2) use persistent directory handle cache to recover paths for events where the parent directory was already deleted. Handles multi-level nested `rm -rf` scenarios.
 - **Binary Search Query**: `fsmon query` uses binary search on approximately time-sorted log files, narrowing the scan range to O(log N) seek operations. Combined with `expand_offset_backward` to catch minor out-of-order entries.
-- **Per-Path Log Files**: Logs are named after the monitored path (e.g., `_tmp_foo.toml`), using `!`-escape for literal underscores. No central log file — easy to find, `ls` and `grep` friendly.
+- **Per-Path Log Files**: Logs are named with a deterministic hash of the monitored path (e.g., `a1b2c3d4.toml`). The original path is preserved in each file's header comment and every event's `path` field. No central log file — `ls` and filter-friendly.
 - **Error Classification**: Socket protocol distinguishes `Permanent` errors (path conflicts, invalid config — CLI rolls back the store change) from `Transient` errors (runtime issues — change applies on restart).
 - **Rust + Tokio**: Per-fd async reader tasks communicate via mpsc channels. Background thread for proc connector. Signal handlers for graceful shutdown and SIGHUP config reload.
 

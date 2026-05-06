@@ -141,7 +141,7 @@ fn count_lines(path: &Path, upto: usize) -> Result<usize> {
 
 ---
 
-### B8 (低) — `path_to_log_name` 编码膨胀导致超长文件名
+### B8 (低) — `path_to_log_name` 编码膨胀导致超长文件名 ✅ 已修复 (2026-05-06)
 
 **文件**: `src/utils.rs`
 
@@ -149,8 +149,9 @@ fn count_lines(path: &Path, upto: usize) -> Result<usize> {
 含大量 `_`/`!` 的路径编码后可能超过 255 字节（Linux 文件名限制），
 导致 `write_event` 创建日志文件失败。
 
-**修复**: 将路径 hash 为固定长度（如 `sha256(path)[:16].hex()`）替代全路径编码，
-或截断过长路径时使用 hash。
+**修复**: 使用 FNV-1a 64-bit 确定性哈希替代全路径编码，文件名固定为 `{:016x}.toml`（21 字节）。
+原始路径作为 `FileEvent.monitored_path` 字段保留在每个事件中（TOML/CSV 均可解析），
+用户可用自己的过滤策略按此字段检索，不影响查询体验。
 
 ---
 
@@ -274,7 +275,7 @@ spawn 的 reader task 可能仍在执行（channel 未立即断开），
 |----------|------|
 | `cmd_remove` 路径规范化（tilde/canonical） | B2 同类 bug 回归 |
 | `cmd_clean` 并发操作 | B5 同类 bug 回归 |
-| `path_to_log_name` 超长路径（>255 字节） | B8 同类 bug 回归 |
+| `path_to_log_name` 超长路径（>255 字节） | ✅ 已修复 + 测试覆盖 |
 | `persist_config` 失败后恢复 | B6 同类 bug 回归 |
 | `build_file_event` MODIFY 事件 size_change 语义 | D1 回归 |
 | `resolve_file_handle` 多 mount_fd 返回错误 fd | C3 回归 |
