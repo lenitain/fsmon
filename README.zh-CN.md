@@ -287,24 +287,31 @@ path = "/tmp/fsmon-<UID>.sock"
 
 ## 技术架构
 
-### 模块
+### 源码结构
 
-| 模块 | 说明 |
-|------|------|
-| `lib.rs` | 库根 — 共享类型（`FileEvent`、`EventType`），日志清理引擎 |
-| `bin/fsmon.rs` | 主二进制 — `daemon`、`add`、`remove`、`managed`、`query`、`clean`、`generate` |
-| `config.rs` | 基础设施配置（`~/.config/fsmon/config.toml`），通过 `SUDO_UID` 解析路径 |
-| `store.rs` | 监控路径数据库（`~/.local/share/fsmon/store.toml`） |
-| `monitor.rs` | 核心 fanotify 监控循环，按文件系统分 FD 组，LRU 文件大小追踪，无限递归防护 |
-| `fid_parser.rs` | 底层 FID 模式事件解析，两阶段路径恢复，内核结构体定义 |
-| `dir_cache.rs` | 基于 `name_to_handle_at` 的目录句柄缓存，恢复已删除文件路径 |
-| `proc_cache.rs` | Netlink proc connector 监听器 — 在进程 `exec()` 时捕获短命进程信息 |
-| `query.rs` | 日志文件查询，二分查找优化，多条件组合过滤 |
-| `output.rs` | 事件输出格式化（人类可读、TOML、CSV） |
-| `socket.rs` | Unix socket 协议（TOML over stream socket） — daemon 服务器 + 客户端，`ErrorKind` 枚举 |
-| `utils.rs` | 大小/时间解析、进程信息获取、UID 查询（`/etc/passwd`）、路径转日志名编码 |
-| `help.rs` | 所有命令的集中帮助文本 |
-| `systemd.rs` | 已废弃的 systemd 模块 — 引导用户使用 `sudo fsmon daemon &` |
+```
+src/
+├── bin/
+│   └── fsmon.rs          # CLI: daemon, add, remove, managed, query, clean, generate
+├── lib.rs                # Crate 根: FileEvent, EventType, 日志清理引擎
+├── config.rs             # 基础设施配置 (~/.config/fsmon/config.toml)
+│                         #   SUDO_UID 路径解析, tilde 展开
+├── store.rs              # 路径数据库 (~/.local/share/fsmon/store.toml)
+├── monitor.rs            # Fanotify 主循环: 按文件系统分 FD 组, 作用域/LRU 过滤,
+│                         #   socket 命令处理, 无限递归防护
+├── fid_parser.rs         # 底层 FID 事件解析, 两阶段路径恢复
+├── dir_cache.rs          # 目录句柄缓存 (name_to_handle_at)
+│                         #   （父目录删除后恢复事件路径）
+├── proc_cache.rs         # Netlink proc connector: 在 exec() 时捕获
+│                         #   (pid,cmd,user)，归因短命进程
+├── query.rs              # 日志查询: 二分查找 + 组合过滤
+├── output.rs             # 事件格式化: human, TOML, CSV
+├── socket.rs             # Unix socket 协议 (TOML over stream):
+│                         #   daemon 服务端 + CLI 客户端, ErrorKind 枚举
+├── utils.rs              # parse_size, parse_time, uid 查询, 路径↔日志名
+├── help.rs               # 集中式帮助文本
+└── systemd.rs            # 已废弃 — 引导用户使用 sudo fsmon daemon &
+```
 
 ### 数据流
 

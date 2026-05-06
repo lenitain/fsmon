@@ -289,24 +289,31 @@ path = "/tmp/fsmon-<UID>.sock"
 
 ## Technical Architecture
 
-### Modules
+### Source Tree
 
-| Module | Description |
-|--------|-------------|
-| `lib.rs` | Library crate root — shared types (`FileEvent`, `EventType`), log cleaning engine |
-| `bin/fsmon.rs` | Main binary — `daemon`, `add`, `remove`, `managed`, `query`, `clean`, `generate` |
-| `config.rs` | Infrastructure config (`~/.config/fsmon/config.toml`), path resolution via `SUDO_UID` |
-| `store.rs` | Monitored path database (`~/.local/share/fsmon/store.toml`) |
-| `monitor.rs` | Core fanotify monitoring loop, per-filesystem FD groups, scope filtering, file size tracking (LRU), recursion prevention |
-| `fid_parser.rs` | Low-level FID mode event parsing, two-pass path recovery, kernel struct definitions |
-| `dir_cache.rs` | Directory handle caching via `name_to_handle_at` for deleted file path resolution |
-| `proc_cache.rs` | Netlink proc connector listener — captures short-lived process info at `exec()` |
-| `query.rs` | Log file querying with binary search optimization and combined filters |
-| `output.rs` | Event output formatting (human, TOML, CSV) |
-| `socket.rs` | Unix socket protocol (TOML over stream socket) — daemon server + client helpers, `ErrorKind` enum |
-| `utils.rs` | Size/time parsing, process info helpers, UID lookup via `/etc/passwd`, path-to-log-name encoding |
-| `help.rs` | Centralized help text for all commands |
-| `systemd.rs` | Deprecated systemd module — guides users to `sudo fsmon daemon &` |
+```
+src/
+├── bin/
+│   └── fsmon.rs          # CLI: daemon, add, remove, managed, query, clean, generate
+├── lib.rs                # Crate root: FileEvent, EventType, log cleaning engine
+├── config.rs             # Infrastructure config (~/.config/fsmon/config.toml)
+│                         #   SUDO_UID-based home resolution, tilde expansion
+├── store.rs              # Path database (~/.local/share/fsmon/store.toml)
+├── monitor.rs            # Fanotify loop: per-fs FD groups, scope/LRU filters,
+│                         #   socket command handler, recursion prevention
+├── fid_parser.rs         # Low-level FID event parsing, two-pass path recovery
+├── dir_cache.rs          # Directory handle cache via name_to_handle_at
+│                         #   (recovers paths after parent dir deletion)
+├── proc_cache.rs         # Netlink proc connector: captures (pid,cmd,user)
+│                         #   at exec() for short-lived process attribution
+├── query.rs              # Log querying with binary search + combined filters
+├── output.rs             # Event formatting: human, TOML, CSV
+├── socket.rs             # Unix socket protocol (TOML over stream):
+│                         #   daemon server + CLI client, ErrorKind enum
+├── utils.rs              # parse_size, parse_time, uid lookup, path↔log name
+├── help.rs               # Centralized help text for all commands
+└── systemd.rs            # Deprecated — guides users to sudo fsmon daemon &
+```
 
 ### Data Flow
 
