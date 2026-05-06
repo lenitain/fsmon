@@ -284,7 +284,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             println!("Daemon updated live");
         }
         Ok(resp) => {
-            let is_permanent = resp.error_kind.as_deref() == Some("permanent");
+            let is_permanent = resp.error_kind == Some(fsmon::socket::ErrorKind::Permanent);
             if is_permanent {
                 // Revert store save — the error will persist after restart
                 let mut store = Store::load(&cfg.store.file)?;

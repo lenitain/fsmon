@@ -29,15 +29,24 @@ pub struct SocketCmd {
     pub all_events: Option<bool>,
 }
 
+/// Classifies whether an error is permanent (will persist after daemon restart)
+/// or transient (runtime issue, will work after restart).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ErrorKind {
+    /// The error will persist across daemon restarts (e.g., path conflicts, invalid config).
+    Permanent,
+    /// The error is a runtime issue (e.g., daemon not running, fanotify failure).
+    /// This is the default when `error_kind` is absent.
+    Transient,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SocketResp {
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// Error kind: "permanent" (will persist after restart) or "transient" (runtime, will work on restart).
-    /// If absent, defaults to "transient" for backward compatibility.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error_kind: Option<String>,
+    pub error_kind: Option<ErrorKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paths: Option<Vec<PathEntry>>,
 }
@@ -61,12 +70,11 @@ impl SocketResp {
         }
     }
 
-    /// Return this error kind as "permanent" — the operation will fail again after restart.
     pub fn permanent_err(msg: impl Into<String>) -> Self {
         SocketResp {
             ok: false,
             error: Some(msg.into()),
-            error_kind: Some("permanent".to_string()),
+            error_kind: Some(ErrorKind::Permanent),
             paths: None,
         }
     }
