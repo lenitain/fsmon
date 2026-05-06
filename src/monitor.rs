@@ -1155,15 +1155,12 @@ impl Monitor {
             }
         };
         let log_path = log_dir.join(crate::utils::path_to_log_name(matched_path));
-        let is_new = !log_path.exists();
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&log_path)?;
-        // Chown new log files to the original user so they own everything in their ~
-        if is_new {
-            let _ = chown_to_user(&log_path);
-        }
+        // Chown every time (idempotent). Fixes old root-owned files from prior versions.
+        let _ = chown_to_user(&log_path);
         writeln!(file, "{}", event.to_toml_string())?;
         writeln!(file)?; // blank line separator
         Ok(())
