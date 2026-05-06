@@ -606,7 +606,7 @@ impl Monitor {
         let pid = raw.pid.unsigned_abs();
         let (cmd, user) = get_process_info_by_pid(pid, &raw.path, self.proc_cache.as_ref());
 
-        let size_change = match event_type {
+        let file_size = match event_type {
             // For CREATE/MODIFY/CLOSE_WRITE: get actual size and cache it
             EventType::Create | EventType::Modify | EventType::CloseWrite => {
                 let size = fs::metadata(&raw.path).map(|m| m.len()).unwrap_or(0);
@@ -628,7 +628,7 @@ impl Monitor {
             pid,
             cmd,
             user,
-            size_change,
+            file_size,
             monitored_path: matched_path.map_or(PathBuf::new(), |p| p.to_path_buf()),
         }
     }
@@ -1134,7 +1134,7 @@ impl Monitor {
         }
 
         if let Some(min) = opts.min_size
-            && event.size_change.abs() < min
+            && event.file_size.abs() < min
         {
             return false;
         }
@@ -1482,7 +1482,7 @@ mod tests {
             pid,
             cmd: "test".to_string(),
             user: "root".to_string(),
-            size_change: size,
+            file_size: size,
             monitored_path: PathBuf::from("/watched"),
         }
     }

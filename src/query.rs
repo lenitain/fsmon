@@ -268,7 +268,7 @@ impl Query {
             }
 
             if let Some(min) = self.min_size
-                && event.size_change.abs() < min
+                && event.file_size.abs() < min
             {
                 continue;
             }
@@ -551,7 +551,7 @@ impl Query {
                 events.sort_by_key(|a| a.time);
             }
             SortBy::Size => {
-                events.sort_by_key(|b| std::cmp::Reverse(b.size_change.abs()));
+                events.sort_by_key(|b| std::cmp::Reverse(b.file_size.abs()));
             }
             SortBy::Pid => {
                 events.sort_by_key(|a| a.pid);
@@ -592,7 +592,7 @@ mod tests {
             pid,
             cmd: "test".to_string(),
             user: "root".to_string(),
-            size_change: size,
+            file_size: size,
             monitored_path: PathBuf::from("/watched"),
         }
     }
@@ -643,9 +643,9 @@ mod tests {
 
         let q = make_query(SortBy::Size);
         let sorted = q.sort_events(events);
-        assert_eq!(sorted[0].size_change.abs(), 5000);
-        assert_eq!(sorted[1].size_change.abs(), 1000);
-        assert_eq!(sorted[2].size_change.abs(), 100);
+        assert_eq!(sorted[0].file_size.abs(), 5000);
+        assert_eq!(sorted[1].file_size.abs(), 1000);
+        assert_eq!(sorted[2].file_size.abs(), 100);
     }
 
     #[test]
@@ -678,7 +678,7 @@ mod tests {
         let q = make_query(SortBy::Size);
         let sorted = q.sort_events(events);
         assert_eq!(sorted.len(), 1);
-        assert_eq!(sorted[0].size_change, 42);
+        assert_eq!(sorted[0].file_size, 42);
     }
 
     #[test]
@@ -696,7 +696,7 @@ mod tests {
             pid: 100,
             cmd: "test".into(),
             user: "root".into(),
-            size_change: 0,
+            file_size: 0,
             monitored_path: PathBuf::from("/tmp/test_pid"),
         };
         let e2 = FileEvent {
@@ -706,7 +706,7 @@ mod tests {
             pid: 200,
             cmd: "test".into(),
             user: "root".into(),
-            size_change: 0,
+            file_size: 0,
             monitored_path: PathBuf::from("/tmp/test_pid"),
         };
 
@@ -750,7 +750,7 @@ mod tests {
             pid: 1,
             cmd: "test".into(),
             user: "root".into(),
-            size_change: 0,
+            file_size: 0,
             monitored_path: PathBuf::from("/tmp/test"),
         };
         let e2 = FileEvent {
@@ -760,7 +760,7 @@ mod tests {
             pid: 1,
             cmd: "test".into(),
             user: "root".into(),
-            size_change: 0,
+            file_size: 0,
             monitored_path: PathBuf::from("/tmp/test"),
         };
 

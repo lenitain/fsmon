@@ -127,7 +127,7 @@ pub struct FileEvent {
     pub pid: u32,
     pub cmd: String,
     pub user: String,
-    pub size_change: i64,
+    pub file_size: i64,
     /// The monitored (watched) path this event belongs to.
     /// Allows filtering events by which watched path triggered the log entry.
     pub monitored_path: PathBuf,
@@ -143,7 +143,7 @@ path = "{}"
 pid = {}
 cmd = "{}"
 user = "{}"
-size_change = {}
+file_size = {}
 "#,
             self.monitored_path
                 .display()
@@ -160,7 +160,7 @@ size_change = {}
             self.pid,
             self.cmd.replace('\\', "\\\\").replace('"', "\\\""),
             self.user.replace('\\', "\\\\").replace('"', "\\\""),
-            self.size_change,
+            self.file_size,
         )
     }
 
@@ -185,7 +185,7 @@ size_change = {}
         let pid = table.get("pid")?.as_integer()? as u32;
         let cmd = table.get("cmd")?.as_str()?.to_string();
         let user = table.get("user")?.as_str()?.to_string();
-        let size_change = table.get("size_change")?.as_integer()?;
+        let file_size = table.get("file_size")?.as_integer()?;
 
         Some(FileEvent {
             time,
@@ -194,7 +194,7 @@ size_change = {}
             pid,
             cmd,
             user,
-            size_change,
+            file_size,
             monitored_path,
         })
     }
@@ -534,7 +534,7 @@ mod tests {
             pid: 1,
             cmd: "test".into(),
             user: "root".into(),
-            size_change: 0,
+            file_size: 0,
             monitored_path: PathBuf::from("/tmp"),
         };
         let new_event = FileEvent {
@@ -544,7 +544,7 @@ mod tests {
             pid: 1,
             cmd: "test".into(),
             user: "root".into(),
-            size_change: 0,
+            file_size: 0,
             monitored_path: PathBuf::from("/tmp"),
         };
 
@@ -588,7 +588,7 @@ mod tests {
             pid: 1,
             cmd: "test".into(),
             user: "root".into(),
-            size_change: 0,
+            file_size: 0,
             monitored_path: PathBuf::from("/tmp"),
         };
 
@@ -637,7 +637,7 @@ mod tests {
                     pid: 1,
                     cmd: "test".into(),
                     user: "root".into(),
-                    size_change: 0,
+                    file_size: 0,
                     monitored_path: PathBuf::from("/tmp"),
                 };
                 write!(f, "{}", event.to_toml_string()).unwrap();
