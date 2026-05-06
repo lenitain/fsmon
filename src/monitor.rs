@@ -962,12 +962,14 @@ impl Monitor {
     fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> SocketResp {
         match cmd.cmd.as_str() {
             "add" => {
-                let path = match &cmd.path {
+                let raw = match &cmd.path {
                     Some(p) => p.clone(),
                     None => {
                         return SocketResp::err("Missing 'path' field");
                     }
                 };
+                // Normalize path for consistent comparison
+                let path = resolve_recursion_check(&raw);
                 // Remove first if already monitored, then add with new options
                 if self.path_options.contains_key(&path) {
                     let _ = self.remove_path(&path);
