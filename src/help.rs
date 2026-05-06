@@ -93,7 +93,6 @@ Options:
   --user            Filter by username (comma-separated)
   --types           Filter by event type (comma-separated)
   --min-size        Minimum size change
-  --format          Output format: human, json, csv
   --sort            Sort by: time, size, pid
 
 Examples:

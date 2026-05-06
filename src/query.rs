@@ -5,7 +5,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use crate::utils::{format_size, parse_time};
+use crate::utils::parse_time;
 use crate::{EventType, FileEvent, OutputFormat, SortBy, parse_log_line};
 
 const SCAN_BACK_BYTES: u64 = 4096;
@@ -567,34 +567,10 @@ impl Query {
         }
 
         match self.format {
-            OutputFormat::Human => {
-                for event in events {
-                    println!("{}", event.to_human_string());
-                }
-            }
             OutputFormat::Toml => {
                 for event in events {
                     print!("{}", event.to_toml_string());
                     println!(); // blank line separator
-                }
-            }
-            OutputFormat::Csv => {
-                println!("time,type,path,pid,cmd,user,size_change,size_change_str");
-                for event in events {
-                    let size_human = format_size(event.size_change);
-                    let size_prefix = if event.size_change >= 0 { "+" } else { "" };
-                    println!(
-                        "{},{},{},{},{},{},{},{}{}",
-                        event.time.to_rfc3339(),
-                        event.event_type,
-                        event.path.display(),
-                        event.pid,
-                        event.cmd,
-                        event.user,
-                        event.size_change,
-                        size_prefix,
-                        size_human
-                    );
                 }
             }
         }
@@ -632,7 +608,7 @@ mod tests {
             None,
             None,
             None,
-            OutputFormat::Human,
+            OutputFormat::Toml,
             sort,
         )
     }
@@ -748,7 +724,7 @@ mod tests {
             None,
             None,
             None,
-            OutputFormat::Human,
+            OutputFormat::Toml,
             SortBy::Time,
         );
 
@@ -802,7 +778,7 @@ mod tests {
             None,
             Some(vec![EventType::Create]),
             None,
-            OutputFormat::Human,
+            OutputFormat::Toml,
             SortBy::Time,
         );
 

@@ -199,12 +199,14 @@ Delete 事件 `size_change` 恒为非负（`cached_size as i64`）。
 
 ---
 
-### D3 — 死代码
+### D3 — 死代码 ✅ 已清理 (2026-05-06)
 
-| 文件 | 函数 | 原因 |
+| 文件 | 函数 | 处理 |
 |------|------|------|
-| `src/output.rs` | `output_event()` | 从未调用。实际输出走 `write_event` + `query::output_events` |
-| `src/socket.rs` | `listen()` / `read_toml_message()` | daemon 用 `monitor.rs::run()` inline socket 处理 |
+| `src/output.rs` | `output_event()` | 删除（从未调用，依赖 Human/Csv 输出） |
+| `src/lib.rs` | `FileEvent::to_human_string()` / `FileEvent::to_csv_string()` / `FileEvent::from_csv_str()` | 删除 |
+| `src/lib.rs` | `OutputFormat::Human` / `OutputFormat::Csv` | 移除 enum 变体（仅保留 `Toml`） |
+| `Cargo.toml` | `csv` 依赖 | 移除 |
 
 ---
 

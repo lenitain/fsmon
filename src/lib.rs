@@ -3,7 +3,6 @@ pub mod dir_cache;
 pub mod fid_parser;
 pub mod help;
 pub mod monitor;
-pub mod output;
 pub mod proc_cache;
 pub mod query;
 pub mod socket;
@@ -26,11 +25,7 @@ pub const EXIT_CONFIG: i32 = 78;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum OutputFormat {
-    Human,
-    /// Alias for TOML output format
-    #[clap(name = "json")]
     Toml,
-    Csv,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -139,24 +134,6 @@ pub struct FileEvent {
 }
 
 impl FileEvent {
-    pub fn to_human_string(&self) -> String {
-        let time_str = utils::format_datetime(&self.time);
-        let size_str = utils::format_size(self.size_change);
-        let size_prefix = if self.size_change >= 0 { "+" } else { "" };
-        format!(
-            "[{}] [{}] {} (MONITORED: {}, PID: {}, CMD: {}, USER: {}, SIZE: {}{})",
-            time_str,
-            self.event_type,
-            self.path.display(),
-            self.monitored_path.display(),
-            self.pid,
-            self.cmd,
-            self.user,
-            size_prefix,
-            size_str
-        )
-    }
-
     pub fn to_toml_string(&self) -> String {
         format!(
             r#"monitored_path = "{}"
@@ -222,66 +199,16 @@ size_change = {}
         })
     }
 
-    pub fn to_csv_string(&self) -> String {
-        use csv::WriterBuilder;
-        let mut wtr = WriterBuilder::new().has_headers(false).from_writer(vec![]);
-        wtr.write_record([
-            self.time.to_rfc3339(),
-            self.event_type.to_string(),
-            self.path.display().to_string(),
-            self.pid.to_string(),
-            self.cmd.clone(),
-            self.user.clone(),
-            self.size_change.to_string(),
-        ])
-        .expect("csv write failed");
-        String::from_utf8(wtr.into_inner().expect("csv flush failed"))
-            .expect("csv not utf8")
-            .trim()
-            .to_string()
-    }
 
-    pub fn from_csv_str(s: &str) -> Option<Self> {
-        use csv::ReaderBuilder;
-        let mut rdr = ReaderBuilder::new()
-            .has_headers(false)
-            .from_reader(s.as_bytes());
-        let record = rdr.records().next()?.ok()?;
-        if record.len() < 7 {
-            return None;
-        }
-        let time = DateTime::parse_from_rfc3339(&record[0])
-            .ok()?
-            .with_timezone(&Utc);
-        let event_type: EventType = record[1].parse().ok()?;
-        let path = PathBuf::from(&record[2]);
-        let pid: u32 = record[3].parse().ok()?;
-        let cmd = record[4].to_string();
-        let user = record[5].to_string();
-        let size_change: i64 = record[6].parse().ok()?;
-        Some(FileEvent {
-            time,
-            event_type,
-            path,
-            pid,
-            cmd,
-            user,
-            size_change,
-            // CSV format has no monitored_path column — fill dummy for compat
-            monitored_path: PathBuf::from(""),
-        })
-    }
 }
 
-/// Parse a log line (or multi-line block) into a FileEvent.
-/// Supports TOML format (multi-line, separated by blank lines) and CSV (single-line).
+/// Parse a TOML event block into a FileEvent.
 pub fn parse_log_line(line: &str) -> Option<FileEvent> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return None;
     }
-    // Try TOML first, fall back to CSV
-    FileEvent::from_toml_str(trimmed).or_else(|| FileEvent::from_csv_str(trimmed))
+    FileEvent::from_toml_str(trimmed)
 }
 
 /// Read the next TOML event block from the reader.

@@ -102,8 +102,7 @@ struct QueryArgs {
     types: Option<String>,
     #[arg(short = 'm', long)]
     min_size: Option<String>,
-    #[arg(short, long, value_enum)]
-    format: Option<OutputFormat>,
+
     #[arg(short = 'r', long, value_enum)]
     sort: Option<SortBy>,
 }
@@ -456,7 +455,6 @@ async fn cmd_query(args: QueryArgs) -> Result<()> {
         })
         .transpose()?;
 
-    let format = args.format.unwrap_or(OutputFormat::Human);
     let sort = args.sort.unwrap_or(SortBy::Time);
 
     let query = Query::new(
@@ -469,7 +467,7 @@ async fn cmd_query(args: QueryArgs) -> Result<()> {
         users,
         event_types,
         min_size_bytes,
-        format,
+        OutputFormat::Toml,
         sort,
     );
 
