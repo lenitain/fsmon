@@ -146,6 +146,12 @@ pub struct Monitor {
     /// Shared state for spawning reader tasks during live-add (set in run())
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<fid_parser::FidEvent>>>,
     shared_dir_cache: Option<Arc<Mutex<HashMap<fid_parser::HandleKey, PathBuf>>>>,
+    /// Paths that didn't exist at add/startup time, retried on directory creation
+    pending_paths: Vec<(PathBuf, PathEntry)>,
+    /// inotify instance watching parent dirs of pending paths
+    inotify: Option<inotify::Inotify>,
+    /// Watch descriptors kept alive so watches stay active
+    _inotify_watches: Vec<inotify::WatchDescriptor>,
 }
 
 impl Monitor {
@@ -205,6 +211,9 @@ impl Monitor {
             dir_cache: HashMap::new(),
             event_tx: None,
             shared_dir_cache: None,
+            pending_paths: Vec::new(),
+            inotify: None,
+            _inotify_watches: Vec::new(),
         })
     }
 
@@ -264,13 +273,28 @@ impl Monitor {
 
         // Collect canonical paths
         for path in &self.paths {
-            let canonical = if path.exists() {
-                path.canonicalize().unwrap_or_else(|_| path.clone())
+            if path.exists() {
+                let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+                self.canonical_paths.push(canonical);
             } else {
-                path.clone()
-            };
-            self.canonical_paths.push(canonical);
+                eprintln!(
+                    "[WARNING] Path '{}' does not exist yet — will start monitoring when created.",
+                    path.display()
+                );
+                let opts = self.path_options.get(path)
+                    .expect("path in paths but not in path_options");
+                self.pending_paths.push((path.clone(), PathEntry {
+                    path: path.clone(),
+                    recursive: opts.recursive.then_some(true),
+                    types: None,
+                    min_size: None,
+                    exclude: None,
+                    all_events: opts.all_events.then_some(true),
+                }));
+            }
         }
+        // Set up inotify watches for pending paths
+        self.setup_inotify_watches();
 
         // Initialize per-filesystem fanotify fds. The kernel does not allow
         // marks on different filesystems to coexist on a single fanotify fd
@@ -521,6 +545,12 @@ impl Monitor {
 
         let socket_listener = self.socket_listener.take();
 
+        // Build inotify AsyncFd for tokio event loop
+        let inotify_async = self.inotify.as_ref().map(|ino| {
+            let fd = ino.as_raw_fd();
+            AsyncFd::new(FanFd(fd)).expect("inotify AsyncFd")
+        });
+
         loop {
             tokio::select! {
                 Some(events) = event_rx.recv() => {
@@ -563,6 +593,24 @@ impl Monitor {
                 _ = sighup.recv() => {
                     if let Err(e) = self.reload_config() {
                         eprintln!("Config reload error: {e}");
+                    }
+                }
+                inotify_ready = async {
+                    match inotify_async.as_ref() {
+                        Some(afd) => afd.readable().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    if let Ok(mut guard) = inotify_ready {
+                        if let Some(ref mut inotify) = self.inotify {
+                            // Drain all pending inotify events
+                            let mut buf = [0u8; 4096];
+                            let _ = inotify.read_events(&mut buf);
+                            // inotify doesn't tell us which pending path was created,
+                            // so just check all of them
+                            self.check_pending();
+                        }
+                        guard.clear_ready();
                     }
                 }
                 accept_result = async {
@@ -774,11 +822,16 @@ impl Monitor {
             );
         }
 
-        let canonical = if path.exists() {
-            path.canonicalize().unwrap_or_else(|_| path.clone())
-        } else {
-            path.clone()
-        };
+        if !path.exists() {
+            eprintln!(
+                "[WARNING] Path '{}' does not exist yet — will start monitoring when created.",
+                path.display()
+            );
+            self.pending_paths.push((path.clone(), entry.clone()));
+            return Ok(());
+        }
+
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
 
         let event_types = entry.types.as_ref().map(|types| {
             types
@@ -1140,6 +1193,86 @@ impl Monitor {
         Ok(())
     }
 
+    /// Find the deepest existing ancestor directory of a path.
+    /// Walks up until it finds a directory that exists, or returns None.
+    fn nearest_existing_ancestor(path: &Path) -> Option<PathBuf> {
+        let mut p = path.to_path_buf();
+        loop {
+            if p.is_dir() {
+                return Some(p);
+            }
+            if !p.pop() {
+                return None;
+            }
+        }
+    }
+
+    /// Set up inotify watches on parent directories of all pending paths.
+    /// Removes stale watches first.
+    fn setup_inotify_watches(&mut self) {
+        use inotify::WatchMask;
+
+        // Drop old watches
+        self._inotify_watches.clear();
+
+        if self.pending_paths.is_empty() {
+            self.inotify = None;
+            return;
+        }
+
+        let inotify = self.inotify.get_or_insert_with(|| {
+            inotify::Inotify::init().expect("inotify_init")
+        });
+
+        for (path, _) in &self.pending_paths {
+            if let Some(parent) = Self::nearest_existing_ancestor(path)
+                && let Ok(wd) = inotify.watches().add(
+                    &parent,
+                    WatchMask::CREATE | WatchMask::MOVED_TO,
+                )
+            {
+                self._inotify_watches.push(wd);
+            }
+        }
+    }
+
+    /// Retry setting up fanotify monitoring for paths that didn't exist before.
+    /// Called when inotify detects directory creation under a watched parent.
+    fn check_pending(&mut self) {
+        let mut i = 0;
+        while i < self.pending_paths.len() {
+            let (path, _) = &self.pending_paths[i];
+            if path.exists() {
+                let entry = self.pending_paths.swap_remove(i);
+                match self.add_path(&entry.1) {
+                    Ok(()) => {
+                        eprintln!(
+                            "[INFO] Path '{}' now exists — monitoring started.",
+                            entry.0.display()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[WARNING] Path '{}' exists but monitoring setup failed: {e}",
+                            entry.0.display()
+                        );
+                        i += 1;
+                    }
+                }
+            } else {
+                i += 1;
+            }
+        }
+
+        // Refresh inotify watches for any remaining pending paths
+        if !self.pending_paths.is_empty() {
+            self.setup_inotify_watches();
+        } else {
+            self.inotify = None;
+            self._inotify_watches.clear();
+        }
+    }
+
     fn should_output(&self, event: &FileEvent) -> bool {
         let opts = match self.get_matching_path_options(&event.path) {
             Some(o) => o,
@@ -1490,10 +1623,11 @@ mod tests {
             all_events: None,
         };
 
-        // add_path warns on bad fan_fd but still tracks the path
+        // add_path on non-existent path → goes to pending_paths
         let result = m.add_path(&entry);
         assert!(result.is_ok());
-        assert!(m.path_options.contains_key(Path::new("/tmp/test_add")));
+        assert!(m.pending_paths.iter().any(|(p, _)| p == Path::new("/tmp/test_add")));
+        assert!(!m.path_options.contains_key(Path::new("/tmp/test_add")));
 
         // remove_path on non-existent path (not in options)
         let result = m.remove_path(Path::new("/nonexistent"));

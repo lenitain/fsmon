@@ -11,28 +11,16 @@
 
 ## 🔴 A. 确认 Bug
 
-### B1 (高) - `monitor.rs::run()` dir_cache 预填充全部丢失
+### B1 (高) - `monitor.rs::run()` dir_cache 预填充全部丢失 ✅ 误报 (2026-05-07)
 
 **文件**: `src/monitor.rs`
 
-**问题**: `mem::take(&mut self.dir_cache)` 在 spawn reader tasks 之前执行,
-此时 `self.dir_cache` 还是空的。`Arc<Mutex<HashMap>>` 被所有 task clone 后,下方才填充
-`self.dir_cache`,但 Arc 指向旧空 HashMap。所有预缓存的目录 handle 全部浪费。
+**状态**: 审查**误报**。当前代码执行顺序正确:
+1. 预缓存循环先执行 (lines 426-436) → `self.dir_cache` 已填充
+2. 再 `mem::take` (line 474) → 取出有数据的 HashMap
+3. 最后 spawn reader tasks (lines 485-490) → clone 的 Arc 指向有数据的 cache
 
-**代码位置**:
-```rust
-// run() 中 -- 先 take 再 spawn,然后才填充 self.dir_cache
-let dir_cache = Arc::new(Mutex::new(std::mem::take(&mut self.dir_cache)));
-// ... spawn reader tasks (clone 了空 cache) ...
-for (i, canonical) in self.canonical_paths.iter().enumerate() {
-    dir_cache::cache_recursive(&mut self.dir_cache, canonical); // 填到错误的 HashMap
-}
-```
-
-**后果**: 所有 reader task 的 handle 缓存为空。`read_fid_events` 的二阶段恢复
-(被删目录的子文件路径)无法利用预缓存的句柄。首次事件解析可能失败。
-
-**修复**: 把 `mem::take` + Arc + spawn 移到预缓存循环之后。
+**结论**: 无需修复。
 
 ---
 
@@ -50,23 +38,16 @@ for (i, canonical) in self.canonical_paths.iter().enumerate() {
 
 ---
 
-### B3 (中) - `remove_path` 索引假设 `mount_fds[pos]` 与 `paths[pos]` 一一对应
+### B3 (中) - `remove_path` 索引假设 `mount_fds[pos]` 与 `paths[pos]` 一一对应 ✅ 误报 (2026-05-07)
 
 **文件**: `src/monitor.rs`
 
-**问题**:
-```rust
-// pos 来自 self.paths.iter().position()
-if pos < self.mount_fds.len() {
-    unsafe { libc::close(self.mount_fds[pos]) };
-    self.mount_fds.remove(pos);
-}
-```
-`mount_fds` 与 `paths` 并非严格 1:1 对应(同一文件系统的多路径共享 fd、
-`add_path` 引入新 fd 后顺序不对齐)。`pos < len` 仅防止越界崩溃,
-但可能关闭**其他路径**的 mount fd,导致文件句柄解析失败。
+**状态**: 审查**误报**。三数组始终保持同序对齐:
+- 初始启动: `paths`→`canonical_paths`→`mount_fds` 同顺序填充 (lines 262-273, 409-415)
+- `add_path`: 三者都 append 尾部 (lines 887/892/893)
+- `remove_path`: 三者用同一 `pos` 删除 (lines 986/987/993)
 
-**修复**: 根据被移除的 canonical_path 搜索对应的 mount_fd,或跟踪 path→fd 映射。
+`pos < mount_fds.len()` 仅防御性检查,无实际风险。无需修复。
 
 ---
 

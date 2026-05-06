@@ -37,6 +37,7 @@ anyhow = "1.0"
 lru = "0.12"
 regex = "1.10"
 smallvec = "1.15.1"
+inotify = "0.10"
 toml = "0.8"
 
 [profile.release]

@@ -231,7 +231,16 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     // Resolve tilde + symlinks to catch symlink-based conflicts
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
     let expanded = fsmon::config::expand_tilde(&args.path, &home);
-    let path = expanded.canonicalize().unwrap_or(expanded);
+    let path = match expanded.canonicalize() {
+        Ok(c) => c,
+        Err(_) => {
+            eprintln!(
+                "[WARNING] Path '{}' does not exist yet — will start monitoring when created.",
+                expanded.display()
+            );
+            expanded
+        }
+    };
     let log_dir_canon = cfg.logging.dir.canonicalize().unwrap_or_else(|_| cfg.logging.dir.clone());
     if log_dir_canon.starts_with(&path) {
         bail!(
