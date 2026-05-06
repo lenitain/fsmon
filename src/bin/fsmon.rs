@@ -244,9 +244,13 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         );
     }
 
-    let mut store = Store::load(&cfg.store.file)?;
+    // Normalize path: expand tilde + resolve symlinks/../.
+    // Store the shortest canonical form so all comparisons (remove, match) work consistently.
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+    let expanded = fsmon::config::expand_tilde(&args.path, &home);
+    let path = expanded.canonicalize().unwrap_or(expanded);
 
-    let path = args.path.clone();
+    let mut store = Store::load(&cfg.store.file)?;
     let types: Option<Vec<String>> = args
         .types
         .map(|t| t.split(',').map(|s| s.trim().to_string()).collect());

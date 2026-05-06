@@ -173,8 +173,8 @@ impl Monitor {
                     path.display()
                 );
             }
-            path_options.insert(path.clone(), opts.clone());
-            paths.push(path.clone());
+            path_options.insert(resolved.clone(), opts.clone());
+            paths.push(resolved.clone());
         }
 
         Ok(Self {
@@ -724,16 +724,17 @@ impl Monitor {
     }
 
     pub fn add_path(&mut self, entry: &PathEntry) -> Result<()> {
-        let path = &entry.path;
-        if self.path_options.contains_key(path) {
+        // Normalize path: expand tilde + resolve symlinks/../.
+        // Store the shortest canonical form so all comparisons work consistently.
+        let path = resolve_recursion_check(&entry.path);
+
+        if self.path_options.contains_key(&path) {
             bail!("Path already being monitored: {}", path.display());
         }
 
         // Reject paths that would cause infinite recursion (log dir inside monitored path)
-        // Resolve tilde + symlinks to catch symlink-based conflicts
-        let resolved = resolve_recursion_check(path);
         if let Some(ref log_dir) = self.log_dir
-            && log_dir.canonicalize().unwrap_or_else(|_| log_dir.clone()).starts_with(&resolved)
+            && log_dir.canonicalize().unwrap_or_else(|_| log_dir.clone()).starts_with(&path)
         {
             bail!(
                 "Cannot monitor '{}': log directory '{}' is inside this path — \
