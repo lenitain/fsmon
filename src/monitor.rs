@@ -561,11 +561,7 @@ impl Monitor {
                         Ok((mut writer, cmd_str)) => {
                             let resp = match toml::from_str::<SocketCmd>(&cmd_str) {
                                 Ok(cmd) => self.handle_socket_cmd(cmd),
-                                Err(e) => SocketResp {
-                                    ok: false,
-                                    error: Some(format!("Invalid command: {e}")),
-                                    paths: None,
-                                },
+                                Err(e) => SocketResp::err(format!("Invalid command: {e}")),
                             };
                             if let Ok(toml_str) = toml::to_string(&resp) {
                                 let resp_bytes = format!("{toml_str}\n");
@@ -961,11 +957,7 @@ impl Monitor {
                 let path = match &cmd.path {
                     Some(p) => p.clone(),
                     None => {
-                        return SocketResp {
-                            ok: false,
-                            error: Some("Missing 'path' field".to_string()),
-                            paths: None,
-                        };
+                        return SocketResp::err("Missing 'path' field");
                     }
                 };
                 // Remove first if already monitored, then add with new options
@@ -983,16 +975,16 @@ impl Monitor {
                 match self.add_path(&entry) {
                     Ok(()) => {
                         let _ = self.persist_config();
-                        SocketResp {
-                            ok: true,
-                            error: None,
-                            paths: None,
-                        }
+                        SocketResp::ok()
                     }
-                    Err(e) => SocketResp {
-                        ok: false,
-                        error: Some(e.to_string()),
-                        paths: None,
+                    Err(e) => {
+                        // Classify: recursion/conflict errors are permanent (will fail after restart)
+                        let msg = e.to_string();
+                        if msg.contains("infinite recursion") || msg.contains("log directory") {
+                            SocketResp::permanent_err(msg)
+                        } else {
+                            SocketResp::err(msg)
+                        }
                     },
                 }
             }
@@ -1000,26 +992,22 @@ impl Monitor {
                 let path = match &cmd.path {
                     Some(p) => p.clone(),
                     None => {
-                        return SocketResp {
-                            ok: false,
-                            error: Some("Missing 'path' field".to_string()),
-                            paths: None,
-                        };
+                        return SocketResp::err("Missing 'path' field");
                     }
                 };
                 match self.remove_path(&path) {
                     Ok(()) => {
                         let _ = self.persist_config();
-                        SocketResp {
-                            ok: true,
-                            error: None,
-                            paths: None,
-                        }
+                        SocketResp::ok()
                     }
-                    Err(e) => SocketResp {
-                        ok: false,
-                        error: Some(e.to_string()),
-                        paths: None,
+                    Err(e) => {
+                        // Classify: recursion/conflict errors are permanent (will fail after restart)
+                        let msg = e.to_string();
+                        if msg.contains("infinite recursion") || msg.contains("log directory") {
+                            SocketResp::permanent_err(msg)
+                        } else {
+                            SocketResp::err(msg)
+                        }
                     },
                 }
             }
@@ -1048,14 +1036,11 @@ impl Monitor {
                 SocketResp {
                     ok: true,
                     error: None,
+                    error_kind: None,
                     paths: Some(paths),
                 }
             }
-            _ => SocketResp {
-                ok: false,
-                error: Some(format!("Unknown command: {}", cmd.cmd)),
-                paths: None,
-            },
+            _ => SocketResp::err(format!("Unknown command: {}", cmd.cmd)),
         }
     }
 

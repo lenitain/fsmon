@@ -262,31 +262,44 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     });
 
     store.save(&cfg.store.file)?;
-    println!("Path added: {}", path.display());
 
     // Try live update via socket (non-fatal if fails)
     let socket_path = cfg.socket.path.clone();
-    match socket::send_cmd(
+    let result = socket::send_cmd(
         &socket_path,
         &SocketCmd {
             cmd: "add".to_string(),
-            path: Some(path),
+            path: Some(path.clone()),
             recursive,
             types,
             min_size,
             exclude,
             all_events,
         },
-    ) {
+    );
+
+    match result {
         Ok(resp) if resp.ok => {
+            println!("Path added: {}", path.display());
             println!("Daemon updated live");
         }
         Ok(resp) => {
-            eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
-            eprintln!("Path will be monitored after daemon restart");
+            let is_permanent = resp.error_kind.as_deref() == Some("permanent");
+            if is_permanent {
+                // Revert store save — the error will persist after restart
+                let mut store = Store::load(&cfg.store.file)?;
+                store.remove_entry(&path);
+                store.save(&cfg.store.file)?;
+                eprintln!("Error: {}", resp.error.unwrap_or_default());
+            } else {
+                println!("Path added: {}", path.display());
+                eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
+                eprintln!("Path will be monitored after daemon restart");
+            }
         }
         Err(_) => {
             // daemon not running — store already saved, change applies on restart
+            println!("Path added: {}", path.display());
         }
     }
     Ok(())

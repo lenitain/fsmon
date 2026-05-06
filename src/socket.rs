@@ -34,8 +34,42 @@ pub struct SocketResp {
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Error kind: "permanent" (will persist after restart) or "transient" (runtime, will work on restart).
+    /// If absent, defaults to "transient" for backward compatibility.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paths: Option<Vec<PathEntry>>,
+}
+
+impl SocketResp {
+    pub fn ok() -> Self {
+        SocketResp {
+            ok: true,
+            error: None,
+            error_kind: None,
+            paths: None,
+        }
+    }
+
+    pub fn err(msg: impl Into<String>) -> Self {
+        SocketResp {
+            ok: false,
+            error: Some(msg.into()),
+            error_kind: None,
+            paths: None,
+        }
+    }
+
+    /// Return this error kind as "permanent" — the operation will fail again after restart.
+    pub fn permanent_err(msg: impl Into<String>) -> Self {
+        SocketResp {
+            ok: false,
+            error: Some(msg.into()),
+            error_kind: Some("permanent".to_string()),
+            paths: None,
+        }
+    }
 }
 
 /// Serialize a value to a single TOML document string.
@@ -136,17 +170,9 @@ pub async fn listen(
                         let resp = match from_toml_str::<SocketCmd>(message.trim()) {
                             Ok(cmd) => match handler(cmd) {
                                 Ok(resp) => resp,
-                                Err(e) => SocketResp {
-                                    ok: false,
-                                    error: Some(e.to_string()),
-                                    paths: None,
-                                },
+                                Err(e) => SocketResp::err(e.to_string()),
                             },
-                            Err(e) => SocketResp {
-                                ok: false,
-                                error: Some(format!("Invalid command: {e}")),
-                                paths: None,
-                            },
+                            Err(e) => SocketResp::err(format!("Invalid command: {e}")),
                         };
 
                         let resp_toml = match to_toml_string(&resp) {
