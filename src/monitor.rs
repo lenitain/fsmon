@@ -147,9 +147,26 @@ impl Monitor {
 
         let mut paths = Vec::new();
         let mut path_options = HashMap::new();
-        for (path, opts) in paths_and_options {
-            path_options.insert(path.clone(), opts);
-            paths.push(path);
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        for (path, opts) in &paths_and_options {
+            // Reject paths that would cause infinite recursion
+            // Resolve tilde in store paths (they may not be expanded yet)
+            let resolved = crate::config::expand_tilde(path, &home);
+            if let Some(ref log_dir) = log_dir
+                && log_dir.starts_with(&resolved)
+            {
+                bail!(
+                    "Cannot monitor '{}': log directory '{}' is inside this path — \
+                     would cause infinite recursion on every log write.\n\
+                     Tip: fsmon remove {} or exclude the log directory with --exclude \
+                     or use a different logging.dir",
+                    path.display(),
+                    log_dir.display(),
+                    path.display()
+                );
+            }
+            path_options.insert(path.clone(), opts.clone());
+            paths.push(path.clone());
         }
 
         Ok(Self {
@@ -706,6 +723,22 @@ impl Monitor {
         let path = &entry.path;
         if self.path_options.contains_key(path) {
             bail!("Path already being monitored: {}", path.display());
+        }
+
+        // Reject paths that would cause infinite recursion (log dir inside monitored path)
+        // Resolve tilde in store paths (they may not be expanded yet)
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        let resolved = crate::config::expand_tilde(path, &home);
+        if let Some(ref log_dir) = self.log_dir
+            && log_dir.starts_with(&resolved)
+        {
+            bail!(
+                "Cannot monitor '{}': log directory '{}' is inside this path — \
+                 every log write would trigger a new event, causing infinite recursion.\n\
+                 Tip: exclude the log directory with --exclude or use a different logging.dir",
+                path.display(),
+                log_dir.display()
+            );
         }
 
         let canonical = if path.exists() {
