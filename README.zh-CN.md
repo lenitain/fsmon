@@ -208,19 +208,19 @@ fsmon 以用户自己管理的前台守护进程运行。
 ┌──────────────────────────────────────────────────────┐
 │  用户运行：  sudo fsmon daemon &                     │
 ├──────────────────────────────────────────────────────┤
-│  守护进程（root）：                                   │
-│  1. 通过 SUDO_UID 解析原始用户                        │
-│  2. 读取 ~/.config/fsmon/config.toml（基础设施路径）   │
-│  3. 读取 ~/.local/share/fsmon/store.toml（监控路径）  │
-│  4. 校验路径（拒绝日志目录递归）                       │
+│  守护进程（root）：                                  │
+│  1. 通过 SUDO_UID 解析原始用户                       │
+│  2. 读取 ~/.config/fsmon/config.toml（基础设施路径） │
+│  3. 读取 ~/.local/share/fsmon/store.toml（监控路径） │
+│  4. 校验路径（拒绝日志目录递归）                     │
 │  5. fanotify_init → fanotify_mark(paths)             │
 │  6. 绑定 /tmp/fsmon-<UID>.sock（权限 0666）          │
-│  7. 主循环：fanotify 事件 + socket 命令               │
+│  7. 主循环：fanotify 事件 + socket 命令              │
 ├──────────────────────────────────────────────────────┤
 │  CLI（用户）：  fsmon add /path                      │
-│  1. 校验路径（拒绝日志目录递归）                       │
+│  1. 校验路径（拒绝日志目录递归）                     │
 │  2. 写入 ~/.local/share/fsmon/store.toml             │
-│  3. 通过 socket 发送 add 命令（热更新）               │
+│  3. 通过 socket 发送 add 命令（热更新）              │
 │  4. 如 daemon 返回永久错误 → 回滚 store              │
 └──────────────────────────────────────────────────────┘
 ```
@@ -309,7 +309,7 @@ src/
 ├── socket.rs             # Unix socket 协议 (TOML over stream):
 │                         #   daemon 服务端 + CLI 客户端, ErrorKind 枚举
 ├── utils.rs              # parse_size, parse_time, uid 查询, 路径↔日志名
-├── help.rs               # 集中式帮助文本
+└── help.rs               # 集中式帮助文本
 ```
 
 ### 数据流
