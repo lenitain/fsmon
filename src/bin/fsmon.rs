@@ -312,9 +312,15 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_remove(path: PathBuf) -> Result<()> {
+fn cmd_remove(raw: PathBuf) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
+
+    // Normalize path: expand tilde + resolve symlinks/../.
+    // Must match the normalization done by cmd_add, so store.remove_entry finds the entry.
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+    let expanded = fsmon::config::expand_tilde(&raw, &home);
+    let path = expanded.canonicalize().unwrap_or(expanded);
 
     let mut store = Store::load(&cfg.store.file)?;
 
