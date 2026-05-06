@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Duration, Local, NaiveDateTime, Utc};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use crate::proc_cache::ProcCache;
@@ -189,20 +189,41 @@ pub fn uid_to_username(uid: u32) -> Option<String> {
     uid_passwd_map().get(&uid).cloned()
 }
 
-/// Convert a monitored path to a deterministic, human-readable log filename.
-/// Uses the path directly: `/` → `_`, so `/tmp/foo` becomes `_tmp_foo.toml`.
-/// Users can find log files by path with simple `ls`/`grep` commands.
+/// Convert a monitored path to a deterministic, reversible log filename.
+///
+/// Uses `!` as escape prefix to avoid collision between literal `_` and `_` as separator:
+///   1. `!` → `!!` (escape the escape char itself)
+///   2. `_` → `!_` (escape literal underscores)
+///   3. `/` → `_`   (replace path separators)
+///
+/// Examples:
+/// - `/tmp/foo`          → `_tmp_foo.toml`
+/// - `/home/my_docs/a_b` → `_home_my!_docs_a!_b.toml`
+/// - `!/tmp`             → `!!_tmp.toml`
 pub fn path_to_log_name(path: &Path) -> String {
     let s = path.to_string_lossy();
-    // Replace / with _ to create a flat, readable filename
-    let name = s.replace('/', "_");
+    // Order matters: escape `!` first, then `_`, then replace `/`
+    let name = s.replace('!', "!!").replace('_', "!_").replace('/', "_");
     format!("{}.toml", name)
+}
+
+/// Reverse of [`path_to_log_name`]: decode a log filename back to the monitored path.
+pub fn log_name_to_path(log_name: &str) -> Option<PathBuf> {
+    let stem = log_name.strip_suffix(".toml")?;
+    // Use sentinel-based decoding (null bytes can't appear in paths)
+    let step1 = stem.replace("!!", "\0");   // `!!` → sentinel
+    let step2 = step1.replace("!_", "\x01"); // `!_` → sentinel
+    let step3 = step2.replace('_', "/");       // `_` → separator
+    let step4 = step3.replace('\x01', "_");    // sentinel → literal `_`
+    let step5 = step4.replace('\0', "!");      // sentinel → `!`
+    Some(PathBuf::from(step5))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::{Datelike, TimeZone, Timelike};
+    use std::path::PathBuf;
 
     #[test]
     fn test_parse_size() {
@@ -370,5 +391,110 @@ mod tests {
                 parsed
             );
         }
+    }
+
+    #[test]
+    fn test_path_to_log_name_simple() {
+        assert_eq!(path_to_log_name(Path::new("/tmp/foo")), "_tmp_foo.toml");
+        assert_eq!(path_to_log_name(Path::new("/")), "_.toml");
+        assert_eq!(path_to_log_name(Path::new("/a/b/c")), "_a_b_c.toml");
+    }
+
+    #[test]
+    fn test_path_to_log_name_with_underscores() {
+        // Literal underscores get `!` prefix to avoid collision with path separators
+        assert_eq!(
+            path_to_log_name(Path::new("/home/my_docs/a_b")),
+            "_home_my!_docs_a!_b.toml"
+        );
+        assert_eq!(
+            path_to_log_name(Path::new("/tmp/_test")),
+            "_tmp_!_test.toml"
+        );
+        assert_eq!(
+            path_to_log_name(Path::new("/__test__")),
+            "_!_!_test!_!_.toml"
+        );
+    }
+
+    #[test]
+    fn test_path_to_log_name_with_exclamation() {
+        assert_eq!(
+            path_to_log_name(Path::new("!/tmp")),
+            "!!_tmp.toml"
+        );
+        assert_eq!(
+            path_to_log_name(Path::new("/tmp/foo!bar")),
+            "_tmp_foo!!bar.toml"
+        );
+    }
+
+    #[test]
+    fn test_log_name_to_path_simple() {
+        assert_eq!(
+            log_name_to_path("_tmp_foo.toml"),
+            Some(PathBuf::from("/tmp/foo"))
+        );
+        assert_eq!(log_name_to_path("_.toml"), Some(PathBuf::from("/")));
+        assert_eq!(
+            log_name_to_path("_a_b_c.toml"),
+            Some(PathBuf::from("/a/b/c"))
+        );
+    }
+
+    #[test]
+    fn test_log_name_to_path_with_underscores() {
+        assert_eq!(
+            log_name_to_path("_home_my!_docs_a!_b.toml"),
+            Some(PathBuf::from("/home/my_docs/a_b"))
+        );
+        assert_eq!(
+            log_name_to_path("_tmp_!_test.toml"),
+            Some(PathBuf::from("/tmp/_test"))
+        );
+        assert_eq!(
+            log_name_to_path("_!_!_test!_!_.toml"),
+            Some(PathBuf::from("/__test__"))
+        );
+    }
+
+    #[test]
+    fn test_log_name_to_path_with_exclamation() {
+        assert_eq!(
+            log_name_to_path("!!_tmp.toml"),
+            Some(PathBuf::from("!/tmp"))
+        );
+        assert_eq!(
+            log_name_to_path("_tmp_foo!!bar.toml"),
+            Some(PathBuf::from("/tmp/foo!bar"))
+        );
+    }
+
+    #[test]
+    fn test_path_log_name_roundtrip() {
+        let paths = [
+            "/",
+            "/tmp",
+            "/tmp/foo",
+            "/home/my_docs/a_b",
+            "/tmp/_test",
+            "/__test__",
+            "/a/b/c/d/e/f",
+            "/home/user/with_underscore/deep_path",
+            "!/tmp",
+            "/tmp/foo!bar",
+            "/a!_b/c!!d/e_",
+        ];
+        for p in &paths {
+            let encoded = path_to_log_name(Path::new(p));
+            let decoded = log_name_to_path(&encoded).unwrap();
+            assert_eq!(decoded, PathBuf::from(p), "roundtrip failed for {}", p);
+        }
+    }
+
+    #[test]
+    fn test_log_name_to_path_invalid() {
+        assert!(log_name_to_path("no_extension").is_none());
+        assert!(log_name_to_path(".toml").is_some()); // valid: empty stem
     }
 }
