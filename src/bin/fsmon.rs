@@ -231,9 +231,9 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     // Resolve tilde + symlinks to catch symlink-based conflicts
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
     let expanded = fsmon::config::expand_tilde(&args.path, &home);
-    let resolved = expanded.canonicalize().unwrap_or(expanded);
+    let path = expanded.canonicalize().unwrap_or(expanded);
     let log_dir_canon = cfg.logging.dir.canonicalize().unwrap_or_else(|_| cfg.logging.dir.clone());
-    if log_dir_canon.starts_with(&resolved) {
+    if log_dir_canon.starts_with(&path) {
         bail!(
             "Cannot monitor '{}': log directory '{}' is inside this path — \
              would cause infinite recursion on every log write.\n\
@@ -242,12 +242,6 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             cfg.logging.dir.display()
         );
     }
-
-    // Normalize path: expand tilde + resolve symlinks/../.
-    // Store the shortest canonical form so all comparisons (remove, match) work consistently.
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let expanded = fsmon::config::expand_tilde(&args.path, &home);
-    let path = expanded.canonicalize().unwrap_or(expanded);
 
     let mut store = Store::load(&cfg.store.file)?;
     let types: Option<Vec<String>> = args

@@ -173,31 +173,31 @@ let events = fid_parser::read_fid_events(fd, &mfds, &mut dc.lock().unwrap(), &mu
 
 ## 🟡 B. 设计问题 / 语义不一致
 
-### D1 — `FileEvent.file_size`  ✅ 已修复 (2026-05-06)
+### D1 - `FileEvent.file_size`  ✅ 已修复 (2026-05-06)
 
 **文件**: `src/lib.rs`
 
-**问题**: 字段名 `size_change` 暗示"增量"(delta)，但实际值为**绝对文件大小**：
+**问题**: 字段名 `size_change` 暗示"增量"(delta),但实际值为**绝对文件大小**:
 
 | EventType | `file_size` 实际含义 |
 |-----------|-------------------|
-| CREATE/MODIFY/CLOSE_WRITE | 当前文件大小（非增量） |
+| CREATE/MODIFY/CLOSE_WRITE | 当前文件大小(非增量) |
 | DELETE/DELETE_SELF/MOVED_FROM | 删除前缓存的大小 |
 | 其他 | 缓存大小或 0 |
 
-TOML 字段名为 `file_size`，`size_change` 已全部替换。
+TOML 字段名为 `file_size`,`size_change` 已全部替换。
 
 ---
 
-### D2 — `file_size: u64`  ✅ 已修复 (2026-05-06)
+### D2 - `file_size: u64`  ✅ 已修复 (2026-05-06)
 
 **文件**: `src/lib.rs`
 
-**问题**: `size_change: i64` 暗示可能存在负值，但实际文件大小永不为负。
-`i64` 是历史遗留（原名 `size_change` 时可能存增量）。
+**问题**: `size_change: i64` 暗示可能存在负值,但实际文件大小永不为负。
+`i64` 是历史遗留(原名 `size_change` 时可能存增量)。
 
-**修复**: 
-- 类型改为 `file_size: u64`，与绝对大小语义一致
+**修复**:
+- 类型改为 `file_size: u64`,与绝对大小语义一致
 - 删除所有 `abs()` 调用和负数测试用例
 - TOML 字段名同步为 `file_size`
 
@@ -224,11 +224,15 @@ TOML 字段名为 `file_size`，`size_change` 已全部替换。
 
 ---
 
-### D5 - `cmd_add` 中重复规范化
+### D5 — `cmd_add` 中重复规范化 ✅ 已修复 (2026-05-06)
 
-`cmd_add` 中先做一次 `resolve_recursion_check`(递归检查),再做一次
-`expand_tilde + canonicalize`(路径规范化)。内部 `add_path` 再做第三次。
-后续重构应合并。
+**文件**: `src/bin/fsmon.rs`
+
+**问题**: `cmd_add` 中先做一次 `resolve_recursion_check`（递归检查），再做一次
+`expand_tilde + canonicalize`（存 store）。内部 `add_path` 再做第三次。
+
+**修复**: `cmd_add` 中规范化一次，结果 `path` 同时用于递归检查、存 store、发 socket。
+`add_path` 的规范化保留（socket handler 和 `reload_config` 也需要）。
 
 ---
 
@@ -283,7 +287,7 @@ spawn 的 reader task 可能仍在执行(channel 未立即断开),
 | `cmd_clean` 并发操作 | B5 同类 bug 回归 |
 | `path_to_log_name` 超长路径(>255 字节) | ✅ 已修复 + 测试覆盖 |
 | `persist_config` 失败后恢复 | B6 同类 bug 回归 |
-| `build_file_event` MODIFY 事件 file_size 语义 | ✅ 已修复（字段改名 `file_size`） |
+| `build_file_event` MODIFY 事件 file_size 语义 | ✅ 已修复(字段改名 `file_size`) |
 | `resolve_file_handle` 多 mount_fd 返回错误 fd | C3 回归 |
 | `dir_cache` 预填充在 spawn 之后生效 | B1 回归 |
 

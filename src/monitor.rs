@@ -977,8 +977,7 @@ impl Monitor {
                         return SocketResp::err("Missing 'path' field");
                     }
                 };
-                // Normalize path for consistent comparison
-                let path = resolve_recursion_check(&raw);
+                let path = raw;
                 // Remove first if already monitored, then add with new options
                 if self.path_options.contains_key(&path) {
                     let _ = self.remove_path(&path);
