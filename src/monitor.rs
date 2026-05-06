@@ -49,6 +49,20 @@ impl AsFd for FanFd {
     }
 }
 
+/// Chown a file or directory to the original user (daemon runs as root).
+/// Resolves the original user from SUDO_UID/SUDO_GID env vars.
+fn chown_to_user(path: &Path) -> std::io::Result<()> {
+    let (uid, gid) = crate::config::resolve_uid_gid();
+    let cpath = std::ffi::CString::new(path.to_string_lossy().as_bytes())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains null"))?;
+    let ret = unsafe { libc::chown(cpath.as_ptr(), uid, gid) };
+    if ret != 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
 // ---- Constants ----
 
 const FILE_SIZE_CACHE_CAP: usize = 10_000;
@@ -386,10 +400,12 @@ impl Monitor {
             }
         }
 
-        // Ensure log directory exists
+        // Ensure log directory exists and is owned by the original user
         if let Some(ref dir) = self.log_dir {
             fs::create_dir_all(dir)
                 .with_context(|| format!("Failed to create log directory {}", dir.display()))?;
+            // Daemon runs as root; chown to the original user so they own their logs
+            let _ = chown_to_user(dir);
         }
 
         println!("Starting file trace monitor...");
@@ -1139,10 +1155,15 @@ impl Monitor {
             }
         };
         let log_path = log_dir.join(crate::utils::path_to_log_name(matched_path));
+        let is_new = !log_path.exists();
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&log_path)?;
+        // Chown new log files to the original user so they own everything in their ~
+        if is_new {
+            let _ = chown_to_user(&log_path);
+        }
         writeln!(file, "{}", event.to_toml_string())?;
         writeln!(file)?; // blank line separator
         Ok(())

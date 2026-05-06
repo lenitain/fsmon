@@ -180,6 +180,12 @@ async fn cmd_daemon() -> Result<()> {
     // Set socket permissions to 0666 so any user can send commands
     set_socket_permissions(&socket_path)?;
 
+    // Chown store parent dir to the original user (daemon runs as root)
+    let (uid, gid) = fsmon::config::resolve_uid_gid();
+    if let Some(parent) = cfg.store.file.parent() {
+        chown_path(parent, uid, gid);
+    }
+
     eprintln!("Monitored paths ({}):", store.entries.len());
     for entry in &store.entries {
         eprintln!("  {}", entry.path.display());
@@ -198,6 +204,15 @@ async fn cmd_daemon() -> Result<()> {
 
     monitor.run().await?;
     Ok(())
+}
+
+/// Chown a path to the given uid:gid (daemon runs as root, needs to give files back to the user).
+fn chown_path(path: &Path, uid: u32, gid: u32) {
+    if let Ok(cpath) = std::ffi::CString::new(path.to_string_lossy().as_bytes()) {
+        unsafe {
+            libc::chown(cpath.as_ptr(), uid, gid);
+        }
+    }
 }
 
 /// Set socket permissions to 0666 so non-root users can communicate with the daemon.

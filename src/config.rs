@@ -36,6 +36,27 @@ pub struct SocketConfig {
 
 // ---- Helpers ----
 
+/// Resolve the original user's UID and GID:
+/// - If SUDO_UID is set (sudo), look up the passwd entry for that UID
+/// - Otherwise use the current process UID/GID
+pub fn resolve_uid_gid() -> (u32, u32) {
+    let uid = if let Ok(uid_str) = std::env::var("SUDO_UID")
+        && let Ok(uid) = uid_str.parse::<u32>()
+    {
+        uid
+    } else {
+        unsafe { libc::geteuid() }
+    };
+    let gid = if let Ok(gid_str) = std::env::var("SUDO_GID")
+        && let Ok(gid) = gid_str.parse::<u32>()
+    {
+        gid
+    } else {
+        unsafe { libc::getegid() }
+    };
+    (uid, gid)
+}
+
 /// Resolve the original user's UID:
 /// - If SUDO_UID is set (sudo), use that
 /// - Otherwise use the current process UID
