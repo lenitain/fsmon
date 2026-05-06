@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use fsmon::config::Config;
 use fsmon::help::{self, HelpTopic};
@@ -186,11 +186,6 @@ async fn cmd_daemon() -> Result<()> {
         chown_path(parent, uid, gid);
     }
 
-    eprintln!("Monitored paths ({}):", store.entries.len());
-    for entry in &store.entries {
-        eprintln!("  {}", entry.path.display());
-    }
-
     let paths_and_options = parse_path_entries(&store.entries)?;
 
     let store_path = cfg.store.file.clone();
@@ -201,6 +196,11 @@ async fn cmd_daemon() -> Result<()> {
         None,
         Some(socket_listener),
     )?;
+
+    eprintln!("Monitored paths ({}):", store.entries.len());
+    for entry in &store.entries {
+        eprintln!("  {}", entry.path.display());
+    }
 
     monitor.run().await?;
     Ok(())
@@ -227,6 +227,19 @@ fn set_socket_permissions(path: &Path) -> Result<()> {
 fn cmd_add(args: AddArgs) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
+
+    // Local check: reject paths that would cause infinite recursion
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+    let resolved = fsmon::config::expand_tilde(&args.path, &home);
+    if cfg.logging.dir.starts_with(&resolved) {
+        bail!(
+            "Cannot monitor '{}': log directory '{}' is inside this path — \
+             would cause infinite recursion on every log write.\n\
+             Tip: use a different logging.dir or add a more specific path",
+            args.path.display(),
+            cfg.logging.dir.display()
+        );
+    }
 
     let mut store = Store::load(&cfg.store.file)?;
 

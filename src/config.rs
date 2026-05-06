@@ -135,7 +135,7 @@ pub fn guess_home() -> String {
 }
 
 /// Expand a leading `~` in a path to the given home directory.
-pub(crate) fn expand_tilde(path: &Path, home: &str) -> PathBuf {
+pub fn expand_tilde(path: &Path, home: &str) -> PathBuf {
     let s = path.to_string_lossy();
     if let Some(rest) = s.strip_prefix('~')
         && (rest.is_empty() || rest.starts_with('/'))
