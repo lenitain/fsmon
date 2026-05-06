@@ -395,11 +395,11 @@ async fn clean_single_log(
 
 /// Clean log files by age and size.
 ///
-/// If `ids` is Some, only clean matching `{id}.log` files.
-/// If `ids` is None, clean all `*.log` files in `log_dir`.
+/// If `paths` is Some, only clean matching log files for those paths.
+/// If `paths` is None, clean all `*.toml` log files in `log_dir`.
 pub async fn clean_logs(
     log_dir: &Path,
-    ids: Option<&[u64]>,
+    paths: Option<&[PathBuf]>,
     keep_days: u32,
     max_size: Option<i64>,
     dry_run: bool,
@@ -409,16 +409,16 @@ pub async fn clean_logs(
         return Ok(());
     }
 
-    if let Some(ids) = ids {
-        for &id in ids {
-            let log_file = log_dir.join(format!("log_{}.toml", id));
+    if let Some(paths) = paths {
+        for path in paths {
+            let log_file = log_dir.join(crate::utils::path_to_log_name(path));
             clean_single_log(&log_file, keep_days, max_size, dry_run).await?;
         }
     } else {
         for entry in fs::read_dir(log_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "log") {
+            if path.extension().is_some_and(|ext| ext == "toml") {
                 clean_single_log(&path, keep_days, max_size, dry_run).await?;
             }
         }
@@ -585,7 +585,7 @@ mod tests {
     fn test_clean_logs_by_time() {
         let dir = std::env::temp_dir().join("fsmon_test_clean_time");
         fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.log");
+        let log_path = dir.join("test.toml");
 
         let old_event = FileEvent {
             time: Utc::now() - chrono::Duration::days(60),
@@ -637,7 +637,7 @@ mod tests {
     fn test_clean_logs_dry_run() {
         let dir = std::env::temp_dir().join("fsmon_test_clean_dryrun");
         fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.log");
+        let log_path = dir.join("test.toml");
 
         let old_event = FileEvent {
             time: Utc::now() - chrono::Duration::days(60),
@@ -682,7 +682,7 @@ mod tests {
     fn test_clean_logs_by_size() {
         let dir = std::env::temp_dir().join("fsmon_test_clean_size");
         fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.log");
+        let log_path = dir.join("test.toml");
 
         {
             let mut f = fs::File::create(&log_path).unwrap();

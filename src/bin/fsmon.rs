@@ -32,9 +32,9 @@ enum Commands {
     #[command(about = help::about(HelpTopic::Add), long_about = help::long_about(HelpTopic::Add))]
     Add(AddArgs),
 
-    /// Remove a path from the monitoring list by numeric ID
+    /// Remove a path from the monitoring list
     #[command(about = help::about(HelpTopic::Remove), long_about = help::long_about(HelpTopic::Remove))]
-    Remove { id: u64 },
+    Remove { path: PathBuf },
 
     /// List all monitored paths with their configuration
     #[command(about = help::about(HelpTopic::Managed), long_about = help::long_about(HelpTopic::Managed))]
@@ -85,9 +85,9 @@ struct AddArgs {
 
 #[derive(Parser)]
 struct QueryArgs {
-    /// Entry ID(s) to query. Comma-separated and/or ranges. Repeatable. Default: all.
-    #[arg(short, long, value_name = "IDS")]
-    id: Vec<String>,
+    /// Path(s) to query. Repeatable. Default: all.
+    #[arg(short, long, value_name = "PATH")]
+    path: Vec<PathBuf>,
     #[arg(short = 'S', long)]
     since: Option<String>,
     #[arg(short = 'U', long)]
@@ -110,9 +110,9 @@ struct QueryArgs {
 
 #[derive(Parser)]
 struct CleanArgs {
-    /// Entry ID(s) to clean. Comma-separated and/or ranges. Repeatable. Default: all.
-    #[arg(short, long, value_name = "IDS")]
-    id: Vec<String>,
+    /// Path(s) to clean. Repeatable. Default: all.
+    #[arg(short, long, value_name = "PATH")]
+    path: Vec<PathBuf>,
     #[arg(short, long)]
     keep_days: Option<u32>,
     #[arg(short = 'm', long)]
@@ -128,7 +128,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Daemon => cmd_daemon().await?,
         Commands::Add(args) => cmd_add(args)?,
-        Commands::Remove { id } => cmd_remove(id)?,
+        Commands::Remove { path } => cmd_remove(path)?,
         Commands::Managed => cmd_managed()?,
         Commands::Query(args) => cmd_query(args).await?,
         Commands::Clean(args) => cmd_clean(args).await?,
@@ -182,20 +182,14 @@ async fn cmd_daemon() -> Result<()> {
 
     eprintln!("Monitored paths ({}):", store.entries.len());
     for entry in &store.entries {
-        eprintln!("  [{}] {}", entry.id, entry.path.display());
+        eprintln!("  {}", entry.path.display());
     }
 
     let paths_and_options = parse_path_entries(&store.entries)?;
-    let path_ids: std::collections::HashMap<_, _> = store
-        .entries
-        .iter()
-        .map(|e| (e.path.clone(), e.id))
-        .collect();
 
     let store_path = cfg.store.file.clone();
     let mut monitor = Monitor::new(
         paths_and_options,
-        path_ids,
         Some(cfg.logging.dir.clone()),
         Some(store_path),
         None,
@@ -230,8 +224,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     let recursive = if args.recursive { Some(true) } else { None };
     let all_events = if args.all_events { Some(true) } else { None };
 
-    let id = store.add_entry(PathEntry {
-        id: 0,
+    store.add_entry(PathEntry {
         path: path.clone(),
         recursive,
         types: types.clone(),
@@ -241,7 +234,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     });
 
     store.save(&cfg.store.file)?;
-    println!("Path added (ID: {}): {}", id, path.display());
+    println!("Path added: {}", path.display());
 
     // Try live update via socket (non-fatal if fails)
     let socket_path = cfg.socket.path.clone();
@@ -255,7 +248,6 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             min_size,
             exclude,
             all_events,
-            id: Some(id),
         },
     ) {
         Ok(resp) if resp.ok => {
@@ -272,19 +264,19 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_remove(id: u64) -> Result<()> {
+fn cmd_remove(path: PathBuf) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
 
     let mut store = Store::load(&cfg.store.file)?;
 
-    if !store.remove_entry(id) {
-        eprintln!("No monitored path with ID {}", id);
+    if !store.remove_entry(&path) {
+        eprintln!("No monitored path: {}", path.display());
         std::process::exit(1);
     }
 
     store.save(&cfg.store.file)?;
-    println!("Path removed from config (ID: {})", id);
+    println!("Path removed: {}", path.display());
 
     // Try live update via socket (non-fatal if fails)
     let socket_path = cfg.socket.path.clone();
@@ -292,13 +284,12 @@ fn cmd_remove(id: u64) -> Result<()> {
         &socket_path,
         &SocketCmd {
             cmd: "remove".to_string(),
-            path: None,
+            path: Some(path),
             recursive: None,
             types: None,
             min_size: None,
             exclude: None,
             all_events: None,
-            id: Some(id),
         },
     ) {
         Ok(resp) if resp.ok => {
@@ -331,7 +322,6 @@ fn cmd_managed() -> Result<()> {
             min_size: None,
             exclude: None,
             all_events: None,
-            id: None,
         },
     ) {
         Ok(resp) if resp.ok => resp.paths.unwrap_or_default(),
@@ -364,9 +354,8 @@ fn cmd_managed() -> Result<()> {
         };
 
         println!(
-            "{} | id={} | types={} | {} | min_size={} | exclude={} | events={}",
+            "{} | types={} | {} | min_size={} | exclude={} | events={}",
             entry.path.display(),
-            entry.id,
             types_str,
             recursive_str,
             min_size_str,
@@ -382,10 +371,10 @@ async fn cmd_query(args: QueryArgs) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
 
-    let ids = if args.id.is_empty() {
+    let paths = if args.path.is_empty() {
         None
     } else {
-        Some(parse_query_ids(&args.id)?)
+        Some(args.path.clone())
     };
 
     let min_size_bytes = args.min_size.map(|s| parse_size(&s)).transpose()?;
@@ -418,7 +407,7 @@ async fn cmd_query(args: QueryArgs) -> Result<()> {
 
     let query = Query::new(
         cfg.logging.dir,
-        ids,
+        paths,
         args.since,
         args.until,
         pids,
@@ -450,55 +439,22 @@ async fn cmd_clean(args: CleanArgs) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
 
-    let ids = if args.id.is_empty() {
+    let paths = if args.path.is_empty() {
         None
     } else {
-        Some(parse_query_ids(&args.id)?)
+        Some(args.path.clone())
     };
     let keep_days = args.keep_days.unwrap_or(DEFAULT_KEEP_DAYS);
     let max_size_bytes = args.max_size.map(|s| parse_size(&s)).transpose()?;
     clean_logs(
         &cfg.logging.dir,
-        ids.as_deref(),
+        paths.as_deref(),
         keep_days,
         max_size_bytes,
         args.dry_run,
     )
     .await?;
     Ok(())
-}
-
-/// Parse --id argument: comma-separated IDs and/or ranges, e.g. "1,3,5-8"
-/// Also handles repeated: --id 1 --id 3
-fn parse_query_ids(raw: &[String]) -> Result<Vec<u64>> {
-    let mut ids = Vec::new();
-    for part in raw {
-        for segment in part.split(',') {
-            let segment = segment.trim();
-            if segment.is_empty() {
-                continue;
-            }
-            if let Some((start, end)) = segment.split_once('-') {
-                let s: u64 = start
-                    .trim()
-                    .parse()
-                    .with_context(|| format!("Invalid ID range start: {}", start))?;
-                let e: u64 = end
-                    .trim()
-                    .parse()
-                    .with_context(|| format!("Invalid ID range end: {}", end))?;
-                ids.extend(s..=e);
-            } else {
-                let v: u64 = segment
-                    .parse()
-                    .with_context(|| format!("Invalid ID: {}", segment))?;
-                ids.push(v);
-            }
-        }
-    }
-    ids.sort();
-    ids.dedup();
-    Ok(ids)
 }
 
 fn parse_path_entries(entries: &[PathEntry]) -> Result<Vec<(PathBuf, PathOptions)>> {

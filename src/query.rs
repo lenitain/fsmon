@@ -12,7 +12,7 @@ const SCAN_BACK_BYTES: u64 = 4096;
 
 pub struct Query {
     log_dir: PathBuf,
-    ids: Option<Vec<u64>>,
+    paths: Option<Vec<PathBuf>>,
     since: Option<String>,
     until: Option<String>,
     pids: Option<Vec<u32>>,
@@ -28,7 +28,7 @@ impl Query {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         log_dir: PathBuf,
-        ids: Option<Vec<u64>>,
+        paths: Option<Vec<PathBuf>>,
         since: Option<String>,
         until: Option<String>,
         pids: Option<Vec<u32>>,
@@ -41,7 +41,7 @@ impl Query {
     ) -> Self {
         Self {
             log_dir,
-            ids,
+            paths,
             since,
             until,
             pids,
@@ -92,21 +92,21 @@ impl Query {
     }
 
     /// Resolve the list of log files to query.
-    /// If ids is Some, return {log_dir}/{id}.log for each id (skip missing files).
-    /// If ids is None, scan log_dir for all *.log files, sorted by ID.
+    /// If paths is Some, resolve each path to its log filename.
+    /// If paths is None, scan log_dir for all `*.toml` log files.
     fn resolve_log_files(&self) -> Result<Vec<PathBuf>> {
-        if let Some(ref ids) = self.ids {
+        if let Some(ref paths) = self.paths {
             let mut files = Vec::new();
-            for &id in ids {
-                let path = self.log_dir.join(format!("log_{}.toml", id));
-                if path.exists() {
-                    files.push(path);
+            for path in paths {
+                let log_path = self.log_dir.join(crate::utils::path_to_log_name(path));
+                if log_path.exists() {
+                    files.push(log_path);
                 }
             }
             return Ok(files);
         }
 
-        // Scan directory for all *.log files
+        // Scan directory for all *.toml files (log files)
         if !self.log_dir.exists() {
             return Ok(Vec::new());
         }
@@ -117,18 +117,12 @@ impl Query {
         {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "log") {
+            if path.extension().is_some_and(|ext| ext == "toml") {
                 files.push(path);
             }
         }
 
-        // Sort by numeric ID extracted from filename
-        files.sort_by_key(|p| {
-            p.file_stem()
-                .and_then(|s| s.to_str())
-                .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(u64::MAX)
-        });
+        files.sort();
 
         Ok(files)
     }
@@ -715,7 +709,8 @@ mod tests {
         use std::io::Write;
         let dir = std::env::temp_dir().join("fsmon_test_query_pid");
         std::fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("log_1.toml");
+        let log_name = crate::utils::path_to_log_name(Path::new("/tmp/test_pid"));
+        let log_path = dir.join(&log_name);
 
         let e1 = FileEvent {
             time: Utc::now(),
@@ -742,7 +737,7 @@ mod tests {
 
         let q = Query::new(
             dir.clone(),
-            Some(vec![1]),
+            Some(vec![PathBuf::from("/tmp/test_pid")]),
             None,
             None,
             Some(vec![100]),
@@ -766,7 +761,8 @@ mod tests {
         use std::io::Write;
         let dir = std::env::temp_dir().join("fsmon_test_query_type");
         std::fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("log_1.toml");
+        let log_name = crate::utils::path_to_log_name(Path::new("/tmp/test"));
+        let log_path = dir.join(&log_name);
 
         let e1 = FileEvent {
             time: Utc::now(),
@@ -793,7 +789,7 @@ mod tests {
 
         let q = Query::new(
             dir.clone(),
-            Some(vec![1]),
+            Some(vec![PathBuf::from("/tmp/test")]),
             None,
             None,
             None,

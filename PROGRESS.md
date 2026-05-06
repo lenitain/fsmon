@@ -2,6 +2,45 @@
 
 ## 已完成
 
+### 2026-05-06 — 移除数字 ID，路径即唯一标识
+
+参考 chezmoi 设计，路径本身就是唯一标识符，`id: u64` 字段是多此一举。
+
+#### 核心改动
+
+| 领域 | 旧 | 新 |
+|------|-----|-----|
+| 日志文件名 | `log_{id}.toml` | 路径 hash → `{hash16}.toml` |
+| 路径标识 | `id: u64` 字段 | 路径自身 (`PathBuf`) |
+| CLI 删除 | `fsmon remove <ID>` | `fsmon remove <path>` |
+| CLI 查询 | `--id 1,3-5` (范围语法) | `--path /tmp --path /var` (重复) |
+| CLI 清理 | `--id 1,3-5` | `--path /tmp` (重复) |
+| 唯一性保证 | `Store::next_id()` | 路径唯一 (HashSet dedup) |
+| socket 协议 | `id: Option<u64>` | 无 `id` 字段 |
+
+#### 文件改动
+
+| 文件 | 改动 |
+|------|------|
+| `store.rs` | `PathEntry` 移除 `id`，`add_entry`/`remove_entry`/`get` 改用路径 |
+| `socket.rs` | `SocketCmd` + `SocketResp` 移除 `id` 字段 |
+| `utils.rs` | 新增 `path_to_log_name()` (路径 hash → 文件名) |
+| `lib.rs` | `clean_logs` 签名改用 `paths: Option<&[PathBuf]>` |
+| `monitor.rs` | 移除 `path_ids`，`write_event` 用路径 hash 日志文件，`matching_path` 取代 `entry_id_for_path` |
+| `query.rs` | `ids: Option<Vec<u64>>` → `paths: Option<Vec<PathBuf>>`，日志扫描 `.toml` |
+| `bin/fsmon.rs` | `remove` 取路径，`query --path`，`clean --path`，移除 `parse_query_ids` |
+| `help.rs` | 所有 ID 相关帮助文本更新为路径 |
+| `config.rs` | 配置模板注释更新 |
+
+#### 构建状态
+
+```
+cargo build     ✅ 零警告
+cargo clippy    ✅ -D warnings 通过
+cargo fmt       ✅ 无差异
+cargo test      ✅ 73 passed, 7 ignored (fanotify 需要 sudo)
+```
+
 ### 架构变更
 
 旧: `~/.config/fsmon/config.toml` 同时存储基础设施路径和受监控路径。

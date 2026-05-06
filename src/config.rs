@@ -200,7 +200,7 @@ impl Config {
 file = "~/.local/share/fsmon/store.toml"
 
 [logging]
-# Directory containing per-entry log files (named <entry_id>.log).
+# Directory containing per-path log files (named by path hash).
 dir = "~/.local/state/fsmon"
 
 [socket]

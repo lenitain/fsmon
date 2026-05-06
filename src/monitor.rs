@@ -98,7 +98,6 @@ pub struct PathOptions {
 pub struct Monitor {
     paths: Vec<PathBuf>,
     canonical_paths: Vec<PathBuf>,
-    path_ids: HashMap<PathBuf, u64>,
     path_options: HashMap<PathBuf, PathOptions>,
     log_dir: Option<PathBuf>,
     store_path: Option<PathBuf>,
@@ -118,7 +117,6 @@ pub struct Monitor {
 impl Monitor {
     pub fn new(
         paths_and_options: Vec<(PathBuf, PathOptions)>,
-        path_ids: HashMap<PathBuf, u64>,
         log_dir: Option<PathBuf>,
         store_path: Option<PathBuf>,
         buffer_size: Option<usize>,
@@ -143,7 +141,6 @@ impl Monitor {
         Ok(Self {
             paths,
             canonical_paths: Vec::new(),
-            path_ids,
             path_options,
             log_dir,
             store_path,
@@ -534,7 +531,6 @@ impl Monitor {
                                 Err(e) => SocketResp {
                                     ok: false,
                                     error: Some(format!("Invalid command: {e}")),
-                                    id: None,
                                     paths: None,
                                 },
                             };
@@ -814,7 +810,6 @@ impl Monitor {
         self.paths.push(path.clone());
         self.canonical_paths.push(canonical.clone());
         self.path_options.insert(path.clone(), opts);
-        self.path_ids.insert(path.clone(), entry.id);
 
         // Pre-cache directory handles in the shared cache (used by all reader tasks)
         // before spawning the reader, so second-pass path recovery works.
@@ -900,7 +895,6 @@ impl Monitor {
         self.paths.remove(pos);
         self.canonical_paths.remove(pos);
         self.path_options.remove(path);
-        self.path_ids.remove(path);
 
         // Close and remove the matching mount fd
         if pos < self.mount_fds.len() {
@@ -912,13 +906,6 @@ impl Monitor {
         Ok(())
     }
 
-    fn path_for_id(&self, id: u64) -> Option<&PathBuf> {
-        self.path_ids
-            .iter()
-            .find(|&(_, &v)| v == id)
-            .map(|(k, _)| k)
-    }
-
     fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> SocketResp {
         match cmd.cmd.as_str() {
             "add" => {
@@ -928,7 +915,6 @@ impl Monitor {
                         return SocketResp {
                             ok: false,
                             error: Some("Missing 'path' field".to_string()),
-                            id: None,
                             paths: None,
                         };
                     }
@@ -937,12 +923,7 @@ impl Monitor {
                 if self.path_options.contains_key(&path) {
                     let _ = self.remove_path(&path);
                 }
-                // Use the ID assigned by the CLI if provided; fallback for other clients
-                let id = cmd
-                    .id
-                    .unwrap_or_else(|| self.path_ids.values().max().copied().unwrap_or(0) + 1);
                 let entry = PathEntry {
-                    id,
                     path,
                     recursive: cmd.recursive,
                     types: cmd.types.clone(),
@@ -950,44 +931,29 @@ impl Monitor {
                     exclude: cmd.exclude.clone(),
                     all_events: cmd.all_events,
                 };
-                let id = entry.id;
                 match self.add_path(&entry) {
                     Ok(()) => {
                         let _ = self.persist_config();
                         SocketResp {
                             ok: true,
                             error: None,
-                            id: Some(id),
                             paths: None,
                         }
                     }
                     Err(e) => SocketResp {
                         ok: false,
                         error: Some(e.to_string()),
-                        id: None,
                         paths: None,
                     },
                 }
             }
             "remove" => {
-                let id = match cmd.id {
-                    Some(id) => id,
-                    None => {
-                        return SocketResp {
-                            ok: false,
-                            error: Some("Missing 'id' field".to_string()),
-                            id: None,
-                            paths: None,
-                        };
-                    }
-                };
-                let path = match self.path_for_id(id) {
+                let path = match &cmd.path {
                     Some(p) => p.clone(),
                     None => {
                         return SocketResp {
                             ok: false,
-                            error: Some(format!("No path with ID {}", id)),
-                            id: None,
+                            error: Some("Missing 'path' field".to_string()),
                             paths: None,
                         };
                     }
@@ -998,14 +964,12 @@ impl Monitor {
                         SocketResp {
                             ok: true,
                             error: None,
-                            id: None,
                             paths: None,
                         }
                     }
                     Err(e) => SocketResp {
                         ok: false,
                         error: Some(e.to_string()),
-                        id: None,
                         paths: None,
                     },
                 }
@@ -1016,9 +980,7 @@ impl Monitor {
                     .iter()
                     .map(|p| {
                         let opts = self.path_options.get(p);
-                        let id = self.path_ids.get(p).copied().unwrap_or(0);
                         PathEntry {
-                            id,
                             path: p.clone(),
                             recursive: opts.map(|o| o.recursive),
                             types: opts.and_then(|o| {
@@ -1037,14 +999,12 @@ impl Monitor {
                 SocketResp {
                     ok: true,
                     error: None,
-                    id: None,
                     paths: Some(paths),
                 }
             }
             _ => SocketResp {
                 ok: false,
                 error: Some(format!("Unknown command: {}", cmd.cmd)),
-                id: None,
                 paths: None,
             },
         }
@@ -1056,9 +1016,7 @@ impl Monitor {
             .iter()
             .map(|p| {
                 let opts = self.path_options.get(p);
-                let id = self.path_ids.get(p).copied().unwrap_or(0);
                 PathEntry {
-                    id,
                     path: p.clone(),
                     recursive: opts.map(|o| o.recursive),
                     types: opts.and_then(|o| {
@@ -1074,7 +1032,6 @@ impl Monitor {
             })
             .collect();
         // Persist to store.toml using the stored path
-        // next_id is not stored — it is derived from max(entries.id) + 1 on load.
         if let Some(ref store_path) = self.store_path
             && let Ok(mut store) = Store::load(store_path)
         {
@@ -1138,40 +1095,40 @@ impl Monitor {
         true
     }
 
-    /// Find the entry ID for a given event path by checking path_ids (direct match or recursive).
-    /// Also checks canonical paths in case the store path differs from the actual filesystem path
-    /// (e.g., symlinks, bind mounts).
-    fn entry_id_for_path(&self, path: &Path) -> Option<u64> {
-        // Direct match first
-        if let Some(&id) = self.path_ids.get(path) {
-            return Some(id);
+    /// Find the configured path that matches a given event path.
+    /// Checks configured paths (direct or recursive prefix), then canonical paths.
+    fn matching_path(&self, path: &Path) -> Option<&PathBuf> {
+        // Direct match first: find the configured PathBuf that matches this path
+        for watched in &self.paths {
+            if watched == path && self.path_options.contains_key(watched) {
+                return Some(watched);
+            }
         }
         // Recursive match: find watched path that is a prefix of event path
-        for (watched, &id) in &self.path_ids {
+        for watched in self.path_options.keys() {
             if path.starts_with(watched) {
-                return Some(id);
+                return Some(watched);
             }
         }
         // Fallback: match against canonical paths (handles symlinks/bind-mounts)
         for (i, canonical) in self.canonical_paths.iter().enumerate() {
             if (path == canonical.as_path() || path.starts_with(canonical))
                 && let Some(orig) = self.paths.get(i)
-                && let Some(&id) = self.path_ids.get(orig)
             {
-                return Some(id);
+                return Some(orig);
             }
         }
         None
     }
 
-    /// Write an event to its per-ID log file.
+    /// Write an event to its path-based log file.
     fn write_event(&self, event: &FileEvent) -> std::io::Result<()> {
         let log_dir = match self.log_dir.as_ref() {
             Some(d) => d,
             None => return Ok(()),
         };
-        let entry_id = match self.entry_id_for_path(&event.path) {
-            Some(id) => id,
+        let matched_path = match self.matching_path(&event.path) {
+            Some(p) => p,
             None => {
                 // Warn once per unique unmatched path to avoid log spam
                 eprintln!(
@@ -1181,7 +1138,7 @@ impl Monitor {
                 return Ok(());
             }
         };
-        let log_path = log_dir.join(format!("log_{}.toml", entry_id));
+        let log_path = log_dir.join(crate::utils::path_to_log_name(matched_path));
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -1239,7 +1196,6 @@ fn mark_recursive(fan_fd: i32, mask: u64, dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     fn options(
@@ -1287,7 +1243,6 @@ mod tests {
                     )
                 })
                 .collect(),
-            HashMap::new(),
             None,
             None,
             None,
@@ -1419,7 +1374,6 @@ mod tests {
 
         let result = Monitor::new(
             vec![(PathBuf::from("/tmp"), opts.clone())],
-            HashMap::new(),
             None,
             None,
             Some(1024),
@@ -1430,7 +1384,6 @@ mod tests {
 
         let result = Monitor::new(
             vec![(PathBuf::from("/tmp"), opts.clone())],
-            HashMap::new(),
             None,
             None,
             Some(2 * 1024 * 1024),
@@ -1441,7 +1394,6 @@ mod tests {
 
         let result = Monitor::new(
             vec![(PathBuf::from("/tmp"), opts.clone())],
-            HashMap::new(),
             None,
             None,
             Some(65536),
@@ -1452,11 +1404,10 @@ mod tests {
 
     #[test]
     fn test_add_path_and_remove_path() {
-        let mut m = Monitor::new(vec![], HashMap::new(), None, None, None, None).unwrap();
+        let mut m = Monitor::new(vec![], None, None, None, None).unwrap();
         m.fan_fds.push(-1); // dummy fd for tests
 
         let entry = PathEntry {
-            id: 1,
             path: PathBuf::from("/tmp/test_add"),
             recursive: Some(true),
             types: None,

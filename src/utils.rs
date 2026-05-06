@@ -189,6 +189,16 @@ pub fn uid_to_username(uid: u32) -> Option<String> {
     uid_passwd_map().get(&uid).cloned()
 }
 
+/// Convert a monitored path to a deterministic log filename.
+/// Uses a hash of the path to produce a unique, safe filename.
+pub fn path_to_log_name(path: &Path) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut hasher);
+    let hash = hasher.finish();
+    format!("{:016x}.toml", hash)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

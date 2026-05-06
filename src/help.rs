@@ -40,7 +40,7 @@ Usage:
 
 Config:           ~/.config/fsmon/config.toml
 Store:            ~/.local/share/fsmon/store.toml (managed by add/remove)
-Log dir:          ~/.local/state/fsmon/ (one log_<id>.toml file per entry ID)
+Log dir:          ~/.local/state/fsmon/ (one .toml file per monitored path)
 Socket:           /tmp/fsmon-<UID>.sock"#
         }
         HelpTopic::Add => {
@@ -64,20 +64,18 @@ Examples:
   fsmon add /tmp --all-events"#
         }
         HelpTopic::Remove => {
-            r#"Remove a path from the monitoring list by numeric ID.
+            r#"Remove a path from the monitoring list.
 
 The path is removed immediately if the daemon is running.
-Use 'fsmon managed' to view IDs.
 
 Examples:
-  fsmon remove 1"#
+  fsmon remove /path/to/watch"#
         }
         HelpTopic::Managed => {
             r#"List all monitored paths with their configuration.
 
-Displays each path with its numeric ID, recursive flag, event type filters,
+Displays each path with its recursive flag, event type filters,
 minimum size threshold, and exclusion patterns.
-Use the ID with 'fsmon remove <ID>' to remove an entry.
 
 Examples:
   fsmon managed"#
@@ -86,8 +84,8 @@ Examples:
             r#"Query historical file change events from log files.
 
 Options:
-  --id              Entry ID(s). Comma-separated and/or ranges. Repeatable. Default: all.
-                    Examples: --id 1 --id 1,3,5-8
+  --path            Path(s) to query. Repeatable. Default: all.
+                    Examples: --path /tmp --path /var/log
   --since           Start time: relative (1h, 30m, 7d) or absolute
   --until           End time
   --pid             Filter by PID (comma-separated)
@@ -100,21 +98,21 @@ Options:
 
 Examples:
   fsmon query --since 1h
-  fsmon query --id 1 --since 1h
-  fsmon query --id 1,3-5 --cmd nginx"#
+  fsmon query --path /tmp --since 1h
+  fsmon query --path /tmp --cmd nginx"#
         }
         HelpTopic::Clean => {
             r#"Clean historical log files, retain by time or size.
 
 Options:
-  --id              Entry ID(s). Comma-separated and/or ranges. Repeatable. Default: all.
+  --path            Path(s) to clean. Repeatable. Default: all.
   --keep-days       Keep logs from last N days (default: 30)
   --max-size        Maximum log file size (e.g., 100MB, 1GB)
   --dry-run         Preview mode, don't actually delete
 
 Examples:
   fsmon clean --keep-days 7
-  fsmon clean --id 1 --max-size 100MB --dry-run"#
+  fsmon clean --path /tmp --max-size 100MB --dry-run"#
         }
         HelpTopic::Generate => {
             r#"Generate a default configuration file at ~/.config/fsmon/config.toml.
@@ -144,10 +142,10 @@ Management (no sudo needed):
 
 Query & Clean:
   fsmon query --since 1h            Events from last hour
-  fsmon query --id 1 --since 1h     Events for entry ID 1
+  fsmon query --path /tmp           Events for a specific path
   fsmon clean --keep-days 7         Keep 7 days of logs
 
 Config: ~/.config/fsmon/config.toml
 Store:  ~/.local/share/fsmon/store.toml
-Logs:   ~/.local/state/fsmon/<ID>.log"#
+Logs:   ~/.local/state/fsmon/*.toml"#
 }

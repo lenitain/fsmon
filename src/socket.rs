@@ -27,8 +27,6 @@ pub struct SocketCmd {
     pub exclude: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub all_events: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<u64>, // For "remove" commands
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -36,8 +34,6 @@ pub struct SocketResp {
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paths: Option<Vec<PathEntry>>,
 }
@@ -143,14 +139,12 @@ pub async fn listen(
                                 Err(e) => SocketResp {
                                     ok: false,
                                     error: Some(e.to_string()),
-                                    id: None,
                                     paths: None,
                                 },
                             },
                             Err(e) => SocketResp {
                                 ok: false,
                                 error: Some(format!("Invalid command: {e}")),
-                                id: None,
                                 paths: None,
                             },
                         };
