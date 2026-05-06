@@ -107,6 +107,14 @@ pub struct PathOptions {
     pub all_events: bool,
 }
 
+
+/// Resolve a path for recursion check: expand tilde, then canonicalize if the path exists
+/// (follows symlinks). Falls back to tilde-expanded path if can't canonicalize.
+fn resolve_recursion_check(path: &Path) -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+    let expanded = crate::config::expand_tilde(path, &home);
+    expanded.canonicalize().unwrap_or(expanded)
+}
 // ---- Monitor ----
 
 pub struct Monitor {
@@ -147,12 +155,12 @@ impl Monitor {
 
         let mut paths = Vec::new();
         let mut path_options = HashMap::new();
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        let log_dir_canonical = log_dir.as_ref().map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()));
         for (path, opts) in &paths_and_options {
             // Reject paths that would cause infinite recursion
-            // Resolve tilde in store paths (they may not be expanded yet)
-            let resolved = crate::config::expand_tilde(path, &home);
-            if let Some(ref log_dir) = log_dir
+            // Resolve tilde + symlinks to catch symlink-based conflicts
+            let resolved = resolve_recursion_check(path);
+            if let Some(ref log_dir) = log_dir_canonical
                 && log_dir.starts_with(&resolved)
             {
                 bail!(
@@ -161,7 +169,7 @@ impl Monitor {
                      Tip: fsmon remove {} or exclude the log directory with --exclude \
                      or use a different logging.dir",
                     path.display(),
-                    log_dir.display(),
+                    log_dir_canonical.as_ref().unwrap().display(),
                     path.display()
                 );
             }
@@ -722,11 +730,10 @@ impl Monitor {
         }
 
         // Reject paths that would cause infinite recursion (log dir inside monitored path)
-        // Resolve tilde in store paths (they may not be expanded yet)
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-        let resolved = crate::config::expand_tilde(path, &home);
+        // Resolve tilde + symlinks to catch symlink-based conflicts
+        let resolved = resolve_recursion_check(path);
         if let Some(ref log_dir) = self.log_dir
-            && log_dir.starts_with(&resolved)
+            && log_dir.canonicalize().unwrap_or_else(|_| log_dir.clone()).starts_with(&resolved)
         {
             bail!(
                 "Cannot monitor '{}': log directory '{}' is inside this path — \

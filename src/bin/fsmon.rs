@@ -229,9 +229,12 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     cfg.resolve_paths()?;
 
     // Local check: reject paths that would cause infinite recursion
+    // Resolve tilde + symlinks to catch symlink-based conflicts
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let resolved = fsmon::config::expand_tilde(&args.path, &home);
-    if cfg.logging.dir.starts_with(&resolved) {
+    let expanded = fsmon::config::expand_tilde(&args.path, &home);
+    let resolved = expanded.canonicalize().unwrap_or(expanded);
+    let log_dir_canon = cfg.logging.dir.canonicalize().unwrap_or_else(|_| cfg.logging.dir.clone());
+    if log_dir_canon.starts_with(&resolved) {
         bail!(
             "Cannot monitor '{}': log directory '{}' is inside this path — \
              would cause infinite recursion on every log write.\n\
