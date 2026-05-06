@@ -51,15 +51,27 @@ impl AsFd for FanFd {
 
 /// Chown a file or directory to the original user (daemon runs as root).
 /// Resolves the original user from SUDO_UID/SUDO_GID env vars.
-fn chown_to_user(path: &Path) -> std::io::Result<()> {
+///
+/// Returns `Ok(true)` if chown succeeded, `Ok(false)` if the filesystem
+/// does not support ownership changes (vfat/exfat/NFS no_root_squash, etc.),
+/// and `Err` for genuine errors (bad path, IO failure).
+fn chown_to_user(path: &Path) -> std::io::Result<bool> {
     let (uid, gid) = crate::config::resolve_uid_gid();
     let cpath = std::ffi::CString::new(path.to_string_lossy().as_bytes())
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains null"))?;
     let ret = unsafe { libc::chown(cpath.as_ptr(), uid, gid) };
-    if ret != 0 {
-        Err(std::io::Error::last_os_error())
+    if ret == 0 {
+        Ok(true)
     } else {
-        Ok(())
+        let err = std::io::Error::last_os_error();
+        // EPERM / EOPNOTSUPP / ENOTSUP / ENOSYS — FS doesn't support ownership
+        if err.raw_os_error().is_some_and(|e| {
+            matches!(e, libc::EPERM | libc::EOPNOTSUPP | libc::ENOSYS)
+        }) {
+            Ok(false)
+        } else {
+            Err(err)
+        }
     }
 }
 
@@ -430,7 +442,15 @@ impl Monitor {
             fs::create_dir_all(dir)
                 .with_context(|| format!("Failed to create log directory {}", dir.display()))?;
             // Daemon runs as root; chown to the original user so they own their logs
-            let _ = chown_to_user(dir);
+            match chown_to_user(dir) {
+                Ok(true) => {}
+                Ok(false) => {
+                    eprintln!("[WARNING] Log directory '{}' is on a filesystem that does not support\n         ownership changes (e.g. vfat/exfat/NFS). Log files will remain owned by root.\n         Run 'sudo fsmon clean' if you cannot clean logs as a normal user.", dir.display());
+                }
+                Err(e) => {
+                    eprintln!("[WARNING] Could not chown log directory '{}': {}.\n         Log files may remain owned by root.", dir.display(), e);
+                }
+            }
         }
 
         println!("Starting file trace monitor...");
@@ -1188,7 +1208,16 @@ impl Monitor {
             .open(&log_path)?;
         // Chown new log files to the original user so they own everything in their ~
         if is_new {
-            let _ = chown_to_user(&log_path);
+            match chown_to_user(&log_path) {
+                Ok(true) => {}
+                Ok(false) => {
+                    // one-time warning already emitted in run() for the log directory
+                }
+                Err(e) => {
+                    eprintln!("[WARNING] Could not chown log file '{}': {}",
+                        log_path.display(), e);
+                }
+            }
         }
         writeln!(file, "{}", event.to_toml_string())?;
         writeln!(file)?; // blank line separator

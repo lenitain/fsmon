@@ -271,11 +271,19 @@ spawn 的 reader task 可能仍在执行(channel 未立即断开),
 
 ---
 
-### C5 - `chown_to_user` 在无所有权的 FS 上失败
+### C5 - `chown_to_user` 在无所有权的 FS 上失败 ✅ 已修复 (2026-05-07)
 
 若 log_dir 在 vfat/exfat/NFS (no_root_squash off) 等不支持标准 UNIX 所有权的
 文件系统上,`chown` 静默失败(`let _ = chown_to_user(dir)`),
 导致日志文件归 root 所有,普通用户无法 `fsmon clean`。
+
+**修复**: `chown_to_user` 现在区分三类结果:
+- `Ok(true)`: chown 成功
+- `Ok(false)`: FS 不支持所有权变更(EPERM/EOPNOTSUPP/ENOSYS)
+- `Err(err)`: 真实错误(IO 失败等)
+
+daemon 启动时对 log_dir 的 chown 失败会发一次性 `[WARNING]`,
+提示用户此 FS 不支持所有权变更,`clean` 可能需要 `sudo`。
 
 ---
 
