@@ -310,7 +310,6 @@ src/
 │                         #   daemon 服务端 + CLI 客户端, ErrorKind 枚举
 ├── utils.rs              # parse_size, parse_time, uid 查询, 路径↔日志名
 ├── help.rs               # 集中式帮助文本
-└── systemd.rs            # 已废弃 — 引导用户使用 sudo fsmon daemon &
 ```
 
 ### 数据流

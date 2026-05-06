@@ -312,7 +312,6 @@ src/
 │                         #   daemon server + CLI client, ErrorKind enum
 ├── utils.rs              # parse_size, parse_time, uid lookup, path↔log name
 ├── help.rs               # Centralized help text for all commands
-└── systemd.rs            # Deprecated — guides users to sudo fsmon daemon &
 ```
 
 ### Data Flow
