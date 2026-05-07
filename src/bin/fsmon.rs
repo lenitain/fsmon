@@ -7,7 +7,7 @@ use fsmon::query::Query;
 use fsmon::socket::{self, SocketCmd};
 use fsmon::store::{PathEntry, Store};
 use fsmon::utils::parse_size;
-use fsmon::{DEFAULT_KEEP_DAYS, EventType, OutputFormat, SortBy, clean_logs};
+use fsmon::{DEFAULT_KEEP_DAYS, EventType, SortBy, clean_logs};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -106,9 +106,6 @@ struct QueryArgs {
     #[arg(short = 'r', long, value_enum)]
     sort: Option<SortBy>,
 
-    /// Output format: toml (default) or jsonl
-    #[arg(short = 'F', long, value_enum)]
-    format: Option<OutputFormat>,
 }
 
 #[derive(Parser)]
@@ -437,7 +434,6 @@ async fn cmd_query(args: QueryArgs) -> Result<()> {
         .transpose()?;
 
     let sort = args.sort.unwrap_or(SortBy::Time);
-    let format = args.format.unwrap_or(OutputFormat::Toml);
 
     let query = Query::new(
         cfg.logging.dir,
@@ -449,7 +445,6 @@ async fn cmd_query(args: QueryArgs) -> Result<()> {
         users,
         event_types,
         min_size_bytes,
-        format,
         sort,
     );
 

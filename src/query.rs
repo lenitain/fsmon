@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use crate::utils::parse_time;
-use crate::{EventType, FileEvent, OutputFormat, SortBy, parse_log_line_jsonl};
+use crate::{EventType, FileEvent, SortBy, parse_log_line_jsonl};
 
 const SCAN_BACK_BYTES: u64 = 4096;
 
@@ -20,7 +20,6 @@ pub struct Query {
     users: Option<Vec<String>>,
     event_types: Option<Vec<EventType>>,
     min_size: Option<i64>,
-    format: OutputFormat,
     sort: SortBy,
 }
 
@@ -36,7 +35,6 @@ impl Query {
         users: Option<Vec<String>>,
         event_types: Option<Vec<EventType>>,
         min_size: Option<i64>,
-        format: OutputFormat,
         sort: SortBy,
     ) -> Self {
         Self {
@@ -49,7 +47,6 @@ impl Query {
             users,
             event_types,
             min_size,
-            format,
             sort,
         }
     }
@@ -500,18 +497,8 @@ impl Query {
             return Ok(());
         }
 
-        match self.format {
-            OutputFormat::Toml => {
-                for event in events {
-                    print!("{}", event.to_toml_string());
-                    println!(); // blank line separator
-                }
-            }
-            OutputFormat::Jsonl => {
-                for event in events {
-                    println!("{}", event.to_jsonl_string());
-                }
-            }
+        for event in events {
+            println!("{}", event.to_jsonl_string());
         }
 
         Ok(())
@@ -547,7 +534,6 @@ mod tests {
             None,
             None,
             None,
-            OutputFormat::Toml,
             sort,
         )
     }
@@ -663,7 +649,6 @@ mod tests {
             None,
             None,
             None,
-            OutputFormat::Toml,
             SortBy::Time,
         );
 
@@ -717,7 +702,6 @@ mod tests {
             None,
             Some(vec![EventType::Create]),
             None,
-            OutputFormat::Toml,
             SortBy::Time,
         );
 

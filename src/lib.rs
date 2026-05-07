@@ -11,6 +11,7 @@ pub mod utils;
 
 use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
+
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -23,11 +24,7 @@ pub const DEFAULT_KEEP_DAYS: u32 = 30;
 
 pub const EXIT_CONFIG: i32 = 78;
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
-pub enum OutputFormat {
-    Toml,
-    Jsonl,
-}
+
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum SortBy {
