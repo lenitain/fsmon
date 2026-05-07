@@ -79,7 +79,7 @@ Examples:
             r#"List all monitored paths with their configuration.
 
 Displays each path with its recursive flag, event type filters,
-minimum size threshold, and exclusion patterns.
+size threshold, path/cmd exclusion patterns.
 
 Examples:
   fsmon managed"#
@@ -103,22 +103,27 @@ Examples:
         HelpTopic::Clean => {
             r#"Clean historical log files, retain by time or size.
 
+Defaults come from config.toml [logging] section (keep_days=30, max_size="1GB").
+CLI args override config overrides code defaults.
+
 Options:
   --path            Path(s) to clean. Repeatable. Default: all.
-  --keep-days       Keep logs from last N days (default: 30)
+  --keep-days       Keep logs from last N days
   --max-size        Maximum log file size (e.g., 100MB, 1GB)
   --dry-run         Preview mode, don't actually delete
 
 Examples:
-  fsmon clean --keep-days 7
-  fsmon clean --path /tmp --max-size 100MB --dry-run"#
+  fsmon clean                       Use config defaults
+  fsmon clean --keep-days 7         Override retention
+  fsmon clean --path /tmp --dry-run Preview without deleting"#
         }
         HelpTopic::Generate => {
             r#"Generate a default configuration file at ~/.config/fsmon/config.toml.
 
-The config file defines infrastructure paths (store, log dir, socket).
-Monitored paths are managed separately via 'fsmon add'/'fsmon remove'.
+The config includes safety nets (keep_days=30, max_size="1GB")
+that prevent disk overflow even if you never run 'fsmon clean'.
 
+Monitored paths are managed separately via 'fsmon add'/'fsmon remove'.
 The daemon also auto-generates a default config if none exists when started.
 
 Examples:
@@ -135,16 +140,21 @@ Daemon (requires sudo):
   kill %1                           Stop daemon (or Ctrl+C)
 
 Management (no sudo needed):
-  fsmon add /path -r                Add path with recursive monitoring
+  fsmon add /path -r                Add path (recursive)
+  fsmon add /path --only-cmd nginx  Filter by process name
   fsmon remove /path                Remove path
   fsmon managed                     List monitored paths
 
-Query & Clean:
+Query (stdout JSONL, pipe to jq):
   fsmon query --since 1h            Events from last hour
-  fsmon query --path /tmp           Events for a specific path
-  fsmon clean --keep-days 7         Keep 7 days of logs
+  fsmon query | jq 'select(.cmd == "nginx")'  Custom filter
+
+Clean (config defaults: keep_days=30, max_size=1GB):
+  fsmon clean                       Clean all logs
+  fsmon clean --keep-days 7         Override retention
+  fsmon clean --dry-run             Preview without deleting
 
 Config: ~/.config/fsmon/config.toml
 Store:  ~/.local/share/fsmon/store.jsonl
-Logs:   ~/.local/state/fsmon/*.jsonl"#
+Logs:   ~/.local/state/fsmon/*_log.jsonl"#
 }

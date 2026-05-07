@@ -20,32 +20,27 @@
 - **进程追溯**: 追踪每个文件变更的 PID、命令名和用户 — 包括 `touch`、`rm`、`mv` 等短命进程
 - **递归监控**: 监控整个目录树，追踪新建的子目录
 - **完整删除捕获**: 通过持久化目录句柄缓存，完整捕获 `rm -rf` 递归删除中的每个文件
-- **高性能**: Rust + Tokio 编写，内存占用 <5MB，零拷贝 FID 事件解析，二分查找日志查询
-- **灵活过滤**: 支持按时间、大小、进程、用户、事件类型和排除模式（通配符）过滤
+- **高性能**: Rust + Tokio，内存占用 <5MB，零拷贝 FID 解析，二分查找日志查询
+- **Unix 哲学**: JSONL 日志格式 — `jq` 查询、`grep` 过滤、`sort` 排序。fsmon 只负责捕获和写入，过滤策略由你掌控
+- **灵活的捕获过滤**: 按事件类型、大小、路径模式、进程名过滤 — 全部在 daemon 进程内完成，纳秒级，无 fork 开销
 - **日常无需 sudo**: 仅 `sudo fsmon daemon` 需要 root（fanotify），其余命令普通用户可执行
 - **热更新**: 守护进程运行时添加/移除路径，无需重启
-- **无限递归防护**: 自动拒绝包含日志目录的监控路径，防止事件循环
-- **无 systemd 架构**: 用户自己管理 daemon。配置按用户隔离
-
-## 为什么选择 fsmon
-
-fsmon 用于记录"谁修改了这个文件？"。
-
-传统的文件监控工具只提供事件本身，缺少上下文。fsmon 将每个文件变更归因到对应的进程。无论是恶意脚本、自动化部署还是配置错误的服务。
+- **磁盘安全网**: 可配置 `keep_days`（默认 30 天）和 `max_size`（默认 1GB），防止磁盘写满
+- **无 systemd 架构**: 用户自己管理 daemon，配置按用户隔离
 
 ## 快速开始
 
 ### 前置要求
 
 - **操作系统**: Linux 5.9+（需要 fanotify FID 模式）
-- **已测试的文件系统**: ext4、XFS、btrfs（注：推荐 Linux 6.18+ 内核以获得 btrfs 递归操作的完整支持）
+- **已测试的文件系统**: ext4、XFS、btrfs
 - **构建工具**: Rust 工具链（`cargo`）
 
 ```bash
 # 验证内核版本
 uname -r  # 需要 ≥ 5.9
 
-# 如未安装 Rust
+# 安装 Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source $HOME/.cargo/env
 ```
@@ -62,7 +57,7 @@ cargo build --release
 cargo install fsmon
 ```
 
-**注意：daemon 需要管理员权限**
+**fanotify 需要 root 权限运行 daemon：**
 ```bash
 sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 ```
@@ -70,304 +65,157 @@ sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 ### 使用
 
 ```bash
-# 1. 启动守护进程（fanotify 需要 sudo）
+# 1. 启动守护进程（需要 sudo）
 sudo fsmon daemon &
 
-# 2. 添加监控路径（不需要 sudo）
+# 2. 添加监控路径（无需 sudo）
 fsmon add /etc --types MODIFY
 fsmon add /var/www --recursive --types MODIFY,CREATE
-fsmon add /tmp --all-events
+fsmon add /var/log --exclude-cmd "rsync|apt"     # 忽略构建噪音
+fsmon add /tmp --only-cmd nginx                   # 只捕获 nginx
 
-# 3. 列出已监控路径
+# 3. 列出已监控路径及其过滤配置
 fsmon managed
 
-# 4. 查询历史事件
-fsmon query --since 1h --cmd nginx
+# 4. 查询历史事件 — pipe 到 jq 做过滤
+fsmon query --since 1h | jq 'select(.cmd == "nginx")'
 
-# 5. 清理旧日志（dry-run 预览）
-fsmon clean --keep-days 7 --dry-run
+# 5. 清理日志（默认 keep_days=30，max_size=1GB）
+fsmon clean                       # 使用 config.toml 默认值
+fsmon clean --keep-days 7         # CLI 覆盖
+fsmon clean --dry-run             # 预览模式，不删除
 
-# 6. 移除监控路径
+# 6. 移除路径
 fsmon remove /tmp
 
-# 7. 停止守护进程
+# 7. 停止 daemon
 kill %1
 ```
 
-### 文件路径
+**无 systemd，一切按用户隔离。**
 
-| 用途 | 路径 | 创建者 | 权限 |
+### Pipe 示例
+
+```bash
+# 按 PID 过滤
+fsmon query --since 1h | jq 'select(.pid == 1234)'
+
+# 按事件类型过滤
+fsmon query | jq 'select(.event_type == "MODIFY")'
+
+# 按文件大小排序
+fsmon query | jq -s 'sort_by(.file_size)[]'
+
+# 组合过滤
+fsmon query --since 1h | jq 'select(.cmd == "nginx" and .file_size > 10240)'
+
+# 实时 tail
+tail -f ~/.local/state/fsmon/*_log.jsonl | jq 'select(.event_type == "CREATE")'
+```
+
+### 文件位置
+
+| 用途 | 路径 | 格式 | 权限 |
 |---|---|---|---|
-| 基础设施配置 | `~/.config/fsmon/config.toml` | `fsmon generate` / daemon 自动创建 | 用户 |
-| 路径数据库 (store) | `~/.local/share/fsmon/store.toml` | `fsmon add` / `fsmon remove` | 用户 |
-| 事件日志（按路径分文件） | `~/.local/state/fsmon/<hash>.toml` | daemon (root)¹ | 644 |
-| Unix socket | `/tmp/fsmon-<UID>.sock` | daemon (root)¹ | 666 |
+| 基础设施配置 | `~/.config/fsmon/config.toml` | TOML（可手动编辑） | 用户所有 |
+| 路径数据库 | `~/.local/share/fsmon/store.jsonl` | JSONL（每行一条目） | 用户所有 |
+| 事件日志 | `~/.local/state/fsmon/*_log.jsonl` | JSONL（每行一事件） | 644 |
+| Unix Socket | `/tmp/fsmon-<UID>.sock` | TOML over stream | 666 |
 
-¹ daemon 以 root 运行（通过 sudo），但会通过 `SUDO_UID` + `getpwuid_r` 自动解析原始用户的 home 目录，
-  所以实际写入的是 `/home/<你>/...` 而不是 `/root/...`
+daemon 通过 sudo 以 root 运行，但通过 `SUDO_UID` + `getpwuid_r` 解析原始用户的 home 目录，
+所以日志文件会写入 `/home/<你>/...` 而非 `/root/...`。
 
-### 开机自启（可选）
+### 开机自启动（可选）
 
-fsmon **不安装** systemd 服务。如需登录时自动启动 daemon，请自行添加到 crontab：
+fsmon 不安装 systemd 服务。如需登录时自动启动：
 
 ```bash
 crontab -e
-# 添加这一行：
 @reboot /usr/local/bin/fsmon daemon &
 ```
 
-或添加到 shell 配置文件：
+## 捕获过滤
 
-```bash
-echo 'sudo fsmon daemon &' >> ~/.bashrc
+所有捕获过滤都在 daemon 进程内完成（纳秒级，无 fork），不匹配的事件不会写盘。
+
+| 参数 | 类型 | 开销 | 原因 |
+|------|------|------|------|
+| `--types` | 内核 mask | 零 | fanotify 只传递匹配事件 |
+| `--recursive` | 内核范围 | 零 | 监控子目录 |
+| `--exclude` | 路径 regex | ~µs | 减少写盘 I/O |
+| `--min-size` | u64 比较 | ~ns | 减少写盘 I/O |
+| `--exclude-cmd` | 进程名 regex | ~µs | 减少写盘 I/O |
+| `--only-cmd` | 进程名 regex | ~µs | 减少写盘 I/O |
+| `--all-events` | 内核 mask | 零 | 开启全部 14 种事件 |
+
+## 查询与清理
+
+查询只保留性能攸关的参数，其余过滤通过 pipe 到标准 Unix 工具完成。
+
+```
+fsmon query                  →  扫所有日志文件，输出 JSONL
+fsmon query --path /tmp      →  只读 /tmp 的日志文件
+fsmon query --since 1h       →  二分搜索 + 输出
 ```
 
-## 示例
-
-### 排查配置文件变更
+清理使用 config.toml 中的安全网默认值，可通过 CLI 覆盖：
 
 ```bash
-# 添加 /etc 监控
-fsmon add /etc --types MODIFY
-
-# 另一个终端执行修改
-echo "192.168.1.100 newhost" | sudo tee -a /etc/hosts
-
-# 查询结果
-fsmon query --since 1h --types MODIFY
+# 优先级: CLI 参数 > config.toml > 代码默认值 (30 天)
+fsmon clean                       # 使用 config 默认
+fsmon clean --keep-days 60        # 覆盖默认值
 ```
 
-### 追踪大文件创建
+## 配置
 
-```bash
-# 监控大文件创建
-fsmon add /tmp --types CREATE
+首次启动 daemon 或执行 `fsmon generate` 自动生成。包含磁盘安全网：
 
-# 触发
-dd if=/dev/zero of=/tmp/large_test.bin bs=1M count=100
-
-# 查询时按最小大小过滤
-fsmon query --since 1m --min-size 50MB
+```toml
+[logging]
+dir = "~/.local/state/fsmon"
+keep_days = 30          # 防止磁盘写满
+max_size = "1GB"        # 单日志文件上限
 ```
 
-### 审计删除操作
+## 事件类型
 
-```bash
-# 添加删除事件监控
-fsmon add ~/myproject --types DELETE --recursive
+默认捕获 8 种核心事件，`--all-events` 开启全部 14 种。
 
-# 触发
-rm -rf ~/myproject/
+**默认（8 种）：** CLOSE_WRITE、ATTRIB、CREATE、DELETE、DELETE_SELF、MOVED_FROM、MOVED_TO、MOVE_SELF
 
-# 输出显示每个被删除的文件（包括子目录中的）
-[2026-05-04 21:37:47] [DELETE] /home/pilot/myproject/hello.c (PID: 32838, CMD: rm, USER: pilot, SIZE: +0B)
-[2026-05-04 21:37:47] [DELETE] /home/pilot/myproject (PID: 32838, CMD: rm, USER: pilot, SIZE: +0B)
-```
-
-### 组合过滤查询
-
-```bash
-# 查询最近 1 小时 nginx 的操作，按文件大小排序
-fsmon query --since 1h --cmd nginx* --sort size
-
-# 添加监控并排除临时文件
-fsmon add /var/www --types CREATE,DELETE --exclude "*.tmp"
-```
-
-## 命令参考
-
-```bash
-fsmon daemon          # 启动守护进程（需要 sudo）
-fsmon add /path -r    # 添加监控路径（实时 + 持久化）
-fsmon remove /path    # 移除监控路径
-fsmon managed         # 列出所有监控路径及选项
-fsmon query --since   # 查询历史事件
-fsmon clean --keep    # 清理旧日志
-fsmon generate        # 生成默认配置文件
-```
-
-使用 `fsmon <COMMAND> --help` 查看每个子命令的详细帮助。
-
-## 日志文件命名
-
-日志文件以监控路径命名，便于查找：
-
-| 监控路径 | 日志文件名 | 文件头注释 |
-|---|---|---|
-| `/tmp/foo` | `a1b2c3d4e5f6a7b8.toml` | `# monitored_path = "/tmp/foo"` |
-| `/etc` | `c9d0e1f2a3b4c5d6.toml` | `# monitored_path = "/etc"` |
-| `/var/log` | `e7f8a9b0c1d2e3f4.toml` | `# monitored_path = "/var/log"` |
-
-> **注意**：哈希是确定性的——相同路径始终产生相同文件名。
-> 因此 `--path` 查找（`query`、`clean`）在守护进程重启后仍能正常工作。
-
-文件名使用 FNV-1a 64 位哈希（16 位十六进制 + `.toml`），避免旧版路径编码可能超出 Linux 255 字节文件名限制的问题。原始路径保留在文件头注释和每个事件的 `path` 字段中。
+**额外（6 种，通过 --all-events）：** ACCESS、MODIFY、OPEN、OPEN_EXEC、CLOSE_NOWRITE、FS_ERROR
 
 ## 架构
 
-fsmon 以用户自己管理的前台守护进程运行。
-
 ```
-┌──────────────────────────────────────────────────────┐
-│  用户运行：  sudo fsmon daemon &                     │
-├──────────────────────────────────────────────────────┤
-│  守护进程（root）：                                  │
-│  1. 通过 SUDO_UID 解析原始用户                       │
-│  2. 读取 ~/.config/fsmon/config.toml（基础设施路径） │
-│  3. 读取 ~/.local/share/fsmon/store.toml（监控路径） │
-│  4. 校验路径（拒绝日志目录递归）                     │
-│  5. fanotify_init → fanotify_mark(paths)             │
-│  6. 绑定 /tmp/fsmon-<UID>.sock（权限 0666）          │
-│  7. 主循环：fanotify 事件 + socket 命令              │
-├──────────────────────────────────────────────────────┤
-│  CLI（用户）：  fsmon add /path                      │
-│  1. 校验路径（拒绝日志目录递归）                     │
-│  2. 写入 ~/.local/share/fsmon/store.toml             │
-│  3. 通过 socket 发送 add 命令（热更新）              │
-│  4. 如 daemon 返回永久错误 → 回滚 store              │
-└──────────────────────────────────────────────────────┘
+Linux Kernel (fanotify)
+    → FID 事件推入队列
+    → tokio 异步读取
+    → fid_parser 解析路径（两阶段 + 目录缓存）
+    → Monitor 过滤（类型、大小、路径模式、进程名）
+    → JSONL → 按路径分文件日志 (*_log.jsonl)
+
+用户 pipe:
+    cat/ tail *.jsonl → jq → 你的自定义逻辑
 ```
-
-| 项目 | 说明 |
-|------|------|
-| 基础设施配置 | `~/.config/fsmon/config.toml` — store 路径、日志目录、socket 路径 |
-| 路径数据库 | `~/.local/share/fsmon/store.toml` — 由 `add`/`remove` 自动管理 |
-| 路径管理 | `fsmon add` / `fsmon remove /path`（通过 Unix socket 实时生效） |
-| 日志输出 | TOML 格式，按路径分文件：`~/.local/state/fsmon/<hash>.toml` |
-| Socket | `/tmp/fsmon-<UID>.sock`（权限 0666，普通用户可用） |
-| 错误分类 | Socket 协议区分 `Permanent`（永久）和 `Transient`（临时）错误 |
-| 查询 | `fsmon query --since 1h` — 二分查找优化 |
-| 清理 | `fsmon clean --keep-days 7` — 按时间或最大大小轮转 |
-| daemon 管理 | 用户自理（`sudo fsmon daemon &`、crontab 等） |
-
-## 配置文件
-
-配置文件位于 `~/.config/fsmon/config.toml`。首次启动 daemon 或执行 `fsmon generate` 时自动生成。
-
-```toml
-# fsmon 配置文件
-#
-# 基础设施路径。监控路径通过 'fsmon add' / 'fsmon remove' 管理，
-# 持久化在 [store].file 中。
-# 所有路径支持 ~ 扩展。<UID> 在运行时替换为实际 UID。
-
-[store]
-# 自动管理的监控路径数据库
-file = "~/.local/share/fsmon/store.toml"
-
-[logging]
-# 日志目录，每个监控路径一个文件（文件名为 _路径.toml）
-dir = "~/.local/state/fsmon"
-
-[socket]
-# daemon-CLI 实时通信的 Unix socket 路径
-path = "/tmp/fsmon-<UID>.sock"
-```
-
-### 查询选项
-
-| 参数 | 说明 |
-|------|------|
-| `--path` | 按路径查询。默认：全部监控路径。 |
-| `--since` | 起始时间（相对如 `1h`、`30m`、`7d`，或绝对时间戳） |
-| `--until` | 结束时间 |
-| `--pid` | 按 PID 过滤，逗号分隔 |
-| `--cmd` | 按进程名过滤（支持通配符，如 `nginx*`） |
-| `--user` | 按用户名过滤，逗号分隔 |
-| `-t, --types` | 按事件类型过滤，逗号分隔 |
-| `-m, --min-size` | 最小变更大小 |
-| `-f, --format` | 输出格式：`human`（默认）、`json`（TOML 输出）、`csv` |
-| `-r, --sort` | 排序：`time`、`size`、`pid` |
-
-### 清理选项
-
-| 参数 | 说明 |
-|------|------|
-| `--path` | 按路径清理。默认：全部监控路径。 |
-| `--keep-days` | 保留天数（默认：30） |
-| `--max-size` | 截断前最大大小（如 `100MB`） |
-| `--dry-run` | 预览模式，不实际删除 |
-
-## 技术架构
 
 ### 源码结构
 
 ```
 src/
-├── bin/
-│   └── fsmon.rs          # CLI: daemon, add, remove, managed, query, clean, generate
-├── lib.rs                # Crate 根: FileEvent, EventType, 日志清理引擎
-├── config.rs             # 基础设施配置 (~/.config/fsmon/config.toml)
-│                         #   SUDO_UID 路径解析, tilde 展开
-├── store.rs              # 路径数据库 (~/.local/share/fsmon/store.toml)
-├── monitor.rs            # Fanotify 主循环: 按文件系统分 FD 组, 作用域/LRU 过滤,
-│                         #   socket 命令处理, 无限递归防护
-├── fid_parser.rs         # 底层 FID 事件解析, 两阶段路径恢复
-├── dir_cache.rs          # 目录句柄缓存 (name_to_handle_at)
-│                         #   （父目录删除后恢复事件路径）
-├── proc_cache.rs         # Netlink proc connector: 在 exec() 时捕获
-│                         #   (pid,cmd,user)，归因短命进程
-├── query.rs              # 日志查询: 二分查找 + 组合过滤
-├── output.rs             # 事件格式化: human, TOML, CSV
-├── socket.rs             # Unix socket 协议 (TOML over stream):
-│                         #   daemon 服务端 + CLI 客户端, ErrorKind 枚举
-├── utils.rs              # parse_size, parse_time, uid 查询, 路径↔日志名
-└── help.rs               # 集中式帮助文本
+├── bin/fsmon.rs       CLI: daemon, add, remove, managed, query, clean, generate
+├── lib.rs             FileEvent、EventType、清理引擎、临时文件安全
+├── config.rs          基础设施配置、SUDO_UID 用户解析
+├── store.rs           路径数据库（JSONL 格式）
+├── monitor.rs         Fanotify 循环、socket 处理、所有捕获过滤
+├── fid_parser.rs      FID 事件底层解析、两阶段路径恢复
+├── dir_cache.rs       目录句柄缓存（rm -rf 路径恢复）
+├── proc_cache.rs      Netlink proc 连接器（短命进程归因）
+├── query.rs           二分查找日志查询、JSONL 输出
+├── socket.rs          Unix socket 协议（TOML）、错误分类
+├── utils.rs           大小/时间解析、uid 查询、路径→日志名哈希
+└── help.rs            所有命令的帮助文本
 ```
-
-### 数据流
-
-```
-Linux Kernel (fanotify)
-    → FID 事件推入队列
-    → tokio::select 异步读取事件
-    → fid_parser 解析 FID 记录（两阶段：解析 + 缓存恢复）
-    → Monitor 过滤（类型、大小、排除模式、作用域）
-    → output 格式化（TOML）→ 按路径分文件日志
-```
-
-- **fanotify (FID 模式 + FAN_REPORT_NAME)**：内核推送文件事件时携带目录文件句柄和文件名。无需轮询，事件通过非阻塞 read 即时送达。
-- **按文件系统分 FD 组**：每个文件系统（挂载点）创建独立的 fanotify fd，因为内核禁止单个 fd 跨文件系统标记。每个 fd 独立 tokio 读取任务。
-- **Proc Connector**：后台线程订阅 netlink `PROC_EVENT_EXEC` 通知，在每个进程 exec 时缓存 `(pid, cmd, user)`。确保短命进程（`touch`、`rm`、`mv`）即使退出后也能被归因。
-- **FID 解析器 + 目录缓存**：两阶段事件处理：(1) 通过 `open_by_handle_at` 解析文件句柄，(2) 使用持久化目录句柄缓存恢复父目录已被删除的事件路径。处理多层嵌套的 `rm -rf` 场景。
-- **二分查找查询**：`fsmon query` 在大致按时间排序的日志文件上使用二分查找，将扫描范围缩小到 O(log N) 次 seek。配合 `expand_offset_backward` 处理边界附近的轻微乱序。
-- **按路径分文件日志**：日志以监控路径的确定性哈希命名（如 `a1b2c3d4.toml`）。原始路径保留在文件头注释和每个事件的 `path` 字段中。无集中日志文件，`ls` 和过滤友好。
-- **错误分类**：Socket 协议区分 `Permanent` 错误（路径冲突、配置无效——CLI 回滚 store）和 `Transient` 错误（运行时问题——重启后生效）。
-- **Rust + Tokio**：多 fd 异步读取任务通过 mpsc channel 通信。独立后台线程处理 proc connector。信号处理支持优雅关闭和 SIGHUP 配置重载。
-
-### 事件挂载策略
-
-fsmon 使用两级挂载策略：
-1. **FAN_MARK_FILESYSTEM**（首选）：标记目标路径所在的整个挂载点 — 新建文件无竞态窗口。若遇到 `EXDEV`（btrfs 子卷）则降级。
-2. **Inode 标记降级**：逐个标记目录，`--recursive` 模式下递归遍历。
-
-### 事件类型
-
-默认捕获 8 种核心事件。使用 `--all-events` 可开启全部 14 种。
-
-**默认事件（8 种）：**
-
-| 事件 | 说明 |
-|------|------|
-| CLOSE_WRITE | 文件写完后关闭（最佳"已修改"信号） |
-| ATTRIB | 元数据变更（权限、时间戳、所有者） |
-| CREATE | 文件/目录已创建 |
-| DELETE | 文件/目录已删除 |
-| DELETE_SELF | 被监控对象自身被删除 |
-| MOVED_FROM | 文件从监控目录移出 |
-| MOVED_TO | 文件移入监控目录 |
-| MOVE_SELF | 被监控对象自身被移动 |
-
-**额外事件（6 种，使用 --all-events）：**
-
-| 事件 | 说明 |
-|------|------|
-| ACCESS | 文件被读取 |
-| MODIFY | 文件内容被写入（非常频繁） |
-| OPEN | 文件/目录被打开 |
-| OPEN_EXEC | 文件被打开用于执行 |
-| CLOSE_NOWRITE | 只读文件被关闭 |
-| FS_ERROR | 文件系统错误（Linux 5.16+） |
 
 ## 许可证
 
