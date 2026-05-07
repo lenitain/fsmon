@@ -280,7 +280,7 @@ async fn clean_single_log(
 /// Clean log files by age and size.
 ///
 /// If `paths` is Some, only clean matching log files for those paths.
-/// If `paths` is None, clean all `*.toml` log files in `log_dir`.
+/// If `paths` is None, clean all `*.jsonl` log files in `log_dir`.
 pub async fn clean_logs(
     log_dir: &Path,
     paths: Option<&[PathBuf]>,

@@ -218,7 +218,7 @@ impl Config {
 
 [store]
 # Path to the auto-managed monitored paths database.
-file = "~/.local/share/fsmon/store.toml"
+file = "~/.local/share/fsmon/store.jsonl"
 
 [logging]
 # Directory containing per-path log files (named by path hash).
@@ -296,7 +296,7 @@ mod tests {
             let cfg = Config::load().unwrap();
             assert_eq!(
                 cfg.store.file.to_string_lossy(),
-                "~/.local/share/fsmon/store.toml"
+                "~/.local/share/fsmon/store.jsonl"
             );
             assert_eq!(cfg.logging.dir.to_string_lossy(), "~/.local/state/fsmon");
             assert_eq!(cfg.socket.path.to_string_lossy(), "/tmp/fsmon-<UID>.sock");
@@ -308,7 +308,7 @@ mod tests {
         with_isolated_home(|_| {
             // Write a config file
             let content = r#"[store]
-file = "/custom/store.toml"
+file = "/custom/store.jsonl"
 
 [logging]
 dir = "/custom/logs"
@@ -319,7 +319,7 @@ path = "/tmp/custom.sock"
             fs::write(Config::path(), content).unwrap();
 
             let cfg = Config::load().unwrap();
-            assert_eq!(cfg.store.file, PathBuf::from("/custom/store.toml"));
+            assert_eq!(cfg.store.file, PathBuf::from("/custom/store.jsonl"));
             assert_eq!(cfg.logging.dir, PathBuf::from("/custom/logs"));
             assert_eq!(cfg.socket.path, PathBuf::from("/tmp/custom.sock"));
         });
@@ -366,7 +366,7 @@ path = "/tmp/custom.sock"
             let cfg = Config::load().unwrap();
             assert_eq!(
                 cfg.store.file.to_string_lossy(),
-                "~/.local/share/fsmon/store.toml"
+                "~/.local/share/fsmon/store.jsonl"
             );
             assert_eq!(cfg.logging.dir.to_string_lossy(), "~/.local/state/fsmon");
             assert_eq!(cfg.socket.path.to_string_lossy(), "/tmp/fsmon-<UID>.sock");
@@ -382,7 +382,7 @@ path = "/tmp/custom.sock"
             let cfg = Config::load().unwrap();
             assert_eq!(
                 cfg.store.file.to_string_lossy(),
-                "~/.local/share/fsmon/store.toml"
+                "~/.local/share/fsmon/store.jsonl"
             );
         });
     }

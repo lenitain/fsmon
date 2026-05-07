@@ -39,8 +39,8 @@ Usage:
   fsmon query --since 1h    Query events
 
 Config:           ~/.config/fsmon/config.toml
-Store:            ~/.local/share/fsmon/store.toml (managed by add/remove)
-Log dir:          ~/.local/state/fsmon/ (one .toml file per monitored path)
+Store:            ~/.local/share/fsmon/store.jsonl (managed by add/remove)
+Log dir:          ~/.local/state/fsmon/ (one .jsonl file per monitored path)
 Socket:           /tmp/fsmon-<UID>.sock"#
         }
         HelpTopic::Add => {
@@ -145,6 +145,6 @@ Query & Clean:
   fsmon clean --keep-days 7         Keep 7 days of logs
 
 Config: ~/.config/fsmon/config.toml
-Store:  ~/.local/share/fsmon/store.toml
-Logs:   ~/.local/state/fsmon/*.toml"#
+Store:  ~/.local/share/fsmon/store.jsonl
+Logs:   ~/.local/state/fsmon/*.jsonl"#
 }
