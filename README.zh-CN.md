@@ -98,7 +98,7 @@ cat ~/.local/state/fsmon/*_log.jsonl
 
 注意：vim 的 `.swp` 虽然被 fanotify 捕获，但 **不会落盘**——`--exclude "*.swp"` 在写磁盘前就拦截了。
 
-#### 用 pipe 过滤查询
+#### 用管道过滤查询
 
 ```bash
 # nginx 在过去一小时做了什么？
@@ -178,8 +178,6 @@ crontab -e
 | `--only-cmd` | 进程名 regex | ~µs | 减少写盘 I/O |
 | `--all-events` | 内核 mask | 零 | 开启全部 14 种事件 |
 
-```
-
 ## 事件类型
 
 默认捕获 8 种核心事件，`--all-events` 开启全部 14 种。
@@ -198,7 +196,7 @@ Linux Kernel (fanotify)
     → Monitor 过滤（类型、大小、路径模式、进程名）
     → JSONL → 按路径分文件日志 (*_log.jsonl)
 
-用户 pipe:
+用户管道:
     cat/ tail *.jsonl → jq → 你的自定义逻辑
 ```
 
