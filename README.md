@@ -179,17 +179,17 @@ sudo crontab -e
 All capture filters run inside the daemon process (nanosecond-fast, no fork).
 They reduce write I/O — events that don't match never touch disk.
 
-| Flag | Type | Cost | Reason |
-|------|------|------|--------|
-| `--types` | kernel mask | zero | fanotify only delivers matching events |
-| `--recursive` | kernel scope | zero | watch subdirectories |
-| `--exclude` | path regex | ~µs | reduce write I/O |
-| `--min-size` | u64 compare | ~ns | reduce write I/O |
-| `--exclude-cmd` | cmd regex | ~µs | reduce write I/O (new) |
-| `--only-cmd` | cmd regex | ~µs | reduce write I/O (new) |
-| `--all-events` | kernel mask | zero | enable all 14 events |
+```
+fsmon add --types MODIFY,CREATE    →  kernel mask, zero cost: fanotify only delivers matching events
+fsmon add --recursive              →  kernel scope, zero cost: watch subdirectories
+fsmon add --exclude "*.swp"        →  path regex, ~µs: reduce write I/O
+fsmon add --min-size 1024          →  u64 compare, ~ns: reduce write I/O
+fsmon add --exclude-cmd "cron"     →  cmd regex, ~µs: reduce write I/O
+fsmon add --only-cmd nginx,vim     →  cmd regex, ~µs: reduce write I/O
+fsmon add --all-events             →  kernel mask, zero cost: enable all 14 events
+```
 
-## Query & Clean
+## Query
 
 Query only keeps performance-critical options. All other filtering is done by piping JSONL to standard Unix tools.
 
@@ -198,6 +198,8 @@ fsmon query                  →  scan all log files, output JSONL
 fsmon query --path /tmp      →  only read /tmp's log file
 fsmon query --since 1h       →  binary search + output
 ```
+
+## Clean
 
 Clean uses safety net defaults from config.toml, overridable via CLI:
 

@@ -172,17 +172,17 @@ sudo crontab -e
 
 所有捕获过滤都在 daemon 进程内完成（纳秒级，无 fork），不匹配的事件不会写盘。
 
-| 参数 | 类型 | 开销 | 原因 |
-|------|------|------|------|
-| `--types` | 内核 mask | 零 | fanotify 只传递匹配事件 |
-| `--recursive` | 内核范围 | 零 | 监控子目录 |
-| `--exclude` | 路径 regex | ~µs | 减少写盘 I/O |
-| `--min-size` | u64 比较 | ~ns | 减少写盘 I/O |
-| `--exclude-cmd` | 进程名 regex | ~µs | 减少写盘 I/O |
-| `--only-cmd` | 进程名 regex | ~µs | 减少写盘 I/O |
-| `--all-events` | 内核 mask | 零 | 开启全部 14 种事件 |
+```
+fsmon add --types MODIFY,CREATE    →  内核 mask，零开销：fanotify 只传递匹配事件
+fsmon add --recursive              →  内核范围，零开销：监控子目录
+fsmon add --exclude "*.swp"        →  路径 regex，~µs：减少写盘 I/O
+fsmon add --min-size 1024          →  u64 比较，~ns：减少写盘 I/O
+fsmon add --exclude-cmd "cron"     →  进程名 regex，~µs：减少写盘 I/O
+fsmon add --only-cmd nginx,vim     →  进程名 regex，~µs：减少写盘 I/O
+fsmon add --all-events             →  内核 mask，零开销：开启全部 14 种事件
+```
 
-## 查询与清理
+## 查询
 
 查询只保留性能攸关的参数，其余过滤通过管道到标准 Unix 工具完成。
 
@@ -191,6 +191,8 @@ fsmon query                  →  扫所有日志文件，输出 JSONL
 fsmon query --path /tmp      →  只读 /tmp 的日志文件
 fsmon query --since 1h       →  二分搜索 + 输出
 ```
+
+## 清理
 
 清理使用 config.toml 中的安全网默认值（keep_days=30，max_size="1GB"），可通过 CLI 覆盖：
 
