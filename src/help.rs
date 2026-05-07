@@ -34,8 +34,9 @@ restarting the daemon.
 
 Usage:
   sudo fsmon daemon &       Start daemon in background
-  fsmon add /path/to/watch  Add a path (no sudo needed)
-  fsmon managed             List monitored paths
+  fsmon add /path -r --types MODIFY  Filter by event types
+  fsmon add /path --exclude-cmd rsync  Exclude by process name
+  fsmon managed                       List monitored paths
   fsmon query --since 1h    Query events
 
 Config:           ~/.config/fsmon/config.toml
@@ -52,16 +53,19 @@ in ~/.config/fsmon/config.toml for automatic monitoring on daemon restart.
 No sudo needed — store is updated immediately.
 
 Options:
-  -r, --recursive     Watch subdirectories recursively
-  -t, --types         Event types to monitor (comma-separated)
-  -m, --min-size      Minimum file size change to report (e.g., 100MB, 1GB)
-  -e, --exclude       Glob patterns to exclude (e.g., "*.tmp")
-  --all-events        Monitor all 14 fanotify event types
+  -r, --recursive         Watch subdirectories recursively
+  -t, --types             Event types to monitor (comma-separated)
+  -m, --min-size          Minimum file size change to report (e.g., 100MB, 1GB)
+  -e, --exclude           Glob patterns to exclude (e.g., "*.tmp")
+  --exclude-cmd           Process names to exclude (glob, e.g. "rsync|apt")
+  --only-cmd              Only capture from these process names (glob)
+  --all-events            Monitor all 14 fanotify event types
 
 Examples:
   fsmon add /path/to/project -r --types MODIFY,CREATE
   fsmon add /etc --types MODIFY --min-size 100KB
-  fsmon add /tmp --all-events"#
+  fsmon add /var/log --exclude-cmd "rsync|apt"
+  fsmon add /tmp --only-cmd nginx"#
         }
         HelpTopic::Remove => {
             r#"Remove a path from the monitoring list.

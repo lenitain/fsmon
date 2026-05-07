@@ -78,6 +78,14 @@ struct AddArgs {
     #[arg(short = 'e', long, value_name = "PATTERN")]
     exclude: Option<String>,
 
+    /// Process names to exclude (glob, e.g. "rsync|apt")
+    #[arg(long, value_name = "PATTERN")]
+    exclude_cmd: Option<String>,
+
+    /// Only capture events from these process names (glob)
+    #[arg(long, value_name = "PATTERN")]
+    only_cmd: Option<String>,
+
     /// Capture all 14 fanotify events
     #[arg(long)]
     all_events: bool,
@@ -240,6 +248,8 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         .map(|t| t.split(',').map(|s| s.trim().to_string()).collect());
     let min_size = args.min_size.clone();
     let exclude = args.exclude.clone();
+    let exclude_cmd = args.exclude_cmd.clone();
+    let only_cmd = args.only_cmd.clone();
     let recursive = if args.recursive { Some(true) } else { None };
     let all_events = if args.all_events { Some(true) } else { None };
 
@@ -249,6 +259,8 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         types: types.clone(),
         min_size: min_size.clone(),
         exclude: exclude.clone(),
+        exclude_cmd: exclude_cmd.clone(),
+        only_cmd: only_cmd.clone(),
         all_events,
     });
 
@@ -265,6 +277,8 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             types,
             min_size,
             exclude,
+            exclude_cmd,
+            only_cmd,
             all_events,
         },
     );
@@ -327,6 +341,8 @@ fn cmd_remove(raw: PathBuf) -> Result<()> {
             types: None,
             min_size: None,
             exclude: None,
+            exclude_cmd: None,
+            only_cmd: None,
             all_events: None,
         },
     ) {
@@ -364,6 +380,8 @@ fn cmd_managed() -> Result<()> {
         };
         let min_size_str = entry.min_size.as_deref().unwrap_or("-");
         let exclude_str = entry.exclude.as_deref().unwrap_or("-");
+        let exclude_cmd_str = entry.exclude_cmd.as_deref().unwrap_or("-");
+        let only_cmd_str = entry.only_cmd.as_deref().unwrap_or("-");
         let all_events_str = if entry.all_events.unwrap_or(false) {
             "all"
         } else {
@@ -371,12 +389,14 @@ fn cmd_managed() -> Result<()> {
         };
 
         println!(
-            "{} | types={} | {} | min_size={} | exclude={} | events={}",
+            "{} | types={} | {} | min_size={} | exclude-path={} | exclude-cmd={} | only-cmd={} | events={}",
             entry.path.display(),
             types_str,
             recursive_str,
             min_size_str,
             exclude_str,
+            exclude_cmd_str,
+            only_cmd_str,
             all_events_str,
         );
     }
@@ -469,10 +489,28 @@ fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
             regex::Regex::new(&pattern).with_context(|| "invalid exclude pattern")
         })
         .transpose()?;
+    let exclude_cmd_regex = entry
+        .exclude_cmd
+        .as_ref()
+        .map(|p| {
+            let pattern = p.replace("*", ".*");
+            regex::Regex::new(&pattern).with_context(|| "invalid --exclude-cmd pattern")
+        })
+        .transpose()?;
+    let only_cmd_regex = entry
+        .only_cmd
+        .as_ref()
+        .map(|p| {
+            let pattern = p.replace("*", ".*");
+            regex::Regex::new(&pattern).with_context(|| "invalid --only-cmd pattern")
+        })
+        .transpose()?;
     Ok(PathOptions {
         min_size,
         event_types,
         exclude_regex,
+        exclude_cmd_regex,
+        only_cmd_regex,
         recursive: entry.recursive.unwrap_or(false),
         all_events: entry.all_events.unwrap_or(false),
     })

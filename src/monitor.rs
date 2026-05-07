@@ -115,6 +115,8 @@ pub struct PathOptions {
     pub min_size: Option<i64>,
     pub event_types: Option<Vec<EventType>>,
     pub exclude_regex: Option<regex::Regex>,
+    pub exclude_cmd_regex: Option<regex::Regex>,
+    pub only_cmd_regex: Option<regex::Regex>,
     pub recursive: bool,
     pub all_events: bool,
 }
@@ -297,6 +299,8 @@ impl Monitor {
                     ),
                     min_size: opts.min_size.map(|s| s.to_string()),
                     exclude: opts.exclude_regex.as_ref().map(|r| r.as_str().to_string()),
+                    exclude_cmd: None,
+                    only_cmd: None,
                     all_events: Some(opts.all_events),
                 }));
             }
@@ -600,6 +604,8 @@ impl Monitor {
                                     )),
                                     min_size: opts.and_then(|o| o.min_size.map(|s| s.to_string())),
                                     exclude: opts.and_then(|o| o.exclude_regex.as_ref().map(|r| r.as_str().to_string())),
+                                    exclude_cmd: None,
+                                    only_cmd: None,
                                     all_events: opts.map(|o| o.all_events),
                                 };
                                 if let Err(e) = self.remove_path(path) {
@@ -892,6 +898,22 @@ impl Monitor {
                 regex::Regex::new(&pattern).with_context(|| "invalid exclude pattern")
             })
             .transpose()?;
+        let exclude_cmd_regex = entry
+            .exclude_cmd
+            .as_ref()
+            .map(|p| {
+                let pattern = p.replace("*", ".*");
+                regex::Regex::new(&pattern).with_context(|| "invalid --exclude-cmd pattern")
+            })
+            .transpose()?;
+        let only_cmd_regex = entry
+            .only_cmd
+            .as_ref()
+            .map(|p| {
+                let pattern = p.replace("*", ".*");
+                regex::Regex::new(&pattern).with_context(|| "invalid --only-cmd pattern")
+            })
+            .transpose()?;
         let recursive = entry.recursive.unwrap_or(false);
         let all_events = entry.all_events.unwrap_or(false);
 
@@ -899,6 +921,8 @@ impl Monitor {
             min_size,
             event_types,
             exclude_regex,
+            exclude_cmd_regex,
+            only_cmd_regex,
             recursive,
             all_events,
         };
@@ -1104,6 +1128,8 @@ impl Monitor {
                     types: cmd.types.clone(),
                     min_size: cmd.min_size.clone(),
                     exclude: cmd.exclude.clone(),
+                    exclude_cmd: cmd.exclude_cmd.clone(),
+                    only_cmd: cmd.only_cmd.clone(),
                     all_events: cmd.all_events,
                 };
                 match self.add_path(&entry) {
@@ -1161,6 +1187,8 @@ impl Monitor {
                             exclude: opts.and_then(|o| {
                                 o.exclude_regex.as_ref().map(|r| r.as_str().to_string())
                             }),
+                            exclude_cmd: None,
+                            only_cmd: None,
                             all_events: opts.map(|o| o.all_events),
                         }
                     })
@@ -1298,6 +1326,18 @@ impl Monitor {
             return false;
         }
 
+        if let Some(ref regex) = opts.exclude_cmd_regex
+            && regex.is_match(&event.cmd)
+        {
+            return false;
+        }
+
+        if let Some(ref regex) = opts.only_cmd_regex
+            && !regex.is_match(&event.cmd)
+        {
+            return false;
+        }
+
         true
     }
 
@@ -1423,6 +1463,8 @@ mod tests {
             min_size,
             event_types,
             exclude_regex,
+            exclude_cmd_regex: None,
+            only_cmd_regex: None,
             recursive,
             all_events,
         }
@@ -1620,6 +1662,8 @@ mod tests {
             types: None,
             min_size: None,
             exclude: None,
+            exclude_cmd: None,
+            only_cmd: None,
             all_events: None,
         };
 

@@ -27,6 +27,10 @@ pub struct PathEntry {
     pub min_size: Option<String>,
     /// Paths to exclude from monitoring (wildcard patterns).
     pub exclude: Option<String>,
+    /// Process names to exclude (glob, e.g. "rsync|apt").
+    pub exclude_cmd: Option<String>,
+    /// Only capture events from these process names (glob).
+    pub only_cmd: Option<String>,
     /// Capture all 14 fanotify event types.
     pub all_events: Option<bool>,
 }
@@ -153,6 +157,8 @@ mod tests {
             types: None,
             min_size: None,
             exclude: None,
+    exclude_cmd: None,
+    only_cmd: None,
             all_events: None,
         });
         assert_eq!(store.entries.len(), 1);
@@ -164,6 +170,8 @@ mod tests {
             types: Some(vec!["MODIFY".into()]),
             min_size: None,
             exclude: None,
+    exclude_cmd: None,
+    only_cmd: None,
             all_events: None,
         });
         assert_eq!(store.entries.len(), 2);
@@ -180,6 +188,8 @@ mod tests {
             types: None,
             min_size: None,
             exclude: None,
+    exclude_cmd: None,
+    only_cmd: None,
             all_events: None,
         });
         assert_eq!(store.entries.len(), 1);
@@ -191,6 +201,8 @@ mod tests {
             types: Some(vec!["MODIFY".into()]),
             min_size: None,
             exclude: None,
+    exclude_cmd: None,
+    only_cmd: None,
             all_events: None,
         });
         assert_eq!(store.entries.len(), 1); // replaced, not duplicated
@@ -209,6 +221,8 @@ mod tests {
             types: None,
             min_size: None,
             exclude: None,
+    exclude_cmd: None,
+    only_cmd: None,
             all_events: None,
         });
         store.add_entry(PathEntry {
@@ -217,6 +231,8 @@ mod tests {
             types: None,
             min_size: None,
             exclude: None,
+    exclude_cmd: None,
+    only_cmd: None,
             all_events: None,
         });
 
@@ -239,6 +255,8 @@ mod tests {
             types: Some(vec!["CREATE".into(), "DELETE".into()]),
             min_size: Some("1KB".into()),
             exclude: Some("*.tmp".into()),
+    exclude_cmd: None,
+    only_cmd: None,
             all_events: Some(false),
         });
 
@@ -266,6 +284,8 @@ mod tests {
             types: None,
             min_size: None,
             exclude: None,
+    exclude_cmd: None,
+    only_cmd: None,
             all_events: None,
         });
 
@@ -292,6 +312,8 @@ mod tests {
                     types: None,
                     min_size: None,
                     exclude: None,
+    exclude_cmd: None,
+    only_cmd: None,
                     all_events: None,
                 },
                 PathEntry {
@@ -300,6 +322,8 @@ mod tests {
                     types: None,
                     min_size: None,
                     exclude: None,
+    exclude_cmd: None,
+    only_cmd: None,
                     all_events: None,
                 },
                 PathEntry {
@@ -308,6 +332,8 @@ mod tests {
                     types: Some(vec!["MODIFY".into()]),
                     min_size: None,
                     exclude: None,
+    exclude_cmd: None,
+    only_cmd: None,
                     all_events: None,
                 },
             ],
@@ -330,6 +356,8 @@ mod tests {
                     types: None,
                     min_size: None,
                     exclude: None,
+    exclude_cmd: None,
+    only_cmd: None,
                     all_events: None,
                 },
                 PathEntry {
@@ -338,6 +366,8 @@ mod tests {
                     types: None,
                     min_size: None,
                     exclude: None,
+    exclude_cmd: None,
+    only_cmd: None,
                     all_events: None,
                 },
                 PathEntry {
@@ -346,6 +376,8 @@ mod tests {
                     types: None,
                     min_size: None,
                     exclude: None,
+    exclude_cmd: None,
+    only_cmd: None,
                     all_events: None,
                 },
             ],
@@ -364,6 +396,8 @@ mod tests {
                     types: None,
                     min_size: None,
                     exclude: None,
+    exclude_cmd: None,
+    only_cmd: None,
                     all_events: None,
                 },
                 PathEntry {
@@ -372,6 +406,8 @@ mod tests {
                     types: None,
                     min_size: None,
                     exclude: None,
+    exclude_cmd: None,
+    only_cmd: None,
                     all_events: None,
                 },
             ],
