@@ -256,6 +256,37 @@ daemon 启动时对 log_dir 的 chown 失败会发一次性 `[WARNING]`,
 
 ---
 
+---
+
+## ✅ 已实现: JSONL 格式迁移 (2026-05-07)
+
+### 改动总览
+
+| 文件 | 改动 |
+|------|------|
+| `Cargo.toml` | 加 `serde_json` 依赖 |
+| `src/utils.rs` | `path_to_log_name` 扩展名 `.toml` → `.jsonl` |
+| `src/config.rs` | 默认 store 路径 `store.toml` → `store.jsonl` |
+| `src/store.rs` | save/load 从 TOML 序列化改为 JSONL 逐行读写 |
+| `src/lib.rs` | 加 `FileEvent::to_jsonl_string/from_jsonl_str`, `OutputFormat::Jsonl`, `parse_log_line_jsonl`; `clean_single_log` 改为逐行处理; 删 `read_toml_block`/`TOML_SEPARATOR` |
+| `src/monitor.rs` | `write_event` 写一行 JSONL, 无 blank line separator |
+| `src/query.rs` | 读/写 JSONL, `expand_offset_backward` 简化为按行扫描 |
+| `src/bin/fsmon.rs` | `query` 加 `-F/--format jsonl` 选项 |
+
+### 格式分界
+
+| 目录 | 格式 | 原因 |
+|------|------|------|
+| `~/.config/fsmon/config.toml` | 多行 TOML | 用户编辑,保持不变 |
+| `~/.local/share/fsmon/store.jsonl` | JSONL | 程序读写,一行一个路径 |
+| `~/.local/state/fsmon/*.jsonl` | JSONL | 一行一个事件,pipe 友好 |
+
+### 附带修复
+
+- B5: `.fsmon_trunc_tmp` 改为带 PID 的唯一临时文件名 (修复并发 clean 冲突)
+
+---
+
 ## 🟣 D. 测试覆盖缺失
 
 | 覆盖缺口 | 风险 |

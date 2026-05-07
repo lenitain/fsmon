@@ -94,7 +94,7 @@ impl Store {
             let line = serde_json::to_string(entry)
                 .context("Failed to serialize store entry")?;
             writeln!(file, "{}", line)
-                .with_context(|| format!("Failed to write store entry"))?;
+                .context("Failed to write store entry")?;
         }
         Ok(())
     }
