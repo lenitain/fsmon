@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use users::os::unix::UserExt;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -91,41 +92,14 @@ pub fn resolve_uid() -> u32 {
 /// Resolve the original user's home directory using platform password database.
 /// Used by the daemon (running as root) to find the user's config/log paths.
 pub fn resolve_home(uid: u32) -> Result<PathBuf> {
-    // SAFETY: getpwuid_r is reentrant and thread-safe
-    let bufsize = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
-    let bufsize = if bufsize > 0 { bufsize as usize } else { 4096 };
-    let mut buf = vec![0u8; bufsize];
-    let mut pwd = std::mem::MaybeUninit::<libc::passwd>::zeroed();
-    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    let user = users::get_user_by_uid(uid)
+        .ok_or_else(|| anyhow::anyhow!("User not found for UID {}", uid))?;
 
-    let ret = unsafe {
-        libc::getpwuid_r(
-            uid,
-            pwd.as_mut_ptr(),
-            buf.as_mut_ptr() as *mut libc::c_char,
-            bufsize,
-            &mut result,
-        )
-    };
-
-    if ret != 0 || result.is_null() {
-        anyhow::bail!(
-            "Failed to look up home directory for UID {} (errno: {})",
-            uid,
-            ret
-        );
-    }
-
-    // SAFETY: result is non-null and points to initialized passwd struct
-    let home_ptr = unsafe { (*result).pw_dir };
-    if home_ptr.is_null() {
+    let home = user.home_dir().to_path_buf();
+    if home.as_os_str().is_empty() {
         anyhow::bail!("Home directory not set for UID {}", uid);
     }
-    // SAFETY: pw_dir is a valid C string
-    let home = unsafe { std::ffi::CStr::from_ptr(home_ptr) }
-        .to_string_lossy()
-        .into_owned();
-    Ok(PathBuf::from(home))
+    Ok(home)
 }
 
 /// Best-effort guess of user's home directory.
