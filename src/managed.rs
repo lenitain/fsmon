@@ -136,7 +136,14 @@ mod tests {
     use std::fs;
 
     fn temp_path() -> (PathBuf, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("fsmon_managed_test_{}", std::process::id()));
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "fsmon_managed_test_{}_{}",
+            std::process::id(),
+            n
+        ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let managed_path = dir.join("managed.jsonl");
