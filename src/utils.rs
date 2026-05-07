@@ -132,11 +132,30 @@ pub fn get_process_info_by_pid(
     }
 
     // Fallback to reading /proc directly (for long-lived processes)
-    let cmd = read_proc_comm(pid).unwrap_or_else(|| "unknown".to_string());
-    let user = read_proc_user(pid)
+    // If the process just exited, /proc/{pid} might still exist briefly
+    // as a zombie before the parent reaps it. Retry with short sleep.
+    let cmd = retry(|| read_proc_comm(pid)).unwrap_or_else(|| "unknown".to_string());
+    let user = retry(|| read_proc_user(pid))
         .or_else(|| read_file_owner(file_path))
         .unwrap_or_else(|| "unknown".to_string());
     (cmd, user)
+}
+
+/// Retry a fallible operation up to 3 times with 500µs sleep between attempts.
+fn retry<T, F>(mut f: F) -> Option<T>
+where
+    F: FnMut() -> Option<T>,
+{
+    if let Some(val) = f() {
+        return Some(val);
+    }
+    for _ in 0..2 {
+        std::thread::sleep(std::time::Duration::from_micros(500));
+        if let Some(val) = f() {
+            return Some(val);
+        }
+    }
+    None
 }
 
 fn read_proc_comm(pid: u32) -> Option<String> {

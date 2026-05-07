@@ -189,13 +189,19 @@ TOML 字段名为 `file_size`,`size_change` 已全部替换。
 
 ---
 
-### D4 - `ALL_EVENT_MASK` 包含 `FAN_FS_ERROR`
+### D4 - `ALL_EVENT_MASK` 包含 `FAN_FS_ERROR` ⏸️ 搁置，等 fanotify-rs 支持
 
 **文件**: `src/monitor.rs` + `src/fid_parser.rs`
 
 `FAN_FS_ERROR` (0x0000_8000) 需要 Linux 5.16+。`fanotify-rs 0.3.1` 不导出此常量,
 在 `fid_parser.rs` 手动定义。在旧内核上 `fanotify_mark` 会返回 EINVAL
 (mask 含未知 bit),导致 `all_events: true` 的路径静默监控失败。
+
+**处理**:
+- 删除 `fid_parser.rs` 中手动定义的 `FAN_FS_ERROR` 常量
+- 从 `EVENT_BITS` 和 `ALL_EVENT_MASK` 中移除该 bit
+- 保留 `EventType::FsError` 枚举变体以保持向前兼容
+- 等 `fanotify-rs` 后续版本原生导出该常量后再加回来
 
 ---
 
@@ -213,11 +219,20 @@ TOML 字段名为 `file_size`,`size_change` 已全部替换。
 
 ## 🟠 C. 边界条件
 
-### C1 - 进程已退出时 TOCTOU
+### C1 - 进程已退出时 TOCTOU ✅ 已修复 (2026-05-07)
+
+**文件**: `src/monitor.rs` + `src/utils.rs`
 
 `build_file_event` 调用 `get_process_info_by_pid`。短命进程退出后
 `/proc/{pid}/status` 读取失败,user 回退到文件 owner。
 对 MODIFY/CREATE 事件,user 字段可能不准确(文件 owner ≠ 写入者)。
+
+**修复**:
+1. 新增 `pid_cache: LruCache<u32, ProcInfo>` — 成功解析的 PID 缓存 4096 条,
+   同 PID 后续事件零延迟命中
+2. `get_process_info_by_pid` 中 `/proc/{pid}` 读取失败时重试 2 次,
+   每次 500µs sleep — 进程刚退出时可能还在 zombie 态,/proc 短暂可读
+3. 提取通用 `retry()` 辅助函数
 
 ---
 

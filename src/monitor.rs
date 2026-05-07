@@ -23,8 +23,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::signal::unix::{SignalKind, signal};
 
 use crate::dir_cache;
-use crate::fid_parser::{self, FAN_FS_ERROR};
-use crate::proc_cache::{self, ProcCache};
+use crate::fid_parser;
+use crate::proc_cache::{self, ProcCache, ProcInfo};
 use crate::socket::{SocketCmd, SocketResp};
 use crate::managed::PathEntry;
 use crate::managed::Managed;
@@ -105,7 +105,6 @@ const ALL_EVENT_MASK: u64 = FAN_ACCESS
     | FAN_MOVED_FROM
     | FAN_MOVED_TO
     | FAN_MOVE_SELF
-    | FAN_FS_ERROR
     | FAN_EVENT_ON_CHILD
     | FAN_ONDIR;
 
@@ -140,6 +139,7 @@ pub struct Monitor {
     managed_path: Option<PathBuf>,
     proc_cache: Option<ProcCache>,
     file_size_cache: LruCache<PathBuf, u64>,
+    pid_cache: LruCache<u32, ProcInfo>,
     buffer_size: usize,
     socket_listener: Option<tokio::net::UnixListener>,
     /// All fanotify fds (one per filesystem group)
@@ -206,6 +206,7 @@ impl Monitor {
             managed_path,
             proc_cache: None,
             file_size_cache: LruCache::new(NonZeroUsize::new(FILE_SIZE_CACHE_CAP).unwrap()),
+            pid_cache: LruCache::new(NonZeroUsize::new(4096).unwrap()),
             buffer_size,
 
             socket_listener,
@@ -721,7 +722,23 @@ impl Monitor {
         matched_path: Option<&Path>,
     ) -> FileEvent {
         let pid = raw.pid.unsigned_abs();
-        let (cmd, user) = get_process_info_by_pid(pid, &raw.path, self.proc_cache.as_ref());
+        let (cmd, user) = if let Some(info) = self.pid_cache.get(&pid) {
+            (info.cmd.clone(), info.user.clone())
+        } else {
+            let (cmd, user) =
+                get_process_info_by_pid(pid, &raw.path, self.proc_cache.as_ref());
+            // Cache successfully resolved info for reuse
+            if cmd != "unknown" || user != "unknown" {
+                self.pid_cache.put(
+                    pid,
+                    ProcInfo {
+                        cmd: cmd.clone(),
+                        user: user.clone(),
+                    },
+                );
+            }
+            (cmd, user)
+        };
 
         let file_size = match event_type {
             // For CREATE/MODIFY/CLOSE_WRITE: get actual size and cache it

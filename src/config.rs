@@ -178,6 +178,7 @@ impl Config {
     }
 
     /// Load config from file. Returns default Config if file doesn't exist.
+    /// If the file exists but is invalid, overwrites with fresh defaults.
     pub fn load() -> Result<Self> {
         let p = Self::path();
         if !p.exists() {
@@ -185,9 +186,18 @@ impl Config {
         }
         let content = fs::read_to_string(&p)
             .with_context(|| format!("Failed to read config {}", p.display()))?;
-        let cfg: Config =
-            toml::from_str(&content).with_context(|| format!("Invalid TOML in {}", p.display()))?;
-        Ok(cfg)
+        match toml::from_str::<Config>(&content) {
+            Ok(cfg) => Ok(cfg),
+            Err(e) => {
+                eprintln!(
+                    "[WARNING] Invalid config file at {}, overwriting with defaults.\n  Reason: {}",
+                    p.display(),
+                    e
+                );
+                Self::generate_default()?;
+                Ok(Config::default())
+            }
+        }
     }
 
     /// Expand `~` in all paths using the original user's home directory.
