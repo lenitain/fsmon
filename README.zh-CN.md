@@ -198,13 +198,28 @@ fsmon clean --keep-days 60        # 覆盖默认值
 
 ## 配置
 
-首次启动 daemon 或执行 `fsmon generate` 自动生成。安全网默认值已包含：
+首次启动 daemon 或执行 `fsmon generate` 自动生成。可编辑以自定义路径和安全网。
 
 ```toml
+# fsmon 配置文件
+#
+# 基础设施路径。监控路径通过 'fsmon add' / 'fsmon remove' 管理，存储在 [managed].file 中。
+# 所有路径支持 ~ 展开。<UID> 在运行时替换为实际 UID。
+
+[managed]
+# 自动管理的监控路径数据库。
+file = "~/.local/share/fsmon/managed.jsonl"
+
 [logging]
+# 事件日志目录（按路径哈希命名的文件）。
 dir = "~/.local/state/fsmon"
-keep_days = 30          # 防止磁盘写满
-max_size = "1GB"        # 单日志文件上限
+# 安全网：最多保留 30 天日志，每个日志文件上限 1GB。
+keep_days = 30
+max_size = "1GB"
+
+[socket]
+# daemon 与 CLI 通信的 Unix socket 路径。
+path = "/tmp/fsmon-<UID>.sock"
 ```
 
 ## 事件类型

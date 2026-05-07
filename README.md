@@ -205,13 +205,29 @@ fsmon clean --keep-days 60        # overrides config
 
 ## Configuration
 
-Auto-generated on first daemon start or via `fsmon generate`. Safety nets included:
+Auto-generated on first daemon start or via `fsmon generate`. Edit to customize paths and safety nets.
 
 ```toml
+# fsmon configuration file
+#
+# Infrastructure paths for fsmon. Monitored paths are managed separately
+# via 'fsmon add' / 'fsmon remove' and persisted in [managed].file.
+# All paths support ~ expansion. <UID> is replaced with the numeric UID at runtime.
+
+[managed]
+# Path to the auto-managed monitored paths database.
+file = "~/.local/share/fsmon/managed.jsonl"
+
 [logging]
+# Directory containing per-path log files (named by path hash).
 dir = "~/.local/state/fsmon"
-keep_days = 30          # prevent disk overflow
-max_size = "1GB"        # max per log file
+# Safety nets: keep at most 30 days, max 1GB per log file.
+keep_days = 30
+max_size = "1GB"
+
+[socket]
+# Unix socket path for daemon-CLI live communication.
+path = "/tmp/fsmon-<UID>.sock"
 ```
 
 ## Event Types
