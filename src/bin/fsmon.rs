@@ -159,10 +159,6 @@ async fn cmd_daemon() -> Result<()> {
 
     let store = Store::load(&cfg.store.file)?;
 
-    if store.entries.is_empty() {
-        eprintln!("Warning: No paths configured. Use 'fsmon add <path>' to add paths.");
-    }
-
     let socket_path = cfg.socket.path.clone();
 
     // Create parent directories for socket
@@ -196,9 +192,11 @@ async fn cmd_daemon() -> Result<()> {
         Some(socket_listener),
     )?;
 
-    eprintln!("Monitored paths ({}):", store.entries.len());
-    for entry in &store.entries {
-        eprintln!("  {}", entry.path.display());
+    if !store.entries.is_empty() {
+        eprintln!("Managed paths ({}):", store.entries.len());
+        for entry in &store.entries {
+            eprintln!("  {}", entry.path.display());
+        }
     }
 
     monitor.run().await?;
@@ -234,10 +232,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     let path = match expanded.canonicalize() {
         Ok(c) => c,
         Err(_) => {
-            eprintln!(
-                "[WARNING] Path '{}' does not exist yet — will start monitoring when created.",
-                expanded.display()
-            );
+            eprintln!("Note: path does not exist yet — will start monitoring when created.");
             expanded
         }
     };
@@ -307,8 +302,8 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             }
         }
         Err(_) => {
-            // daemon not running — store already saved, change applies on restart
             println!("Path added: {}", path.display());
+            eprintln!("Daemon not running — path will be monitored after daemon restart.");
         }
     }
     Ok(())

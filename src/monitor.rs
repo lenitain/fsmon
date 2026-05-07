@@ -271,20 +271,26 @@ impl Monitor {
             DEFAULT_EVENT_MASK
         };
 
-        // Collect canonical paths
-        for path in &self.paths {
+        // Collect canonical paths — non-existent paths go to pending_paths
+        // and are removed from paths/path_options so add_path can work on retry
+        let mut keep_paths: Vec<PathBuf> = Vec::new();
+        let mut keep_opts = HashMap::new();
+        for path in std::mem::take(&mut self.paths) {
+            let opts = self.path_options.remove(&path)
+                .expect("path in paths but not in path_options");
             if path.exists() {
                 let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
                 self.canonical_paths.push(canonical);
+                keep_paths.push(path.clone());
+                keep_opts.insert(path, opts);
             } else {
                 eprintln!(
-                    "[WARNING] Path '{}' does not exist yet — will start monitoring when created.",
+                    "[INFO] Path '{}' does not exist yet — will start monitoring when created.",
                     path.display()
                 );
-                let opts = self.path_options.get(path)
-                    .expect("path in paths but not in path_options");
-                self.pending_paths.push((path.clone(), PathEntry {
-                    path: path.clone(),
+                let entry_path = path.clone();
+                self.pending_paths.push((path, PathEntry {
+                    path: entry_path,
                     recursive: opts.recursive.then_some(true),
                     types: None,
                     min_size: None,
@@ -293,7 +299,10 @@ impl Monitor {
                 }));
             }
         }
-        // Set up inotify watches for pending paths
+        self.paths = keep_paths;
+        self.path_options = keep_opts;
+        // Initialize inotify for watching parent dirs of pending paths
+        self.inotify = Some(inotify::Inotify::init().context("inotify_init")?);
         self.setup_inotify_watches();
 
         // Initialize per-filesystem fanotify fds. The kernel does not allow
@@ -427,16 +436,13 @@ impl Monitor {
             fan_groups.push(FanGroup { fd: new_fd });
         }
 
-        if fan_groups.is_empty() {
-            eprintln!("No paths configured. Waiting for socket commands (use 'fsmon add <path>').");
-        } else {
+        if !fan_groups.is_empty() {
             // Store fds for live-add reuse via socket commands
             for group in &fan_groups {
                 self.fan_fds.push(group.fd);
             }
 
             // Open directory fds for open_by_handle_at to resolve file handles.
-            // These are shared across all fan_fds (resolve_file_handle tries each).
             for canonical in &self.canonical_paths {
                 if let Ok(c_path) = CString::new(canonical.to_string_lossy().as_bytes()) {
                     let mfd =
@@ -459,6 +465,8 @@ impl Monitor {
                     }
                 }
             }
+        } else if self.pending_paths.is_empty() {
+            eprintln!("No paths configured. Waiting for socket commands (use 'fsmon add <path>').");
         }
 
         // Ensure log directory exists and is owned by the original user
@@ -480,7 +488,7 @@ impl Monitor {
         println!("Starting file trace monitor...");
         if !self.canonical_paths.is_empty() {
             println!(
-                "Monitoring paths: {}",
+                "Active paths: {}",
                 self.canonical_paths
                     .iter()
                     .map(|p| p.display().to_string())
@@ -488,6 +496,16 @@ impl Monitor {
                     .join(", "),
             );
             println!("  FDs: {} file-descriptor(s)", fan_groups.len());
+        }
+        if !self.pending_paths.is_empty() {
+            println!(
+                "Pending paths (waiting for directory creation): {}",
+                self.pending_paths
+                    .iter()
+                    .map(|(p, _)| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
         }
 
         // Spawn one reader task per fan_fd. Events are sent through an
@@ -554,10 +572,6 @@ impl Monitor {
         loop {
             tokio::select! {
                 Some(events) = event_rx.recv() => {
-                    // Process events from any fan_fd reader task.
-                    // Dynamic inode marking is not applied here — for
-                    // cross-filesystem setups new directory marks are added
-                    // at next daemon restart. This is a known limitation.
                     for raw in &events {
                         if raw.mask & FAN_Q_OVERFLOW != 0 {
                             eprintln!("[WARNING] fanotify queue overflow - some events may have been lost");
@@ -565,9 +579,34 @@ impl Monitor {
                         }
 
                         let event_types = fid_parser::mask_to_event_types(raw.mask);
-
-                        // Resolve monitored path once per event (used by build + write)
                         let matched_path = self.matching_path(&raw.path).cloned();
+
+                        // If a managed directory was deleted, move to pending_paths
+                        let is_delete_self = event_types.contains(&EventType::DeleteSelf)
+                            || event_types.contains(&EventType::MovedFrom);
+                        let is_canonical_root = is_delete_self
+                            && self.canonical_paths.iter().any(|cp| cp == &raw.path);
+                        if is_canonical_root {
+                            if let Some(ref path) = matched_path {
+                                if let Err(e) = self.remove_path(path) {
+                                    eprintln!("[WARNING] Failed to remove deleted path '{}': {e}", path.display());
+                                }
+                                self.pending_paths.push((path.clone(), PathEntry {
+                                    path: path.clone(),
+                                    recursive: None,
+                                    types: None,
+                                    min_size: None,
+                                    exclude: None,
+                                    all_events: None,
+                                }));
+                                self.setup_inotify_watches();
+                                eprintln!(
+                                    "[INFO] Path '{}' was deleted — will restart monitoring when recreated.",
+                                    path.display()
+                                );
+                            }
+                            continue;
+                        }
 
                         for event_type in event_types {
                             let event = self.build_file_event(raw, event_type, matched_path.as_deref());
@@ -824,10 +863,11 @@ impl Monitor {
 
         if !path.exists() {
             eprintln!(
-                "[WARNING] Path '{}' does not exist yet — will start monitoring when created.",
+                "[INFO] Path '{}' does not exist yet — will start monitoring when created.",
                 path.display()
             );
             self.pending_paths.push((path.clone(), entry.clone()));
+            self.setup_inotify_watches();
             return Ok(());
         }
 
@@ -1215,14 +1255,10 @@ impl Monitor {
         // Drop old watches
         self._inotify_watches.clear();
 
-        if self.pending_paths.is_empty() {
-            self.inotify = None;
-            return;
-        }
-
-        let inotify = self.inotify.get_or_insert_with(|| {
-            inotify::Inotify::init().expect("inotify_init")
-        });
+        let inotify = match self.inotify.as_ref() {
+            Some(ino) => ino,
+            None => return,
+        };
 
         for (path, _) in &self.pending_paths {
             if let Some(parent) = Self::nearest_existing_ancestor(path)
@@ -1264,13 +1300,8 @@ impl Monitor {
             }
         }
 
-        // Refresh inotify watches for any remaining pending paths
-        if !self.pending_paths.is_empty() {
-            self.setup_inotify_watches();
-        } else {
-            self.inotify = None;
-            self._inotify_watches.clear();
-        }
+        // Refresh inotify watches for remaining pending paths
+        self.setup_inotify_watches();
     }
 
     fn should_output(&self, event: &FileEvent) -> bool {
