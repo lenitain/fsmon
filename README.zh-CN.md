@@ -178,6 +178,35 @@ crontab -e
 | `--only-cmd` | 进程名 regex | ~µs | 减少写盘 I/O |
 | `--all-events` | 内核 mask | 零 | 开启全部 14 种事件 |
 
+## 查询与清理
+
+查询只保留性能攸关的参数，其余过滤通过 pipe 到标准 Unix 工具完成。
+
+```
+fsmon query                  →  扫所有日志文件，输出 JSONL
+fsmon query --path /tmp      →  只读 /tmp 的日志文件
+fsmon query --since 1h       →  二分搜索 + 输出
+```
+
+清理使用 config.toml 中的安全网默认值（keep_days=30，max_size="1GB"），可通过 CLI 覆盖：
+
+```bash
+# 优先级: CLI 参数 > config.toml > 代码默认值
+fsmon clean                       # 使用 config 默认
+fsmon clean --keep-days 60        # 覆盖默认值
+```
+
+## 配置
+
+首次启动 daemon 或执行 `fsmon generate` 自动生成。安全网默认值已包含：
+
+```toml
+[logging]
+dir = "~/.local/state/fsmon"
+keep_days = 30          # 防止磁盘写满
+max_size = "1GB"        # 单日志文件上限
+```
+
 ## 事件类型
 
 默认捕获 8 种核心事件，`--all-events` 开启全部 14 种。
