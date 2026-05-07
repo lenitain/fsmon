@@ -60,19 +60,17 @@ fn chown_to_user(path: &Path) -> std::io::Result<bool> {
     let (uid, gid) = crate::config::resolve_uid_gid();
     let cpath = std::ffi::CString::new(path.to_string_lossy().as_bytes())
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains null"))?;
-    let ret = unsafe { libc::chown(cpath.as_ptr(), uid, gid) };
-    if ret == 0 {
-        Ok(true)
-    } else {
-        let err = std::io::Error::last_os_error();
-        // EPERM / EOPNOTSUPP / ENOTSUP / ENOSYS — FS doesn't support ownership
-        if err.raw_os_error().is_some_and(|e| {
-            matches!(e, libc::EPERM | libc::EOPNOTSUPP | libc::ENOSYS)
-        }) {
+    match nix::unistd::chown(
+        cpath.as_c_str(),
+        Some(nix::unistd::Uid::from_raw(uid)),
+        Some(nix::unistd::Gid::from_raw(gid)),
+    ) {
+        Ok(()) => Ok(true),
+        Err(nix::errno::Errno::EPERM) | Err(nix::errno::Errno::EOPNOTSUPP) | Err(nix::errno::Errno::ENOSYS) => {
+            // FS doesn't support ownership (vfat/exfat/NFS no_root_squash)
             Ok(false)
-        } else {
-            Err(err)
         }
+        Err(e) => Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
     }
 }
 

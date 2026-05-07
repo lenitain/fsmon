@@ -210,9 +210,11 @@ async fn cmd_daemon() -> Result<()> {
 /// Chown a path to the given uid:gid (daemon runs as root, needs to give files back to the user).
 fn chown_path(path: &Path, uid: u32, gid: u32) {
     if let Ok(cpath) = std::ffi::CString::new(path.to_string_lossy().as_bytes()) {
-        unsafe {
-            libc::chown(cpath.as_ptr(), uid, gid);
-        }
+        let _ = nix::unistd::chown(
+            cpath.as_c_str(),
+            Some(nix::unistd::Uid::from_raw(uid)),
+            Some(nix::unistd::Gid::from_raw(gid)),
+        );
     }
 }
 

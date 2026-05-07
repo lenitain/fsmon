@@ -9,12 +9,12 @@
 
 ```
 总 unsafe 55 处（35 处生产代码 + 20 处测试代码）
-├── ✅ 已完成           -7 处（geteuid/getegid → nix::unistd）
-├── ✅ 可 safe 替代     ~22 处（换 nix/fs2/users 等 safe crate）
+├── ✅ 已完成           -10 处（geteuid/getegid + chown → nix::unistd）
+├── ✅ 可 safe 替代     ~19 处（换 nix/fs2/users 等 safe crate）
 ├── 🔶 可包装但本质 unsafe  ~10 处（底层仍是 unsafe，只是接口变 safe）
 └── ❌ 不可替代         ~14 处（FID 结构体 + name_to_handle_at + raw fd）
 
-**当前进度**: 55 → 48 处 unsafe（生产代码 35 → 30）
+**当前进度**: 55 → 45 处 unsafe（生产代码 35 → 27）
 ```
 
 ---
@@ -179,7 +179,7 @@
 | 阶段 | 状态 | 内容 | 影响 unsafe | 涉及文件 |
 |------|------|------|-------------|---------|
 | **P0** | ✅ 已完成 | `geteuid`/`getegid` → `nix::unistd` | -7 处 | `config.rs`, `monitor.rs` |
-| **P0** | ⏳ | `chown` → `nix::unistd::chown` | -3 处 | `config.rs`, `monitor.rs`, `bin/fsmon.rs` |
+| **P0** | ✅ 已完成 | `chown` → `nix::unistd::chown` | -3 处 | `config.rs`, `monitor.rs`, `bin/fsmon.rs` |
 | **P0** | ⏳ | `flock` → `fs2::FileExt` | -1 处 | `lib.rs` |
 | **P1** | ⏳ | `getpwuid_r` → `users::get_user_by_uid` | -3 处 | `config.rs` |
 | **P1** | ⏳ | 目录 `open`/`close` → `nix::fcntl` + RAII guard | -6 处 | `monitor.rs`, `fid_parser.rs` |
