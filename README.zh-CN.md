@@ -168,7 +168,9 @@ sudo crontab -e
 > **注意：** 使用 `sudo crontab -e`（root 的 crontab）— daemon 需要 root 权限。
 > 如果使用用户 crontab，需将 fsmon 命令添加到 sudoers NOPASSWD 列表中。
 
-## 捕获过滤
+## 完整命令
+
+### 捕获过滤
 
 所有捕获过滤都在 daemon 进程内完成（纳秒级，无 fork），不匹配的事件不会写盘。
 
@@ -182,7 +184,7 @@ fsmon add --only-cmd nginx,vim     →  进程名 regex，~µs：减少写盘 I/
 fsmon add --all-events             →  内核 mask，零开销：开启全部 14 种事件
 ```
 
-## 查询
+### 查询
 
 查询只保留性能攸关的参数，其余过滤通过管道到标准 Unix 工具完成。
 
@@ -192,7 +194,7 @@ fsmon query --path /tmp      →  只读 /tmp 的日志文件
 fsmon query --since 1h       →  二分搜索 + 输出
 ```
 
-## 清理
+### 清理
 
 清理使用 config.toml 中的安全网默认值（keep_days=30，max_size="1GB"），可通过 CLI 覆盖：
 

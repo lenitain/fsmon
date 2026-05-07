@@ -174,7 +174,9 @@ sudo crontab -e
 > **Note:** Use `sudo crontab -e` (root's crontab) — the daemon needs root privileges.
 > Add the `fsmon` command to sudoers with NOPASSWD if using a user crontab instead.
 
-## Capture Filtering
+## Complete Commands
+
+### Capture Filtering
 
 All capture filters run inside the daemon process (nanosecond-fast, no fork).
 They reduce write I/O — events that don't match never touch disk.
@@ -189,7 +191,7 @@ fsmon add --only-cmd nginx,vim     →  cmd regex, ~µs: reduce write I/O
 fsmon add --all-events             →  kernel mask, zero cost: enable all 14 events
 ```
 
-## Query
+### Query
 
 Query only keeps performance-critical options. All other filtering is done by piping JSONL to standard Unix tools.
 
@@ -199,7 +201,7 @@ fsmon query --path /tmp      →  only read /tmp's log file
 fsmon query --since 1h       →  binary search + output
 ```
 
-## Clean
+### Clean
 
 Clean uses safety net defaults from config.toml, overridable via CLI:
 
