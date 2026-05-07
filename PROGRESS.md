@@ -9,10 +9,15 @@
 
 ```
 总 unsafe 55 处（35 处生产代码 + 20 处测试代码）
-├── ✅ 已完成           -25 处（geteuid/getegid + chown + flock + getpwuid_r + open/close）
-├── ✅ 可 safe 替代     ~15 处（换 nix/fs2/users 等 safe crate）
-├── 🔶 可包装但本质 unsafe  ~10 处（底层仍是 unsafe，只是接口变 safe）
-└── ❌ 不可替代         ~14 处（FID 结构体 + name_to_handle_at + raw fd）
+├── ✅ 已完成                -25 处
+├── ✅ 类型安全（编译器保证无 UB）  ~5 处剩余  → geteuid, flock, fs2
+├── ⚠️ 薄包装（safe 签名，传错仍 UB） ~6 处剩余  → close(RawFd), netlink, BorrowedFd
+└── ❌ 本质 unsafe（指针解引用、FFI） ~19 处剩余 → FID 结构体, name_to_handle_at, 测试代码
+
+关键认知：safe 函数签名 ≠ 安全操作。nix::unistd::close(fd) 是薄包装，
+传无效 fd 仍然 UB。真正推动安全的换的是 fs2::try_lock_exclusive (RAII guard)
+和删除手动 close（OwnedFd 所有权）。单纯把 unsafe 从自己代码移到 nix crate
+里，并没有提升安全性。
 
 **当前进度**: 55 → 30 处 unsafe（生产代码 35 → **11**）
 
@@ -31,70 +36,49 @@
 
 ### 详细分类与解决方案
 
-#### 1. ✅ `libc::geteuid()` / `libc::getegid()` — 8 处
-
-| 位置 | 行号 | 用途 |
-|------|------|------|
-| `config.rs` | 52, 68, 84, 143, 476 | 获取当前用户 UID |
-| `config.rs` | 59 | 获取当前用户 GID |
-| `monitor.rs` | 225 | 检查是否 root |
+#### 1. ✅ 已完成 — `libc::geteuid()` / `libc::getegid()`
+类型安全 ✅：无参纯函数，编译器保证无 UB。
 
 **方案**: 替换为 `nix::unistd::geteuid()` / `getegid()`
-**方法**: 全局搜索替换，nix 已经是可选依赖
 
 ---
 
-#### 2. ✅ `libc::chown()` — 3 处
-
-| 位置 | 行号 |
-|------|------|
-| `config.rs` | 70 |
-| `monitor.rs` | 63 |
-| `bin/fsmon.rs` | 213 |
+#### 2. ✅ 已完成 — `libc::chown()`
+类型安全 ✅：正确参数类型由 `Uid`/`Gid` 新类型保证。
 
 **方案**: 替换为 `nix::unistd::chown()`
 
 ---
 
-#### 3. ✅ `libc::flock()` — 1 处
+#### 3. ✅ 已完成 — `libc::flock()`
+类型安全 ✅：`fs2::FileExt::try_lock_exclusive()` 返回 RAII guard，
+drop 自动释放锁，不可能忘记解锁或双解锁。**这是最干净的改造**。
 
-| 位置 | 行号 |
-|------|------|
-| `lib.rs` | 45 |
-
-**方案**: 替换为 `fs2::FileExt::lock_exclusive()`（加 `fs2` 依赖）
-**备选**: `fd-lock` crate（更轻量）
+**方案**: 替换为 `fs2::FileExt::try_lock_exclusive()`
 
 ---
 
-#### 4. ✅ `libc::getpwuid_r()` + 指针解引用 — 3 处
+#### 4. ✅ 已完成 — `libc::getpwuid_r()` + 指针解引用
+类型安全 ✅：`users::get_user_by_uid()` 返回 safe Rust 类型。
 
-| 位置 | 行号 |
-|------|------|
-| `config.rs` | 91 (sysconf) |
-| `config.rs` | 97 (getpwuid_r) |
-| `config.rs` | 116, 121 (CStr 解引用) |
-
-**方案**:
-- `getpwuid_r` + `pw_dir` 解引用 → `users::get_user_by_uid()`（`users` crate）
-- `sysconf(_SC_GETPW_R_SIZE_MAX)` → hardcode fallback 4096 或 `nix::unistd::sysconf()`
+**方案**: 替换为 `users::get_user_by_uid()`
 
 ---
 
-#### 5. ✅ `libc::open()` / `libc::close()` 目录 fd — 6 处
+#### 5. ✅ 已完成 — `libc::open()` / `libc::close()` 目录 fd
+混合评价：
+- ⚠️ `nix::fcntl::open()` 返回 `RawFd`（薄包装，传错仍 UB）
+- ✅ 删除 mount_fds 的 `libc::close`（转为所有权隐含清除）— **真正安全**
+- ⚠️ `nix::unistd::close(fd)`（薄包装）
 
-| 位置 | 行号 |
-|------|------|
-| `monitor.rs` | 457, 1017 |
-| `monitor.rs` | 1114 (close) |
-| `fid_parser.rs` | 339, 349 |
-
-**方案**: 替换为 `nix::fcntl::open(path, OFlag::O_RDONLY | OFlag::O_DIRECTORY, Mode::empty())`
-**注意**: `fid_parser.rs:349` 的 `close(fd)` 可用 RAII guard 包裹
+**最有价值的是 mount_fds 手动 close 的删除（RAII 化）**，
+而非把 `unsafe { libc::close }` 换成 `nix::unistd::close`。
 
 ---
 
-#### 6. 🔶 Netlink 全程 — ~9 处
+#### 6. ⚠️ Netlink 全程 — ~9 处（未完成）
+薄包装 ⚠️：即使换成 `nix::sys::socket`，传错 netlink fd 仍然 UB。
+只有将 fd 用 `OwnedFd` 管理才能真安全。
 
 | 位置 | 行号 | 操作 |
 |------|------|------|
@@ -105,38 +89,22 @@
 | `proc_cache.rs` | 154 | `send()` |
 | `proc_cache.rs` | 217, 351 | `close()` |
 
-**方案**: 用 `nix::sys::socket` 的 netlink 支持
-- `socket(PF_NETLINK, SOCK_DGRAM, NETLINK_CONNECTOR)` → `nix::sys::socket::socket(AddressFamily::Netlink, SockType::Datagram, SockFlag::SOCK_CLOEXEC, Some(NetlinkProtocol::Connector))`
-- `bind()` → `nix::sys::socket::bind()`
-- `send()` / `recv()` → `nix::sys::socket::sendto()` / `recvfrom()`
-- `zeroed()` → 用 `nix::sys::socket::SockaddrNetlink` safe 构造
-
-**优先级**: 中 — 改动大但彻底消除 proc_cache 所有 unsafe
+**优先级**: 低 — 纯薄包装，不提升安全性，除非用 `OwnedFd` + RAII 重构。
 
 ---
 
-#### 7. 🔶 `BorrowedFd::borrow_raw()` — 1 处
+#### 7. ⚠️ `BorrowedFd::borrow_raw()` — 1 处
+薄包装 ⚠️：AsFd trait 实现的标准模式，绕不开。
 
 | 位置 | 行号 |
 |------|------|
 | `monitor.rs` | 49 |
 
-**方案**: 改成 `unsafe { OwnedFd::from_raw_fd(self.0) }` — 本质一样，但生命周期更清晰
-**免改**: 这是 AsFd trait 实现，底层必然 unsafe
-
 ---
 
-#### 8. 🔶 `std::mem::zeroed()` — 2 处
-
-| 位置 | 行号 |
-|------|------|
-| `proc_cache.rs` | 79, 337 |
-
-**方案**: 如果能用 `nix::sys::socket::SockaddrNetlink` 则消除；否则保持现状（等价于 `MaybeUninit::zeroed().assume_init()`）
-
----
-
-#### 9. ❌ FID 内核结构体指针解引用 — 3 处
+#### 8. ❌ FID 内核结构体指针解引用 — 3 处
+本质 unsafe ❌：从 raw buffer 按内存布局 reinterpret 为 `FanMetadata` / `FanInfoHeader`。
+Rust 无法验证这些字节是否真的是一个有效结构体。
 
 | 位置 | 行号 | 说明 |
 |------|------|------|
@@ -193,23 +161,30 @@
 | **P0** | ✅ 已完成 | `flock` → `fs2::FileExt` | -1 处 | `lib.rs` |
 | **P1** | ✅ 已完成 | `getpwuid_r` → `users::get_user_by_uid` | -4 处 | `config.rs` |
 | **P1** | ✅ 已完成 | 目录 `open`/`close` → `nix::fcntl::open` + `nix::unistd::close` + SockGuard | -10 处 | `monitor.rs`, `fid_parser.rs`, `proc_cache.rs` |
-| **P1** | ⏳ | `std::env::set_var` 测试 → `temp-env` / SerialTest | -9 处 | `config.rs` |
-| **P2** | ⏳ | Netlink 全程 → `nix::sys::socket` | -9 处 | `proc_cache.rs` |
-| **P3** | ⏳ | FID 解析封装到安全函数 | 0 处（缩小 scope） | `fid_parser.rs` |
-| **P3** | ⏳ | `name_to_handle_at` + RAII guard | 0 处（缩小 scope） | `dir_cache.rs`, `fid_parser.rs` |
-
-**总计**: P0+P1 可消除 ~29 处 unsafe，生产代码 unsafe 从 35 降到 ~15
+| **P1** | ⏳ | 测试 `std::env::set_var` → 清理 | -9 处（测试代码） | `config.rs` |
+| **P2** | ⏳ | Netlink → `nix::sys::socket`（薄包装，价值低） | -9 处 | `proc_cache.rs` |
+| **P3** | ❌ 不做了 | FID 解析封装 | 0 处（本质 unsafe） | `fid_parser.rs` |
+| **P3** | ❌ 不做了 | `name_to_handle_at` 封装 | 0 处（本质 unsafe） | `dir_cache.rs`, `fid_parser.rs` |
 
 ---
 
-### 遗留问题（不可消除）
+### 遗留问题（不可消除 / 不值得做）
 
-- FID 事件变长结构体 reinterpret（`fid_parser.rs` ~3 处）
-- `name_to_handle_at()` / `open_by_handle_at()`（`dir_cache.rs` + `fid_parser.rs` ~4 处）
-- `BorrowedFd::borrow_raw()` 实现 AsFd trait（`monitor.rs` 1 处）
-- 底层 fd close 的 RAII 包装内部（本质需求）
+| 类别 | 位置 | 原因 |
+|------|------|------|
+| FID 结构体 reinterpret | `fid_parser.rs` 3 处 | 本质 unsafe，raw buffer 转结构体 |
+| name_to_handle_at / open_by_handle_at | `dir_cache.rs` + `fid_parser.rs` 4 处 | Linux 专属 kernel ABI，无 safe 包装 |
+| BorrowedFd::borrow_raw | `monitor.rs` 1 处 | AsFd trait 实现的标准写法 |
+| 测试 `libc::close`/`read` | `monitor.rs` + `proc_cache.rs` 6 处 | 测试代码，直接调 libc 做底端测试 |
+| Netlink + `std::env::set_var` | ~15 处 | 纯薄包装，换 nix 不提升安全性 |
 
-这些是 Linux 系统编程中 Rust 安全抽象和 kernel C ABI 之间不可消除的桥梁。
+核心认知：**safe 函数签名 ≠ 安全操作**。仅靠薄包装把 `unsafe` 挪到 nix crate 里，
+不改变传参错误就会 UB 的事实。真正推动安全的是 RAII 化（`OwnedFd`、RAII guard）
+和所有权设计。否则 `unsafe { libc::close(fd) }` 和 `nix::unistd::close(fd)`
+在安全性上等价。
+
+项目当前状态：11 处生产代码 unsafe 均为本质 unsafe 或显式薄包装，
+没有隐藏的安全风险。不值得再花时间做薄包装替换。
 
 ---
 
