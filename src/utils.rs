@@ -390,9 +390,9 @@ mod tests {
 
     #[test]
     fn test_path_to_log_name() {
-        // Hash-based: fixed 16-char hex + .jsonl suffix
+        // Hash-based: fixed 16-char hex + _log.jsonl suffix
         let name = path_to_log_name(Path::new("/tmp/foo"));
-        assert!(name.ends_with(".jsonl"));
+        assert!(name.ends_with("_log.jsonl"));
         assert_eq!(name.len(), 16 + 10); // 16 hex chars + "_log.jsonl"
         assert!(name.chars().take(16).all(|c| c.is_ascii_hexdigit()));
     }
