@@ -170,38 +170,96 @@ sudo crontab -e
 
 ## 完整命令
 
-### 捕获过滤
+### daemon
 
-所有捕获过滤都在 daemon 进程内完成（纳秒级，无 fork），不匹配的事件不会写盘。
-
-```
-fsmon add --types MODIFY,CREATE    →  内核 mask，零开销：fanotify 只传递匹配事件
-fsmon add --recursive              →  内核范围，零开销：监控子目录
-fsmon add --exclude "*.swp"        →  路径 regex，~µs：减少写盘 I/O
-fsmon add --min-size 1024          →  u64 比较，~ns：减少写盘 I/O
-fsmon add --exclude-cmd "cron"     →  进程名 regex，~µs：减少写盘 I/O
-fsmon add --only-cmd nginx,vim     →  进程名 regex，~µs：减少写盘 I/O
-fsmon add --all-events             →  内核 mask，零开销：开启全部 14 种事件
-```
-
-### 查询
-
-查询只保留性能攸关的参数，其余过滤通过管道到标准 Unix 工具完成。
+启动 fsmon 守护进程 — 需要 `sudo` 获取 fanotify 权限。
 
 ```
-fsmon query                  →  扫所有日志文件，输出 JSONL
-fsmon query --path /tmp      →  只读 /tmp 的日志文件
-fsmon query --since 1h       →  二分搜索 + 输出
+sudo fsmon daemon          启动守护进程（前台）
+sudo fsmon daemon &        后台启动守护进程
 ```
 
-### 清理
+配置：            `~/.config/fsmon/config.toml`
+监控路径数据库：  `~/.local/share/fsmon/managed.jsonl`
+日志目录：        `~/.local/state/fsmon/`
+Socket：          `/tmp/fsmon-<UID>.sock`
 
-清理使用 config.toml 中的安全网默认值（keep_days=30，max_size="1GB"），可通过 CLI 覆盖：
+### add
+
+添加监控路径。无需 sudo。
+
+```
+fsmon add <path>                           监控一个路径
+fsmon add <path> -r                        递归监控子目录
+fsmon add <path> --types MODIFY,CREATE     按事件类型过滤
+fsmon add <path> --exclude "*.swp"         排除路径模式
+fsmon add <path> --min-size 1MB            最小文件变更大小
+fsmon add <path> --exclude-cmd rsync       按进程名排除
+fsmon add <path> --only-cmd nginx,vim      仅捕获这些进程
+fsmon add <path> --all-events              捕获全部 14 种事件
+```
+
+所有捕获过滤在 daemon 进程内完成（纳秒级，无 fork），不匹配的事件不会写盘。
+
+### remove
+
+移除监控路径。无需 sudo。
+
+```
+fsmon remove <path>                        移除一个监控路径
+```
+
+### managed
+
+列出所有监控路径及其过滤配置。
+
+```
+fsmon managed                              显示所有监控路径
+```
+
+### query
+
+查询历史事件日志。输出为 JSONL 格式 — 可管道到 `jq` 进行自定义过滤。
+
+```
+fsmon query                                查询所有日志文件
+fsmon query --path /tmp                    查询指定路径的日志
+fsmon query --path /tmp --path /var        查询多个路径
+fsmon query --since 1h                     查询最近一小时事件
+fsmon query --since "2026-05-01T00:00:00Z" 从绝对时间开始
+fsmon query --until 30m                    查询直到 30 分钟前
+fsmon query --since 1h --until now         时间范围查询
+```
+
+搭配 `jq` 使用示例：
 
 ```bash
-# 优先级: CLI 参数 > config.toml > 代码默认值
-fsmon clean                       # 使用 config 默认
-fsmon clean --keep-days 60        # 覆盖默认值
+fsmon query --since 1h | jq 'select(.cmd == "nginx")'
+fsmon query | jq 'select(.event_type == "DELETE")'
+fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
+```
+
+### clean
+
+清理历史日志文件。默认值来自 `config.toml`：`keep_days=30`，`max_size=1GB`。
+
+```bash
+fsmon clean                                使用 config 默认值
+fsmon clean --keep-days 7                  覆盖保留天数
+fsmon clean --max-size 500MB               每个日志文件大小上限
+fsmon clean --path /tmp                    清理指定路径的日志
+fsmon clean --dry-run                      预览模式，不实际删除
+```
+
+优先级：CLI 参数 > config.toml > 代码默认值（30 天）
+
+### generate
+
+在 `~/.config/fsmon/config.toml` 生成默认配置文件。
+
+```
+fsmon generate                             创建默认配置
+fsmon generate -f                          覆盖已有配置
 ```
 
 ## 配置

@@ -176,39 +176,97 @@ sudo crontab -e
 
 ## Complete Commands
 
-### Capture Filtering
+### daemon
+
+Start the fsmon daemon — requires `sudo` for fanotify.
+
+```
+sudo fsmon daemon          Start daemon in foreground
+sudo fsmon daemon &        Start daemon in background
+```
+
+Config:           `~/.config/fsmon/config.toml`
+Managed paths:    `~/.local/share/fsmon/managed.jsonl`
+Log dir:          `~/.local/state/fsmon/`
+Socket:           `/tmp/fsmon-<UID>.sock`
+
+### add
+
+Add a path to the monitoring list. No sudo needed.
+
+```
+fsmon add <path>                           Monitor a path
+fsmon add <path> -r                        Monitor recursively
+fsmon add <path> --types MODIFY,CREATE     Filter by event types
+fsmon add <path> --exclude "*.swp"         Exclude path patterns
+fsmon add <path> --min-size 1MB            Minimum file size change
+fsmon add <path> --exclude-cmd rsync       Exclude by process name
+fsmon add <path> --only-cmd nginx,vim      Only capture these processes
+fsmon add <path> --all-events              Capture all 14 fanotify events
+```
 
 All capture filters run inside the daemon process (nanosecond-fast, no fork).
-They reduce write I/O — events that don't match never touch disk.
+Events that don't match never touch disk.
+
+### remove
+
+Remove a path from the monitoring list. No sudo needed.
 
 ```
-fsmon add --types MODIFY,CREATE    →  kernel mask, zero cost: fanotify only delivers matching events
-fsmon add --recursive              →  kernel scope, zero cost: watch subdirectories
-fsmon add --exclude "*.swp"        →  path regex, ~µs: reduce write I/O
-fsmon add --min-size 1024          →  u64 compare, ~ns: reduce write I/O
-fsmon add --exclude-cmd "cron"     →  cmd regex, ~µs: reduce write I/O
-fsmon add --only-cmd nginx,vim     →  cmd regex, ~µs: reduce write I/O
-fsmon add --all-events             →  kernel mask, zero cost: enable all 14 events
+fsmon remove <path>                        Remove a monitored path
 ```
 
-### Query
+### managed
 
-Query only keeps performance-critical options. All other filtering is done by piping JSONL to standard Unix tools.
+List all monitored paths with their filtering configuration.
 
 ```
-fsmon query                  →  scan all log files, output JSONL
-fsmon query --path /tmp      →  only read /tmp's log file
-fsmon query --since 1h       →  binary search + output
+fsmon managed                              Show all monitored paths
 ```
 
-### Clean
+### query
 
-Clean uses safety net defaults from config.toml, overridable via CLI:
+Query historical events from log files. Output is JSONL — pipe to `jq` for filtering.
+
+```
+fsmon query                                Query all log files
+fsmon query --path /tmp                    Query specific path's log
+fsmon query --path /tmp --path /var        Query multiple paths
+fsmon query --since 1h                     Events from last hour
+fsmon query --since "2026-05-01T00:00:00Z" From absolute time
+fsmon query --until 30m                    Events until 30 minutes ago
+fsmon query --since 1h --until now         Time range
+```
+
+Examples with `jq`:
 
 ```bash
-# Priority: CLI arg > config.toml > code default (30)
-fsmon clean                       # uses config defaults
-fsmon clean --keep-days 60        # overrides config
+fsmon query --since 1h | jq 'select(.cmd == "nginx")'
+fsmon query | jq 'select(.event_type == "DELETE")'
+fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
+```
+
+### clean
+
+Clean historical log files. Defaults from `config.toml`: `keep_days=30`, `max_size=1GB`.
+
+```bash
+fsmon clean                                Use config defaults
+fsmon clean --keep-days 7                  Override retention (days)
+fsmon clean --max-size 500MB               Max size per log file
+fsmon clean --path /tmp                    Clean specific path's log
+fsmon clean --dry-run                      Preview without deleting
+```
+
+Priority: CLI arg > config.toml > code default (30)
+
+### generate
+
+Generate a default configuration file at `~/.config/fsmon/config.toml`.
+
+```
+fsmon generate                             Create default config
+fsmon generate -f                          Overwrite existing config
 ```
 
 ## Configuration
