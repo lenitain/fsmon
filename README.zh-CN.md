@@ -207,7 +207,7 @@ src/
 ├── bin/fsmon.rs       CLI: daemon, add, remove, managed, query, clean, generate
 ├── lib.rs             FileEvent、EventType、清理引擎、临时文件安全
 ├── config.rs          基础设施配置、SUDO_UID 用户解析
-├── store.rs           Managed 路径数据库（JSONL 格式）
+├── managed.rs         Managed 路径数据库（JSONL 格式）
 ├── monitor.rs         Fanotify 循环、socket 处理、所有捕获过滤
 ├── fid_parser.rs      FID 事件底层解析、两阶段路径恢复
 ├── dir_cache.rs       目录句柄缓存（rm -rf 路径恢复）

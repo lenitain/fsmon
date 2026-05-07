@@ -21,12 +21,8 @@
 - **Recursive Monitoring**: Watch entire directory trees with automatic tracking of newly created subdirectories
 - **Complete Deletion Capture**: Captures every file deleted during `rm -rf` via persistent directory handle cache
 - **High Performance**: Rust + Tokio, <5MB memory footprint, zero-copy FID event parsing, binary-search log querying
-- **Unix Philisophy**: JSONL logs — query with `jq`, filter with `grep`, sort with `sort(1)`. fsmon captures and writes, you control the rest.
 - **Flexible Capture Filtering**: Filter at capture time by event type, size, path pattern, and process name — all in-process, nanosecond-fast, no fork.
-- **No Sudo Required for Daily Use**: Only `sudo fsmon daemon` needs root (fanotify). All other commands run as normal user.
 - **Live Updates**: Add/remove paths while daemon runs — no restart needed.
-- **Disk Safety Nets**: Configurable `keep_days` (default: 30) and `max_size` (default: 1GB) prevent disk overflow. Set once in `config.toml`.
-- **Podman-style Architecture**: Run the daemon yourself — no systemd dependency. Config per user.
 
 ## Quick Start
 
@@ -145,16 +141,14 @@ done
 kill %1
 ```
 
-**No systemd, no `/etc/` config files — everything is per-user.**
-
 ### File Locations
 
-| Purpose | Path | Format | Permissions |
-|---|---|---|---|
-| Infrastructure config | `~/.config/fsmon/config.toml` | TOML (human-editable) | user-owned |
-| Path database | `~/.local/share/fsmon/managed.jsonl` | JSONL (one entry per line) | user-owned |
-| Event logs | `~/.local/state/fsmon/*_log.jsonl` | JSONL (one event per line) | 644 |
-| Unix socket | `/tmp/fsmon-<UID>.sock` | TOML over stream | 666 |
+| Purpose | Path | Format |
+|---|---|---|
+| Infrastructure config | `~/.config/fsmon/config.toml` | TOML (generated via `fsmon generate`) |
+| Path database | `~/.local/share/fsmon/managed.jsonl` | JSONL (one entry per line) |
+| Event logs | `~/.local/state/fsmon/*_log.jsonl` | JSONL (one event per line) |
+| Unix socket | `/tmp/fsmon-<UID>.sock` | TOML over stream |
 
 Both the store path and log directory are configurable in `~/.config/fsmon/config.toml`
 (see `[managed].file` and `[logging].dir`).
@@ -249,7 +243,7 @@ src/
 ├── bin/fsmon.rs       CLI: daemon, add, remove, managed, query, clean, generate
 ├── lib.rs             FileEvent, EventType, clean engine, temp file safety
 ├── config.rs          Infrastructure config, SUDO_UID home resolution
-├── store.rs           Path database (JSONL)
+├── managed.rs         Managed paths database (JSONL)
 ├── monitor.rs         Fanotify loop, socket handler, all capture filters
 ├── fid_parser.rs      Low-level FID event parsing, two-pass path recovery
 ├── dir_cache.rs       Directory handle cache for rm -rf recovery
