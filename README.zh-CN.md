@@ -47,7 +47,7 @@ source $HOME/.cargo/env
 # 从源码构建
 git clone https://github.com/lenitain/fsmon.git
 cd fsmon
-cargo build --release
+cargo install --path .
 
 # 或从 crates.io 安装
 cargo install fsmon
