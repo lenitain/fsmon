@@ -214,9 +214,7 @@ fn read_proc_uid(pid: u32) -> Option<String> {
 struct SockGuard(libc::c_int);
 impl Drop for SockGuard {
     fn drop(&mut self) {
-        unsafe {
-            libc::close(self.0);
-        }
+        let _ = nix::unistd::close(self.0);
     }
 }
 

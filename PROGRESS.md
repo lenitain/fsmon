@@ -9,12 +9,22 @@
 
 ```
 总 unsafe 55 处（35 处生产代码 + 20 处测试代码）
-├── ✅ 已完成           -15 处（geteuid/getegid + chown + flock + getpwuid_r）
+├── ✅ 已完成           -25 处（geteuid/getegid + chown + flock + getpwuid_r + open/close）
 ├── ✅ 可 safe 替代     ~15 处（换 nix/fs2/users 等 safe crate）
 ├── 🔶 可包装但本质 unsafe  ~10 处（底层仍是 unsafe，只是接口变 safe）
 └── ❌ 不可替代         ~14 处（FID 结构体 + name_to_handle_at + raw fd）
 
-**当前进度**: 55 → 40 处 unsafe（生产代码 35 → 22）
+**当前进度**: 55 → 30 处 unsafe（生产代码 35 → **11**）
+
+已消除 unsafe 明细:
+| 阶段 | 消除 | 累计 |
+|------|------|------|
+| P0 geteuid/getegid | -7 | 7 |
+| P0 chown | -3 | 10 |
+| P0 flock | -1 | 11 |
+| P1 getpwuid_r | -4 | 15 |
+| P1 open/close | -10 | 25 |
+| **剩余** | | **11 生产 + 19 测试** |
 ```
 
 ---
@@ -182,7 +192,7 @@
 | **P0** | ✅ 已完成 | `chown` → `nix::unistd::chown` | -3 处 | `config.rs`, `monitor.rs`, `bin/fsmon.rs` |
 | **P0** | ✅ 已完成 | `flock` → `fs2::FileExt` | -1 处 | `lib.rs` |
 | **P1** | ✅ 已完成 | `getpwuid_r` → `users::get_user_by_uid` | -4 处 | `config.rs` |
-| **P1** | ⏳ | 目录 `open`/`close` → `nix::fcntl` + RAII guard | -6 处 | `monitor.rs`, `fid_parser.rs` |
+| **P1** | ✅ 已完成 | 目录 `open`/`close` → `nix::fcntl::open` + `nix::unistd::close` + SockGuard | -10 处 | `monitor.rs`, `fid_parser.rs`, `proc_cache.rs` |
 | **P1** | ⏳ | `std::env::set_var` 测试 → `temp-env` / SerialTest | -9 处 | `config.rs` |
 | **P2** | ⏳ | Netlink 全程 → `nix::sys::socket` | -9 处 | `proc_cache.rs` |
 | **P3** | ⏳ | FID 解析封装到安全函数 | 0 处（缩小 scope） | `fid_parser.rs` |

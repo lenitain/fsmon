@@ -9,7 +9,6 @@ use fanotify::low_level::{
 };
 use dashmap::DashMap;
 use std::collections::HashMap;
-use std::ffi::CString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::num::NonZeroUsize;
@@ -424,18 +423,14 @@ impl Monitor {
                                 canonical.display(),
                                 e
                             );
-                            unsafe {
-                                libc::close(new_fd);
-                            }
+                            let _ = nix::unistd::close(new_fd);
                             continue;
                         }
                     }
                 }
                 Err(e) => {
                     eprintln!("[WARNING] Cannot monitor {}: {:#}", canonical.display(), e);
-                    unsafe {
-                        libc::close(new_fd);
-                    }
+                    let _ = nix::unistd::close(new_fd);
                     continue;
                 }
             };
@@ -450,12 +445,12 @@ impl Monitor {
 
             // Open directory fds for open_by_handle_at to resolve file handles.
             for canonical in &self.canonical_paths {
-                if let Ok(c_path) = CString::new(canonical.to_string_lossy().as_bytes()) {
-                    let mfd =
-                        unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
-                    if mfd >= 0 {
-                        self.mount_fds.push(mfd);
-                    }
+                if let Ok(mfd) = nix::fcntl::open(
+                    canonical,
+                    nix::fcntl::OFlag::O_DIRECTORY,
+                    nix::sys::stat::Mode::empty(),
+                ) {
+                    self.mount_fds.push(mfd);
                 }
             }
 
@@ -518,7 +513,8 @@ impl Monitor {
         // unbounded mpsc channel to the main loop for processing.
         let (event_tx, mut event_rx) =
             tokio::sync::mpsc::unbounded_channel::<Vec<fid_parser::FidEvent>>();
-        let mount_fds = Arc::new(self.mount_fds.clone());
+        let mount_fds: Vec<i32> = self.mount_fds.iter().map(|fd| fd.as_raw_fd()).collect();
+        let mount_fds = Arc::new(mount_fds);
         let dir_cache = Arc::new(std::mem::take(&mut self.dir_cache));
         let buf_size = self.buffer_size;
 
@@ -556,9 +552,7 @@ impl Monitor {
                     }
                     guard.clear_ready();
                 }
-                unsafe {
-                    libc::close(fd);
-                }
+                let _ = nix::unistd::close(fd);
             });
         }
 
@@ -825,7 +819,8 @@ impl Monitor {
                 return;
             }
         };
-        let mfds = Arc::new(self.mount_fds.clone());
+        let mfds: Vec<i32> = self.mount_fds.iter().map(|fd| fd.as_raw_fd()).collect();
+        let mfds = Arc::new(mfds);
         let buf_size = self.buffer_size;
         tokio::spawn(async move {
             let afd = match AsyncFd::new(FanFd(fd)) {
@@ -852,9 +847,7 @@ impl Monitor {
                 }
                 guard.clear_ready();
             }
-            unsafe {
-                libc::close(fd);
-            }
+            let _ = nix::unistd::close(fd);
         });
     }
 
@@ -1011,11 +1004,12 @@ impl Monitor {
 
         // Open directory fd for handle resolution BEFORE spawning reader,
         // so the new reader task can resolve file handles for this path.
-        if let Ok(c_path) = CString::new(canonical.to_string_lossy().as_bytes()) {
-            let mfd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
-            if mfd >= 0 {
-                self.mount_fds.push(mfd);
-            }
+        if let Ok(mfd) = nix::fcntl::open(
+            canonical.as_path(),
+            nix::fcntl::OFlag::O_DIRECTORY,
+            nix::sys::stat::Mode::empty(),
+        ) {
+            self.mount_fds.push(mfd);
         }
 
         // Update path tracking
@@ -1107,9 +1101,8 @@ impl Monitor {
         self.canonical_paths.remove(pos);
         self.path_options.remove(path);
 
-        // Close and remove the matching mount fd
+        // Close and remove the matching mount fd (OwnedFd auto-closes on drop)
         if pos < self.mount_fds.len() {
-            unsafe { libc::close(self.mount_fds[pos]) };
             self.mount_fds.remove(pos);
         }
 
