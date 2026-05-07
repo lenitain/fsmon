@@ -26,6 +26,7 @@ pub const EXIT_CONFIG: i32 = 78;
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum OutputFormat {
     Toml,
+    Jsonl,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]

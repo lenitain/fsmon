@@ -2,11 +2,11 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use regex::Regex;
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use crate::utils::parse_time;
-use crate::{EventType, FileEvent, OutputFormat, SortBy, parse_log_line};
+use crate::{EventType, FileEvent, OutputFormat, SortBy, parse_log_line_jsonl};
 
 const SCAN_BACK_BYTES: u64 = 4096;
 
@@ -93,7 +93,7 @@ impl Query {
 
     /// Resolve the list of log files to query.
     /// If paths is Some, resolve each path to its log filename.
-    /// If paths is None, scan log_dir for all `*.toml` log files.
+    /// If paths is None, scan log_dir for all `*.jsonl` log files.
     fn resolve_log_files(&self) -> Result<Vec<PathBuf>> {
         if let Some(ref paths) = self.paths {
             let mut files = Vec::new();
@@ -106,7 +106,7 @@ impl Query {
             return Ok(files);
         }
 
-        // Scan directory for all *.toml files (log files)
+        // Scan directory for all *.jsonl files (log files)
         if !self.log_dir.exists() {
             return Ok(Vec::new());
         }
@@ -117,7 +117,7 @@ impl Query {
         {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "toml") {
+            if path.extension().is_some_and(|ext| ext == "jsonl") {
                 files.push(path);
             }
         }
@@ -127,50 +127,20 @@ impl Query {
         Ok(files)
     }
 
-    /// Read the next TOML event block from the reader at current position.
-    /// Each event is a TOML document (multi-line) separated by blank lines.
-    /// Skips leading blank lines, then reads until a blank line or EOF.
-    /// Returns (block_bytes, total_bytes_consumed) or None at EOF.
-    fn read_next_block(reader: &mut BufReader<File>) -> Result<Option<(Vec<u8>, usize)>> {
-        let mut block = Vec::new();
-        let mut total_bytes = 0usize;
-
-        // Skip leading blank lines, collect first content line
+    /// Read the next non-empty JSONL line from the reader at current position.
+    /// Returns (line_bytes, total_bytes_consumed) or None at EOF.
+    fn read_next_line(reader: &mut BufReader<File>) -> Result<Option<(Vec<u8>, usize)>> {
         loop {
             let mut line = Vec::new();
             let bytes_read = reader.read_until(b'\n', &mut line)?;
             if bytes_read == 0 {
                 return Ok(None); // EOF
             }
-            total_bytes += bytes_read;
             let trimmed = std::str::from_utf8(&line).unwrap_or("").trim();
             if !trimmed.is_empty() {
-                // First content line — start of the block
-                block.extend_from_slice(&line);
-                break;
+                return Ok(Some((line, bytes_read)));
             }
-            // Blank line, skip
-        }
-
-        // Read the rest of the TOML block until a blank line or EOF
-        loop {
-            let mut line = Vec::new();
-            let bytes_read = reader.read_until(b'\n', &mut line)?;
-            if bytes_read == 0 {
-                break; // EOF
-            }
-            total_bytes += bytes_read;
-            let trimmed = std::str::from_utf8(&line).unwrap_or("").trim();
-            if trimmed.is_empty() {
-                break; // blank line ends the block
-            }
-            block.extend_from_slice(&line);
-        }
-
-        if block.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some((block, total_bytes)))
+            // Skip empty lines
         }
     }
 
@@ -201,7 +171,7 @@ impl Query {
 
         let mut events = Vec::new();
 
-        // Seek to start_offset and read TOML blocks within [start_offset, end_offset]
+        // Seek to start_offset and read JSONL lines within [start_offset, end_offset]
         reader.seek(SeekFrom::Start(start_offset))?;
         let mut offset = start_offset;
 
@@ -210,21 +180,21 @@ impl Query {
                 break;
             }
 
-            let (block_bytes, block_len) = match Self::read_next_block(&mut reader)? {
+            let (line_bytes, line_len) = match Self::read_next_line(&mut reader)? {
                 Some(b) => b,
                 None => break,
             };
-            offset += block_len as u64;
+            offset += line_len as u64;
 
-            let block_str = match std::str::from_utf8(&block_bytes) {
+            let line_str = match std::str::from_utf8(&line_bytes) {
                 Ok(s) => s.trim(),
                 Err(_) => continue,
             };
-            if block_str.is_empty() {
+            if line_str.is_empty() {
                 continue;
             }
 
-            let event: FileEvent = match parse_log_line(block_str) {
+            let event: FileEvent = match parse_log_line_jsonl(line_str) {
                 Some(e) => e,
                 None => continue,
             };
@@ -280,7 +250,7 @@ impl Query {
     }
 
     /// Seek to a byte offset in the file and extract the timestamp from the
-    /// nearest complete TOML event block at or before `offset`.
+    /// nearest complete JSONL line at or before `offset`.
     fn seek_and_parse_time(
         &self,
         reader: &mut BufReader<File>,
@@ -291,40 +261,28 @@ impl Query {
 
         reader.seek(SeekFrom::Start(read_start)).ok()?;
 
-        // Skip forward until we find a blank line (block boundary) or EOF
-        loop {
-            let mut line = Vec::new();
-            let bytes = reader.read_until(b'\n', &mut line).ok()?;
-            if bytes == 0 {
-                return None; // EOF
-            }
-            let s = std::str::from_utf8(&line).ok()?.trim();
-            if s.is_empty() {
-                break; // Found blank line, next content is a complete block
+        // Skip to the start of the next complete line
+        if read_start > 0 {
+            let mut byte = [0u8; 1];
+            loop {
+                if reader.read_exact(&mut byte).is_err() {
+                    return None;
+                }
+                if byte[0] == b'\n' {
+                    break;
+                }
             }
         }
 
-        // Read the complete TOML block
-        let mut block = Vec::new();
-        loop {
-            let mut line = Vec::new();
-            let bytes = reader.read_until(b'\n', &mut line).ok()?;
-            if bytes == 0 {
-                break; // EOF
-            }
-            let s = std::str::from_utf8(&line).ok()?.trim();
-            if s.is_empty() {
-                break; // blank line ends the block
-            }
-            block.extend_from_slice(&line);
-        }
-
-        let block_str = std::str::from_utf8(&block).ok()?.trim();
-        if block_str.is_empty() {
+        // Read one complete line
+        let mut line = String::new();
+        reader.read_line(&mut line).ok()?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
             return None;
         }
 
-        let event: FileEvent = parse_log_line(block_str)?;
+        let event: FileEvent = parse_log_line_jsonl(trimmed)?;
         Some((event.time, offset))
     }
 
@@ -392,94 +350,75 @@ impl Query {
         Ok(low)
     }
 
-    /// Expand a byte offset backward by up to `max_blocks` blocks to catch
+    /// Expand a byte offset backward by up to `max_lines` lines to catch
     /// minor out-of-order entries near the boundary.
     fn expand_offset_backward(
         &self,
         reader: &mut BufReader<File>,
         offset: u64,
-        max_blocks: usize,
+        max_lines: usize,
     ) -> Result<u64> {
-        if offset == 0 || max_blocks == 0 {
+        if offset == 0 || max_lines == 0 {
             return Ok(offset);
         }
 
         let file_len = reader.get_ref().metadata()?.len();
         if offset >= file_len {
-            return self.expand_offset_backward_from_start(reader, file_len, max_blocks);
+            return self.expand_offset_backward_from_start(reader, file_len, max_lines);
         }
 
-        let avg_block_bytes: u64 = 420;
-        let mut buf_size: u64 = (max_blocks as u64)
-            .saturating_mul(avg_block_bytes)
+        let avg_line_bytes: u64 = 200;
+        let mut buf_size: u64 = (max_lines as u64)
+            .saturating_mul(avg_line_bytes)
             .max(SCAN_BACK_BYTES);
 
         loop {
             let scan_start = offset.saturating_sub(buf_size);
 
             reader.seek(SeekFrom::Start(scan_start))?;
-            let mut ring_buf = vec![0u64; max_blocks];
+            let mut ring_buf = vec![0u64; max_lines];
             let mut ring_idx = 0usize;
             let mut ring_count = 0usize;
             let mut pos = scan_start;
 
-            // Skip partial first block if not at file start
+            // Skip to the start of the next complete line if not at file start
             if scan_start > 0 {
-                let mut found_blank = false;
+                let mut byte = [0u8; 1];
                 loop {
-                    let mut discard = Vec::new();
-                    let bytes = reader.read_until(b'\n', &mut discard)?;
+                    let bytes = reader.read(&mut byte)?;
                     if bytes == 0 {
                         break;
                     }
-                    pos += bytes as u64;
+                    pos += 1;
                     if pos > offset {
                         return Ok(0);
                     }
-                    let s = std::str::from_utf8(&discard).unwrap_or("").trim();
-                    if s.is_empty() {
-                        found_blank = true;
+                    if byte[0] == b'\n' {
                         break;
                     }
                 }
-                if !found_blank {
-                    return self.expand_offset_backward_from_start(reader, offset, max_blocks);
-                }
             }
 
-            // Track complete blocks
+            // Track line start positions
             loop {
                 if pos >= offset {
                     break;
                 }
-                ring_buf[ring_idx % max_blocks] = pos;
+                ring_buf[ring_idx % max_lines] = pos;
                 ring_idx += 1;
                 ring_count += 1;
 
-                let mut found_content = false;
-                loop {
-                    let mut line = Vec::new();
-                    let bytes_read = reader.read_until(b'\n', &mut line)?;
-                    if bytes_read == 0 {
-                        break;
-                    }
-                    pos += bytes_read as u64;
-                    if pos > offset {
-                        break;
-                    }
-                    let s = std::str::from_utf8(&line).unwrap_or("").trim();
-                    if s.is_empty() {
-                        break;
-                    }
-                    found_content = true;
-                }
-                if !found_content {
+                // Read one line
+                let mut line = Vec::new();
+                let bytes_read = reader.read_until(b'\n', &mut line)?;
+                if bytes_read == 0 {
                     break;
                 }
+                pos += bytes_read as u64;
             }
 
-            if ring_count >= max_blocks {
-                return Ok(ring_buf[ring_idx % max_blocks]);
+            if ring_count >= max_lines {
+                return Ok(ring_buf[ring_idx % max_lines]);
             }
 
             if scan_start == 0 {
@@ -491,22 +430,22 @@ impl Query {
 
             let new_buf_size = buf_size.saturating_mul(2);
             if new_buf_size >= offset {
-                return self.expand_offset_backward_from_start(reader, offset, max_blocks);
+                return self.expand_offset_backward_from_start(reader, offset, max_lines);
             }
             buf_size = new_buf_size;
         }
     }
 
     /// Fallback: scan from file start up to `offset`, tracking the last
-    /// `max_blocks` block start positions.
+    /// `max_lines` line start positions.
     fn expand_offset_backward_from_start(
         &self,
         reader: &mut BufReader<File>,
         offset: u64,
-        max_blocks: usize,
+        max_lines: usize,
     ) -> Result<u64> {
         reader.seek(SeekFrom::Start(0))?;
-        let mut ring_buf = vec![0u64; max_blocks];
+        let mut ring_buf = vec![0u64; max_lines];
         let mut ring_idx = 0usize;
         let mut ring_count = 0usize;
         let mut pos = 0u64;
@@ -515,34 +454,29 @@ impl Query {
             if pos >= offset {
                 break;
             }
-            ring_buf[ring_idx % max_blocks] = pos;
+            ring_buf[ring_idx % max_lines] = pos;
             ring_idx += 1;
             ring_count += 1;
 
-            loop {
-                let mut line = Vec::new();
-                let bytes_read = reader.read_until(b'\n', &mut line)?;
-                if bytes_read == 0 {
-                    break;
-                }
-                pos += bytes_read as u64;
-                let s = std::str::from_utf8(&line).unwrap_or("").trim();
-                if s.is_empty() {
-                    break;
-                }
+            // Read one line
+            let mut line = Vec::new();
+            let bytes_read = reader.read_until(b'\n', &mut line)?;
+            if bytes_read == 0 {
+                break;
             }
+            pos += bytes_read as u64;
         }
 
         if ring_count == 0 {
             return Ok(0);
         }
 
-        let start_idx = if ring_count >= max_blocks {
-            ring_idx % max_blocks
+        let start_idx = if ring_count >= max_lines {
+            ring_idx % max_lines
         } else {
             0
         };
-        Ok(ring_buf[start_idx % max_blocks])
+        Ok(ring_buf[start_idx % max_lines])
     }
 
     fn sort_events(&self, mut events: Vec<FileEvent>) -> Vec<FileEvent> {
@@ -571,6 +505,11 @@ impl Query {
                 for event in events {
                     print!("{}", event.to_toml_string());
                     println!(); // blank line separator
+                }
+            }
+            OutputFormat::Jsonl => {
+                for event in events {
+                    println!("{}", event.to_jsonl_string());
                 }
             }
         }
@@ -711,8 +650,8 @@ mod tests {
         };
 
         let mut f = std::fs::File::create(&log_path).unwrap();
-        writeln!(f, "{}", &e1.to_toml_string()).unwrap();
-        writeln!(f, "{}", &e2.to_toml_string()).unwrap();
+        writeln!(f, "{}", &e1.to_jsonl_string()).unwrap();
+        writeln!(f, "{}", &e2.to_jsonl_string()).unwrap();
 
         let q = Query::new(
             dir.clone(),
@@ -765,8 +704,8 @@ mod tests {
         };
 
         let mut f = std::fs::File::create(&log_path).unwrap();
-        writeln!(f, "{}", &e1.to_toml_string()).unwrap();
-        writeln!(f, "{}", &e2.to_toml_string()).unwrap();
+        writeln!(f, "{}", &e1.to_jsonl_string()).unwrap();
+        writeln!(f, "{}", &e2.to_jsonl_string()).unwrap();
 
         let q = Query::new(
             dir.clone(),
