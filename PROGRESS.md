@@ -64,7 +64,7 @@
 
 ---
 
-### B5 (中) - `truncate_from_start` 并发临时文件冲突
+### B5 (中) - `truncate_from_start` 并发临时文件冲突 ✅ 已修复 (2026-05-07)
 
 **文件**: `src/lib.rs`
 
@@ -76,6 +76,8 @@ let tmp_path = dir.join(".fsmon_trunc_tmp");
 两者使用同一个 `.fsmon_trunc_tmp`,导致数据错乱和损坏。
 
 **修复**: 使用唯一临时文件名(如 `format!(".fsmon_trunc_{}", std::process::id())` 或使用 `tempfile` crate)。
+
+**状态**: ✅ 在 JSONL 迁移中附带修复（`.fsmon_trunc_tmp` → 带 PID 的唯一临时文件名）。
 
 ---
 
@@ -93,7 +95,7 @@ let tmp_path = dir.join(".fsmon_trunc_tmp");
 
 ---
 
-### B7 (低) - `count_lines` 无边界校验
+### B7 (低) - `count_lines` 无边界校验 ✅ 已修复 (2026-05-07)
 
 **文件**: `src/lib.rs`
 
@@ -106,7 +108,9 @@ fn count_lines(path: &Path, upto: usize) -> Result<usize> {
 若 `upto > file_size`,`read_exact` 返回 `UnexpectedEof`。
 目前调用方保证 `upto ≤ file_size`(来自 `find_tail_offset`),但无防御性校验。
 
-**修复**: 用 `read_to_end` 替代,或加 `upto.min(file_len)` 保护。
+**修复**: 使用 `take(upto).read_to_end(&mut buf)` 替代 `read_exact`，避免 TOCTOU 和多余 syscall。
+
+**状态**: ✅ 已修复。`read_exact` → `take(upto).read_to_end`，自动处理文件小于 `upto` 的情况。
 
 ---
 
@@ -124,9 +128,9 @@ fn count_lines(path: &Path, upto: usize) -> Result<usize> {
 
 ---
 
-### B9 (极低) - `read_fid_events` 在 async context 中持 std::sync::Mutex
+### B9 (极低) - `read_fid_events` 在 async context 中持 std::sync::Mutex ✅ 已修复 (2026-05-07)
 
-**文件**: `src/monitor.rs` + `src/fid_parser.rs`
+**文件**: `src/monitor.rs` + `src/fid_parser.rs` + `src/dir_cache.rs`
 
 **问题**:
 ```rust
@@ -135,8 +139,10 @@ let events = fid_parser::read_fid_events(fd, &mfds, &mut dc.lock().unwrap(), &mu
 `std::sync::Mutex` 在 tokio 任务中被持有整个解析周期(包含 `open_by_handle_at`
 磁盘 I/O),阻塞当前 worker 线程。多 fd 时可能影响并发性能。
 
-**修复**: 使用 `tokio::sync::Mutex`(不持有 across .await 即可)或使用
-`dashmap` 替代(因为 dir_cache 已在多处使用)。
+**修复**: 使用 `dashmap::DashMap` 替代 `Mutex<HashMap>`，彻底消除锁竞争。
+- `dir_cache.rs`: `&mut HashMap` → `&DashMap`
+- `fid_parser.rs`: `&mut HashMap` → `&DashMap`
+- `monitor.rs`: 移除 `Mutex` 包装，`dc.lock().unwrap()` → `dc.as_ref()`
 
 ---
 

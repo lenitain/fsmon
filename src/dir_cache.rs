@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use dashmap::DashMap;
 use std::ffi::CString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -34,14 +34,14 @@ pub fn path_to_handle_key(path: &Path) -> Option<HandleKey> {
 }
 
 /// Add directory path handle key to cache
-pub fn cache_dir_handle(cache: &mut HashMap<HandleKey, PathBuf>, path: &Path) {
+pub fn cache_dir_handle(cache: &DashMap<HandleKey, PathBuf>, path: &Path) {
     if let Some(key) = path_to_handle_key(path) {
         cache.insert(key, path.to_path_buf());
     }
 }
 
 /// Recursively cache directory and all subdirectory handles
-pub fn cache_recursive(cache: &mut HashMap<HandleKey, PathBuf>, dir: &Path) {
+pub fn cache_recursive(cache: &DashMap<HandleKey, PathBuf>, dir: &Path) {
     cache_dir_handle(cache, dir);
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,

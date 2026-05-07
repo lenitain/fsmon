@@ -323,9 +323,9 @@ fn truncate_from_start(path: &Path, offset: usize) -> Result<()> {
 fn count_lines(path: &Path, upto: usize) -> Result<usize> {
     use std::io::Read;
 
-    let mut f = fs::File::open(path)?;
-    let mut buf = vec![0u8; upto];
-    f.read_exact(&mut buf)?;
+    let f = fs::File::open(path)?;
+    let mut buf = vec![];
+    f.take(upto as u64).read_to_end(&mut buf)?;
     Ok(buf.iter().filter(|&&b| b == b'\n').count())
 }
 

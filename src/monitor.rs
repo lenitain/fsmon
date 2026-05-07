@@ -7,6 +7,7 @@ use fanotify::low_level::{
     FAN_NONBLOCK, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC, FAN_Q_OVERFLOW, FAN_REPORT_DIR_FID,
     FAN_REPORT_FID, FAN_REPORT_NAME, O_CLOEXEC, O_RDONLY, fanotify_init, fanotify_mark,
 };
+use dashmap::DashMap;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs::{self, OpenOptions};
@@ -14,7 +15,7 @@ use std::io::Write;
 use std::num::NonZeroUsize;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use lru::LruCache;
 use tokio::io::unix::AsyncFd;
@@ -144,10 +145,10 @@ pub struct Monitor {
     /// All fanotify fds (one per filesystem group)
     fan_fds: Vec<i32>,
     mount_fds: Vec<RawFd>,
-    dir_cache: HashMap<fid_parser::HandleKey, PathBuf>,
+    dir_cache: DashMap<fid_parser::HandleKey, PathBuf>,
     /// Shared state for spawning reader tasks during live-add (set in run())
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<fid_parser::FidEvent>>>,
-    shared_dir_cache: Option<Arc<Mutex<HashMap<fid_parser::HandleKey, PathBuf>>>>,
+    shared_dir_cache: Option<Arc<DashMap<fid_parser::HandleKey, PathBuf>>>,
     /// Paths that didn't exist at add/startup time, retried on directory creation
     pending_paths: Vec<(PathBuf, PathEntry)>,
     /// inotify instance watching parent dirs of pending paths
@@ -210,7 +211,7 @@ impl Monitor {
             socket_listener,
             fan_fds: Vec::new(),
             mount_fds: Vec::new(),
-            dir_cache: HashMap::new(),
+            dir_cache: DashMap::new(),
             event_tx: None,
             shared_dir_cache: None,
             pending_paths: Vec::new(),
@@ -465,9 +466,9 @@ impl Monitor {
                     let opts = self.paths.get(i).and_then(|p| self.path_options.get(p));
                     let recursive = opts.is_some_and(|o| o.recursive);
                     if recursive {
-                        dir_cache::cache_recursive(&mut self.dir_cache, canonical);
+                        dir_cache::cache_recursive(&self.dir_cache, canonical);
                     } else {
-                        dir_cache::cache_dir_handle(&mut self.dir_cache, canonical);
+                        dir_cache::cache_dir_handle(&self.dir_cache, canonical);
                     }
                 }
             }
@@ -519,7 +520,7 @@ impl Monitor {
         let (event_tx, mut event_rx) =
             tokio::sync::mpsc::unbounded_channel::<Vec<fid_parser::FidEvent>>();
         let mount_fds = Arc::new(self.mount_fds.clone());
-        let dir_cache = Arc::new(Mutex::new(std::mem::take(&mut self.dir_cache)));
+        let dir_cache = Arc::new(std::mem::take(&mut self.dir_cache));
         let buf_size = self.buffer_size;
 
         // Managed for live-add (add_path may need to spawn reader tasks)
@@ -550,7 +551,7 @@ impl Monitor {
                         }
                     };
                     let events =
-                        fid_parser::read_fid_events(fd, &mfds, &mut dc.lock().unwrap(), &mut buf);
+                        fid_parser::read_fid_events(fd, &mfds, dc.as_ref(), &mut buf);
                     if !events.is_empty() && tx.send(events).is_err() {
                         break; // receiver dropped (shutting down)
                     }
@@ -836,7 +837,7 @@ impl Monitor {
                     }
                 };
                 let events =
-                    fid_parser::read_fid_events(fd, &mfds, &mut dc.lock().unwrap(), &mut buf);
+                    fid_parser::read_fid_events(fd, &mfds, dc.as_ref(), &mut buf);
                 if !events.is_empty() && tx.send(events).is_err() {
                     break;
                 }
@@ -1018,11 +1019,10 @@ impl Monitor {
         if canonical.is_dir()
             && let Some(ref cache) = self.shared_dir_cache
         {
-            let mut dc = cache.lock().unwrap();
             if recursive {
-                dir_cache::cache_recursive(&mut dc, &canonical);
+                dir_cache::cache_recursive(cache.as_ref(), &canonical);
             } else {
-                dir_cache::cache_dir_handle(&mut dc, &canonical);
+                dir_cache::cache_dir_handle(cache.as_ref(), &canonical);
             }
         }
 

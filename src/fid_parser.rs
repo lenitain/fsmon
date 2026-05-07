@@ -3,8 +3,8 @@ use fanotify::low_level::{
     FAN_DELETE_SELF, FAN_MODIFY, FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO, FAN_OPEN,
     FAN_OPEN_EXEC,
 };
+use dashmap::DashMap;
 use smallvec::SmallVec;
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -100,7 +100,7 @@ pub fn mask_to_event_types(mask: u64) -> SmallVec<[EventType; 8]> {
 pub fn read_fid_events(
     fan_fd: i32,
     mount_fds: &[i32],
-    dir_cache: &mut HashMap<HandleKey, PathBuf>,
+    dir_cache: &DashMap<HandleKey, PathBuf>,
     buf: &mut Vec<u8>,
 ) -> Vec<FidEvent> {
     let n = unsafe { libc::read(fan_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
