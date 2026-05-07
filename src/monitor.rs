@@ -9,11 +9,10 @@ use fanotify::low_level::{
 };
 use dashmap::DashMap;
 use std::collections::HashMap;
-use std::ffi::CString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::num::NonZeroUsize;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -60,19 +59,17 @@ fn chown_to_user(path: &Path) -> std::io::Result<bool> {
     let (uid, gid) = crate::config::resolve_uid_gid();
     let cpath = std::ffi::CString::new(path.to_string_lossy().as_bytes())
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains null"))?;
-    let ret = unsafe { libc::chown(cpath.as_ptr(), uid, gid) };
-    if ret == 0 {
-        Ok(true)
-    } else {
-        let err = std::io::Error::last_os_error();
-        // EPERM / EOPNOTSUPP / ENOTSUP / ENOSYS — FS doesn't support ownership
-        if err.raw_os_error().is_some_and(|e| {
-            matches!(e, libc::EPERM | libc::EOPNOTSUPP | libc::ENOSYS)
-        }) {
+    match nix::unistd::chown(
+        cpath.as_c_str(),
+        Some(nix::unistd::Uid::from_raw(uid)),
+        Some(nix::unistd::Gid::from_raw(gid)),
+    ) {
+        Ok(()) => Ok(true),
+        Err(nix::errno::Errno::EPERM) | Err(nix::errno::Errno::EOPNOTSUPP) | Err(nix::errno::Errno::ENOSYS) => {
+            // FS doesn't support ownership (vfat/exfat/NFS no_root_squash)
             Ok(false)
-        } else {
-            Err(err)
         }
+        Err(e) => Err(std::io::Error::other(e)),
     }
 }
 
@@ -144,7 +141,7 @@ pub struct Monitor {
     socket_listener: Option<tokio::net::UnixListener>,
     /// All fanotify fds (one per filesystem group)
     fan_fds: Vec<i32>,
-    mount_fds: Vec<RawFd>,
+    mount_fds: Vec<OwnedFd>,
     dir_cache: DashMap<fid_parser::HandleKey, PathBuf>,
     /// Shared state for spawning reader tasks during live-add (set in run())
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<fid_parser::FidEvent>>>,
@@ -222,7 +219,7 @@ impl Monitor {
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        if unsafe { libc::geteuid() } != 0 {
+        if nix::unistd::geteuid().as_raw() != 0 {
             let hint = if let Ok(exe) = std::env::current_exe() {
                 if exe.to_string_lossy().contains(".cargo/bin") {
                     "\n\nHint: It looks like fsmon was installed via cargo install (~/.cargo/bin).\n\
@@ -426,18 +423,14 @@ impl Monitor {
                                 canonical.display(),
                                 e
                             );
-                            unsafe {
-                                libc::close(new_fd);
-                            }
+                            let _ = nix::unistd::close(new_fd);
                             continue;
                         }
                     }
                 }
                 Err(e) => {
                     eprintln!("[WARNING] Cannot monitor {}: {:#}", canonical.display(), e);
-                    unsafe {
-                        libc::close(new_fd);
-                    }
+                    let _ = nix::unistd::close(new_fd);
                     continue;
                 }
             };
@@ -452,12 +445,13 @@ impl Monitor {
 
             // Open directory fds for open_by_handle_at to resolve file handles.
             for canonical in &self.canonical_paths {
-                if let Ok(c_path) = CString::new(canonical.to_string_lossy().as_bytes()) {
-                    let mfd =
-                        unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
-                    if mfd >= 0 {
-                        self.mount_fds.push(mfd);
-                    }
+                if let Ok(raw) = nix::fcntl::open(
+                    canonical,
+                    nix::fcntl::OFlag::O_DIRECTORY,
+                    nix::sys::stat::Mode::empty(),
+                ) {
+                    // SAFETY: raw fd just opened successfully, OwnedFd takes ownership
+                    self.mount_fds.push(unsafe { OwnedFd::from_raw_fd(raw) });
                 }
             }
 
@@ -520,7 +514,8 @@ impl Monitor {
         // unbounded mpsc channel to the main loop for processing.
         let (event_tx, mut event_rx) =
             tokio::sync::mpsc::unbounded_channel::<Vec<fid_parser::FidEvent>>();
-        let mount_fds = Arc::new(self.mount_fds.clone());
+        let mount_fds: Vec<i32> = self.mount_fds.iter().map(|fd| fd.as_raw_fd()).collect();
+        let mount_fds = Arc::new(mount_fds);
         let dir_cache = Arc::new(std::mem::take(&mut self.dir_cache));
         let buf_size = self.buffer_size;
 
@@ -534,7 +529,9 @@ impl Monitor {
             let mfds = Arc::clone(&mount_fds);
             let dc = Arc::clone(&dir_cache);
             tokio::spawn(async move {
-                let afd = match AsyncFd::new(FanFd(fd)) {
+                // SAFETY: fd is a fanotify fd owned by this task from now on
+                let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
+                let afd = match AsyncFd::new(owned_fd) {
                     Ok(a) => a,
                     Err(e) => {
                         eprintln!("[ERROR] AsyncFd for fd {}: {}", fd, e);
@@ -558,9 +555,7 @@ impl Monitor {
                     }
                     guard.clear_ready();
                 }
-                unsafe {
-                    libc::close(fd);
-                }
+                // OwnedFd dropped here → fd auto-closed
             });
         }
 
@@ -827,10 +822,13 @@ impl Monitor {
                 return;
             }
         };
-        let mfds = Arc::new(self.mount_fds.clone());
+        let mfds: Vec<i32> = self.mount_fds.iter().map(|fd| fd.as_raw_fd()).collect();
+        let mfds = Arc::new(mfds);
         let buf_size = self.buffer_size;
         tokio::spawn(async move {
-            let afd = match AsyncFd::new(FanFd(fd)) {
+            // SAFETY: fd is a fanotify fd owned by this task from now on
+            let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
+            let afd = match AsyncFd::new(owned_fd) {
                 Ok(a) => a,
                 Err(e) => {
                     eprintln!("[ERROR] AsyncFd for fd {}: {}", fd, e);
@@ -854,9 +852,7 @@ impl Monitor {
                 }
                 guard.clear_ready();
             }
-            unsafe {
-                libc::close(fd);
-            }
+            // OwnedFd dropped here → fd auto-closed
         });
     }
 
@@ -1013,11 +1009,13 @@ impl Monitor {
 
         // Open directory fd for handle resolution BEFORE spawning reader,
         // so the new reader task can resolve file handles for this path.
-        if let Ok(c_path) = CString::new(canonical.to_string_lossy().as_bytes()) {
-            let mfd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
-            if mfd >= 0 {
-                self.mount_fds.push(mfd);
-            }
+        if let Ok(raw) = nix::fcntl::open(
+            canonical.as_path(),
+            nix::fcntl::OFlag::O_DIRECTORY,
+            nix::sys::stat::Mode::empty(),
+        ) {
+            // SAFETY: raw fd just opened successfully, OwnedFd takes ownership
+            self.mount_fds.push(unsafe { OwnedFd::from_raw_fd(raw) });
         }
 
         // Update path tracking
@@ -1109,9 +1107,8 @@ impl Monitor {
         self.canonical_paths.remove(pos);
         self.path_options.remove(path);
 
-        // Close and remove the matching mount fd
+        // Remove the matching mount fd (OwnedFd dropped → auto-closed)
         if pos < self.mount_fds.len() {
-            unsafe { libc::close(self.mount_fds[pos]) };
             self.mount_fds.remove(pos);
         }
 

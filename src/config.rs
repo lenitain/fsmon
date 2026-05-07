@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use users::os::unix::UserExt;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -49,14 +50,14 @@ pub fn resolve_uid_gid() -> (u32, u32) {
     {
         uid
     } else {
-        unsafe { libc::geteuid() }
+        nix::unistd::geteuid().as_raw()
     };
     let gid = if let Ok(gid_str) = std::env::var("SUDO_GID")
         && let Ok(gid) = gid_str.parse::<u32>()
     {
         gid
     } else {
-        unsafe { libc::getegid() }
+        nix::unistd::getegid().as_raw()
     };
     (uid, gid)
 }
@@ -65,10 +66,14 @@ pub fn resolve_uid_gid() -> (u32, u32) {
 /// Silently no-ops if already running as the target user (no sudo).
 pub fn chown_to_original_user(path: &Path) {
     let (uid, gid) = resolve_uid_gid();
-    if unsafe { libc::geteuid() } == 0 {
-        if let Ok(cpath) = std::ffi::CString::new(path.to_string_lossy().as_ref()) {
-            unsafe { libc::chown(cpath.as_ptr(), uid, gid); }
-        }
+    if nix::unistd::geteuid().as_raw() == 0
+        && let Ok(cpath) = std::ffi::CString::new(path.to_string_lossy().as_ref())
+    {
+        let _ = nix::unistd::chown(
+            cpath.as_c_str(),
+            Some(nix::unistd::Uid::from_raw(uid)),
+            Some(nix::unistd::Gid::from_raw(gid)),
+        );
     }
 }
 
@@ -81,47 +86,20 @@ pub fn resolve_uid() -> u32 {
     {
         return uid;
     }
-    unsafe { libc::geteuid() }
+    nix::unistd::geteuid().as_raw()
 }
 
 /// Resolve the original user's home directory using platform password database.
 /// Used by the daemon (running as root) to find the user's config/log paths.
 pub fn resolve_home(uid: u32) -> Result<PathBuf> {
-    // SAFETY: getpwuid_r is reentrant and thread-safe
-    let bufsize = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
-    let bufsize = if bufsize > 0 { bufsize as usize } else { 4096 };
-    let mut buf = vec![0u8; bufsize];
-    let mut pwd = std::mem::MaybeUninit::<libc::passwd>::zeroed();
-    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    let user = users::get_user_by_uid(uid)
+        .ok_or_else(|| anyhow::anyhow!("User not found for UID {}", uid))?;
 
-    let ret = unsafe {
-        libc::getpwuid_r(
-            uid,
-            pwd.as_mut_ptr(),
-            buf.as_mut_ptr() as *mut libc::c_char,
-            bufsize,
-            &mut result,
-        )
-    };
-
-    if ret != 0 || result.is_null() {
-        anyhow::bail!(
-            "Failed to look up home directory for UID {} (errno: {})",
-            uid,
-            ret
-        );
-    }
-
-    // SAFETY: result is non-null and points to initialized passwd struct
-    let home_ptr = unsafe { (*result).pw_dir };
-    if home_ptr.is_null() {
+    let home = user.home_dir().to_path_buf();
+    if home.as_os_str().is_empty() {
         anyhow::bail!("Home directory not set for UID {}", uid);
     }
-    // SAFETY: pw_dir is a valid C string
-    let home = unsafe { std::ffi::CStr::from_ptr(home_ptr) }
-        .to_string_lossy()
-        .into_owned();
-    Ok(PathBuf::from(home))
+    Ok(home)
 }
 
 /// Best-effort guess of user's home directory.
@@ -140,7 +118,7 @@ pub fn guess_home() -> String {
     };
     // If we're not actually root (e.g. in tests where SUDO_UID is unset),
     // just use HOME. If we are root, try getpwuid.
-    if unsafe { libc::geteuid() } != 0 {
+    if nix::unistd::geteuid().as_raw() != 0 {
         return std::env::var("HOME").unwrap_or_else(|_| "/root".into());
     }
     match resolve_home(uid) {
@@ -473,7 +451,7 @@ path = "/tmp/custom.sock"
             std::env::remove_var("SUDO_UID");
         }
         let uid = resolve_uid();
-        assert_eq!(uid, unsafe { libc::geteuid() });
+        assert_eq!(uid, nix::unistd::geteuid().as_raw());
         // Restore
         if let Some(v) = old {
             unsafe {

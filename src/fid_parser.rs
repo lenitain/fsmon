@@ -166,9 +166,7 @@ pub fn read_fid_events(
 
         // In FID mode, fd should be -1, but defensively close it
         if meta.fd >= 0 {
-            unsafe {
-                libc::close(meta.fd);
-            }
+            let _ = nix::unistd::close(meta.fd);
         }
 
         events.push(FidEvent {
@@ -346,9 +344,7 @@ pub fn resolve_file_handle(mount_fds: &[i32], fh_data: &[u8]) -> Option<PathBuf>
 
         if fd >= 0 {
             let result = fs::read_link(format!("/proc/self/fd/{}", fd));
-            unsafe {
-                libc::close(fd);
-            }
+            let _ = nix::unistd::close(fd);
             if let Ok(p) = result {
                 return Some(p);
             }
