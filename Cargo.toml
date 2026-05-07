@@ -36,6 +36,7 @@ procfs = "0.16"
 libc = "0.2"
 nix = { version = "0.29", default-features = false, features = ["user", "fs", "socket"] }
 anyhow = "1.0"
+fs2 = "0.4"
 lru = "0.12"
 regex = "1.10"
 path-clean = "1.0"

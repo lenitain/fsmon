@@ -16,7 +16,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
-use std::os::fd::AsRawFd;
+use fs2::FileExt;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -35,18 +35,15 @@ impl DaemonLock {
         let path = PathBuf::from(format!("/tmp/fsmon-{}.lock", uid));
         let file = fs::OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&path)
             .map_err(|e| anyhow::anyhow!("Failed to open daemon lock file '{}': {}", path.display(), e))?;
 
-        let fd = file.as_raw_fd();
-        // SAFETY: fd is valid, owned by `file` which lives in this struct
-        let ret = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
-        if ret != 0 {
-            let err = std::io::Error::last_os_error();
-            if err.raw_os_error() == Some(libc::EWOULDBLOCK) ||
-               err.raw_os_error() == Some(libc::EAGAIN) {
+        match file.try_lock_exclusive() {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 // Read existing PID for helpful message
                 let pid_str = fs::read_to_string(&path).unwrap_or_default();
                 let pid_hint = if pid_str.trim().is_empty() {
@@ -56,7 +53,7 @@ impl DaemonLock {
                 };
                 bail!("Another fsmon daemon is already running{}", pid_hint);
             }
-            bail!("Failed to acquire daemon lock: {}", err);
+            Err(e) => bail!("Failed to acquire daemon lock: {}", e),
         }
 
         // Write PID for diagnostic purposes (not relied on for correctness)

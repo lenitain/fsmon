@@ -70,7 +70,7 @@ fn chown_to_user(path: &Path) -> std::io::Result<bool> {
             // FS doesn't support ownership (vfat/exfat/NFS no_root_squash)
             Ok(false)
         }
-        Err(e) => Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
+        Err(e) => Err(std::io::Error::other(e)),
     }
 }
 
