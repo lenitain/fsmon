@@ -7,7 +7,7 @@ use fsmon::query::Query;
 use fsmon::socket::{self, SocketCmd};
 use fsmon::store::{PathEntry, Store};
 use fsmon::utils::parse_size;
-use fsmon::{DEFAULT_KEEP_DAYS, EventType, SortBy, clean_logs};
+use fsmon::{DEFAULT_KEEP_DAYS, EventType, clean_logs};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -92,20 +92,6 @@ struct QueryArgs {
     since: Option<String>,
     #[arg(short = 'U', long)]
     until: Option<String>,
-    #[arg(short, long)]
-    pid: Option<String>,
-    #[arg(short, long)]
-    cmd: Option<String>,
-    #[arg(short, long)]
-    user: Option<String>,
-    #[arg(short, long)]
-    types: Option<String>,
-    #[arg(short = 'm', long)]
-    min_size: Option<String>,
-
-    #[arg(short = 'r', long, value_enum)]
-    sort: Option<SortBy>,
-
 }
 
 #[derive(Parser)]
@@ -408,44 +394,11 @@ async fn cmd_query(args: QueryArgs) -> Result<()> {
         Some(args.path.clone())
     };
 
-    let min_size_bytes = args.min_size.map(|s| parse_size(&s)).transpose()?;
-
-    let pids = args.pid.map(|p| {
-        p.split(',')
-            .filter_map(|s| s.trim().parse::<u32>().ok())
-            .collect()
-    });
-
-    let users = args
-        .user
-        .map(|u| u.split(',').map(|s| s.trim().to_string()).collect());
-
-    let event_types = args
-        .types
-        .map(|t| {
-            t.split(',')
-                .map(|s| {
-                    s.trim()
-                        .parse::<EventType>()
-                        .map_err(|e| anyhow::anyhow!(e))
-                })
-                .collect::<Result<Vec<_>>>()
-        })
-        .transpose()?;
-
-    let sort = args.sort.unwrap_or(SortBy::Time);
-
     let query = Query::new(
         cfg.logging.dir,
         paths,
         args.since,
         args.until,
-        pids,
-        args.cmd,
-        users,
-        event_types,
-        min_size_bytes,
-        sort,
     );
 
     query.execute().await?;

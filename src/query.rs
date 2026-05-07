@@ -1,12 +1,11 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use regex::Regex;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use crate::utils::parse_time;
-use crate::{EventType, FileEvent, SortBy, parse_log_line_jsonl};
+use crate::{FileEvent, parse_log_line_jsonl};
 
 const SCAN_BACK_BYTES: u64 = 4096;
 
@@ -15,39 +14,20 @@ pub struct Query {
     paths: Option<Vec<PathBuf>>,
     since: Option<String>,
     until: Option<String>,
-    pids: Option<Vec<u32>>,
-    cmd: Option<String>,
-    users: Option<Vec<String>>,
-    event_types: Option<Vec<EventType>>,
-    min_size: Option<i64>,
-    sort: SortBy,
 }
 
 impl Query {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         log_dir: PathBuf,
         paths: Option<Vec<PathBuf>>,
         since: Option<String>,
         until: Option<String>,
-        pids: Option<Vec<u32>>,
-        cmd: Option<String>,
-        users: Option<Vec<String>>,
-        event_types: Option<Vec<EventType>>,
-        min_size: Option<i64>,
-        sort: SortBy,
     ) -> Self {
         Self {
             log_dir,
             paths,
             since,
             until,
-            pids,
-            cmd,
-            users,
-            event_types,
-            min_size,
-            sort,
         }
     }
 
@@ -64,26 +44,16 @@ impl Query {
         let since_time = self.since.as_ref().map(|s| parse_time(s)).transpose()?;
         let until_time = self.until.as_ref().map(|s| parse_time(s)).transpose()?;
 
-        // Compile cmd regex if specified
-        let cmd_regex = self
-            .cmd
-            .as_ref()
-            .map(|c| Regex::new(&c.replace("*", ".*")))
-            .transpose()?;
-
-        // Read and filter events from each file
+        // Read events from each file
         let mut all_events = Vec::new();
         for log_file in &log_files {
             let events =
-                self.read_events_from(log_file, since_time, until_time, cmd_regex.clone())?;
+                self.read_events_from(log_file, since_time, until_time)?;
             all_events.extend(events);
         }
 
-        // Sort events
-        let sorted_events = self.sort_events(all_events);
-
-        // Output
-        self.output_events(&sorted_events)?;
+        // Output (time order preserved from log files)
+        self.output_events(&all_events)?;
 
         Ok(())
     }
@@ -146,7 +116,6 @@ impl Query {
         log_file: &Path,
         since_time: Option<DateTime<Utc>>,
         until_time: Option<DateTime<Utc>>,
-        cmd_regex: Option<Regex>,
     ) -> Result<Vec<FileEvent>> {
         let file = File::open(log_file)
             .with_context(|| format!("Failed to open log file: {}", log_file.display()))?;
@@ -205,37 +174,6 @@ impl Query {
 
             if let Some(ref until) = until_time
                 && event.time > *until
-            {
-                continue;
-            }
-
-            // Apply non-time filters
-            if let Some(ref pids) = self.pids
-                && !pids.contains(&event.pid)
-            {
-                continue;
-            }
-
-            if let Some(ref regex) = cmd_regex
-                && !regex.is_match(&event.cmd)
-            {
-                continue;
-            }
-
-            if let Some(ref users) = self.users
-                && !users.contains(&event.user)
-            {
-                continue;
-            }
-
-            if let Some(ref types) = self.event_types
-                && !types.contains(&event.event_type)
-            {
-                continue;
-            }
-
-            if let Some(min) = self.min_size
-                && event.file_size < min as u64
             {
                 continue;
             }
@@ -476,21 +414,6 @@ impl Query {
         Ok(ring_buf[start_idx % max_lines])
     }
 
-    fn sort_events(&self, mut events: Vec<FileEvent>) -> Vec<FileEvent> {
-        match self.sort {
-            SortBy::Time => {
-                events.sort_by_key(|a| a.time);
-            }
-            SortBy::Size => {
-                events.sort_by_key(|b| std::cmp::Reverse(b.file_size));
-            }
-            SortBy::Pid => {
-                events.sort_by_key(|a| a.pid);
-            }
-        }
-        events
-    }
-
     fn output_events(&self, events: &[FileEvent]) -> Result<()> {
         if events.is_empty() {
             println!("No matching events found");
@@ -508,7 +431,7 @@ impl Query {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+    use crate::EventType;
 
     fn make_event(time: DateTime<Utc>, size: u64, pid: u32) -> FileEvent {
         FileEvent {
@@ -523,191 +446,53 @@ mod tests {
         }
     }
 
-    fn make_query(sort: SortBy) -> Query {
-        Query::new(
-            PathBuf::from("/tmp/fsmon_logs"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            sort,
-        )
-    }
-
     #[test]
-    fn test_sort_events_by_time() {
-        let t1 = Utc.with_ymd_and_hms(2024, 1, 1, 10, 0, 0).unwrap();
-        let t2 = Utc.with_ymd_and_hms(2024, 1, 1, 9, 0, 0).unwrap();
-        let t3 = Utc.with_ymd_and_hms(2024, 1, 1, 11, 0, 0).unwrap();
-
-        let events = vec![
-            make_event(t1, 100, 1),
-            make_event(t2, 200, 2),
-            make_event(t3, 50, 3),
-        ];
-
-        let q = make_query(SortBy::Time);
-        let sorted = q.sort_events(events);
-        assert_eq!(sorted[0].time, t2);
-        assert_eq!(sorted[1].time, t1);
-        assert_eq!(sorted[2].time, t3);
-    }
-
-    #[test]
-    fn test_sort_events_by_size() {
-        let t = Utc::now();
-        let events = vec![
-            make_event(t, 100, 1),
-            make_event(t, 5000, 2),
-            make_event(t, 1000, 3),
-        ];
-
-        let q = make_query(SortBy::Size);
-        let sorted = q.sort_events(events);
-        assert_eq!(sorted[0].file_size, 5000);
-        assert_eq!(sorted[1].file_size, 1000);
-        assert_eq!(sorted[2].file_size, 100);
-    }
-
-    #[test]
-    fn test_sort_events_by_pid() {
-        let t = Utc::now();
-        let events = vec![
-            make_event(t, 100, 300),
-            make_event(t, 200, 100),
-            make_event(t, 50, 200),
-        ];
-
-        let q = make_query(SortBy::Pid);
-        let sorted = q.sort_events(events);
-        assert_eq!(sorted[0].pid, 100);
-        assert_eq!(sorted[1].pid, 200);
-        assert_eq!(sorted[2].pid, 300);
-    }
-
-    #[test]
-    fn test_sort_events_empty() {
-        let q = make_query(SortBy::Time);
-        let sorted = q.sort_events(vec![]);
-        assert!(sorted.is_empty());
-    }
-
-    #[test]
-    fn test_sort_events_single() {
-        let t = Utc::now();
-        let events = vec![make_event(t, 42, 1)];
-        let q = make_query(SortBy::Size);
-        let sorted = q.sort_events(events);
-        assert_eq!(sorted.len(), 1);
-        assert_eq!(sorted[0].file_size, 42);
-    }
-
-    #[test]
-    fn test_read_events_with_pid_filter() {
+    fn test_read_events_basic() {
         use std::io::Write;
-        let dir = std::env::temp_dir().join("fsmon_test_query_pid");
+        let dir = std::env::temp_dir().join("fsmon_test_query_basic");
         std::fs::create_dir_all(&dir).unwrap();
-        let log_name = crate::utils::path_to_log_name(Path::new("/tmp/test_pid"));
+        let log_name = crate::utils::path_to_log_name(Path::new("/tmp/test"));
         let log_path = dir.join(&log_name);
 
-        let e1 = FileEvent {
-            time: Utc::now(),
-            event_type: EventType::Create,
-            path: PathBuf::from("/tmp/a"),
-            pid: 100,
-            cmd: "test".into(),
-            user: "root".into(),
-            file_size: 0,
-            monitored_path: PathBuf::from("/tmp/test_pid"),
-        };
-        let e2 = FileEvent {
-            time: Utc::now(),
-            event_type: EventType::Delete,
-            path: PathBuf::from("/tmp/b"),
-            pid: 200,
-            cmd: "test".into(),
-            user: "root".into(),
-            file_size: 0,
-            monitored_path: PathBuf::from("/tmp/test_pid"),
-        };
+        let e1 = make_event(Utc::now(), 100, 1);
+        let e2 = make_event(Utc::now(), 200, 2);
 
         let mut f = std::fs::File::create(&log_path).unwrap();
         writeln!(f, "{}", &e1.to_jsonl_string()).unwrap();
         writeln!(f, "{}", &e2.to_jsonl_string()).unwrap();
 
-        let q = Query::new(
-            dir.clone(),
-            Some(vec![PathBuf::from("/tmp/test_pid")]),
-            None,
-            None,
-            Some(vec![100]),
-            None,
-            None,
-            None,
-            None,
-            SortBy::Time,
-        );
-
-        let events = q.read_events_from(&log_path, None, None, None).unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].pid, 100);
+        let q = Query::new(dir.clone(), Some(vec![PathBuf::from("/tmp/test")]), None, None);
+        let events = q.read_events_from(&log_path, None, None).unwrap();
+        assert_eq!(events.len(), 2);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn test_read_events_with_type_filter() {
+    fn test_read_events_with_since_filter() {
         use std::io::Write;
-        let dir = std::env::temp_dir().join("fsmon_test_query_type");
+        use chrono::TimeZone;
+
+        let dir = std::env::temp_dir().join("fsmon_test_query_since");
         std::fs::create_dir_all(&dir).unwrap();
         let log_name = crate::utils::path_to_log_name(Path::new("/tmp/test"));
         let log_path = dir.join(&log_name);
 
-        let e1 = FileEvent {
-            time: Utc::now(),
-            event_type: EventType::Create,
-            path: PathBuf::from("/tmp/a"),
-            pid: 1,
-            cmd: "test".into(),
-            user: "root".into(),
-            file_size: 0,
-            monitored_path: PathBuf::from("/tmp/test"),
-        };
-        let e2 = FileEvent {
-            time: Utc::now(),
-            event_type: EventType::Modify,
-            path: PathBuf::from("/tmp/b"),
-            pid: 1,
-            cmd: "test".into(),
-            user: "root".into(),
-            file_size: 0,
-            monitored_path: PathBuf::from("/tmp/test"),
-        };
+        let old = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let new = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+
+        let e1 = make_event(old, 100, 1);
+        let e2 = make_event(new, 200, 2);
 
         let mut f = std::fs::File::create(&log_path).unwrap();
         writeln!(f, "{}", &e1.to_jsonl_string()).unwrap();
         writeln!(f, "{}", &e2.to_jsonl_string()).unwrap();
 
-        let q = Query::new(
-            dir.clone(),
-            Some(vec![PathBuf::from("/tmp/test")]),
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(vec![EventType::Create]),
-            None,
-            SortBy::Time,
-        );
-
-        let events = q.read_events_from(&log_path, None, None, None).unwrap();
+        let cutoff = Utc.with_ymd_and_hms(2024, 6, 1, 0, 0, 0).unwrap();
+        let q = Query::new(dir.clone(), Some(vec![PathBuf::from("/tmp/test")]), None, None);
+        let events = q.read_events_from(&log_path, Some(cutoff), None).unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, EventType::Create);
+        assert_eq!(events[0].time, new);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

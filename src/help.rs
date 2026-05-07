@@ -83,22 +83,18 @@ Examples:
         HelpTopic::Query => {
             r#"Query historical file change events from log files.
 
+Output is JSONL (one JSON object per line), pipe to jq for custom filtering.
+
 Options:
-  --path            Path(s) to query. Repeatable. Default: all.
-                    Examples: --path /tmp --path /var/log
-  --since           Start time: relative (1h, 30m, 7d) or absolute
-  --until           End time
-  --pid             Filter by PID (comma-separated)
-  --cmd             Filter by process name (wildcards: nginx*)
-  --user            Filter by username (comma-separated)
-  --types           Filter by event type (comma-separated)
-  --min-size        Minimum size change
-  --sort            Sort by: time, size, pid
+  -p, --path        Path(s) to query. Repeatable. Default: all.
+  -S, --since       Start time: relative (1h, 30m, 7d) or absolute
+  -U, --until       End time
 
 Examples:
   fsmon query --since 1h
   fsmon query --path /tmp --since 1h
-  fsmon query --path /tmp --cmd nginx"#
+  fsmon query --since 1h | jq 'select(.cmd == "nginx")'
+  fsmon query | jq -s 'sort_by(.file_size)[]'"#
         }
         HelpTopic::Clean => {
             r#"Clean historical log files, retain by time or size.

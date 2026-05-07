@@ -12,7 +12,6 @@ pub mod utils;
 use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
 
-use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
@@ -25,13 +24,6 @@ pub const DEFAULT_KEEP_DAYS: u32 = 30;
 pub const EXIT_CONFIG: i32 = 78;
 
 
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-pub enum SortBy {
-    Time,
-    Size,
-    Pid,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
