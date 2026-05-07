@@ -40,9 +40,9 @@ Usage:
   fsmon query --since 1h    Query events
 
 Config:           ~/.config/fsmon/config.toml
-Store:            ~/.local/share/fsmon/store.jsonl (managed by add/remove)
-Log dir:          ~/.local/state/fsmon/ (one .jsonl file per monitored path)
-Socket:           /tmp/fsmon-<UID>.sock"#
+Store:            ~/.local/share/fsmon/store.jsonl (configurable via [store].file)
+Log dir:          ~/.local/state/fsmon/ (configurable via [logging].dir)
+Socket:           /tmp/fsmon-<UID>.sock (configurable via [socket].path)"#
         }
         HelpTopic::Add => {
             r#"Add a path to the monitoring list.
@@ -155,6 +155,6 @@ Clean (config defaults: keep_days=30, max_size=1GB):
   fsmon clean --dry-run             Preview without deleting
 
 Config: ~/.config/fsmon/config.toml
-Store:  ~/.local/share/fsmon/store.jsonl
-Logs:   ~/.local/state/fsmon/*_log.jsonl"#
+Store:  ~/.local/share/fsmon/store.jsonl (configurable via [store].file)
+Logs:   ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].dir)"#
 }

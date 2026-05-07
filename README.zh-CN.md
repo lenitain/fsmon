@@ -120,6 +120,9 @@ tail -f ~/.local/state/fsmon/*_log.jsonl | jq 'select(.event_type == "CREATE")'
 | 基础设施配置 | `~/.config/fsmon/config.toml` | TOML（可手动编辑） | 用户所有 |
 | 路径数据库 | `~/.local/share/fsmon/store.jsonl` | JSONL（每行一条目） | 用户所有 |
 | 事件日志 | `~/.local/state/fsmon/*_log.jsonl` | JSONL（每行一事件） | 644 |
+
+store 路径和日志目录均在 `~/.config/fsmon/config.toml` 中可配
+（见 `[store].file` 和 `[logging].dir`）。
 | Unix Socket | `/tmp/fsmon-<UID>.sock` | TOML over stream | 666 |
 
 daemon 通过 sudo 以 root 运行，但通过 `SUDO_UID` + `getpwuid_r` 解析原始用户的 home 目录，
