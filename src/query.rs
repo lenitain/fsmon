@@ -191,34 +191,49 @@ impl Query {
         reader: &mut BufReader<File>,
         offset: u64,
     ) -> Option<(DateTime<Utc>, u64)> {
-        let scan_back = SCAN_BACK_BYTES;
-        let read_start = offset.saturating_sub(scan_back);
+        // Try progressively larger scan-back windows (up to 256KB)
+        // to handle JSONL lines larger than the default 4KB scan-back.
+        let mut scan_back = SCAN_BACK_BYTES;
+        loop {
+            let read_start = offset.saturating_sub(scan_back);
 
-        reader.seek(SeekFrom::Start(read_start)).ok()?;
+            reader.seek(SeekFrom::Start(read_start)).ok()?;
 
-        // Skip to the start of the next complete line
-        if read_start > 0 {
-            let mut byte = [0u8; 1];
-            loop {
-                if reader.read_exact(&mut byte).is_err() {
-                    return None;
+            // Skip to the start of the next complete line
+            if read_start > 0 {
+                let mut found_newline = false;
+                let mut byte = [0u8; 1];
+                loop {
+                    if reader.read_exact(&mut byte).is_err() {
+                        break; // EOF, larger scan_back needed
+                    }
+                    if byte[0] == b'\n' {
+                        found_newline = true;
+                        break;
+                    }
                 }
-                if byte[0] == b'\n' {
-                    break;
+                if !found_newline {
+                    // Hit EOF without finding newline — retry with larger window
+                    let next = scan_back.saturating_mul(2);
+                    if next >= offset || next > 256 * 1024 {
+                        return None;
+                    }
+                    scan_back = next;
+                    continue;
                 }
             }
-        }
 
-        // Read one complete line
-        let mut line = String::new();
-        reader.read_line(&mut line).ok()?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
+            // Read one complete line
+            let mut line = String::new();
+            reader.read_line(&mut line).ok()?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
 
-        let event: FileEvent = parse_log_line_jsonl(trimmed)?;
-        Some((event.time, offset))
+            let event: FileEvent = parse_log_line_jsonl(trimmed)?;
+            return Some((event.time, offset));
+        }
     }
 
     /// Binary search to find the byte offset of the first line with timestamp >= target.

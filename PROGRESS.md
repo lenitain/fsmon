@@ -236,28 +236,44 @@ TOML 字段名为 `file_size`,`size_change` 已全部替换。
 
 ---
 
-### C2 - 二进制搜索的边界扫描失效
+### C2 - 二进制搜索的边界扫描失效 ✅ 已修复 (2026-05-07)
+
+**文件**: `src/query.rs`
 
 `query.rs::seek_and_parse_time` 从 offset 向后扫描最多 4096 字节寻空白行
-(块边界)。若 TOML 块 > 4KB(极端情况),`expand_offset_backward`
-可能回退不充分,导致时间边界的少数事件被漏掉。
+(块边界)。若 JSONL 行 > 4KB(极端情况),向后回退不充分,
+向前扫 `\n` 可能直达 EOF 找不到换行,导致二分搜返回 `None`,
+边界事件被漏掉。
+
+**修复**: `seek_and_parse_time` 的 scan_back 改为自适应循环:
+起始 4KB,扫到 EOF 未找到 `\n` 则翻倍重试,最大 256KB。
 
 ---
 
-### C3 - `resolve_file_handle` 多 mount_fd 迭代
+### C3 - `resolve_file_handle` 多 mount_fd 迭代 ⏸️ 无需处理
 
 `resolve_file_handle` 遍历所有 mount_fds 调用 `open_by_handle_at`,
 理论上有极低概率因 inode 碰撞用错误 mount_fd 解析出错误路径。
-实际 file_handle 是文件系统特化的,不同 fs 不会碰撞。
+实际 file_handle 是文件系统特化的（含 fs UUID），不同 fs 不会碰撞。
+
+**决定**: 无需处理。`open_by_handle_at` 对错误 mount 返回 EINVAL/ESTALE，
+不会静默返回错误路径。
 
 ---
 
-### C4 - fanotify fd 终止时的 post-close 使用
+### C4 - fanotify fd 终止时的 post-close 使用 ✅ 已修复 (2026-05-07)
+
+**文件**: `src/monitor.rs`
 
 `run()` 末尾 `for &mfd in &self.mount_fds { libc::close(mfd); }` 关闭后
 spawn 的 reader task 可能仍在执行(channel 未立即断开),
 会尝试用已关闭 fd 调 `open_by_handle_at` → EBADF → 路径为空。
 不会崩溃,但最后一批事件可能丢失路径。
+
+**修复**:
+- 新增 `reader_handles: Vec<JoinHandle<()>>` 字段,追踪所有 reader task
+- 关闭前先 `drop(event_tx)` 断开 channel → reader 收到 send 失败退出 loop
+- 最多等 3 秒所有 reader 退出,再关 mount_fds
 
 ---
 

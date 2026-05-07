@@ -151,6 +151,8 @@ pub struct Monitor {
     shared_dir_cache: Option<Arc<DashMap<fid_parser::HandleKey, PathBuf>>>,
     /// Paths that didn't exist at add/startup time, retried on directory creation
     pending_paths: Vec<(PathBuf, PathEntry)>,
+    /// Handles for spawned reader tasks, awaited on shutdown
+    reader_handles: Vec<tokio::task::JoinHandle<()>>,
     /// inotify instance watching parent dirs of pending paths
     inotify: Option<inotify::Inotify>,
     /// Watch descriptors kept alive so watches stay active
@@ -216,6 +218,7 @@ impl Monitor {
             event_tx: None,
             shared_dir_cache: None,
             pending_paths: Vec::new(),
+            reader_handles: Vec::new(),
             inotify: None,
             _inotify_watches: Vec::new(),
         })
@@ -533,7 +536,7 @@ impl Monitor {
             let tx = event_tx.clone();
             let mfds = Arc::clone(&mount_fds);
             let dc = Arc::clone(&dir_cache);
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 let afd = match AsyncFd::new(FanFd(fd)) {
                     Ok(a) => a,
                     Err(e) => {
@@ -562,6 +565,7 @@ impl Monitor {
                     libc::close(fd);
                 }
             });
+            self.reader_handles.push(handle);
         }
 
         let mut sigterm =
@@ -703,7 +707,11 @@ impl Monitor {
             }
         }
 
-        // Cleanup: spawned tasks close their own fds on exit.
+        // Cleanup: signal reader tasks to stop, wait for them, then close fds.
+        drop(self.event_tx.take());
+        for handle in self.reader_handles.drain(..) {
+            tokio::time::timeout(std::time::Duration::from_secs(3), handle).await.ok();
+        }
         // Close mount fds.
         for &mfd in &self.mount_fds {
             unsafe {
@@ -818,7 +826,7 @@ impl Monitor {
     }
 
     /// Spawn a tokio reader task for a newly created fanotify fd.
-    fn spawn_fd_reader(&self, fd: i32) {
+    fn spawn_fd_reader(&mut self, fd: i32) {
         let tx = match self.event_tx.as_ref() {
             Some(t) => t.clone(),
             None => {
@@ -835,7 +843,7 @@ impl Monitor {
         };
         let mfds = Arc::new(self.mount_fds.clone());
         let buf_size = self.buffer_size;
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let afd = match AsyncFd::new(FanFd(fd)) {
                 Ok(a) => a,
                 Err(e) => {
@@ -864,6 +872,7 @@ impl Monitor {
                 libc::close(fd);
             }
         });
+        self.reader_handles.push(handle);
     }
 
     pub fn add_path(&mut self, entry: &PathEntry) -> Result<()> {
