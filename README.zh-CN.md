@@ -180,7 +180,7 @@ crontab -e
 
 ## 查询与清理
 
-查询只保留性能攸关的参数，其余过滤通过 pipe 到标准 Unix 工具完成。
+查询只保留性能攸关的参数，其余过滤通过管道到标准 Unix 工具完成。
 
 ```
 fsmon query                  →  扫所有日志文件，输出 JSONL
@@ -198,7 +198,7 @@ fsmon clean --keep-days 60        # 覆盖默认值
 
 ## 配置
 
-首次启动 daemon 或执行 `fsmon generate` 自动生成。可编辑以自定义路径和安全网。
+首次启动 daemon 或执行 `fsmon generate` 自动生成。
 
 ```toml
 # fsmon 配置文件

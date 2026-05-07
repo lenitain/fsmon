@@ -205,7 +205,7 @@ fsmon clean --keep-days 60        # overrides config
 
 ## Configuration
 
-Auto-generated on first daemon start or via `fsmon generate`. Edit to customize paths and safety nets.
+Auto-generated on first daemon start or via `fsmon generate`.
 
 ```toml
 # fsmon configuration file
