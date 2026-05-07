@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::num::NonZeroUsize;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -141,7 +141,7 @@ pub struct Monitor {
     socket_listener: Option<tokio::net::UnixListener>,
     /// All fanotify fds (one per filesystem group)
     fan_fds: Vec<i32>,
-    mount_fds: Vec<RawFd>,
+    mount_fds: Vec<OwnedFd>,
     dir_cache: DashMap<fid_parser::HandleKey, PathBuf>,
     /// Shared state for spawning reader tasks during live-add (set in run())
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<fid_parser::FidEvent>>>,
@@ -445,12 +445,13 @@ impl Monitor {
 
             // Open directory fds for open_by_handle_at to resolve file handles.
             for canonical in &self.canonical_paths {
-                if let Ok(mfd) = nix::fcntl::open(
+                if let Ok(raw) = nix::fcntl::open(
                     canonical,
                     nix::fcntl::OFlag::O_DIRECTORY,
                     nix::sys::stat::Mode::empty(),
                 ) {
-                    self.mount_fds.push(mfd);
+                    // SAFETY: raw fd just opened successfully, OwnedFd takes ownership
+                    self.mount_fds.push(unsafe { OwnedFd::from_raw_fd(raw) });
                 }
             }
 
@@ -1004,12 +1005,13 @@ impl Monitor {
 
         // Open directory fd for handle resolution BEFORE spawning reader,
         // so the new reader task can resolve file handles for this path.
-        if let Ok(mfd) = nix::fcntl::open(
+        if let Ok(raw) = nix::fcntl::open(
             canonical.as_path(),
             nix::fcntl::OFlag::O_DIRECTORY,
             nix::sys::stat::Mode::empty(),
         ) {
-            self.mount_fds.push(mfd);
+            // SAFETY: raw fd just opened successfully, OwnedFd takes ownership
+            self.mount_fds.push(unsafe { OwnedFd::from_raw_fd(raw) });
         }
 
         // Update path tracking
@@ -1101,7 +1103,7 @@ impl Monitor {
         self.canonical_paths.remove(pos);
         self.path_options.remove(path);
 
-        // Close and remove the matching mount fd (OwnedFd auto-closes on drop)
+        // Remove the matching mount fd (OwnedFd dropped → auto-closed)
         if pos < self.mount_fds.len() {
             self.mount_fds.remove(pos);
         }
