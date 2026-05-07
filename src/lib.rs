@@ -16,8 +16,61 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
+use std::os::fd::AsRawFd;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+
+/// Enforces single daemon instance via `flock`.
+/// Lock file at `/tmp/fsmon-<UID>.lock`.
+/// Lock released automatically when process exits or crashes.
+pub struct DaemonLock {
+    #[allow(dead_code)]
+    file: fs::File,
+    _path: PathBuf,
+}
+
+impl DaemonLock {
+    /// Acquire exclusive lock. Fails if another daemon is already running.
+    pub fn acquire(uid: u32) -> Result<Self> {
+        let path = PathBuf::from(format!("/tmp/fsmon-{}.lock", uid));
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(|e| anyhow::anyhow!("Failed to open daemon lock file '{}': {}", path.display(), e))?;
+
+        let fd = file.as_raw_fd();
+        // SAFETY: fd is valid, owned by `file` which lives in this struct
+        let ret = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+        if ret != 0 {
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::EWOULDBLOCK) ||
+               err.raw_os_error() == Some(libc::EAGAIN) {
+                // Read existing PID for helpful message
+                let pid_str = fs::read_to_string(&path).unwrap_or_default();
+                let pid_hint = if pid_str.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!(" (PID {})", pid_str.trim())
+                };
+                bail!("Another fsmon daemon is already running{}", pid_hint);
+            }
+            bail!("Failed to acquire daemon lock: {}", err);
+        }
+
+        // Write PID for diagnostic purposes (not relied on for correctness)
+        let _ = fs::write(&path, format!("{}", std::process::id()));
+
+        Ok(DaemonLock { file, _path: path })
+    }
+}
+
+impl Drop for DaemonLock {
+    fn drop(&mut self) {
+        // fd closes → kernel releases flock automatically
+    }
+}
 use std::str::FromStr;
 
 pub const DEFAULT_KEEP_DAYS: u32 = 30;
