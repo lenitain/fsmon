@@ -258,6 +258,34 @@ daemon 启动时对 log_dir 的 chown 失败会发一次性 `[WARNING]`,
 
 ---
 
+## 🔴 测试问题
+
+### T1 (低) - config 测试全局 Mutex 中毒导致并行失败
+
+**文件**: `src/config.rs`
+
+**问题**:
+```rust
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn with_isolated_home(f: impl FnOnce(&Path)) {
+    let _lock = ENV_LOCK.lock().unwrap();  // panic → 毒化 Mutex
+    ...
+}
+```
+
+3 个 config 测试共享一个全局 `Mutex<()>` 保护 `std::env::set_var`。
+若有测试 panic（如 `/tmp` 清理竞争），Mutex 被毒化，后续测试 `lock().unwrap()` 直接 panic。
+
+**影响**: 并行运行时 (`cargo test` 默认) 偶发失败 3 个:
+- `config::tests::test_load_returns_default_when_no_file`
+- `config::tests::test_resolve_paths_expands_tilde_and_uid`
+- `config::tests::test_resolve_uid_no_sudo`
+
+**修复**: 把 `.unwrap()` 改为 `.lock().unwrap_or_else(|e| e.into_inner())` 或使用 `parking_lot::Mutex`（不支持中毒）。
+
+---
+
 ## ✅ 已实现: JSONL 格式迁移 (2026-05-07)
 
 ### 改动总览

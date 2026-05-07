@@ -132,36 +132,6 @@ pub struct FileEvent {
 }
 
 impl FileEvent {
-    pub fn to_toml_string(&self) -> String {
-        format!(
-            r#"monitored_path = "{}"
-time = "{}"
-event_type = "{}"
-path = "{}"
-pid = {}
-cmd = "{}"
-user = "{}"
-file_size = {}
-"#,
-            self.monitored_path
-                .display()
-                .to_string()
-                .replace('\\', "\\\\")
-                .replace('"', "\\\""),
-            self.time.to_rfc3339(),
-            self.event_type,
-            self.path
-                .display()
-                .to_string()
-                .replace('\\', "\\\\")
-                .replace('"', "\\\""),
-            self.pid,
-            self.cmd.replace('\\', "\\\\").replace('"', "\\\""),
-            self.user.replace('\\', "\\\\").replace('"', "\\\""),
-            self.file_size,
-        )
-    }
-
     pub fn from_toml_str(s: &str) -> Option<Self> {
         let value: toml::Value = s.parse().ok()?;
         let table = value.as_table()?;
