@@ -1353,8 +1353,7 @@ impl Monitor {
                 }
             }
         }
-        writeln!(file, "{}", event.to_toml_string())?;
-        writeln!(file)?; // blank line separator
+        writeln!(file, "{}", event.to_jsonl_string())?;
         Ok(())
     }
 
