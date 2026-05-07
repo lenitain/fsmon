@@ -140,7 +140,7 @@ kill %1
 
 | 用途 | 路径 | 格式 |
 |---|---|---|
-| 基础设施配置 | `~/.config/fsmon/config.toml` | TOML（可手动编辑） |
+| 基础设施配置 | `~/.config/fsmon/config.toml` | TOML（可通过fsmon generate生成） |
 | Managed 路径数据库 | `~/.local/share/fsmon/managed.jsonl` | JSONL（每行一条目） |
 | 事件日志 | `~/.local/state/fsmon/*_log.jsonl` | JSONL（每行一事件） |
 | Unix Socket | `/tmp/fsmon-<UID>.sock` | TOML over stream |
@@ -178,17 +178,6 @@ crontab -e
 | `--only-cmd` | 进程名 regex | ~µs | 减少写盘 I/O |
 | `--all-events` | 内核 mask | 零 | 开启全部 14 种事件 |
 
-```
-
-## 配置
-
-首次启动 daemon 或执行 `fsmon generate` 自动生成。包含磁盘安全网：
-
-```toml
-[logging]
-dir = "~/.local/state/fsmon"
-keep_days = 30          # 防止磁盘写满
-max_size = "1GB"        # 单日志文件上限
 ```
 
 ## 事件类型
