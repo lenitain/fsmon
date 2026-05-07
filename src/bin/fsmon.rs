@@ -170,8 +170,12 @@ async fn cmd_daemon() -> Result<()> {
     // Set socket permissions to 0666 so any user can send commands
     set_socket_permissions(&socket_path)?;
 
-    // Chown store parent dir to the original user (daemon runs as root)
+    // Chown config file + store parent dir to the original user (daemon runs as root)
     let (uid, gid) = fsmon::config::resolve_uid_gid();
+    chown_path(&config_path, uid, gid);
+    if let Some(parent) = config_path.parent() {
+        chown_path(parent, uid, gid);
+    }
     if let Some(parent) = cfg.managed.file.parent() {
         chown_path(parent, uid, gid);
     }

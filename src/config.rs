@@ -61,6 +61,17 @@ pub fn resolve_uid_gid() -> (u32, u32) {
     (uid, gid)
 }
 
+/// Chown a path to the original user (daemon runs as root, files should go to the user).
+/// Silently no-ops if already running as the target user (no sudo).
+pub fn chown_to_original_user(path: &Path) {
+    let (uid, gid) = resolve_uid_gid();
+    if unsafe { libc::geteuid() } == 0 {
+        if let Ok(cpath) = std::ffi::CString::new(path.to_string_lossy().as_ref()) {
+            unsafe { libc::chown(cpath.as_ptr(), uid, gid); }
+        }
+    }
+}
+
 /// Resolve the original user's UID:
 /// - If SUDO_UID is set (sudo), use that
 /// - Otherwise use the current process UID
@@ -250,6 +261,13 @@ path = "/tmp/fsmon-<UID>.sock"
 "#;
         fs::write(&path, content)
             .with_context(|| format!("Failed to write config to {}", path.display()))?;
+
+        // Chown to original user if running as root (daemon via sudo)
+        chown_to_original_user(&path);
+        if let Some(parent) = path.parent() {
+            chown_to_original_user(parent);
+        }
+
         Ok(())
     }
 }

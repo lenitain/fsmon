@@ -9,6 +9,7 @@ pub mod socket;
 pub mod managed;
 pub mod utils;
 
+use crate::config::chown_to_original_user;
 use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
 
@@ -210,6 +211,7 @@ async fn clean_single_log(
         println!("No changes made (--dry-run enabled)");
     } else {
         fs::rename(&temp_file, log_file)?;
+        chown_to_original_user(log_file);
         println!("Cleaning {}...", log_file.display());
         println!(
             "Deleted {} entries (logs older than {} days)",
@@ -317,6 +319,7 @@ fn truncate_from_start(path: &Path, offset: usize) -> Result<()> {
     result?;
 
     fs::rename(&tmp_path, path)?;
+    chown_to_original_user(path);
     Ok(())
 }
 

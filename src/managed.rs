@@ -4,6 +4,8 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
+use crate::config::chown_to_original_user;
+
 /// The monitored paths database, stored in the file configured by `[store].file`.
 ///
 /// Managed automatically by `fsmon add` and `fsmon remove`.
@@ -94,6 +96,9 @@ impl Managed {
             .with_context(|| format!("Failed to create directory {}", parent.display()))?;
         let mut file = fs::File::create(path)
             .with_context(|| format!("Failed to create store {}", path.display()))?;
+        // Chown to original user if running as root
+        chown_to_original_user(path);
+        chown_to_original_user(parent);
         for entry in &self.entries {
             let line = serde_json::to_string(entry)
                 .context("Failed to serialize store entry")?;
