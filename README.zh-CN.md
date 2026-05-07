@@ -147,17 +147,17 @@ kill %1
 | 基础设施配置 | `~/.config/fsmon/config.toml` | TOML（可手动编辑） | 用户所有 |
 | Managed 路径数据库 | `~/.local/share/fsmon/managed.jsonl` | JSONL（每行一条目） | 用户所有 |
 | 事件日志 | `~/.local/state/fsmon/*_log.jsonl` | JSONL（每行一事件） | 644 |
+| Unix Socket | `/tmp/fsmon-<UID>.sock` | TOML over stream | 666 |
 
 managed 路径和日志目录均在 `~/.config/fsmon/config.toml` 中可配
 （见 `[managed].file` 和 `[logging].dir`）。
 
-> **vfat/exfat/NFS 用户注意：** daemon 以 root 运行，会尝试把日志文件 chown 回你的用户。
-> 不支持标准 Unix 所有权的文件系统（vfat、exfat、NFS no_root_squash off）无法执行 chown，
-> 日志文件会保持 root 所有。如果普通用户执行 `fsmon clean` 失败，请用 `sudo fsmon clean` 或直接操作文件。
-| Unix Socket | `/tmp/fsmon-<UID>.sock` | TOML over stream | 666 |
-
 daemon 通过 sudo 以 root 运行，但通过 `SUDO_UID` + `getpwuid_r` 解析原始用户的 home 目录，
 所以日志文件会写入 `/home/<你>/...` 而非 `/root/...`。
+
+> **vfat/exfat/NFS 用户注意：** daemon 会尝试把日志文件 chown 回你的用户。
+> 不支持标准 Unix 所有权的文件系统（vfat、exfat、NFS no_root_squash off）无法执行 chown，
+> 日志文件保持 root 所有。如果普通用户执行 `fsmon clean` 失败，请用 `sudo fsmon clean` 或直接操作 `.jsonl` 文件。
 
 ### 开机自启动（可选）
 
