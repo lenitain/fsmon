@@ -118,7 +118,7 @@ tail -f ~/.local/state/fsmon/*_log.jsonl | jq 'select(.event_type == "CREATE")'
 | 用途 | 路径 | 格式 | 权限 |
 |---|---|---|---|
 | 基础设施配置 | `~/.config/fsmon/config.toml` | TOML（可手动编辑） | 用户所有 |
-| 路径数据库 | `~/.local/share/fsmon/store.jsonl` | JSONL（每行一条目） | 用户所有 |
+| Managed 路径数据库 | `~/.local/share/fsmon/managed.jsonl` | JSONL（每行一条目） | 用户所有 |
 | 事件日志 | `~/.local/state/fsmon/*_log.jsonl` | JSONL（每行一事件） | 644 |
 
 store 路径和日志目录均在 `~/.config/fsmon/config.toml` 中可配
@@ -209,7 +209,7 @@ src/
 ├── bin/fsmon.rs       CLI: daemon, add, remove, managed, query, clean, generate
 ├── lib.rs             FileEvent、EventType、清理引擎、临时文件安全
 ├── config.rs          基础设施配置、SUDO_UID 用户解析
-├── store.rs           路径数据库（JSONL 格式）
+├── store.rs           Managed 路径数据库（JSONL 格式）
 ├── monitor.rs         Fanotify 循环、socket 处理、所有捕获过滤
 ├── fid_parser.rs      FID 事件底层解析、两阶段路径恢复
 ├── dir_cache.rs       目录句柄缓存（rm -rf 路径恢复）

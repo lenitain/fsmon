@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
 use tokio::net::UnixListener;
 
-use crate::store::PathEntry;
+use crate::managed::PathEntry;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SocketCmd {

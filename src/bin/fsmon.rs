@@ -5,7 +5,7 @@ use fsmon::help::{self, HelpTopic};
 use fsmon::monitor::{Monitor, PathOptions};
 use fsmon::query::Query;
 use fsmon::socket::{self, SocketCmd};
-use fsmon::store::{PathEntry, Store};
+use fsmon::managed::{PathEntry, Managed};
 use fsmon::utils::parse_size;
 use fsmon::{DEFAULT_KEEP_DAYS, EventType, clean_logs};
 use std::fs;
@@ -148,11 +148,11 @@ async fn cmd_daemon() -> Result<()> {
     cfg.resolve_paths()?;
 
     eprintln!("Config loaded:");
-    eprintln!("  Managed path database:  {}", cfg.store.file.display());
+    eprintln!("  Managed path database:  {}", cfg.managed.file.display());
     eprintln!("  Event logs:     {}", cfg.logging.dir.display());
     eprintln!("  Command socket: {}", cfg.socket.path.display());
 
-    let store = Store::load(&cfg.store.file)?;
+    let store = Managed::load(&cfg.managed.file)?;
 
     let socket_path = cfg.socket.path.clone();
 
@@ -172,13 +172,13 @@ async fn cmd_daemon() -> Result<()> {
 
     // Chown store parent dir to the original user (daemon runs as root)
     let (uid, gid) = fsmon::config::resolve_uid_gid();
-    if let Some(parent) = cfg.store.file.parent() {
+    if let Some(parent) = cfg.managed.file.parent() {
         chown_path(parent, uid, gid);
     }
 
     let paths_and_options = parse_path_entries(&store.entries)?;
 
-    let store_path = cfg.store.file.clone();
+    let store_path = cfg.managed.file.clone();
     let mut monitor = Monitor::new(
         paths_and_options,
         Some(cfg.logging.dir.clone()),
@@ -242,7 +242,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         );
     }
 
-    let mut store = Store::load(&cfg.store.file)?;
+    let mut store = Managed::load(&cfg.managed.file)?;
     let types: Option<Vec<String>> = args
         .types
         .map(|t| t.split(',').map(|s| s.trim().to_string()).collect());
@@ -264,7 +264,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         all_events,
     });
 
-    store.save(&cfg.store.file)?;
+    store.save(&cfg.managed.file)?;
 
     // Try live update via socket (non-fatal if fails)
     let socket_path = cfg.socket.path.clone();
@@ -292,9 +292,9 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             let is_permanent = resp.error_kind == Some(fsmon::socket::ErrorKind::Permanent);
             if is_permanent {
                 // Revert store save — the error will persist after restart
-                let mut store = Store::load(&cfg.store.file)?;
+                let mut store = Managed::load(&cfg.managed.file)?;
                 store.remove_entry(&path);
-                store.save(&cfg.store.file)?;
+                store.save(&cfg.managed.file)?;
                 eprintln!("Error: {}", resp.error.unwrap_or_default());
             } else {
                 println!("Path added: {}", path.display());
@@ -320,14 +320,14 @@ fn cmd_remove(raw: PathBuf) -> Result<()> {
     let expanded = fsmon::config::expand_tilde(&raw, &home);
     let path = expanded.canonicalize().unwrap_or(expanded);
 
-    let mut store = Store::load(&cfg.store.file)?;
+    let mut store = Managed::load(&cfg.managed.file)?;
 
     if !store.remove_entry(&path) {
         eprintln!("No monitored path: {}", path.display());
         std::process::exit(1);
     }
 
-    store.save(&cfg.store.file)?;
+    store.save(&cfg.managed.file)?;
     println!("Path removed: {}", path.display());
 
     // Try live update via socket (non-fatal if fails)
@@ -363,7 +363,7 @@ fn cmd_remove(raw: PathBuf) -> Result<()> {
 fn cmd_managed() -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
-    let entries = Store::load(&cfg.store.file)
+    let entries = Managed::load(&cfg.managed.file)
         .map(|s| s.entries)
         .unwrap_or_default();
 

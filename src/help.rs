@@ -40,7 +40,7 @@ Usage:
   fsmon query --since 1h    Query events
 
 Config:           ~/.config/fsmon/config.toml
-Store:            ~/.local/share/fsmon/store.jsonl (configurable via [store].file)
+Managed:          ~/.local/share/fsmon/managed.jsonl (configurable via [managed].file)
 Log dir:          ~/.local/state/fsmon/ (configurable via [logging].dir)
 Socket:           /tmp/fsmon-<UID>.sock (configurable via [socket].path)"#
         }
@@ -155,6 +155,6 @@ Clean (config defaults: keep_days=30, max_size=1GB):
   fsmon clean --dry-run             Preview without deleting
 
 Config: ~/.config/fsmon/config.toml
-Store:  ~/.local/share/fsmon/store.jsonl (configurable via [store].file)
+Managed: ~/.local/share/fsmon/managed.jsonl (configurable via [managed].file)
 Logs:   ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].dir)"#
 }

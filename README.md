@@ -118,7 +118,7 @@ tail -f ~/.local/state/fsmon/*_log.jsonl | jq 'select(.event_type == "CREATE")'
 | Purpose | Path | Format | Permissions |
 |---|---|---|---|
 | Infrastructure config | `~/.config/fsmon/config.toml` | TOML (human-editable) | user-owned |
-| Path database | `~/.local/share/fsmon/store.jsonl` | JSONL (one entry per line) | user-owned |
+| Path database | `~/.local/share/fsmon/managed.jsonl` | JSONL (one entry per line) | user-owned |
 | Event logs | `~/.local/state/fsmon/*_log.jsonl` | JSONL (one event per line) | 644 |
 
 Both the store path and log directory are configurable in `~/.config/fsmon/config.toml`

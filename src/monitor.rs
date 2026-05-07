@@ -25,8 +25,8 @@ use crate::dir_cache;
 use crate::fid_parser::{self, FAN_FS_ERROR};
 use crate::proc_cache::{self, ProcCache};
 use crate::socket::{SocketCmd, SocketResp};
-use crate::store::PathEntry;
-use crate::store::Store;
+use crate::managed::PathEntry;
+use crate::managed::Managed;
 use crate::utils::{get_process_info_by_pid, parse_size};
 use crate::{EventType, FileEvent};
 
@@ -136,7 +136,7 @@ pub struct Monitor {
     canonical_paths: Vec<PathBuf>,
     path_options: HashMap<PathBuf, PathOptions>,
     log_dir: Option<PathBuf>,
-    store_path: Option<PathBuf>,
+    managed_path: Option<PathBuf>,
     proc_cache: Option<ProcCache>,
     file_size_cache: LruCache<PathBuf, u64>,
     buffer_size: usize,
@@ -160,7 +160,7 @@ impl Monitor {
     pub fn new(
         paths_and_options: Vec<(PathBuf, PathOptions)>,
         log_dir: Option<PathBuf>,
-        store_path: Option<PathBuf>,
+        managed_path: Option<PathBuf>,
         buffer_size: Option<usize>,
         socket_listener: Option<tokio::net::UnixListener>,
     ) -> Result<Self> {
@@ -202,7 +202,7 @@ impl Monitor {
             canonical_paths: Vec::new(),
             path_options,
             log_dir,
-            store_path,
+            managed_path,
             proc_cache: None,
             file_size_cache: LruCache::new(NonZeroUsize::new(FILE_SIZE_CACHE_CAP).unwrap()),
             buffer_size,
@@ -443,7 +443,7 @@ impl Monitor {
         }
 
         if !fan_groups.is_empty() {
-            // Store fds for live-add reuse via socket commands
+            // Managed fds for live-add reuse via socket commands
             for group in &fan_groups {
                 self.fan_fds.push(group.fd);
             }
@@ -522,7 +522,7 @@ impl Monitor {
         let dir_cache = Arc::new(Mutex::new(std::mem::take(&mut self.dir_cache)));
         let buf_size = self.buffer_size;
 
-        // Store for live-add (add_path may need to spawn reader tasks)
+        // Managed for live-add (add_path may need to spawn reader tasks)
         self.event_tx = Some(event_tx.clone());
         self.shared_dir_cache = Some(Arc::clone(&dir_cache));
 
@@ -850,7 +850,7 @@ impl Monitor {
 
     pub fn add_path(&mut self, entry: &PathEntry) -> Result<()> {
         // Normalize path: expand tilde + resolve symlinks/../.
-        // Store the shortest canonical form so all comparisons work consistently.
+        // Managed the shortest canonical form so all comparisons work consistently.
         let path = resolve_recursion_check(&entry.path);
 
         if self.path_options.contains_key(&path) {
@@ -1205,11 +1205,11 @@ impl Monitor {
     }
 
     fn reload_config(&mut self) -> Result<()> {
-        let store_path = self
-            .store_path
+        let managed_path = self
+            .managed_path
             .as_ref()
             .context("No store path configured")?;
-        let store = Store::load(store_path)?;
+        let store = Managed::load(managed_path)?;
         // Add new paths that appear in store
         for entry in &store.entries {
             if !self.path_options.contains_key(&entry.path)

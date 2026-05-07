@@ -6,7 +6,7 @@ pub mod monitor;
 pub mod proc_cache;
 pub mod query;
 pub mod socket;
-pub mod store;
+pub mod managed;
 pub mod utils;
 
 use anyhow::{Result, bail};
