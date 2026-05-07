@@ -124,41 +124,6 @@ pub struct FileEvent {
 }
 
 impl FileEvent {
-    pub fn from_toml_str(s: &str) -> Option<Self> {
-        let value: toml::Value = s.parse().ok()?;
-        let table = value.as_table()?;
-
-        let mp_str = table.get("monitored_path")?.as_str()?;
-        let monitored_path = PathBuf::from(mp_str);
-
-        let time_str = table.get("time")?.as_str()?;
-        let time = DateTime::parse_from_rfc3339(time_str)
-            .ok()?
-            .with_timezone(&Utc);
-
-        let event_type_str = table.get("event_type")?.as_str()?;
-        let event_type: EventType = event_type_str.parse().ok()?;
-
-        let path_str = table.get("path")?.as_str()?;
-        let path = PathBuf::from(path_str);
-
-        let pid = table.get("pid")?.as_integer()? as u32;
-        let cmd = table.get("cmd")?.as_str()?.to_string();
-        let user = table.get("user")?.as_str()?.to_string();
-        let file_size = table.get("file_size")?.as_integer()? as u64;
-
-        Some(FileEvent {
-            time,
-            event_type,
-            path,
-            pid,
-            cmd,
-            user,
-            file_size,
-            monitored_path,
-        })
-    }
-
     /// Serialize to a single JSON line (for log storage / pipe output)
     pub fn to_jsonl_string(&self) -> String {
         serde_json::to_string(self).expect("FileEvent serialization should not fail")
@@ -168,15 +133,6 @@ impl FileEvent {
     pub fn from_jsonl_str(s: &str) -> Option<Self> {
         serde_json::from_str(s).ok()
     }
-}
-
-/// Parse a TOML event block into a FileEvent.
-pub fn parse_log_line(line: &str) -> Option<FileEvent> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    FileEvent::from_toml_str(trimmed)
 }
 
 /// Parse a JSONL line into a FileEvent.
