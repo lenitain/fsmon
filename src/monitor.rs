@@ -291,11 +291,13 @@ impl Monitor {
                 let entry_path = path.clone();
                 self.pending_paths.push((path, PathEntry {
                     path: entry_path,
-                    recursive: opts.recursive.then_some(true),
-                    types: None,
-                    min_size: None,
-                    exclude: None,
-                    all_events: opts.all_events.then_some(true),
+                    recursive: Some(opts.recursive),
+                    types: opts.event_types.as_ref().map(
+                        |v| v.iter().map(|t| t.to_string()).collect()
+                    ),
+                    min_size: opts.min_size.map(|s| s.to_string()),
+                    exclude: opts.exclude_regex.as_ref().map(|r| r.as_str().to_string()),
+                    all_events: Some(opts.all_events),
                 }));
             }
         }
@@ -588,22 +590,23 @@ impl Monitor {
                             && self.canonical_paths.iter().any(|cp| cp == &raw.path);
                         if is_canonical_root {
                             if let Some(ref path) = matched_path {
+                                // Preserve options before removing
+                                let opts = self.path_options.get(path);
+                                let pending_entry = PathEntry {
+                                    path: path.clone(),
+                                    recursive: opts.map(|o| o.recursive),
+                                    types: opts.and_then(|o| o.event_types.as_ref().map(
+                                        |v| v.iter().map(|t| t.to_string()).collect()
+                                    )),
+                                    min_size: opts.and_then(|o| o.min_size.map(|s| s.to_string())),
+                                    exclude: opts.and_then(|o| o.exclude_regex.as_ref().map(|r| r.as_str().to_string())),
+                                    all_events: opts.map(|o| o.all_events),
+                                };
                                 if let Err(e) = self.remove_path(path) {
                                     eprintln!("[WARNING] Failed to remove deleted path '{}': {e}", path.display());
                                 }
-                                self.pending_paths.push((path.clone(), PathEntry {
-                                    path: path.clone(),
-                                    recursive: None,
-                                    types: None,
-                                    min_size: None,
-                                    exclude: None,
-                                    all_events: None,
-                                }));
+                                self.pending_paths.push((path.clone(), pending_entry));
                                 self.setup_inotify_watches();
-                                eprintln!(
-                                    "[INFO] Path '{}' was deleted — will restart monitoring when recreated.",
-                                    path.display()
-                                );
                             }
                             continue;
                         }
@@ -1105,7 +1108,6 @@ impl Monitor {
                 };
                 match self.add_path(&entry) {
                     Ok(()) => {
-                        let _ = self.persist_config();
                         SocketResp::ok()
                     }
                     Err(e) => {
@@ -1128,7 +1130,6 @@ impl Monitor {
                 };
                 match self.remove_path(&path) {
                     Ok(()) => {
-                        let _ = self.persist_config();
                         SocketResp::ok()
                     }
                     Err(e) => {
@@ -1173,37 +1174,6 @@ impl Monitor {
             }
             _ => SocketResp::err(format!("Unknown command: {}", cmd.cmd)),
         }
-    }
-
-    fn persist_config(&self) -> Result<()> {
-        let entries: Vec<PathEntry> = self
-            .paths
-            .iter()
-            .map(|p| {
-                let opts = self.path_options.get(p);
-                PathEntry {
-                    path: p.clone(),
-                    recursive: opts.map(|o| o.recursive),
-                    types: opts.and_then(|o| {
-                        o.event_types
-                            .as_ref()
-                            .map(|v| v.iter().map(|t| t.to_string()).collect())
-                    }),
-                    min_size: opts.and_then(|o| o.min_size.map(|s| s.to_string())),
-                    exclude: opts
-                        .and_then(|o| o.exclude_regex.as_ref().map(|r| r.as_str().to_string())),
-                    all_events: opts.map(|o| o.all_events),
-                }
-            })
-            .collect();
-        // Persist to store.toml using the stored path
-        if let Some(ref store_path) = self.store_path
-            && let Ok(mut store) = Store::load(store_path)
-        {
-            store.entries = entries;
-            let _ = store.save(store_path);
-        }
-        Ok(())
     }
 
     fn reload_config(&mut self) -> Result<()> {

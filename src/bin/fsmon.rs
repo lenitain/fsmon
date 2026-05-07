@@ -153,9 +153,9 @@ async fn cmd_daemon() -> Result<()> {
     cfg.resolve_paths()?;
 
     eprintln!("Config loaded:");
-    eprintln!("  Store file:  {}", cfg.store.file.display());
-    eprintln!("  Log dir:     {}", cfg.logging.dir.display());
-    eprintln!("  Socket:      {}", cfg.socket.path.display());
+    eprintln!("  Managed path database:  {}", cfg.store.file.display());
+    eprintln!("  Event logs:     {}", cfg.logging.dir.display());
+    eprintln!("  Command socket: {}", cfg.socket.path.display());
 
     let store = Store::load(&cfg.store.file)?;
 
@@ -360,30 +360,9 @@ fn cmd_remove(raw: PathBuf) -> Result<()> {
 fn cmd_managed() -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
-    let socket_path = cfg.socket.path.clone();
-
-    // Try live list first, fall back to store file
-    let entries = match socket::send_cmd(
-        &socket_path,
-        &SocketCmd {
-            cmd: "list".to_string(),
-            path: None,
-            recursive: None,
-            types: None,
-            min_size: None,
-            exclude: None,
-            all_events: None,
-        },
-    ) {
-        Ok(resp) if resp.ok => resp.paths.unwrap_or_default(),
-        _ => {
-            if let Ok(store) = Store::load(&cfg.store.file) {
-                store.entries
-            } else {
-                vec![]
-            }
-        }
-    };
+    let entries = Store::load(&cfg.store.file)
+        .map(|s| s.entries)
+        .unwrap_or_default();
 
     for entry in &entries {
         let types_str = entry
