@@ -51,22 +51,16 @@
 
 ---
 
-### B4 (中) - `write_event` unmatched 路径警告无去重
+### B4 (中) - `write_event` unmatched 路径警告无去重 ✅ 误报 (2026-05-07)
 
 **文件**: `src/monitor.rs`
 
-**问题**: 注释写着 "Warn once per unique unmatched path to avoid log spam",
-但代码实际无条件输出:
-```rust
-None => {
-    // Warn once per unique unmatched path to avoid log spam
-    eprintln!("[WARNING] Event not matched to any monitored path: {}", ...);
-    return Ok(());
-}
-```
-高频率事件会导致 stderr 被刷屏。
+**状态**: 审查**误报**。代码审查时引用的代码模式在当前代码库中不存在:
+- `write_event` (`src/monitor.rs:1331-1371`) 无任何 unmatched 路径警告
+- 超出监控范围的事件在主循环直接 `continue` 静默跳过 (line 622)
+- 描述的 `eprintln!("[WARNING] Event not matched...")` 从未出现
 
-**修复**: 用 `HashSet<PathBuf>` 记录已警告路径,去重后打印。
+**结论**: 无需修复。
 
 ---
 
@@ -85,23 +79,17 @@ let tmp_path = dir.join(".fsmon_trunc_tmp");
 
 ---
 
-### B6 (中) - `persist_config` 静默忽略保存失败
+### B6 (中) - `persist_config` 静默忽略保存失败 ✅ 误报 (2026-05-07)
 
 **文件**: `src/monitor.rs`
 
-**问题**:
-```rust
-if let Some(ref store_path) = self.store_path
-    && let Ok(mut store) = Store::load(store_path)
-{
-    store.entries = entries;
-    let _ = store.save(store_path);  // 错误被完全吞掉
-}
-```
-磁盘满、权限不足等永久失败被静默忽略,daemon 内存状态与磁盘不一致,
-后续 socket 操作无法回退。
+**状态**: 审查**误报**。
+- 名为 `persist_config` 的函数在当前代码库中**不存在**
+- `store.save()` 只在 `src/bin/fsmon.rs` 中调用,全部使用 `?` 运算符传播错误
+- `handle_socket_cmd` 不参与 store 持久化(由 CLI 保存后再发 socket)
+- 描述的代码模式(`let _ = store.save(store_path)`)未在任何位置出现
 
-**修复**: 至少 `eprintln` 警告,或返回错误给调用方(让 CLI 知道持久化失败)。
+**结论**: 无需修复。
 
 ---
 
