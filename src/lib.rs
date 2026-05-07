@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 pub const DEFAULT_KEEP_DAYS: u32 = 30;
-pub const TOML_SEPARATOR: &str = "\n\n";
+
 pub const EXIT_CONFIG: i32 = 78;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -199,7 +199,15 @@ file_size = {}
         })
     }
 
+    /// Serialize to a single JSON line (for log storage / pipe output)
+    pub fn to_jsonl_string(&self) -> String {
+        serde_json::to_string(self).expect("FileEvent serialization should not fail")
+    }
 
+    /// Deserialize from a single JSON line
+    pub fn from_jsonl_str(s: &str) -> Option<Self> {
+        serde_json::from_str(s).ok()
+    }
 }
 
 /// Parse a TOML event block into a FileEvent.
@@ -211,40 +219,13 @@ pub fn parse_log_line(line: &str) -> Option<FileEvent> {
     FileEvent::from_toml_str(trimmed)
 }
 
-/// Read the next TOML event block from the reader.
-/// Each event is a TOML document (multi-line) separated by blank lines.
-/// Returns the block content (trimmed) or None at EOF.
-fn read_toml_block(reader: &mut BufReader<fs::File>) -> Result<Option<String>> {
-    let mut block = String::new();
-    let mut found_start = false;
-
-    loop {
-        let mut line = String::new();
-        let bytes = reader.read_line(&mut line)?;
-        if bytes == 0 {
-            // EOF
-            break;
-        }
-
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            // Blank line = end of current block
-            if found_start {
-                break;
-            }
-            // Skip leading blank lines
-            continue;
-        }
-
-        found_start = true;
-        block.push_str(&line);
+/// Parse a JSONL line into a FileEvent.
+pub fn parse_log_line_jsonl(line: &str) -> Option<FileEvent> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
     }
-
-    if block.trim().is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(block))
-    }
+    FileEvent::from_jsonl_str(trimmed)
 }
 
 /// Clean a single log file by age and size.
@@ -263,38 +244,33 @@ async fn clean_single_log(
     let original_size = fs::metadata(log_file)?.len();
 
     let temp_file = log_file.with_extension("tmp");
-    let mut time_deleted = 0;
+    let mut time_deleted: u64 = 0;
     let mut kept_bytes: usize = 0;
 
     {
         let file = fs::File::open(log_file)?;
-        let mut reader = BufReader::new(file);
+        let reader = BufReader::new(file);
         let writer = fs::File::create(&temp_file)?;
         let mut writer = BufWriter::new(writer);
 
-        loop {
-            let block = read_toml_block(&mut reader)?;
-            match block {
-                Some(content) => {
-                    let should_keep = if let Some(event) = parse_log_line(&content) {
-                        event.time >= cutoff_time
-                    } else {
-                        true
-                    };
+        for line in reader.lines() {
+            let line = line?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
 
-                    if should_keep {
-                        write!(writer, "{}", content)?;
-                        if !content.ends_with('\n') {
-                            writeln!(writer)?;
-                        }
-                        // Blank line separator between events
-                        writeln!(writer)?;
-                        kept_bytes += content.len() + 2; // +2 for blank line
-                    } else {
-                        time_deleted += 1;
-                    }
-                }
-                None => break,
+            let should_keep = if let Some(event) = parse_log_line_jsonl(trimmed) {
+                event.time >= cutoff_time
+            } else {
+                true
+            };
+
+            if should_keep {
+                writeln!(writer, "{}", line)?;
+                kept_bytes += line.len() + 1; // +1 for newline
+            } else {
+                time_deleted += 1;
             }
         }
     }
@@ -310,17 +286,17 @@ async fn clean_single_log(
         0
     };
 
-    let total_deleted = time_deleted + size_deleted;
+    let total_deleted = time_deleted + size_deleted as u64;
 
     if dry_run {
-        let _ = fs::remove_file(temp_file);
-        println!("Dry run: Would delete {} blocks", total_deleted);
+        let _ = fs::remove_file(&temp_file);
+        println!("Dry run: Would delete {} entries", total_deleted);
         println!("No changes made (--dry-run enabled)");
     } else {
         fs::rename(&temp_file, log_file)?;
         println!("Cleaning {}...", log_file.display());
         println!(
-            "Deleted {} blocks (logs older than {} days)",
+            "Deleted {} entries (logs older than {} days)",
             total_deleted, keep_days
         );
         println!(
@@ -358,7 +334,7 @@ pub async fn clean_logs(
         for entry in fs::read_dir(log_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "toml") {
+            if path.extension().is_some_and(|ext| ext == "jsonl") {
                 clean_single_log(&path, keep_days, max_size, dry_run).await?;
             }
         }
@@ -402,7 +378,7 @@ fn truncate_from_start(path: &Path, offset: usize) -> Result<()> {
     }
 
     let dir = path.parent().unwrap_or(Path::new("."));
-    let tmp_path = dir.join(".fsmon_trunc_tmp");
+    let tmp_path = dir.join(format!(".fsmon_trunc_{}", std::process::id()));
 
     let result = (|| -> Result<()> {
         let mut tmp = fs::File::create_new(&tmp_path)?;
@@ -525,7 +501,7 @@ mod tests {
     fn test_clean_logs_by_time() {
         let dir = std::env::temp_dir().join("fsmon_test_clean_time");
         fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.toml");
+        let log_path = dir.join("test.jsonl");
 
         let old_event = FileEvent {
             time: Utc::now() - chrono::Duration::days(60),
@@ -550,10 +526,8 @@ mod tests {
 
         {
             let mut f = fs::File::create(&log_path).unwrap();
-            write!(f, "{}", old_event.to_toml_string()).unwrap();
-            writeln!(f).unwrap(); // blank line separator
-            write!(f, "{}", new_event.to_toml_string()).unwrap();
-            writeln!(f).unwrap(); // trailing blank line
+            writeln!(f, "{}", old_event.to_jsonl_string()).unwrap();
+            writeln!(f, "{}", new_event.to_jsonl_string()).unwrap();
         }
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -562,14 +536,9 @@ mod tests {
             .unwrap();
 
         let content = fs::read_to_string(&log_path).unwrap();
-        // Parse by TOML blocks, expect one event
-        let blocks: Vec<&str> = content
-            .split("\n\n")
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .collect();
-        assert_eq!(blocks.len(), 1, "expected 1 event block, got {:?}", blocks);
-        let remaining = FileEvent::from_toml_str(blocks[0]).unwrap();
+        let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 1, "expected 1 event line, got {:?}", lines);
+        let remaining = FileEvent::from_jsonl_str(lines[0]).unwrap();
         assert_eq!(remaining.path, PathBuf::from("/tmp/new"));
 
         let _ = fs::remove_dir_all(&dir);
@@ -579,7 +548,7 @@ mod tests {
     fn test_clean_logs_dry_run() {
         let dir = std::env::temp_dir().join("fsmon_test_clean_dryrun");
         fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.toml");
+        let log_path = dir.join("test.jsonl");
 
         let old_event = FileEvent {
             time: Utc::now() - chrono::Duration::days(60),
@@ -594,8 +563,7 @@ mod tests {
 
         {
             let mut f = fs::File::create(&log_path).unwrap();
-            write!(f, "{}", old_event.to_toml_string()).unwrap();
-            writeln!(f).unwrap(); // trailing blank line
+            writeln!(f, "{}", old_event.to_jsonl_string()).unwrap();
         }
 
         let original_content = fs::read_to_string(&log_path).unwrap();
@@ -625,7 +593,7 @@ mod tests {
     fn test_clean_logs_by_size() {
         let dir = std::env::temp_dir().join("fsmon_test_clean_size");
         fs::create_dir_all(&dir).unwrap();
-        let log_path = dir.join("test.toml");
+        let log_path = dir.join("test.jsonl");
 
         {
             let mut f = fs::File::create(&log_path).unwrap();
@@ -640,8 +608,7 @@ mod tests {
                     file_size: 0,
                     monitored_path: PathBuf::from("/tmp"),
                 };
-                write!(f, "{}", event.to_toml_string()).unwrap();
-                writeln!(f).unwrap(); // blank line separator
+                writeln!(f, "{}", event.to_jsonl_string()).unwrap();
             }
         }
 
