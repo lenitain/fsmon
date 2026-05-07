@@ -181,7 +181,9 @@ crontab -e
 ## 事件类型
 
 默认捕获 8 种核心事件，`--all-events` 开启全部 14 种。
+
 **默认（8 种）：** CLOSE_WRITE、ATTRIB、CREATE、DELETE、DELETE_SELF、MOVED_FROM、MOVED_TO、MOVE_SELF
+
 **额外（6 种，通过 --all-events）：** ACCESS、MODIFY、OPEN、OPEN_EXEC、CLOSE_NOWRITE、FS_ERROR
 
 ## 架构
