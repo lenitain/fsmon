@@ -156,7 +156,12 @@ kill %1
 | Event logs | `~/.local/state/fsmon/*_log.jsonl` | JSONL (one event per line) | 644 |
 
 Both the store path and log directory are configurable in `~/.config/fsmon/config.toml`
-(see `[store].file` and `[logging].dir`).
+(see `[managed].file` and `[logging].dir`).
+
+> **Note for vfat/exfat/NFS users:** The daemon runs as root and tries to chown logs back to
+> your user. Filesystems without standard Unix ownership (vfat, exfat, NFS with no_root_squash off)
+> don't support this. Logs remain owned by root. If `fsmon clean` fails as a normal user,
+> run `sudo fsmon clean` or use the Unix tools directly.
 | Unix socket | `/tmp/fsmon-<UID>.sock` | TOML over stream | 666 |
 
 The daemon runs as root (via sudo) but resolves your original user's home directory

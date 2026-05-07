@@ -21,12 +21,8 @@
 - **递归监控**: 监控整个目录树，追踪新建的子目录
 - **完整删除捕获**: 通过持久化目录句柄缓存，完整捕获 `rm -rf` 递归删除中的每个文件
 - **高性能**: Rust + Tokio，内存占用 <5MB，零拷贝 FID 解析，二分查找日志查询
-- **Unix 哲学**: JSONL 日志格式 — `jq` 查询、`grep` 过滤、`sort` 排序。fsmon 只负责捕获和写入，过滤策略由你掌控
-- **灵活的捕获过滤**: 按事件类型、大小、路径模式、进程名过滤 — 全部在 daemon 进程内完成，纳秒级，无 fork 开销
-- **日常无需 sudo**: 仅 `sudo fsmon daemon` 需要 root（fanotify），其余命令普通用户可执行
+- **灵活的捕获过滤**: 按事件类型、大小、路径模式、进程名过滤 — 全部在 daemon 进程内完成，无 fork 开销
 - **热更新**: 守护进程运行时添加/移除路径，无需重启
-- **磁盘安全网**: 可配置 `keep_days`（默认 30 天）和 `max_size`（默认 1GB），防止磁盘写满
-- **无 systemd 架构**: 用户自己管理 daemon，配置按用户隔离
 
 ## 快速开始
 
@@ -152,8 +148,12 @@ kill %1
 | Managed 路径数据库 | `~/.local/share/fsmon/managed.jsonl` | JSONL（每行一条目） | 用户所有 |
 | 事件日志 | `~/.local/state/fsmon/*_log.jsonl` | JSONL（每行一事件） | 644 |
 
-store 路径和日志目录均在 `~/.config/fsmon/config.toml` 中可配
-（见 `[store].file` 和 `[logging].dir`）。
+managed 路径和日志目录均在 `~/.config/fsmon/config.toml` 中可配
+（见 `[managed].file` 和 `[logging].dir`）。
+
+> **vfat/exfat/NFS 用户注意：** daemon 以 root 运行，会尝试把日志文件 chown 回你的用户。
+> 不支持标准 Unix 所有权的文件系统（vfat、exfat、NFS no_root_squash off）无法执行 chown，
+> 日志文件会保持 root 所有。如果普通用户执行 `fsmon clean` 失败，请用 `sudo fsmon clean` 或直接操作文件。
 | Unix Socket | `/tmp/fsmon-<UID>.sock` | TOML over stream | 666 |
 
 daemon 通过 sudo 以 root 运行，但通过 `SUDO_UID` + `getpwuid_r` 解析原始用户的 home 目录，
