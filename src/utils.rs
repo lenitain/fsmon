@@ -196,12 +196,12 @@ pub fn uid_to_username(uid: u32) -> Option<String> {
 /// The original path is preserved in every event's `monitored_path` field.
 ///
 /// Examples:
-/// - `/tmp/foo`          → `a1b2c3d4e5f6a7b8.jsonl`
-/// - `/home/my_docs/a_b` → `c9d0e1f2a3b4c5d6.jsonl`
+/// - `/tmp/foo`          → `a1b2c3d4e5f6a7b8_log.jsonl`
+/// - `/home/my_docs/a_b` → `c9d0e1f2a3b4c5d6_log.jsonl`
 pub fn path_to_log_name(path: &Path) -> String {
     let s = path.to_string_lossy();
     let hash = fnv1a_64(s.as_bytes());
-    format!("{:016x}.jsonl", hash)
+    format!("{:016x}_log.jsonl", hash)
 }
 
 /// FNV-1a 64-bit hash — deterministic, dependency-free, good for this use case.
@@ -393,7 +393,7 @@ mod tests {
         // Hash-based: fixed 16-char hex + .jsonl suffix
         let name = path_to_log_name(Path::new("/tmp/foo"));
         assert!(name.ends_with(".jsonl"));
-        assert_eq!(name.len(), 16 + 6); // 16 hex chars + ".jsonl"
+        assert_eq!(name.len(), 16 + 10); // 16 hex chars + "_log.jsonl"
         assert!(name.chars().take(16).all(|c| c.is_ascii_hexdigit()));
     }
 
@@ -420,8 +420,8 @@ mod tests {
             "/a/very/deep/nested/path/with/lots/of/components/that/would/have/caused/issues/before/with/the/old/encoding/scheme/because/it/exceeds/255/bytes/easily/with/all/the/underscores/and/slashes/foo_bar_baz_qux_quux_corge_grault_garply_waldo_fred_plugh_xyzzy_thud"
         );
         let name = path_to_log_name(deep);
-        assert_eq!(name.len(), 16 + 6); // Still 22 chars
-        assert!(name.ends_with(".jsonl"));
+        assert_eq!(name.len(), 16 + 10); // Still 26 chars
+        assert!(name.ends_with("_log.jsonl"));
     }
 
     #[test]
@@ -436,8 +436,8 @@ mod tests {
             path_to_log_name(Path::new("/a!_b/c!!d/e_")),
         ];
         for name in &names {
-            assert_eq!(name.len(), 16 + 6);
-            assert!(name.ends_with(".jsonl"));
+            assert_eq!(name.len(), 16 + 10);
+            assert!(name.ends_with("_log.jsonl"));
         }
         // Ensure they're all different
         let mut sorted = names.to_vec();
