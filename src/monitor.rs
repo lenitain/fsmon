@@ -529,7 +529,9 @@ impl Monitor {
             let mfds = Arc::clone(&mount_fds);
             let dc = Arc::clone(&dir_cache);
             tokio::spawn(async move {
-                let afd = match AsyncFd::new(FanFd(fd)) {
+                // SAFETY: fd is a fanotify fd owned by this task from now on
+                let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
+                let afd = match AsyncFd::new(owned_fd) {
                     Ok(a) => a,
                     Err(e) => {
                         eprintln!("[ERROR] AsyncFd for fd {}: {}", fd, e);
@@ -553,7 +555,7 @@ impl Monitor {
                     }
                     guard.clear_ready();
                 }
-                let _ = nix::unistd::close(fd);
+                // OwnedFd dropped here → fd auto-closed
             });
         }
 
@@ -824,7 +826,9 @@ impl Monitor {
         let mfds = Arc::new(mfds);
         let buf_size = self.buffer_size;
         tokio::spawn(async move {
-            let afd = match AsyncFd::new(FanFd(fd)) {
+            // SAFETY: fd is a fanotify fd owned by this task from now on
+            let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
+            let afd = match AsyncFd::new(owned_fd) {
                 Ok(a) => a,
                 Err(e) => {
                     eprintln!("[ERROR] AsyncFd for fd {}: {}", fd, e);
@@ -848,7 +852,7 @@ impl Monitor {
                 }
                 guard.clear_ready();
             }
-            let _ = nix::unistd::close(fd);
+            // OwnedFd dropped here → fd auto-closed
         });
     }
 
