@@ -163,12 +163,16 @@ via `SUDO_UID` + `getpwuid_r`, so it writes to `/home/<you>/...` not `/root/...`
 
 ### Auto-start on Boot (Optional)
 
-fsmon does not install a systemd service. To start automatically on login:
+fsmon does not install a systemd service. The daemon requires sudo (root) for fanotify.
+To start automatically on login, add to crontab with passwordless sudo configured:
 
 ```bash
-crontab -e
+sudo crontab -e
 @reboot /usr/local/bin/fsmon daemon &
 ```
+
+> **Note:** Use `sudo crontab -e` (root's crontab) — the daemon needs root privileges.
+> Add the `fsmon` command to sudoers with NOPASSWD if using a user crontab instead.
 
 ## Capture Filtering
 
