@@ -311,6 +311,7 @@ dependencies = [
  "procfs",
  "regex",
  "serde",
+ "serde_json",
  "smallvec",
  "tempfile",
  "tokio",

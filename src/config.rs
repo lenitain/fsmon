@@ -149,7 +149,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             store: StoreConfig {
-                file: PathBuf::from("~/.local/share/fsmon/store.toml"),
+                file: PathBuf::from("~/.local/share/fsmon/store.jsonl"),
             },
             logging: LoggingConfig {
                 dir: PathBuf::from("~/.local/state/fsmon"),
