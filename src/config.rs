@@ -27,6 +27,10 @@ pub struct StoreConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
     pub dir: PathBuf,
+    /// Keep log entries for at most this many days (default: 30).
+    pub keep_days: Option<u32>,
+    /// Maximum size per log file before truncation.
+    pub max_size: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +157,8 @@ impl Default for Config {
             },
             logging: LoggingConfig {
                 dir: PathBuf::from("~/.local/state/fsmon"),
+                keep_days: None,
+                max_size: None,
             },
             socket: SocketConfig {
                 path: PathBuf::from("/tmp/fsmon-<UID>.sock"),
@@ -223,6 +229,10 @@ file = "~/.local/share/fsmon/store.jsonl"
 [logging]
 # Directory containing per-path log files (named by path hash).
 dir = "~/.local/state/fsmon"
+# Safety nets: keep at most 30 days of logs, max 1GB per log file.
+# These prevent disk overflow even if you never run 'fsmon clean'.
+keep_days = 30
+max_size = "1GB"
 
 [socket]
 # Unix socket path for daemon-CLI live communication.

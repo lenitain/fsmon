@@ -446,8 +446,16 @@ async fn cmd_clean(args: CleanArgs) -> Result<()> {
     } else {
         Some(args.path.clone())
     };
-    let keep_days = args.keep_days.unwrap_or(DEFAULT_KEEP_DAYS);
-    let max_size_bytes = args.max_size.map(|s| parse_size(&s)).transpose()?;
+    let keep_days = args
+        .keep_days
+        .or(cfg.logging.keep_days)
+        .unwrap_or(DEFAULT_KEEP_DAYS);
+    let max_size_bytes = args
+        .max_size
+        .clone()
+        .or(cfg.logging.max_size.clone())
+        .map(|s| parse_size(&s))
+        .transpose()?;
     clean_logs(
         &cfg.logging.dir,
         paths.as_deref(),
