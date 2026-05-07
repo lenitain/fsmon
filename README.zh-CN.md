@@ -114,8 +114,6 @@ fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 tail -f ~/.local/state/fsmon/*_log.jsonl | jq 'select(.user == "deploy")'
 ```
 
-不需要内置 `--pid`、`--cmd`、`--user`、`--sort`——`jq` 全搞定。
-
 #### 安全清理
 
 ```bash
@@ -138,16 +136,14 @@ done
 kill %1
 ```
 
-**无 systemd，一切按用户隔离。**
-
 ### 文件位置
 
-| 用途 | 路径 | 格式 | 权限 |
-|---|---|---|---|
-| 基础设施配置 | `~/.config/fsmon/config.toml` | TOML（可手动编辑） | 用户所有 |
-| Managed 路径数据库 | `~/.local/share/fsmon/managed.jsonl` | JSONL（每行一条目） | 用户所有 |
-| 事件日志 | `~/.local/state/fsmon/*_log.jsonl` | JSONL（每行一事件） | 644 |
-| Unix Socket | `/tmp/fsmon-<UID>.sock` | TOML over stream | 666 |
+| 用途 | 路径 | 格式 |
+|---|---|---|
+| 基础设施配置 | `~/.config/fsmon/config.toml` | TOML（可手动编辑） |
+| Managed 路径数据库 | `~/.local/share/fsmon/managed.jsonl` | JSONL（每行一条目） |
+| 事件日志 | `~/.local/state/fsmon/*_log.jsonl` | JSONL（每行一事件） |
+| Unix Socket | `/tmp/fsmon-<UID>.sock` | TOML over stream |
 
 managed 路径和日志目录均在 `~/.config/fsmon/config.toml` 中可配
 （见 `[managed].file` 和 `[logging].dir`）。
@@ -182,22 +178,6 @@ crontab -e
 | `--only-cmd` | 进程名 regex | ~µs | 减少写盘 I/O |
 | `--all-events` | 内核 mask | 零 | 开启全部 14 种事件 |
 
-## 查询与清理
-
-查询只保留性能攸关的参数，其余过滤通过 pipe 到标准 Unix 工具完成。
-
-```
-fsmon query                  →  扫所有日志文件，输出 JSONL
-fsmon query --path /tmp      →  只读 /tmp 的日志文件
-fsmon query --since 1h       →  二分搜索 + 输出
-```
-
-清理使用 config.toml 中的安全网默认值，可通过 CLI 覆盖：
-
-```bash
-# 优先级: CLI 参数 > config.toml > 代码默认值 (30 天)
-fsmon clean                       # 使用 config 默认
-fsmon clean --keep-days 60        # 覆盖默认值
 ```
 
 ## 配置
