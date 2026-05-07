@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 /// The monitored paths database, stored in the file configured by `[store].file`.
@@ -31,7 +32,7 @@ pub struct PathEntry {
 }
 
 impl Store {
-    /// Load Store from file. Returns empty Store if file doesn't exist.
+    /// Load Store from file (JSONL format). Returns empty Store if file doesn't exist.
     /// Automatically validates and repairs common consistency issues:
     ///   - Duplicate paths: keeps the last entry per unique path
     ///
@@ -40,10 +41,21 @@ impl Store {
         if !path.exists() {
             return Ok(Store::default());
         }
-        let content = fs::read_to_string(path)
-            .with_context(|| format!("Failed to read store {}", path.display()))?;
-        let mut store: Store = toml::from_str(&content)
-            .with_context(|| format!("Invalid TOML in {}", path.display()))?;
+        let file = fs::File::open(path)
+            .with_context(|| format!("Failed to open store {}", path.display()))?;
+        let reader = BufReader::new(file);
+        let mut entries = Vec::new();
+        for line in reader.lines() {
+            let line = line?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let entry: PathEntry = serde_json::from_str(trimmed)
+                .with_context(|| format!("Invalid JSON in store {}: {}", path.display(), trimmed))?;
+            entries.push(entry);
+        }
+        let mut store = Store { entries };
         store.validate();
         Ok(store)
     }
@@ -71,14 +83,19 @@ impl Store {
         repaired
     }
 
-    /// Save Store to file. Creates parent directories if needed.
+    /// Save Store to file (JSONL format). Creates parent directories if needed.
     pub fn save(&self, path: &Path) -> Result<()> {
         let parent = path.parent().context("Store path has no parent")?;
         fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create directory {}", parent.display()))?;
-        let content = toml::to_string_pretty(self).context("Failed to serialize store")?;
-        fs::write(path, content)
-            .with_context(|| format!("Failed to write store to {}", path.display()))?;
+        let mut file = fs::File::create(path)
+            .with_context(|| format!("Failed to create store {}", path.display()))?;
+        for entry in &self.entries {
+            let line = serde_json::to_string(entry)
+                .context("Failed to serialize store entry")?;
+            writeln!(file, "{}", line)
+                .with_context(|| format!("Failed to write store entry"))?;
+        }
         Ok(())
     }
 
@@ -113,7 +130,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("fsmon_store_test_{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        let store_path = dir.join("store.toml");
+        let store_path = dir.join("store.jsonl");
         (dir, store_path)
     }
 
@@ -369,23 +386,19 @@ mod tests {
         assert!(!store.validate());
     }
 
-    /// Old-format store.toml had `id` and `next_id` fields — serde ignores them on load.
+    /// Test JSONL format with extra fields (serde ignores unknown fields).
     #[test]
-    fn test_old_format_with_id_field_ignored() {
-        let toml_str = concat!(
-            "[[entries]]\n",
-            "id = 3\n",
-            "path = \"/tmp\"\n",
-            "recursive = true\n",
+    fn test_jsonl_extra_fields_ignored() {
+        let jsonl = concat!(
+            r#"{"path":"/tmp","recursive":true,"extra_field":99}"#,
             "\n",
-            "[[entries]]\n",
-            "id = 99\n",
-            "path = \"/home\"\n",
-            "recursive = false\n",
+            r#"{"path":"/home","id":"old","recursive":false}"#,
+            "\n",
         );
-        let store: Store = toml::from_str(toml_str).unwrap();
+        let (_dir, path) = temp_path();
+        fs::write(&path, jsonl).unwrap();
+        let store = Store::load(&path).unwrap();
         assert_eq!(store.entries.len(), 2);
-        // id field is ignored by serde (no `id` field in struct anymore)
         assert_eq!(store.entries[0].path, PathBuf::from("/tmp"));
         assert_eq!(store.entries[1].path, PathBuf::from("/home"));
     }
