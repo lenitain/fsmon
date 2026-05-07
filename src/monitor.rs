@@ -708,6 +708,7 @@ impl Monitor {
         }
 
         // Cleanup: signal reader tasks to stop, wait for them, then close fds.
+        println!("\nStopping file trace monitor...");
         drop(self.event_tx.take());
         for handle in self.reader_handles.drain(..) {
             tokio::time::timeout(std::time::Duration::from_secs(3), handle).await.ok();
@@ -718,8 +719,7 @@ impl Monitor {
                 libc::close(mfd);
             }
         }
-
-        println!("\nStopping file trace monitor...");
+        println!("Stopped.");
         Ok(())
     }
 
