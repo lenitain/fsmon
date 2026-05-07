@@ -9,9 +9,12 @@
 
 ```
 总 unsafe 55 处（35 处生产代码 + 20 处测试代码）
-├── ✅ 可 safe 替代     ~31 处（换 nix/fs2/users 等 safe crate）
+├── ✅ 已完成           -7 处（geteuid/getegid → nix::unistd）
+├── ✅ 可 safe 替代     ~22 处（换 nix/fs2/users 等 safe crate）
 ├── 🔶 可包装但本质 unsafe  ~10 处（底层仍是 unsafe，只是接口变 safe）
 └── ❌ 不可替代         ~14 处（FID 结构体 + name_to_handle_at + raw fd）
+
+**当前进度**: 55 → 48 处 unsafe（生产代码 35 → 30）
 ```
 
 ---
@@ -173,19 +176,19 @@
 
 ### 执行计划（按顺序）
 
-| 阶段 | 内容 | 影响 unsafe | 涉及文件 |
-|------|------|-------------|---------|
-| **P0** | `geteuid`/`getegid` → `nix::unistd` | -8 处 | `config.rs`, `monitor.rs` |
-| **P0** | `chown` → `nix::unistd::chown` | -3 处 | `config.rs`, `monitor.rs`, `bin/fsmon.rs` |
-| **P0** | `flock` → `fs2::FileExt` | -1 处 | `lib.rs` |
-| **P1** | `getpwuid_r` → `users::get_user_by_uid` | -3 处 | `config.rs` |
-| **P1** | 目录 `open`/`close` → `nix::fcntl` + RAII guard | -6 处 | `monitor.rs`, `fid_parser.rs` |
-| **P1** | `std::env::set_var` 测试 → `temp-env` / SerialTest | -9 处 | `config.rs` |
-| **P2** | Netlink 全程 → `nix::sys::socket` | -9 处 | `proc_cache.rs` |
-| **P3** | FID 解析封装到安全函数 | 0 处（缩小 scope） | `fid_parser.rs` |
-| **P3** | `name_to_handle_at` + RAII guard | 0 处（缩小 scope） | `dir_cache.rs`, `fid_parser.rs` |
+| 阶段 | 状态 | 内容 | 影响 unsafe | 涉及文件 |
+|------|------|------|-------------|---------|
+| **P0** | ✅ 已完成 | `geteuid`/`getegid` → `nix::unistd` | -7 处 | `config.rs`, `monitor.rs` |
+| **P0** | ⏳ | `chown` → `nix::unistd::chown` | -3 处 | `config.rs`, `monitor.rs`, `bin/fsmon.rs` |
+| **P0** | ⏳ | `flock` → `fs2::FileExt` | -1 处 | `lib.rs` |
+| **P1** | ⏳ | `getpwuid_r` → `users::get_user_by_uid` | -3 处 | `config.rs` |
+| **P1** | ⏳ | 目录 `open`/`close` → `nix::fcntl` + RAII guard | -6 处 | `monitor.rs`, `fid_parser.rs` |
+| **P1** | ⏳ | `std::env::set_var` 测试 → `temp-env` / SerialTest | -9 处 | `config.rs` |
+| **P2** | ⏳ | Netlink 全程 → `nix::sys::socket` | -9 处 | `proc_cache.rs` |
+| **P3** | ⏳ | FID 解析封装到安全函数 | 0 处（缩小 scope） | `fid_parser.rs` |
+| **P3** | ⏳ | `name_to_handle_at` + RAII guard | 0 处（缩小 scope） | `dir_cache.rs`, `fid_parser.rs` |
 
-**总计**: P0+P1 可消除 ~30 处 unsafe，生产代码 unsafe 从 35 降到 ~15
+**总计**: P0+P1 可消除 ~29 处 unsafe，生产代码 unsafe 从 35 降到 ~15
 
 ---
 

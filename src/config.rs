@@ -49,14 +49,14 @@ pub fn resolve_uid_gid() -> (u32, u32) {
     {
         uid
     } else {
-        unsafe { libc::geteuid() }
+        nix::unistd::geteuid().as_raw()
     };
     let gid = if let Ok(gid_str) = std::env::var("SUDO_GID")
         && let Ok(gid) = gid_str.parse::<u32>()
     {
         gid
     } else {
-        unsafe { libc::getegid() }
+        nix::unistd::getegid().as_raw()
     };
     (uid, gid)
 }
@@ -65,10 +65,10 @@ pub fn resolve_uid_gid() -> (u32, u32) {
 /// Silently no-ops if already running as the target user (no sudo).
 pub fn chown_to_original_user(path: &Path) {
     let (uid, gid) = resolve_uid_gid();
-    if unsafe { libc::geteuid() } == 0 {
-        if let Ok(cpath) = std::ffi::CString::new(path.to_string_lossy().as_ref()) {
-            unsafe { libc::chown(cpath.as_ptr(), uid, gid); }
-        }
+    if nix::unistd::geteuid().as_raw() == 0
+        && let Ok(cpath) = std::ffi::CString::new(path.to_string_lossy().as_ref())
+    {
+        unsafe { libc::chown(cpath.as_ptr(), uid, gid); }
     }
 }
 
@@ -81,7 +81,7 @@ pub fn resolve_uid() -> u32 {
     {
         return uid;
     }
-    unsafe { libc::geteuid() }
+    nix::unistd::geteuid().as_raw()
 }
 
 /// Resolve the original user's home directory using platform password database.
@@ -140,7 +140,7 @@ pub fn guess_home() -> String {
     };
     // If we're not actually root (e.g. in tests where SUDO_UID is unset),
     // just use HOME. If we are root, try getpwuid.
-    if unsafe { libc::geteuid() } != 0 {
+    if nix::unistd::geteuid().as_raw() != 0 {
         return std::env::var("HOME").unwrap_or_else(|_| "/root".into());
     }
     match resolve_home(uid) {
@@ -473,7 +473,7 @@ path = "/tmp/custom.sock"
             std::env::remove_var("SUDO_UID");
         }
         let uid = resolve_uid();
-        assert_eq!(uid, unsafe { libc::geteuid() });
+        assert_eq!(uid, nix::unistd::geteuid().as_raw());
         // Restore
         if let Some(v) = old {
             unsafe {

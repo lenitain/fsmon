@@ -222,7 +222,7 @@ impl Monitor {
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        if unsafe { libc::geteuid() } != 0 {
+        if nix::unistd::geteuid().as_raw() != 0 {
             let hint = if let Ok(exe) = std::env::current_exe() {
                 if exe.to_string_lossy().contains(".cargo/bin") {
                     "\n\nHint: It looks like fsmon was installed via cargo install (~/.cargo/bin).\n\
