@@ -62,56 +62,90 @@ cargo install fsmon
 sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 ```
 
-### Usage
+### A Complete Walkthrough
+
+Monitor a web project directory, see what gets logged, then use standard Unix tools to filter and clean.
 
 ```bash
-# 1. Start the daemon (requires sudo for fanotify)
+# Terminal 1: start the daemon (sudo for fanotify)
 sudo fsmon daemon &
 
-# 2. Add paths to monitor (no sudo needed)
-fsmon add /etc --types MODIFY
-fsmon add /var/www --recursive --types MODIFY,CREATE
-fsmon add /var/log --exclude-cmd "rsync|apt"     # ignore build noise
-fsmon add /tmp --only-cmd nginx                   # only nginx events
+# Terminal 1 (or another): add paths to monitor
+# Monitor /var/www/myapp recursively, only MODIFY + CREATE events,
+# exclude editor temp files, only capture nginx and vim processes
+fsmon add /var/www/myapp -r --types MODIFY,CREATE --exclude "*.swp" --only-cmd nginx,vim
 
-# 3. List monitored paths with their filters
+# List what's being monitored
 fsmon managed
+# → /var/www/myapp | types=MODIFY,CREATE | recursive | min_size=- | exclude-path=*.swp | exclude-cmd=- | only-cmd=nginx,vim | events=filtered
+```
 
-# 4. Query historical events — pipe to jq for custom filtering
+Now trigger some real file changes:
+
+```bash
+# Terminal 2: simulate real usage
+echo "<h1>Hello</h1>" > /var/www/myapp/index.html      # nginx writes a file
+sleep 2
+rm /var/www/myapp/index.html                              # file gets deleted
+sleep 2
+vim /var/www/myapp/config.json                            # vim creates swap file
+```
+
+Look at what fsmon captured:
+
+```bash
+# The raw log — one JSONL line per event
+cat ~/.local/state/fsmon/*_log.jsonl
+# → {"time":"2026-05-07T10:00:01+00:00","event_type":"MODIFY","path":"/var/www/myapp/index.html","pid":1234,"cmd":"nginx","user":"www-data","file_size":21,"monitored_path":"/var/www/myapp"}
+# → {"time":"2026-05-07T10:00:03+00:00","event_type":"DELETE","path":"/var/www/myapp/index.html","pid":5678,"cmd":"rm","user":"deploy","file_size":0,"monitored_path":"/var/www/myapp"}
+# → {"time":"2026-05-07T10:00:05+00:00","event_type":"CREATE","path":"/var/www/myapp/.config.json.swp","pid":9012,"cmd":"vim","user":"dev","file_size":4096,"monitored_path":"/var/www/myapp"}
+```
+
+Notice: vim's `.swp` was captured but won't be logged — the `--exclude "*.swp"` filter drops it before writing. That means **it never touches disk**.
+
+#### Query with pipe
+
+Now use standard tools, not fsmon options:
+
+```bash
+# What did nginx do in the last hour?
 fsmon query --since 1h | jq 'select(.cmd == "nginx")'
 
-# 5. Clean old logs (config defaults: keep_days=30, max_size=1GB)
-fsmon clean                       # use config defaults
-fsmon clean --keep-days 7         # override retention
-fsmon clean --dry-run             # preview without deleting
+# What files were deleted?
+fsmon query | jq 'select(.event_type == "DELETE")'
 
-# 6. Remove a path
-fsmon remove /tmp
+# Who made the biggest changes?
+fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 
-# 7. Stop the daemon
+# Real-time tail with filter (watch for deployments)
+tail -f ~/.local/state/fsmon/*_log.jsonl | jq 'select(.user == "deploy")'
+```
+
+No built-in `--pid`, `--cmd`, `--user`, `--sort` flags needed — `jq` does it all.
+
+#### Clean with safety
+
+```bash
+# Preview what would be deleted (config default: keep 30 days)
+fsmon clean --dry-run
+
+# Actually clean with custom retention
+fsmon clean --keep-days 7
+
+# Or just use Unix tools directly on the files
+# Delete events older than 2026-04-01:
+cat ~/.local/state/fsmon/*_log.jsonl | jq 'select(.time < "2026-04-01T00:00:00Z")' > /dev/null
+
+# Trim to last 500 lines per log file
+for f in ~/.local/state/fsmon/*_log.jsonl; do
+  tail -500 "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
+done
+
+# Stop the daemon
 kill %1
 ```
 
 **No systemd, no `/etc/` config files — everything is per-user.**
-
-### Pipe Examples
-
-```bash
-# Filter by pid
-fsmon query --since 1h | jq 'select(.pid == 1234)'
-
-# Filter by event type
-fsmon query | jq 'select(.event_type == "MODIFY")'
-
-# Sort by file size
-fsmon query | jq -s 'sort_by(.file_size)[]'
-
-# Combined
-fsmon query --since 1h | jq 'select(.cmd == "nginx" and .file_size > 10240)'
-
-# Real-time tail
-tail -f ~/.local/state/fsmon/*_log.jsonl | jq 'select(.event_type == "CREATE")'
-```
 
 ### File Locations
 

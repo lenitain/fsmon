@@ -62,56 +62,87 @@ cargo install fsmon
 sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 ```
 
-### 使用
+### 完整流程
+
+监控一个 Web 项目目录，看看日志里有什么，然后用标准 Unix 工具过滤和清理。
 
 ```bash
-# 1. 启动守护进程（需要 sudo）
+# 终端 1：启动 daemon（sudo 给 fanotify）
 sudo fsmon daemon &
 
-# 2. 添加监控路径（无需 sudo）
-fsmon add /etc --types MODIFY
-fsmon add /var/www --recursive --types MODIFY,CREATE
-fsmon add /var/log --exclude-cmd "rsync|apt"     # 忽略构建噪音
-fsmon add /tmp --only-cmd nginx                   # 只捕获 nginx
+# 添加监控路径：递归监控 /var/www/myapp，只捕获 MODIFY/CREATE，
+# 排除编辑器临时文件，只记录 nginx 和 vim 进程的事件
+fsmon add /var/www/myapp -r --types MODIFY,CREATE --exclude "*.swp" --only-cmd nginx,vim
 
-# 3. 列出已监控路径及其过滤配置
+# 查看当前监控配置
 fsmon managed
+# → /var/www/myapp | types=MODIFY,CREATE | recursive | min_size=- | exclude-path=*.swp | exclude-cmd=- | only-cmd=nginx,vim | events=filtered
+```
 
-# 4. 查询历史事件 — pipe 到 jq 做过滤
+模拟真实操作：
+
+```bash
+# 终端 2
+echo "<h1>Hello</h1>" > /var/www/myapp/index.html      # nginx 写文件
+sleep 2
+rm /var/www/myapp/index.html                              # 文件被删除
+sleep 2
+vim /var/www/myapp/config.json                            # vim 创建交换文件
+```
+
+查看 fsmon 捕获了什么：
+
+```bash
+# 原始日志 — 每行一个 JSONL 事件
+cat ~/.local/state/fsmon/*_log.jsonl
+# → {"time":"2026-05-07T10:00:01+00:00","event_type":"MODIFY","path":"/var/www/myapp/index.html","pid":1234,"cmd":"nginx","user":"www-data","file_size":21,"monitored_path":"/var/www/myapp"}
+# → {"time":"2026-05-07T10:00:03+00:00","event_type":"DELETE","path":"/var/www/myapp/index.html","pid":5678,"cmd":"rm","user":"deploy","file_size":0,"monitored_path":"/var/www/myapp"}
+# → {"time":"2026-05-07T10:00:05+00:00","event_type":"CREATE","path":"/var/www/myapp/.config.json.swp","pid":9012,"cmd":"vim","user":"dev","file_size":4096,"monitored_path":"/var/www/myapp"}
+```
+
+注意：vim 的 `.swp` 虽然被 fanotify 捕获，但 **不会落盘**——`--exclude "*.swp"` 在写磁盘前就拦截了。
+
+#### 用 pipe 过滤查询
+
+```bash
+# nginx 在过去一小时做了什么？
 fsmon query --since 1h | jq 'select(.cmd == "nginx")'
 
-# 5. 清理日志（默认 keep_days=30，max_size=1GB）
-fsmon clean                       # 使用 config.toml 默认值
-fsmon clean --keep-days 7         # CLI 覆盖
-fsmon clean --dry-run             # 预览模式，不删除
+# 哪些文件被删除了？
+fsmon query | jq 'select(.event_type == "DELETE")'
 
-# 6. 移除路径
-fsmon remove /tmp
+# 谁改了最大的文件？
+fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 
-# 7. 停止 daemon
+# 实时跟踪 deploy 用户的操作
+tail -f ~/.local/state/fsmon/*_log.jsonl | jq 'select(.user == "deploy")'
+```
+
+不需要内置 `--pid`、`--cmd`、`--user`、`--sort`——`jq` 全搞定。
+
+#### 安全清理
+
+```bash
+# 预览将要删除的内容（默认保留 30 天）
+fsmon clean --dry-run
+
+# 实际清理
+fsmon clean --keep-days 7
+
+# 或者直接用 Unix 工具操作文件
+# 删除早于 2026-04-01 的事件：
+cat ~/.local/state/fsmon/*_log.jsonl | jq 'select(.time < "2026-04-01T00:00:00Z")' > /dev/null
+
+# 每个日志文件只保留最后 500 行
+for f in ~/.local/state/fsmon/*_log.jsonl; do
+  tail -500 "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
+done
+
+# 关闭 daemon
 kill %1
 ```
 
 **无 systemd，一切按用户隔离。**
-
-### Pipe 示例
-
-```bash
-# 按 PID 过滤
-fsmon query --since 1h | jq 'select(.pid == 1234)'
-
-# 按事件类型过滤
-fsmon query | jq 'select(.event_type == "MODIFY")'
-
-# 按文件大小排序
-fsmon query | jq -s 'sort_by(.file_size)[]'
-
-# 组合过滤
-fsmon query --since 1h | jq 'select(.cmd == "nginx" and .file_size > 10240)'
-
-# 实时 tail
-tail -f ~/.local/state/fsmon/*_log.jsonl | jq 'select(.event_type == "CREATE")'
-```
 
 ### 文件位置
 
