@@ -10,6 +10,8 @@
 
 [![Crates.io](https://img.shields.io/crates/v/fsmon)](https://crates.io/crates/fsmon)
 
+**fsmon** 是一款基于 Linux fanotify 的实时文件系统变更监控工具。它监视文件和目录，捕获每一次创建、修改、删除、移动、属性变更等事件，并追溯每个变更的来源进程 — 包括 PID、命令名和用户。与轮询式工具（如 `watch`、`find -newer`）不同，fsmon 从内核接收推送通知，零忙等。与通用审计工具（如 `auditd`、`inotifywait`）不同，fsmon 专为**开发者工作流**打造：在线排障、部署取证、安全事件重建、系统行为分析 — 内存占用不到 5MB，纳秒级进程内过滤，标准 JSONL 日志可管道到 `jq` 自由分析。
+
 <div align="center">
 <img width="1200" alt="fsmon demo" src="./images/fsmon.png" />
 </div>
