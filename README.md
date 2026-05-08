@@ -10,6 +10,8 @@
 
 [![Crates.io](https://img.shields.io/crates/v/fsmon)](https://crates.io/crates/fsmon)
 
+**fsmon** is a real-time Linux filesystem change monitor powered by fanotify. It watches files and directories, captures every event (create, modify, delete, move, attribute change, etc.), and attributes each change back to the process that caused it — including the PID, command name, and user. Unlike polling-based tools (e.g. `watch`, `find -newer`), fsmon receives push notifications from the kernel with zero busy-wait. Unlike generic audit tools (e.g. `auditd`, `inotifywait`), fsmon is purpose-built for **developer workflows**: live troubleshooting, deployment forensics, security incident reconstruction, and system behavior analysis — with sub-5MB memory footprint, nanosecond-fast in-process filters, and standard JSONL logs you can pipe to `jq`.
+
 <div align="center">
 <img width="1200" alt="fsmon demo" src="./images/fsmon.png" />
 </div>
