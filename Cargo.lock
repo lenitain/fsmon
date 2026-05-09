@@ -246,11 +246,12 @@ dependencies = [
 
 [[package]]
 name = "fanotify-fid"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d6eb57ba814ade04890b7eda4211955f4665e46d115a3a30834e3d340495ccb"
+checksum = "2b0780ef55bed0b62c7b8aa2e580df54cdf32ed095681638395e7323b4fdc7c3"
 dependencies = [
  "libc",
+ "smallvec",
 ]
 
 [[package]]
@@ -293,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "fsmon"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "chrono",
