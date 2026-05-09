@@ -1151,11 +1151,6 @@ impl Monitor {
             .ok_or_else(|| anyhow::anyhow!("Path not being monitored: {}", path.display()))?;
 
         let canonical = &self.canonical_paths[pos];
-        let fan_fd = if let Some(&fd) = self.fan_fds.first() {
-            fd
-        } else {
-            bail!("Monitor not running (no fanotify fd)");
-        };
         let opts = self
             .path_options
             .get(path)
@@ -1166,40 +1161,44 @@ impl Monitor {
             DEFAULT_EVENT_MASK
         };
 
-        // Try to remove filesystem mark
+        // Try to remove mark from ALL fanotify fds (the path could be on any fd).
         let mut mark_removed = false;
-        match fanotify_mark(
-            fan_fd,
-            FAN_MARK_REMOVE | FAN_MARK_FILESYSTEM,
-            path_mask,
-            AT_FDCWD,
-            canonical,
-        ) {
-            Ok(()) => mark_removed = true,
-            Err(ref e)
-                if e.raw_os_error() == Some(libc::EXDEV)
-                    || e.raw_os_error() == Some(libc::EINVAL) =>
-            {
-                // Filesystem mark didn't apply — try inode mark removal.
-                // Without this, the old fanotify fd keeps generating events,
-                // and a subsequent add_path may create a new fd + reader task,
-                // causing duplicate events.
-                if fanotify_mark(fan_fd, FAN_MARK_REMOVE, path_mask, AT_FDCWD, canonical).is_ok() {
+        for &fan_fd in &self.fan_fds {
+            // Try filesystem mark removal first
+            match fanotify_mark(
+                fan_fd,
+                FAN_MARK_REMOVE | FAN_MARK_FILESYSTEM,
+                path_mask,
+                AT_FDCWD,
+                canonical,
+            ) {
+                Ok(()) => {
                     mark_removed = true;
+                    continue;
                 }
-            }
-            Err(e) => {
-                eprintln!(
-                    "Warning: fanotify_mark remove failed for {}: {}",
-                    canonical.display(),
-                    e
-                );
+                Err(ref e)
+                    if e.raw_os_error() == Some(libc::EXDEV)
+                        || e.raw_os_error() == Some(libc::EINVAL) =>
+                {
+                    // Filesystem mark didn't apply — try inode mark removal.
+                    if fanotify_mark(fan_fd, FAN_MARK_REMOVE, path_mask, AT_FDCWD, canonical).is_ok()
+                    {
+                        mark_removed = true;
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Warning: fanotify_mark remove failed for {}: {}",
+                        canonical.display(),
+                        e
+                    );
+                }
             }
         }
 
         if !mark_removed {
             eprintln!(
-                "Warning: could not remove fanotify mark for {} — events may leak from old fd",
+                "Warning: could not remove fanotify mark for {} on any fd",
                 canonical.display()
             );
         }
