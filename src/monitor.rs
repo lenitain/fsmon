@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
-use fanotify_fid::{fanotify_init, fanotify_mark};
+use fanotify_fid::prelude::*;
 use fanotify_fid::types::{FidEvent, HandleKey};
 use fanotify_fid::consts::{
     AT_FDCWD, FAN_ACCESS, FAN_ATTRIB, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_CLOSE_NOWRITE,
@@ -74,8 +74,8 @@ fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
 
 /// Read and parse FID events, using a `DashMap`-based cache for path recovery.
 fn read_fid_events_dashmap(
-    fan_fd: i32,
-    mount_fds: &[i32],
+    fan_fd: &OwnedFd,
+    mount_fds: &[OwnedFd],
     dir_cache: &DashMap<HandleKey, PathBuf>,
     buf: &mut Vec<u8>,
 ) -> Vec<FidEvent> {
@@ -228,7 +228,7 @@ pub struct Monitor {
     buffer_size: usize,
     socket_listener: Option<tokio::net::UnixListener>,
     /// All fanotify fds (one per filesystem group)
-    fan_fds: Vec<i32>,
+    fan_fds: Vec<OwnedFd>,
     /// Maps monitored path → fanotify fd index in fan_fds.
     /// So remove_path can target the right fd without iterating all fds.
     path_fd: HashMap<PathBuf, usize>,
@@ -414,7 +414,7 @@ impl Monitor {
         // back to inode mark on the new fd.
 
         struct FanGroup {
-            fd: i32,
+            fd: OwnedFd,
         }
 
         let mut fan_groups: Vec<FanGroup> = Vec::new();
@@ -425,7 +425,7 @@ impl Monitor {
             let mut matched = false;
             for group in &fan_groups {
                 match fanotify_mark(
-                    group.fd,
+                    &group.fd,
                     FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
                     path_mask,
                     AT_FDCWD,
@@ -436,11 +436,11 @@ impl Monitor {
                         eprintln!(
                             "[INFO] Monitoring {} (fs mark) on existing fd {}",
                             canonical.display(),
-                            group.fd
+                            group.fd.as_raw_fd()
                         );
                         break;
                     }
-                    Err(ref e) if e.raw_os_error() == Some(libc::EXDEV) => {
+                    Err(FanotifyError::Mark(code)) if code == libc::EXDEV => {
                         continue; // different filesystem, try next fd
                     }
                     Err(e) => {
@@ -470,7 +470,7 @@ impl Monitor {
             })?;
 
             let _use_fs = match fanotify_mark(
-                new_fd,
+                &new_fd,
                 FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
                 path_mask,
                 AT_FDCWD,
@@ -480,19 +480,19 @@ impl Monitor {
                     eprintln!(
                         "[INFO] Monitoring {} (filesystem mark) on fd {}",
                         canonical.display(),
-                        new_fd
+                        new_fd.as_raw_fd()
                     );
                     true
                 }
-                Err(ref e) if e.raw_os_error() == Some(libc::EXDEV) => {
+                Err(FanotifyError::Mark(code)) if code == libc::EXDEV => {
                     // Filesystem mark EXDEV shouldn't happen on a fresh fd,
                     // but fall back to inode mark just in case.
-                    match mark_directory(new_fd, path_mask, canonical) {
+                    match mark_directory(&new_fd, path_mask, canonical) {
                         Ok(()) => {
                             eprintln!(
                                 "[INFO] Monitoring {} (inode mark) on fd {}",
                                 canonical.display(),
-                                new_fd
+                                new_fd.as_raw_fd()
                             );
                             // mark subdirectories recursively
                             let opts = self
@@ -505,7 +505,7 @@ impl Monitor {
                                 })
                                 .and_then(|i| self.path_options.get(&self.paths[i]));
                             if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
-                                mark_recursive(new_fd, path_mask, canonical);
+                                mark_recursive(&new_fd, path_mask, canonical);
                             }
                             false
                         }
@@ -515,23 +515,27 @@ impl Monitor {
                                 canonical.display(),
                                 e
                             );
-                            let _ = nix::unistd::close(new_fd);
+                            drop(new_fd);
                             continue;
                         }
                     }
                 }
                 Err(e) => {
                     eprintln!("[WARNING] Cannot monitor {}: {:#}", canonical.display(), e);
-                    let _ = nix::unistd::close(new_fd);
+                    drop(new_fd);
                     continue;
                 }
             };
             fan_groups.push(FanGroup { fd: new_fd });
         }
 
-        if !fan_groups.is_empty() {
+        // Collect metadata before consuming fan_groups
+        let group_fds: Vec<i32> = fan_groups.iter().map(|g| g.fd.as_raw_fd()).collect();
+        let fan_group_count = fan_groups.len();
+
+        if fan_group_count > 0 {
             // Managed fds for live-add reuse via socket commands
-            for group in &fan_groups {
+            for group in fan_groups {
                 self.fan_fds.push(group.fd);
             }
 
@@ -589,7 +593,7 @@ impl Monitor {
                     .collect::<Vec<_>>()
                     .join(", "),
             );
-            println!("  FDs: {} file-descriptor(s)", fan_groups.len());
+            println!("  FDs: {} file-descriptor(s)", fan_group_count);
         }
         if !self.pending_paths.is_empty() {
             println!(
@@ -606,8 +610,7 @@ impl Monitor {
         // unbounded mpsc channel to the main loop for processing.
         let (event_tx, mut event_rx) =
             tokio::sync::mpsc::unbounded_channel::<Vec<FidEvent>>();
-        let mount_fds: Vec<i32> = self.mount_fds.iter().map(|fd| fd.as_raw_fd()).collect();
-        let mount_fds = Arc::new(mount_fds);
+        let mount_fds = Arc::new(std::mem::take(&mut self.mount_fds));
         let dir_cache = Arc::new(std::mem::take(&mut self.dir_cache));
         let buf_size = self.buffer_size;
 
@@ -615,8 +618,7 @@ impl Monitor {
         self.event_tx = Some(event_tx.clone());
         self.shared_dir_cache = Some(Arc::clone(&dir_cache));
 
-        for group in &fan_groups {
-            let fd = group.fd;
+        for &fd in &group_fds {
             let tx = event_tx.clone();
             let mfds = Arc::clone(&mount_fds);
             let dc = Arc::clone(&dir_cache);
@@ -640,14 +642,15 @@ impl Monitor {
                             break;
                         }
                     };
+                    // SAFETY: we own the fd being passed here
+                    let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
                     let events =
-                        read_fid_events_dashmap(fd, &mfds, dc.as_ref(), &mut buf);
+                        read_fid_events_dashmap(&owned_fd, &mfds, dc.as_ref(), &mut buf);
                     if !events.is_empty() && tx.send(events).is_err() {
                         break; // receiver dropped (shutting down)
                     }
                     guard.clear_ready();
                 }
-                // OwnedFd dropped here → fd auto-closed
             });
         }
 
@@ -880,16 +883,16 @@ impl Monitor {
 
     /// Try to add a path to an existing fan_fd via FAN_MARK_FILESYSTEM.
     /// Returns Ok(fd) on success, Err(()) if no fd accepts this path.
-    fn try_mark_on_existing(fds: &[i32], mask: u64, path: &Path) -> std::result::Result<i32, ()> {
-        for &fd in fds {
+    fn try_mark_on_existing(fds: &[OwnedFd], mask: u64, path: &Path) -> std::result::Result<i32, ()> {
+        for fd in fds {
             match fanotify_mark(fd, FAN_MARK_ADD | FAN_MARK_FILESYSTEM, mask, AT_FDCWD, path) {
-                Ok(()) => return Ok(fd),
-                Err(ref e) if e.raw_os_error() == Some(libc::EXDEV) => continue,
+                Ok(()) => return Ok(fd.as_raw_fd()),
+                Err(FanotifyError::Mark(code)) if code == libc::EXDEV => continue,
                 Err(e) => {
                     eprintln!(
                         "[WARNING] Cannot monitor {} on fd {}: {:#}",
                         path.display(),
-                        fd,
+                        fd.as_raw_fd(),
                         e
                     );
                 }
@@ -900,6 +903,7 @@ impl Monitor {
 
     /// Spawn a tokio reader task for a newly created fanotify fd.
     fn spawn_fd_reader(&mut self, fd: i32) {
+        use std::os::fd::FromRawFd;
         let tx = match self.event_tx.as_ref() {
             Some(t) => t.clone(),
             None => {
@@ -914,7 +918,7 @@ impl Monitor {
                 return;
             }
         };
-        let mfds: Vec<i32> = self.mount_fds.iter().map(|fd| fd.as_raw_fd()).collect();
+        let mfds = std::mem::take(&mut self.mount_fds);
         let mfds = Arc::new(mfds);
         let buf_size = self.buffer_size;
         tokio::spawn(async move {
@@ -937,8 +941,10 @@ impl Monitor {
                         break;
                     }
                 };
+                // SAFETY: we own the fd being passed here
+                let owned = unsafe { OwnedFd::from_raw_fd(fd) };
                 let events =
-                    read_fid_events_dashmap(fd, &mfds, dc.as_ref(), &mut buf);
+                    read_fid_events_dashmap(&owned, &mfds, dc.as_ref(), &mut buf);
                 if !events.is_empty() && tx.send(events).is_err() {
                     break;
                 }
@@ -1040,7 +1046,7 @@ impl Monitor {
                 Ok(fd) => (fd, false),
                 Err(()) => {
                     // No existing fd works — create a new one
-                    let fd = fanotify_init(
+                    let new_fd = fanotify_init(
                         FAN_CLOEXEC
                             | FAN_NONBLOCK
                             | FAN_CLASS_NOTIF
@@ -1055,11 +1061,12 @@ impl Monitor {
                             canonical.display()
                         )
                     })?;
-                    self.fan_fds.push(fd);
+                    let fd = new_fd.as_raw_fd();
+                    self.fan_fds.push(new_fd);
 
                     // Try filesystem mark on the new fd
                     match fanotify_mark(
-                        fd,
+                        &self.fan_fds.last().unwrap(),
                         FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
                         path_mask,
                         AT_FDCWD,
@@ -1072,9 +1079,10 @@ impl Monitor {
                                 fd
                             );
                         }
-                        Err(ref e) if e.raw_os_error() == Some(libc::EXDEV) => {
+                        Err(FanotifyError::Mark(code)) if code == libc::EXDEV => {
                             // Fall back to inode mark
-                            if let Err(e) = mark_directory(fd, path_mask, &canonical) {
+                            let last_fd = &self.fan_fds[self.fan_fds.len() - 1];
+                            if let Err(e) = mark_directory(last_fd, path_mask, &canonical) {
                                 eprintln!(
                                     "[WARNING] Cannot monitor {} (inode mark): {:#}",
                                     canonical.display(),
@@ -1087,7 +1095,8 @@ impl Monitor {
                                     fd
                                 );
                                 if recursive && canonical.is_dir() {
-                                    mark_recursive(fd, path_mask, &canonical);
+                                    let last_fd = &self.fan_fds[self.fan_fds.len() - 1];
+                                    mark_recursive(last_fd, path_mask, &canonical);
                                 }
                             }
                         }
@@ -1114,7 +1123,7 @@ impl Monitor {
         let fd_idx = if is_new_fd {
             self.fan_fds.len() - 1
         } else {
-            self.fan_fds.iter().position(|&f| f == fan_fd)
+            self.fan_fds.iter().position(|f| f.as_raw_fd() == fan_fd)
                 .expect("fan_fd not found in fan_fds")
         };
         self.path_fd.insert(path.clone(), fd_idx);
@@ -1175,7 +1184,7 @@ impl Monitor {
         };
 
         // Look up which fd this path is on (recorded by add_path).
-        let fan_fd = self.path_fd.remove(path).and_then(|idx| self.fan_fds.get(idx).copied());
+        let fan_fd = self.path_fd.remove(path).and_then(|idx| self.fan_fds.get(idx));
         if let Some(fan_fd) = fan_fd {
             let _ = fanotify_mark(
                 fan_fd,
@@ -1514,13 +1523,13 @@ impl Monitor {
 // ---- Directory marking (used by inode mark fallback mode) ----
 
 /// Mark a single directory
-fn mark_directory(fan_fd: i32, mask: u64, path: &Path) -> Result<()> {
+fn mark_directory(fan_fd: &OwnedFd, mask: u64, path: &Path) -> Result<()> {
     fanotify_mark(fan_fd, FAN_MARK_ADD, mask, AT_FDCWD, path)
         .with_context(|| format!("fanotify_mark failed: {}", path.display()))
 }
 
 /// Recursively traverse and mark all subdirectories (ignore errors, e.g., permission denied)
-fn mark_recursive(fan_fd: i32, mask: u64, dir: &Path) {
+fn mark_recursive(fan_fd: &OwnedFd, mask: u64, dir: &Path) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -1796,7 +1805,9 @@ mod tests {
     #[test]
     fn test_add_path_and_remove_path() {
         let mut m = Monitor::new(vec![], None, None, None, None).unwrap();
-        m.fan_fds.push(-1); // dummy fd for tests
+        // Open /dev/null as a dummy fd for testing (OwnedFd panics on from_raw_fd(-1))
+        let dummy = std::fs::File::open("/dev/null").unwrap();
+        m.fan_fds.push(dummy.into());
 
         let entry = PathEntry {
             path: PathBuf::from("/tmp/test_add"),
@@ -1848,9 +1859,7 @@ mod tests {
             (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
         );
         assert!(fd.is_ok(), "fanotify_init should succeed with root");
-        unsafe {
-            libc::close(fd.unwrap());
-        }
+        // OwnedFd is closed on drop — no explicit close needed
     }
 
     #[test]
@@ -1872,7 +1881,7 @@ mod tests {
 
         let mask = FAN_CREATE | FAN_DELETE | FAN_CLOSE_WRITE;
         let result = fanotify_mark(
-            fd,
+            &fd,
             FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
             mask,
             AT_FDCWD,
@@ -1883,9 +1892,7 @@ mod tests {
             "fanotify_mark should succeed on existing directory"
         );
 
-        unsafe {
-            libc::close(fd);
-        }
+        drop(fd);
         let _ = std::fs::remove_dir_all(&test_dir);
     }
 
@@ -1905,7 +1912,7 @@ mod tests {
 
         let mask = FAN_CREATE;
         let result = fanotify_mark(
-            fd,
+            &fd,
             FAN_MARK_ADD,
             mask,
             AT_FDCWD,
@@ -1916,9 +1923,7 @@ mod tests {
             "fanotify_mark should fail on nonexistent path"
         );
 
-        unsafe {
-            libc::close(fd);
-        }
+        drop(fd);
     }
 
     #[test]
@@ -1950,7 +1955,7 @@ mod tests {
 
             let mask = FAN_CREATE | FAN_CLOSE_WRITE | FAN_EVENT_ON_CHILD | FAN_ONDIR;
             fanotify_mark(
-                fd,
+                &fd,
                 FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
                 mask,
                 AT_FDCWD,
@@ -1959,18 +1964,17 @@ mod tests {
             .unwrap();
 
             let mut buf = vec![0u8; 4096];
+            let raw_fd = fd.as_raw_fd();
             let start = std::time::Instant::now();
             while start.elapsed() < std::time::Duration::from_millis(200) {
-                let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+                let n = unsafe { libc::read(raw_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
                 if n > 0 {
                     counter_clone.fetch_add(1, Ordering::SeqCst);
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
 
-            unsafe {
-                libc::close(fd);
-            }
+            drop(fd);
         });
 
         std::thread::sleep(std::time::Duration::from_millis(50));
