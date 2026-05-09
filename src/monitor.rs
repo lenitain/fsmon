@@ -949,8 +949,50 @@ impl Monitor {
         // Managed the shortest canonical form so all comparisons work consistently.
         let path = resolve_recursion_check(&entry.path);
 
+        // If already monitored, just update options in-place (no fanotify rebuild)
         if self.path_options.contains_key(&path) {
-            bail!("Path already being monitored: {}", path.display());
+            let event_types = entry.types.as_ref().map(|types| {
+                types
+                    .iter()
+                    .filter_map(|s| s.parse::<EventType>().ok())
+                    .collect()
+            });
+            let min_size = entry.min_size.as_ref().map(|s| parse_size(s)).transpose()?;
+            let exclude_regex = entry
+                .exclude
+                .as_ref()
+                .map(|p| {
+                    let escaped = regex::escape(p);
+                    let pattern = escaped.replace("\\*", ".*");
+                    regex::Regex::new(&pattern).with_context(|| "invalid exclude pattern")
+                })
+                .transpose()?;
+            let exclude_cmd_regex = entry
+                .exclude_cmd
+                .as_ref()
+                .map(|p| {
+                    let pattern = p.replace("*", ".*");
+                    regex::Regex::new(&pattern).with_context(|| "invalid --exclude-cmd pattern")
+                })
+                .transpose()?;
+            let only_cmd_regex = entry
+                .only_cmd
+                .as_ref()
+                .map(|p| {
+                    let pattern = p.replace("*", ".*");
+                    regex::Regex::new(&pattern).with_context(|| "invalid --only-cmd pattern")
+                })
+                .transpose()?;
+            self.path_options.insert(path.clone(), PathOptions {
+                min_size,
+                event_types,
+                exclude_regex,
+                exclude_cmd_regex,
+                only_cmd_regex,
+                recursive: entry.recursive.unwrap_or(false),
+                all_events: entry.all_events.unwrap_or(false),
+            });
+            return Ok(());
         }
 
         // Reject paths that would cause infinite recursion (log dir inside monitored path)
@@ -1214,10 +1256,6 @@ impl Monitor {
                     }
                 };
                 let path = raw;
-                // Remove first if already monitored, then add with new options
-                if self.path_options.contains_key(&path) {
-                    let _ = self.remove_path(&path);
-                }
                 let entry = PathEntry {
                     path,
                     recursive: cmd.recursive,
