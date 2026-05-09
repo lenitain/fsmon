@@ -1167,6 +1167,7 @@ impl Monitor {
         };
 
         // Try to remove filesystem mark
+        let mut mark_removed = false;
         match fanotify_mark(
             fan_fd,
             FAN_MARK_REMOVE | FAN_MARK_FILESYSTEM,
@@ -1174,13 +1175,18 @@ impl Monitor {
             AT_FDCWD,
             canonical,
         ) {
-            Ok(()) => {}
+            Ok(()) => mark_removed = true,
             Err(ref e)
                 if e.raw_os_error() == Some(libc::EXDEV)
                     || e.raw_os_error() == Some(libc::EINVAL) =>
             {
-                // In inode mark mode, marks are per-directory and hard to remove individually.
-                // They'll be cleaned up on shutdown. That's acceptable.
+                // Filesystem mark didn't apply — try inode mark removal.
+                // Without this, the old fanotify fd keeps generating events,
+                // and a subsequent add_path may create a new fd + reader task,
+                // causing duplicate events.
+                if fanotify_mark(fan_fd, FAN_MARK_REMOVE, path_mask, AT_FDCWD, canonical).is_ok() {
+                    mark_removed = true;
+                }
             }
             Err(e) => {
                 eprintln!(
@@ -1189,6 +1195,13 @@ impl Monitor {
                     e
                 );
             }
+        }
+
+        if !mark_removed {
+            eprintln!(
+                "Warning: could not remove fanotify mark for {} — events may leak from old fd",
+                canonical.display()
+            );
         }
 
         self.paths.remove(pos);
