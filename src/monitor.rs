@@ -1,11 +1,13 @@
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
-use fanotify::low_level::{
+use fanotify_fid::{fanotify_init, fanotify_mark};
+use fanotify_fid::types::{FidEvent, HandleKey};
+use fanotify_fid::consts::{
     AT_FDCWD, FAN_ACCESS, FAN_ATTRIB, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_CLOSE_NOWRITE,
     FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE, FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_MARK_ADD,
     FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE, FAN_MODIFY, FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO,
     FAN_NONBLOCK, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC, FAN_Q_OVERFLOW, FAN_REPORT_DIR_FID,
-    FAN_REPORT_FID, FAN_REPORT_NAME, O_CLOEXEC, O_RDONLY, fanotify_init, fanotify_mark,
+    FAN_REPORT_FID, FAN_REPORT_NAME,
 };
 use dashmap::DashMap;
 use std::collections::HashMap;
@@ -22,7 +24,6 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::signal::unix::{SignalKind, signal};
 
 use crate::dir_cache;
-use crate::fid_parser;
 use crate::proc_cache::{self, ProcCache, ProcInfo};
 use crate::socket::{SocketCmd, SocketResp};
 use crate::managed::PathEntry;
@@ -47,6 +48,68 @@ impl AsFd for FanFd {
         // SAFETY: the fd is valid for the lifetime of the Monitor
         unsafe { BorrowedFd::borrow_raw(self.0) }
     }
+}
+
+// ---- FID event helpers ----
+
+use fanotify_fid::parse::resolve_with_cache;
+
+/// Convert a fanotify event mask to fsmon's EventType enum.
+fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
+    const BITS: [(u64, EventType); 13] = [
+        (FAN_ACCESS, EventType::Access),
+        (FAN_MODIFY, EventType::Modify),
+        (FAN_CLOSE_WRITE, EventType::CloseWrite),
+        (FAN_CLOSE_NOWRITE, EventType::CloseNowrite),
+        (FAN_OPEN, EventType::Open),
+        (FAN_OPEN_EXEC, EventType::OpenExec),
+        (FAN_ATTRIB, EventType::Attrib),
+        (FAN_CREATE, EventType::Create),
+        (FAN_DELETE, EventType::Delete),
+        (FAN_DELETE_SELF, EventType::DeleteSelf),
+        (FAN_MOVED_FROM, EventType::MovedFrom),
+        (FAN_MOVED_TO, EventType::MovedTo),
+        (FAN_MOVE_SELF, EventType::MoveSelf),
+    ];
+    BITS.iter().filter(|(bit, _)| mask & bit != 0).map(|(_, t)| *t).collect()
+}
+
+/// Read and parse FID events, using a `DashMap`-based cache for path recovery.
+fn read_fid_events_dashmap(
+    fan_fd: i32,
+    mount_fds: &[i32],
+    dir_cache: &DashMap<HandleKey, PathBuf>,
+    buf: &mut Vec<u8>,
+) -> Vec<FidEvent> {
+    // Delegate raw read + parse to fanotify-fid (no cache = first pass only)
+    let mut events = match fanotify_fid::read::read_fid_events(fan_fd, mount_fds, buf, None) {
+        Ok(e) => e,
+        Err(_) => return vec![],
+    };
+
+    // Second-pass: DashMap-based cache recovery (multiple passes for nested deletions)
+    for _ in 0..10 {
+        for ev in events.iter() {
+            if ev.path.as_os_str().is_empty() { continue; }
+            if let Some(ref key) = ev.self_handle {
+                dir_cache.entry(key.clone()).or_insert_with(|| ev.path.clone());
+            }
+            if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
+                let dir_path = if !filename.is_empty() {
+                    ev.path.parent().map(|p| p.to_path_buf())
+                } else {
+                    Some(ev.path.clone())
+                };
+                if let Some(dp) = dir_path {
+                    dir_cache.entry(key.clone()).or_insert(dp);
+                }
+            }
+        }
+        let snapshot: std::collections::HashMap<_, _> =
+            dir_cache.iter().map(|e| (e.key().clone(), e.value().clone())).collect();
+        if !resolve_with_cache(&mut events, &snapshot) { break; }
+    }
+    events
 }
 
 /// Chown a file or directory to the original user (daemon runs as root).
@@ -142,10 +205,10 @@ pub struct Monitor {
     /// All fanotify fds (one per filesystem group)
     fan_fds: Vec<i32>,
     mount_fds: Vec<OwnedFd>,
-    dir_cache: DashMap<fid_parser::HandleKey, PathBuf>,
+    dir_cache: DashMap<HandleKey, PathBuf>,
     /// Shared state for spawning reader tasks during live-add (set in run())
-    event_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<fid_parser::FidEvent>>>,
-    shared_dir_cache: Option<Arc<DashMap<fid_parser::HandleKey, PathBuf>>>,
+    event_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<FidEvent>>>,
+    shared_dir_cache: Option<Arc<DashMap<HandleKey, PathBuf>>>,
     /// Paths that didn't exist at add/startup time, retried on directory creation
     pending_paths: Vec<(PathBuf, PathEntry)>,
     /// inotify instance watching parent dirs of pending paths
@@ -368,7 +431,7 @@ impl Monitor {
                     | FAN_REPORT_FID
                     | FAN_REPORT_DIR_FID
                     | FAN_REPORT_NAME,
-                (O_CLOEXEC | O_RDONLY) as u32,
+                (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
             )
             .with_context(|| {
                 format!(
@@ -513,7 +576,7 @@ impl Monitor {
         // Spawn one reader task per fan_fd. Events are sent through an
         // unbounded mpsc channel to the main loop for processing.
         let (event_tx, mut event_rx) =
-            tokio::sync::mpsc::unbounded_channel::<Vec<fid_parser::FidEvent>>();
+            tokio::sync::mpsc::unbounded_channel::<Vec<FidEvent>>();
         let mount_fds: Vec<i32> = self.mount_fds.iter().map(|fd| fd.as_raw_fd()).collect();
         let mount_fds = Arc::new(mount_fds);
         let dir_cache = Arc::new(std::mem::take(&mut self.dir_cache));
@@ -549,7 +612,7 @@ impl Monitor {
                         }
                     };
                     let events =
-                        fid_parser::read_fid_events(fd, &mfds, dc.as_ref(), &mut buf);
+                        read_fid_events_dashmap(fd, &mfds, dc.as_ref(), &mut buf);
                     if !events.is_empty() && tx.send(events).is_err() {
                         break; // receiver dropped (shutting down)
                     }
@@ -581,7 +644,7 @@ impl Monitor {
                             continue;
                         }
 
-                        let event_types = fid_parser::mask_to_event_types(raw.mask);
+                        let event_types = mask_to_event_types(raw.mask);
                         let matched_path = self.matching_path(&raw.path).cloned();
 
                         // If a managed directory was deleted, move to pending_paths
@@ -706,7 +769,7 @@ impl Monitor {
 
     fn build_file_event(
         &mut self,
-        raw: &fid_parser::FidEvent,
+        raw: &FidEvent,
         event_type: EventType,
         matched_path: Option<&Path>,
     ) -> FileEvent {
@@ -846,7 +909,7 @@ impl Monitor {
                     }
                 };
                 let events =
-                    fid_parser::read_fid_events(fd, &mfds, dc.as_ref(), &mut buf);
+                    read_fid_events_dashmap(fd, &mfds, dc.as_ref(), &mut buf);
                 if !events.is_empty() && tx.send(events).is_err() {
                     break;
                 }
@@ -955,7 +1018,7 @@ impl Monitor {
                             | FAN_REPORT_FID
                             | FAN_REPORT_DIR_FID
                             | FAN_REPORT_NAME,
-                        (O_CLOEXEC | O_RDONLY) as u32,
+                        (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
                     )
                     .with_context(|| {
                         format!(
@@ -1454,6 +1517,56 @@ fn mark_recursive(fan_fd: i32, mask: u64, dir: &Path) {
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use fanotify_fid::consts::{FAN_CREATE, FAN_DELETE, FAN_EVENT_ON_CHILD, FAN_MODIFY, FAN_ONDIR};
+
+    // ---- mask_to_event_types ----
+
+    #[test]
+    fn test_mask_to_event_types_single() {
+        let types = mask_to_event_types(FAN_CREATE);
+        assert_eq!(types.len(), 1);
+        assert_eq!(types[0], EventType::Create);
+    }
+
+    #[test]
+    fn test_mask_to_event_types_multiple() {
+        let mask = FAN_CREATE | FAN_DELETE | FAN_MODIFY;
+        let types = mask_to_event_types(mask);
+        assert_eq!(types.len(), 3);
+        assert!(types.contains(&EventType::Create));
+        assert!(types.contains(&EventType::Delete));
+        assert!(types.contains(&EventType::Modify));
+    }
+
+    #[test]
+    fn test_mask_to_event_types_none() {
+        let types = mask_to_event_types(0);
+        assert!(types.is_empty());
+    }
+
+    #[test]
+    fn test_mask_to_event_types_all() {
+        use fanotify_fid::consts::{
+            FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE,
+            FAN_DELETE_SELF, FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO,
+            FAN_OPEN, FAN_OPEN_EXEC,
+        };
+        let mask = FAN_ACCESS | FAN_MODIFY | FAN_CLOSE_WRITE | FAN_CLOSE_NOWRITE
+            | FAN_OPEN | FAN_OPEN_EXEC | FAN_ATTRIB | FAN_CREATE | FAN_DELETE
+            | FAN_DELETE_SELF | FAN_MOVED_FROM | FAN_MOVED_TO | FAN_MOVE_SELF;
+        let types = mask_to_event_types(mask);
+        assert_eq!(types.len(), 13);
+    }
+
+    #[test]
+    fn test_mask_to_event_types_with_flags() {
+        let mask = FAN_CREATE | FAN_EVENT_ON_CHILD | FAN_ONDIR;
+        let types = mask_to_event_types(mask);
+        assert_eq!(types.len(), 1);
+        assert_eq!(types[0], EventType::Create);
+    }
+
+    // ---- Monitor tests ----
 
     fn options(
         min_size: Option<i64>,
@@ -1711,7 +1824,7 @@ mod tests {
                 | FAN_REPORT_FID
                 | FAN_REPORT_DIR_FID
                 | FAN_REPORT_NAME,
-            (O_CLOEXEC | O_RDONLY) as u32,
+            (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
         );
         assert!(fd.is_ok(), "fanotify_init should succeed with root");
         unsafe {
@@ -1732,7 +1845,7 @@ mod tests {
                 | FAN_REPORT_FID
                 | FAN_REPORT_DIR_FID
                 | FAN_REPORT_NAME,
-            (O_CLOEXEC | O_RDONLY) as u32,
+            (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
         )
         .unwrap();
 
@@ -1765,7 +1878,7 @@ mod tests {
                 | FAN_REPORT_FID
                 | FAN_REPORT_DIR_FID
                 | FAN_REPORT_NAME,
-            (O_CLOEXEC | O_RDONLY) as u32,
+            (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
         )
         .unwrap();
 
@@ -1810,7 +1923,7 @@ mod tests {
                     | FAN_REPORT_FID
                     | FAN_REPORT_DIR_FID
                     | FAN_REPORT_NAME,
-                (O_CLOEXEC | O_RDONLY) as u32,
+                (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
             )
             .unwrap();
 

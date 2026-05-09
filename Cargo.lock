@@ -229,26 +229,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "enum-iterator"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fd242f399be1da0a5354aa462d57b4ab2b4ee0683cc552f7c007d2d12d36e94"
-dependencies = [
- "enum-iterator-derive",
-]
-
-[[package]]
-name = "enum-iterator-derive"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "685adfa4d6f3d765a26bc5dbc936577de9abf756c1feeb3089b01dd395034842"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -265,12 +245,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "fanotify-rs"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9525f3fd6f3ae518fdc1642663a93a7c8155e863699d203303b22c45ebbbfe8"
+name = "fanotify-fid"
+version = "0.1.0"
 dependencies = [
- "enum-iterator",
  "libc",
 ]
 
@@ -320,7 +297,7 @@ dependencies = [
  "chrono",
  "clap",
  "dashmap",
- "fanotify-rs",
+ "fanotify-fid",
  "fs2",
  "inotify",
  "libc",

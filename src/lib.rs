@@ -1,6 +1,5 @@
 pub mod config;
 pub mod dir_cache;
-pub mod fid_parser;
 pub mod help;
 pub mod monitor;
 pub mod proc_cache;
