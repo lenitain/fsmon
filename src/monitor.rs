@@ -642,10 +642,9 @@ impl Monitor {
                             break;
                         }
                     };
-                    // SAFETY: we own the fd being passed here
-                    let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
+                    // Use the OwnedFd held by AsyncFd (not a temporary — that would close the fd!)
                     let events =
-                        read_fid_events_dashmap(&owned_fd, &mfds, dc.as_ref(), &mut buf);
+                        read_fid_events_dashmap(afd.get_ref(), &mfds, dc.as_ref(), &mut buf);
                     if !events.is_empty() && tx.send(events).is_err() {
                         break; // receiver dropped (shutting down)
                     }
@@ -903,7 +902,6 @@ impl Monitor {
 
     /// Spawn a tokio reader task for a newly created fanotify fd.
     fn spawn_fd_reader(&mut self, fd: i32) {
-        use std::os::fd::FromRawFd;
         let tx = match self.event_tx.as_ref() {
             Some(t) => t.clone(),
             None => {
@@ -941,10 +939,9 @@ impl Monitor {
                         break;
                     }
                 };
-                // SAFETY: we own the fd being passed here
-                let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+                // Use the OwnedFd held by AsyncFd (not a temporary — that would close the fd!)
                 let events =
-                    read_fid_events_dashmap(&owned, &mfds, dc.as_ref(), &mut buf);
+                    read_fid_events_dashmap(afd.get_ref(), &mfds, dc.as_ref(), &mut buf);
                 if !events.is_empty() && tx.send(events).is_err() {
                     break;
                 }
