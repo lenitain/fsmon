@@ -52,8 +52,6 @@ impl AsFd for FanFd {
 
 // ---- FID event helpers ----
 
-use fanotify_fid::parse::resolve_with_cache;
-
 /// Convert a fanotify event mask to fsmon's EventType enum.
 fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
     const BITS: [(u64, EventType); 13] = [
@@ -87,8 +85,11 @@ fn read_fid_events_dashmap(
         Err(_) => return vec![],
     };
 
-    // Second-pass: DashMap-based cache recovery (multiple passes for nested deletions)
+    // Second-pass: DashMap-based cache recovery (multiple passes for nested deletions).
+    // Inlined instead of using fanotify_fid::resolve_with_cache because that
+    // takes &HashMap — copying the entire DashMap on every event is too expensive.
     for _ in 0..10 {
+        // Update cache from successfully-resolved events
         for ev in events.iter() {
             if ev.path.as_os_str().is_empty() { continue; }
             if let Some(ref key) = ev.self_handle {
@@ -105,9 +106,33 @@ fn read_fid_events_dashmap(
                 }
             }
         }
-        let snapshot: std::collections::HashMap<_, _> =
-            dir_cache.iter().map(|e| (e.key().clone(), e.value().clone())).collect();
-        if !resolve_with_cache(&mut events, &snapshot) { break; }
+
+        // Try to recover empty paths from cache (direct DashMap lookup, no copy)
+        let mut made_progress = false;
+        for ev in events.iter_mut() {
+            if !ev.path.as_os_str().is_empty() { continue; }
+
+            if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
+                if let Some(dir_path) = dir_cache.get(key) {
+                    ev.path = if filename.is_empty() {
+                        dir_path.clone()
+                    } else {
+                        dir_path.join(filename)
+                    };
+                    made_progress = true;
+                }
+            }
+
+            if ev.path.as_os_str().is_empty()
+                && let Some(ref key) = ev.self_handle
+                && let Some(cached_path) = dir_cache.get(key)
+            {
+                ev.path = cached_path.clone();
+                made_progress = true;
+            }
+        }
+
+        if !made_progress { break; }
     }
     events
 }
