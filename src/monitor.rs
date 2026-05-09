@@ -229,6 +229,9 @@ pub struct Monitor {
     socket_listener: Option<tokio::net::UnixListener>,
     /// All fanotify fds (one per filesystem group)
     fan_fds: Vec<i32>,
+    /// Maps monitored path → fanotify fd index in fan_fds.
+    /// So remove_path can target the right fd without iterating all fds.
+    path_fd: HashMap<PathBuf, usize>,
     mount_fds: Vec<OwnedFd>,
     dir_cache: DashMap<HandleKey, PathBuf>,
     /// Shared state for spawning reader tasks during live-add (set in run())
@@ -296,6 +299,7 @@ impl Monitor {
 
             socket_listener,
             fan_fds: Vec::new(),
+            path_fd: HashMap::new(),
             mount_fds: Vec::new(),
             dir_cache: DashMap::new(),
             event_tx: None,
@@ -1106,6 +1110,15 @@ impl Monitor {
             self.mount_fds.push(unsafe { OwnedFd::from_raw_fd(raw) });
         }
 
+        // Record which fd this path is on (for fast remove_path lookup)
+        let fd_idx = if is_new_fd {
+            self.fan_fds.len() - 1
+        } else {
+            self.fan_fds.iter().position(|&f| f == fan_fd)
+                .expect("fan_fd not found in fan_fds")
+        };
+        self.path_fd.insert(path.clone(), fd_idx);
+
         // Update path tracking
         self.paths.push(path.clone());
         self.canonical_paths.push(canonical.clone());
@@ -1161,46 +1174,17 @@ impl Monitor {
             DEFAULT_EVENT_MASK
         };
 
-        // Try to remove mark from ALL fanotify fds (the path could be on any fd).
-        let mut mark_removed = false;
-        for &fan_fd in &self.fan_fds {
-            // Try filesystem mark removal first
-            match fanotify_mark(
+        // Look up which fd this path is on (recorded by add_path).
+        let fan_fd = self.path_fd.remove(path).and_then(|idx| self.fan_fds.get(idx).copied());
+        if let Some(fan_fd) = fan_fd {
+            let _ = fanotify_mark(
                 fan_fd,
                 FAN_MARK_REMOVE | FAN_MARK_FILESYSTEM,
                 path_mask,
                 AT_FDCWD,
                 canonical,
-            ) {
-                Ok(()) => {
-                    mark_removed = true;
-                    continue;
-                }
-                Err(ref e)
-                    if e.raw_os_error() == Some(libc::EXDEV)
-                        || e.raw_os_error() == Some(libc::EINVAL) =>
-                {
-                    // Filesystem mark didn't apply — try inode mark removal.
-                    if fanotify_mark(fan_fd, FAN_MARK_REMOVE, path_mask, AT_FDCWD, canonical).is_ok()
-                    {
-                        mark_removed = true;
-                    }
-                }
-                Err(e) => {
-                    eprintln!(
-                        "Warning: fanotify_mark remove failed for {}: {}",
-                        canonical.display(),
-                        e
-                    );
-                }
-            }
-        }
-
-        if !mark_removed {
-            eprintln!(
-                "Warning: could not remove fanotify mark for {} on any fd",
-                canonical.display()
             );
+            let _ = fanotify_mark(fan_fd, FAN_MARK_REMOVE, path_mask, AT_FDCWD, canonical);
         }
 
         self.paths.remove(pos);
