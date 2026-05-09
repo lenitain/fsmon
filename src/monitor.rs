@@ -1227,12 +1227,10 @@ impl Monitor {
                     }
                 };
                 let path = raw;
-                // Remove first if already monitored, then add with new options.
+                // Always remove first (no-op if not monitored), then add.
                 // This keeps the state machine simple: add_path always creates
-                // fresh fanotify marks and caches.
-                if self.path_options.contains_key(&path) {
-                    let _ = self.remove_path(&path);
-                }
+                // fresh fanotify marks and caches regardless of prior state.
+                let _ = self.remove_path(&path);
                 let entry = PathEntry {
                     path,
                     recursive: cmd.recursive,
