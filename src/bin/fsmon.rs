@@ -282,8 +282,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         // New path is a subdirectory of an existing recursive path
         if e_recursive && path.starts_with(ep) && path != *ep {
             eprintln!(
-                "[Note] '{}' is under recursively monitored path '{}' — \
-                 events are already captured by the parent.",
+                "[Note] '{}' is under recursively monitored path '{}' — events already covered.",
                 path.display(),
                 ep.display()
             );
