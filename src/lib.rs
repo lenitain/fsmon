@@ -226,15 +226,23 @@ async fn clean_single_log(
                 continue;
             }
 
-            let should_keep = if let Some(event) = parse_log_line_jsonl(trimmed) {
-                event.time >= cutoff_time
+            let (should_keep, event) = if let Some(event) = parse_log_line_jsonl(trimmed) {
+                (event.time >= cutoff_time, Some(event))
             } else {
-                true
+                (true, None)
             };
 
             if should_keep {
                 writeln!(writer, "{}", line)?;
                 kept_bytes += line.len() + 1; // +1 for newline
+            } else if dry_run {
+                if let Some(ev) = event {
+                    println!("  [to-delete] {} | {} | {}",
+                        ev.time.format("%Y-%m-%d %H:%M:%S"),
+                        ev.event_type,
+                        ev.path.display());
+                }
+                time_deleted += 1;
             } else {
                 time_deleted += 1;
             }
@@ -256,8 +264,12 @@ async fn clean_single_log(
 
     if dry_run {
         let _ = fs::remove_file(&temp_file);
-        println!("Dry run: Would delete {} entries", total_deleted);
-        println!("No changes made (--dry-run enabled)");
+        if total_deleted > 0 {
+            println!("---");
+            println!("Dry run: {} entries would be deleted (use --dry-run to preview)", total_deleted);
+        } else {
+            println!("Dry run: 0 entries match cleanup criteria");
+        }
     } else {
         fs::rename(&temp_file, log_file)?;
         chown_to_original_user(log_file);

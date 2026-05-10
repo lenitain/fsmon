@@ -2245,7 +2245,7 @@ mod tests {
     #[test]
     fn test_build_exclude_regex_cmd_wildcard() {
         let patterns = vec!["nginx*".to_string()];
-        let (re, inv) = Monitor::build_exclude_regex(Some(&patterns), "--exclude-cmd").unwrap();
+        let (re, _inv) = Monitor::build_exclude_regex(Some(&patterns), "--exclude-cmd").unwrap();
         assert!(re.is_some());
         assert!(re.as_ref().unwrap().is_match("nginx"));
         assert!(re.as_ref().unwrap().is_match("nginx-worker"));
