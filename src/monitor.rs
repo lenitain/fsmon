@@ -1086,6 +1086,12 @@ impl Monitor {
 
         let path_mask = path_mask_from_options(&opts);
 
+        println!(
+            "Added path: {} (recursive={})",
+            path.display(),
+            recursive,
+        );
+
         // Determine filesystem device ID for dedup lookup
         let dev_id = std::fs::metadata(&canonical)
             .ok()
@@ -1223,11 +1229,6 @@ impl Monitor {
             }
         }
 
-        println!(
-            "Added path: {} (recursive={})",
-            path.display(),
-            recursive,
-        );
         Ok(())
     }
 
