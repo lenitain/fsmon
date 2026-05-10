@@ -79,11 +79,11 @@ struct AddArgs {
     types: Vec<String>,
 
     /// Only record events with size change >= specified value
-    #[arg(short = 'm', long, value_name = "SIZE")]
+    #[arg(short, long, value_name = "SIZE")]
     min_size: Option<String>,
 
     /// Path glob patterns to exclude (repeatable, prefix ! to invert)
-    #[arg(short = 'e', long, value_name = "PATTERN")]
+    #[arg(short, long, value_name = "PATTERN")]
     exclude: Vec<String>,
 
     /// Process names to exclude (glob, repeatable, prefix ! to invert)
@@ -111,7 +111,7 @@ struct CleanArgs {
     path: Vec<PathBuf>,
     #[arg(short, long)]
     keep_days: Option<u32>,
-    #[arg(short = 'm', long)]
+    #[arg(short, long)]
     max_size: Option<String>,
     #[arg(short, long)]
     dry_run: bool,
