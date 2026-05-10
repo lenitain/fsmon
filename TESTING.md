@@ -144,7 +144,7 @@ fsmon add /tmp/subdir
 ### 3.8 添加带排除模式的路径
 
 ```bash
-fsmon add ~/Documents -r --exclude "*.tmp"
+fsmon add ~/Documents -r --exclude '\.tmp$'
 ```
 
 预期：添加成功
@@ -152,7 +152,7 @@ fsmon add ~/Documents -r --exclude "*.tmp"
 ### 3.9 添加带类型过滤的路径
 
 ```bash
-fsmon add /var/log --types CREATE,MODIFY
+fsmon add /var/log --types CREATE --types MODIFY
 ```
 
 预期：添加成功
@@ -425,7 +425,7 @@ echo "hi" > /tmp/fsmon_filter_test/created.txt  # → MODIFY，不应记录
 ### 9.2 按最小文件大小过滤
 
 ```bash
-fsmon add /tmp/fsmon_size_test -m 1K
+fsmon add /tmp/fsmon_size_test -s '>=1K'
 touch /tmp/fsmon_size_test/small.txt            # 0 字节 → 不应记录
 echo "0123456789" > /tmp/fsmon_size_test/big.txt # >1K → 应记录
 ```
@@ -435,7 +435,7 @@ echo "0123456789" > /tmp/fsmon_size_test/big.txt # >1K → 应记录
 ### 9.3 路径排除模式
 
 ```bash
-fsmon add /tmp/fsmon_exclude_test -r --exclude "*.log"
+fsmon add /tmp/fsmon_exclude_test -r --exclude '\.log$'
 touch /tmp/fsmon_exclude_test/a.log             # → 不应记录
 touch /tmp/fsmon_exclude_test/a.txt             # → 应记录
 ```
@@ -445,7 +445,7 @@ touch /tmp/fsmon_exclude_test/a.txt             # → 应记录
 ### 9.4 进程名排除
 
 ```bash
-fsmon add /tmp/fsmon_cmd_test --exclude-cmd "cat"
+fsmon add /tmp/fsmon_cmd_test --exclude-cmd 'cat'
 touch /tmp/fsmon_cmd_test/test.txt              # 由 shell(bash) 创建 → 应记录
 cat /tmp/fsmon_cmd_test/test.txt                # cat 进程 → 不应记录
 ```
@@ -455,7 +455,7 @@ cat /tmp/fsmon_cmd_test/test.txt                # cat 进程 → 不应记录
 ### 9.5 组合过滤
 
 ```bash
-fsmon add /tmp/fsmon_combo_test --types CREATE,MODIFY -m 100 --exclude "*.tmp"
+fsmon add /tmp/fsmon_combo_test --types CREATE --types MODIFY -s '>=100' --exclude '\.tmp$'
 ```
 
 预期：只有 CREATE/MODIFY 事件、文件 ≥100 字节、不是 .tmp 后缀的才被记录
