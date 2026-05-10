@@ -721,6 +721,168 @@ mod tests {
         assert_eq!(args.exclude_cmd, vec!["rsync"]);
         assert_eq!(args.min_size, Some("1KB".into()));
     }
+
+    // ---- QueryArgs CLI parsing ----
+
+    #[test]
+    fn test_query_no_flags() {
+        let args = QueryArgs::try_parse_from(&["query"]).unwrap();
+        assert!(args.path.is_empty());
+        assert!(args.since.is_none());
+        assert!(args.until.is_none());
+    }
+
+    #[test]
+    fn test_query_path_long() {
+        let args = QueryArgs::try_parse_from(&[
+            "query",
+            "--path", "/tmp", "--path", "/home",
+        ]).unwrap();
+        assert_eq!(args.path, vec![PathBuf::from("/tmp"), PathBuf::from("/home")]);
+    }
+
+    #[test]
+    fn test_query_path_short() {
+        let args = QueryArgs::try_parse_from(&[
+            "query",
+            "-p", "/tmp", "-p", "/home",
+        ]).unwrap();
+        assert_eq!(args.path, vec![PathBuf::from("/tmp"), PathBuf::from("/home")]);
+    }
+
+    #[test]
+    fn test_query_since_short() {
+        let args = QueryArgs::try_parse_from(&["query", "-S", "1h"]).unwrap();
+        assert_eq!(args.since, Some("1h".into()));
+    }
+
+    #[test]
+    fn test_query_since_long() {
+        let args = QueryArgs::try_parse_from(&["query", "--since", "7d"]).unwrap();
+        assert_eq!(args.since, Some("7d".into()));
+    }
+
+    #[test]
+    fn test_query_until_long() {
+        let args = QueryArgs::try_parse_from(&["query", "--until", "2026-05-01"]).unwrap();
+        assert_eq!(args.until, Some("2026-05-01".into()));
+    }
+
+    #[test]
+    fn test_query_all_flags() {
+        let args = QueryArgs::try_parse_from(&[
+            "query",
+            "-p", "/tmp", "--path", "/home",
+            "-S", "1h", "--until", "now",
+        ]).unwrap();
+        assert_eq!(args.path, vec![PathBuf::from("/tmp"), PathBuf::from("/home")]);
+        assert_eq!(args.since, Some("1h".into()));
+        assert_eq!(args.until, Some("now".into()));
+    }
+
+    // ---- CleanArgs CLI parsing ----
+
+    #[test]
+    fn test_clean_no_flags() {
+        let args = CleanArgs::try_parse_from(&["clean"]).unwrap();
+        assert!(args.path.is_empty());
+        assert!(args.keep_days.is_none());
+        assert!(args.max_size.is_none());
+        assert!(!args.dry_run);
+    }
+
+    #[test]
+    fn test_clean_path_long() {
+        let args = CleanArgs::try_parse_from(&[
+            "clean",
+            "--path", "/tmp", "--path", "/var/log",
+        ]).unwrap();
+        assert_eq!(args.path, vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")]);
+    }
+
+    #[test]
+    fn test_clean_path_short() {
+        let args = CleanArgs::try_parse_from(&[
+            "clean",
+            "-p", "/tmp", "-p", "/var/log",
+        ]).unwrap();
+        assert_eq!(args.path, vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")]);
+    }
+
+    #[test]
+    fn test_clean_keep_days_long() {
+        let args = CleanArgs::try_parse_from(&["clean", "--keep-days", "7"]).unwrap();
+        assert_eq!(args.keep_days, Some(7));
+    }
+
+    #[test]
+    fn test_clean_max_size_short() {
+        let args = CleanArgs::try_parse_from(&["clean", "-m", "500MB"]).unwrap();
+        assert_eq!(args.max_size, Some("500MB".into()));
+    }
+
+    #[test]
+    fn test_clean_max_size_long() {
+        let args = CleanArgs::try_parse_from(&["clean", "--max-size", "1GB"]).unwrap();
+        assert_eq!(args.max_size, Some("1GB".into()));
+    }
+
+    #[test]
+    fn test_clean_dry_run_long() {
+        let args = CleanArgs::try_parse_from(&["clean", "--dry-run"]).unwrap();
+        assert!(args.dry_run);
+    }
+
+    #[test]
+    fn test_clean_all_flags() {
+        let args = CleanArgs::try_parse_from(&[
+            "clean",
+            "-p", "/tmp", "--path", "/var/log",
+            "--keep-days", "14",
+            "-m", "100MB",
+            "--dry-run",
+        ]).unwrap();
+        assert_eq!(args.path, vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")]);
+        assert_eq!(args.keep_days, Some(14));
+        assert_eq!(args.max_size, Some("100MB".into()));
+        assert!(args.dry_run);
+    }
+
+    // ---- Remove command (positional paths) ----
+
+    #[test]
+    fn test_remove_single_path() {
+        let cli = Cli::try_parse_from(&["fsmon", "remove", "/tmp"]).unwrap();
+        let paths = match cli.command {
+            Commands::Remove { paths } => paths,
+            _ => panic!("expected Remove"),
+        };
+        assert_eq!(paths, vec![PathBuf::from("/tmp")]);
+    }
+
+    #[test]
+    fn test_remove_multiple_paths() {
+        let cli = Cli::try_parse_from(&["fsmon", "remove", "/tmp", "/home", "/var/log"]).unwrap();
+        let paths = match cli.command {
+            Commands::Remove { paths } => paths,
+            _ => panic!("expected Remove"),
+        };
+        assert_eq!(paths, vec![
+            PathBuf::from("/tmp"),
+            PathBuf::from("/home"),
+            PathBuf::from("/var/log"),
+        ]);
+    }
+
+    #[test]
+    fn test_remove_empty_ok() {
+        let cli = Cli::try_parse_from(&["fsmon", "remove"]).unwrap();
+        let paths = match cli.command {
+            Commands::Remove { paths } => paths,
+            _ => panic!("expected Remove"),
+        };
+        assert!(paths.is_empty());
+    }
 }
 
 /// Output all managed paths (one per line) — used by shell completion scripts.
