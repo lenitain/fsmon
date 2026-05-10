@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use users::os::unix::UserExt;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use users::os::unix::UserExt;
 
 /// Infrastructure configuration for fsmon.
 ///
@@ -233,8 +233,8 @@ dir = "~/.local/state/fsmon"
 #   max_size:  truncate log file when exceeding this size
 # Both can be overridden at runtime:
 #   fsmon clean --keep-days 7 --max-size 500MB
-keep_days = 30
-max_size = "1GB"
+keep_days = 7
+max_size = "500MB"
 
 [socket]
 # Unix socket path for daemon-CLI live communication.
