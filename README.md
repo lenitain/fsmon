@@ -18,7 +18,7 @@
 
 ## Features
 
-- **Real-time Monitoring**: Captures 14 fanotify events (default: 8 core change events, `--all-events` for all 14)
+- **Real-time Monitoring**: Captures 14 fanotify events (default: 8 core events, `--types all` for all 14)
 - **Process Attribution**: Tracks PID, command name, and user for every file change — even short-lived processes like `touch`, `rm`, `mv`
 - **Recursive Monitoring**: Watch entire directory trees with automatic tracking of newly created subdirectories
 - **Complete Deletion Capture**: Captures every file deleted during `rm -rf` via persistent directory handle cache
@@ -71,11 +71,11 @@ sudo fsmon daemon &
 # Terminal 1 (or another): add paths to monitor
 # Monitor /var/www/myapp recursively, only MODIFY + CREATE events,
 # exclude editor temp files, only capture nginx and vim processes
-fsmon add /var/www/myapp -r --types MODIFY,CREATE --exclude "*.swp" --only-cmd nginx,vim
+fsmon add /var/www/myapp -r --types MODIFY,CREATE --exclude "*.swp" --exclude-cmd "!nginx|vim"
 
 # List what's being monitored
 fsmon managed
-# → /var/www/myapp | types=MODIFY,CREATE | recursive | min_size=- | exclude-path=*.swp | exclude-cmd=- | only-cmd=nginx,vim | events=filtered
+# → /var/www/myapp | types=MODIFY,CREATE | recursive | min_size=- | exclude-path=*.swp | exclude-cmd=!nginx|vim
 ```
 
 Now trigger some real file changes:
@@ -200,11 +200,12 @@ Add a path to the monitoring list. No sudo needed.
 fsmon add <path>                           Monitor a path
 fsmon add <path> -r                        Monitor recursively
 fsmon add <path> --types MODIFY,CREATE     Filter by event types
-fsmon add <path> --exclude "*.swp"         Exclude path patterns
+fsmon add <path> --types all               All 14 event types
+fsmon add <path> --exclude "*.swp|*.tmp"   Exclude path patterns
+fsmon add <path> --exclude "!*.py"         Only track .py files
 fsmon add <path> --min-size 1MB            Minimum file size change
 fsmon add <path> --exclude-cmd rsync       Exclude by process name
-fsmon add <path> --only-cmd nginx,vim      Only capture these processes
-fsmon add <path> --all-events              Capture all 14 fanotify events
+fsmon add <path> --exclude-cmd "!nginx"    Only track nginx process
 ```
 
 All capture filters run inside the daemon process (nanosecond-fast, no fork).
@@ -300,11 +301,11 @@ path = "/tmp/fsmon-<UID>.sock"
 
 ## Event Types
 
-Default captures 8 core events. Use `--all-events` for all 14.
+Default captures 8 core events. Use `--types all` for all 14.
 
 **Default (8):** CLOSE_WRITE, ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF
 
-**Additional (6, via --all-events):** ACCESS, MODIFY, OPEN, OPEN_EXEC, CLOSE_NOWRITE, FS_ERROR
+**All 14 (via --types all):** + ACCESS, MODIFY, OPEN, OPEN_EXEC, CLOSE_NOWRITE, FS_ERROR
 
 ## Architecture
 
@@ -313,7 +314,7 @@ Linux Kernel (fanotify)
     → FID events pushed to queue
     → tokio reads events asynchronously
     → fid_parser resolves paths (two-pass + dir cache)
-    → Monitor filters (types, size, path pattern, cmd pattern)
+    → Monitor filters (types, size, path pattern, process name)
     → JSONL → per-path log files (*_log.jsonl)
 
 User pipe:

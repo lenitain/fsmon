@@ -18,7 +18,7 @@
 
 ## 特性
 
-- **实时监控**: 默认捕获 8 种核心 fanotify 事件，`--all-events` 开启全部 14 种
+- **实时监控**: 默认捕获 8 种核心 fanotify 事件，`--types all` 开启全部 14 种
 - **进程追溯**: 追踪每个文件变更的 PID、命令名和用户 — 包括 `touch`、`rm`、`mv` 等短命进程
 - **递归监控**: 监控整个目录树，追踪新建的子目录
 - **完整删除捕获**: 通过持久化目录句柄缓存，完整捕获 `rm -rf` 递归删除中的每个文件
@@ -70,11 +70,11 @@ sudo fsmon daemon &
 
 # 添加监控路径：递归监控 /var/www/myapp，只捕获 MODIFY/CREATE，
 # 排除编辑器临时文件，只记录 nginx 和 vim 进程的事件
-fsmon add /var/www/myapp -r --types MODIFY,CREATE --exclude "*.swp" --only-cmd nginx,vim
+fsmon add /var/www/myapp -r --types MODIFY,CREATE --exclude "*.swp" --exclude-cmd "!nginx|vim"
 
 # 查看当前监控配置
 fsmon managed
-# → /var/www/myapp | types=MODIFY,CREATE | recursive | min_size=- | exclude-path=*.swp | exclude-cmd=- | only-cmd=nginx,vim | events=filtered
+# → /var/www/myapp | types=MODIFY,CREATE | recursive | min_size=- | exclude-path=*.swp | exclude-cmd=!nginx|vim
 ```
 
 模拟真实操作：
@@ -194,11 +194,12 @@ Socket：          `/tmp/fsmon-<UID>.sock`
 fsmon add <path>                           监控一个路径
 fsmon add <path> -r                        递归监控子目录
 fsmon add <path> --types MODIFY,CREATE     按事件类型过滤
-fsmon add <path> --exclude "*.swp"         排除路径模式
+fsmon add <path> --types all               全部 14 种事件
+fsmon add <path> --exclude "*.swp|*.tmp"   排除路径模式
+fsmon add <path> --exclude "!*.py"         只跟踪 .py 文件
 fsmon add <path> --min-size 1MB            最小文件变更大小
 fsmon add <path> --exclude-cmd rsync       按进程名排除
-fsmon add <path> --only-cmd nginx,vim      仅捕获这些进程
-fsmon add <path> --all-events              捕获全部 14 种事件
+fsmon add <path> --exclude-cmd "!nginx"    只跟踪 nginx 进程
 ```
 
 所有捕获过滤在 daemon 进程内完成（纳秒级，无 fork），不匹配的事件不会写盘。
@@ -292,11 +293,11 @@ path = "/tmp/fsmon-<UID>.sock"
 
 ## 事件类型
 
-默认捕获 8 种核心事件，`--all-events` 开启全部 14 种。
+默认捕获 8 种核心事件，`--types all` 开启全部 14 种。
 
 **默认（8 种）：** CLOSE_WRITE、ATTRIB、CREATE、DELETE、DELETE_SELF、MOVED_FROM、MOVED_TO、MOVE_SELF
 
-**额外（6 种，通过 --all-events）：** ACCESS、MODIFY、OPEN、OPEN_EXEC、CLOSE_NOWRITE、FS_ERROR
+**全部 14 种（通过 --types all）：** + ACCESS、MODIFY、OPEN、OPEN_EXEC、CLOSE_NOWRITE、FS_ERROR
 
 ## 架构
 
