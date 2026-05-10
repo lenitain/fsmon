@@ -112,7 +112,7 @@ Examples:
         HelpTopic::Clean => {
             r#"Clean historical log files, retain by time or size.
 
-Defaults: keep_days=30, max_size=1GB (from config.toml [logging] section or code fallback).
+Defaults: keep_days=30, size=1GB (from config.toml [logging] section or code fallback).
 CLI args override config. Daemon does not auto-clean; use cron/systemd timer.
 
 Options:
@@ -130,7 +130,7 @@ Examples:
         HelpTopic::Generate => {
             r#"Generate a default configuration file at ~/.config/fsmon/config.toml.
 
-The config includes defaults for 'fsmon clean' (keep_days=30, max_size="1GB").
+The config includes defaults for 'fsmon clean' (keep_days=30, size="1GB").
 
 Monitored paths are managed separately via 'fsmon add'/'fsmon remove'.
 The daemon also auto-generates a default config if none exists when started.
@@ -158,7 +158,7 @@ Query (stdout JSONL, pipe to jq):
   fsmon query --since 1h            Events from last hour
   fsmon query | jq 'select(.cmd == "nginx")'  Custom filter
 
-Clean (config defaults: keep_days=30, max_size=1GB):
+Clean (config defaults: keep_days=30, size=1GB):
   fsmon clean                       Clean all logs
   fsmon clean --keep-days 7         Override retention
   fsmon clean --dry-run             Preview without deleting

@@ -251,7 +251,7 @@ fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 
 ### clean
 
-Clean historical log files. Defaults from `config.toml`: `keep_days=30`, `max_size=1GB`.
+Clean historical log files. Defaults from `config.toml`: `keep_days=30`, `size=1GB`.
 
 ```bash
 fsmon clean                                Use config defaults
@@ -292,7 +292,7 @@ file = "~/.local/share/fsmon/managed.jsonl"
 dir = "~/.local/state/fsmon"
 # Safety nets: keep at most 30 days, max 1GB per log file.
 keep_days = 30
-max_size = "1GB"
+size = "1GB"
 
 [socket]
 # Unix socket path for daemon-CLI live communication.

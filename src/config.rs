@@ -31,7 +31,9 @@ pub struct LoggingConfig {
     /// Keep log entries for at most this many days (default: 30).
     pub keep_days: Option<u32>,
     /// Maximum size per log file before truncation.
-    pub max_size: Option<String>,
+    /// Size limit per log file before truncation.
+    #[serde(alias = "max_size")]
+    pub size: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,7 +149,7 @@ impl Default for Config {
             logging: LoggingConfig {
                 dir: PathBuf::from("~/.local/state/fsmon"),
                 keep_days: None,
-                max_size: None,
+                size: None,
             },
             socket: SocketConfig {
                 path: PathBuf::from("/tmp/fsmon-<UID>.sock"),
@@ -230,11 +232,11 @@ file = "~/.local/share/fsmon/managed.jsonl"
 dir = "~/.local/state/fsmon"
 # Defaults for 'fsmon clean' (not auto-cleaned by daemon; use cron/timer).
 #   keep_days: delete entries older than N days
-#   max_size:  truncate log file when exceeding this size
+#   size:  truncate log file when exceeding this size
 # Both can be overridden at runtime:
 #   fsmon clean --keep-days 14 --size '>1GB'
 keep_days = 30
-max_size = "1GB"
+size = "1GB"
 
 [socket]
 # Unix socket path for daemon-CLI live communication.

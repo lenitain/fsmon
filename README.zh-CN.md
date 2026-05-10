@@ -244,7 +244,7 @@ fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 
 ### clean
 
-清理历史日志文件。默认值来自 `config.toml`：`keep_days=30`，`max_size=1GB`。
+清理历史日志文件。默认值来自 `config.toml`：`keep_days=30`，`size=1GB`。
 
 ```bash
 fsmon clean                                使用 config 默认值
@@ -284,7 +284,7 @@ file = "~/.local/share/fsmon/managed.jsonl"
 dir = "~/.local/state/fsmon"
 # 安全网：最多保留 30 天日志，每个日志文件上限 1GB。
 keep_days = 30
-max_size = "1GB"
+size = "1GB"
 
 [socket]
 # daemon 与 CLI 通信的 Unix socket 路径。

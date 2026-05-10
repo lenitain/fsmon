@@ -517,7 +517,7 @@ async fn cmd_clean(args: CleanArgs) -> Result<()> {
     let max_size_bytes = args
         .size
         .clone()
-        .or(cfg.logging.max_size.clone())
+        .or(cfg.logging.size.clone())
         .or_else(|| Some(DEFAULT_MAX_SIZE.to_string()))
         .map(|s| parse_size(&s))
         .transpose()?;
