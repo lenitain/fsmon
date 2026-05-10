@@ -210,12 +210,13 @@ fn chown_to_user(path: &Path) -> std::io::Result<bool> {
 const FILE_SIZE_CACHE_CAP: usize = 10_000;
 const PROC_CONNECTOR_TIMEOUT_SECS: u64 = 2;
 
+/// Default mask: 8 core events (FS_ERROR excluded — only works with FS marks).
+/// Use --types all to get all 14 (FS_ERROR included, but only effective on FS marks).
 const DEFAULT_EVENT_MASK: u64 = FAN_CLOSE_WRITE
     | FAN_ATTRIB
     | FAN_CREATE
     | FAN_DELETE
     | FAN_DELETE_SELF
-    | FAN_FS_ERROR
     | FAN_MOVED_FROM
     | FAN_MOVED_TO
     | FAN_MOVE_SELF
@@ -1590,14 +1591,17 @@ impl Monitor {
 
 // ---- Directory marking (used by inode mark fallback mode) ----
 
-/// Mark a single directory
+/// Mark a single directory. Strips FAN_FS_ERROR (only works with FS marks).
 fn mark_directory(fan_fd: &OwnedFd, mask: u64, path: &Path) -> Result<()> {
-    fanotify_mark(fan_fd, FAN_MARK_ADD, mask, AT_FDCWD, path)
+    let safe_mask = mask & !FAN_FS_ERROR;
+    fanotify_mark(fan_fd, FAN_MARK_ADD, safe_mask, AT_FDCWD, path)
         .with_context(|| format!("fanotify_mark failed: {}", path.display()))
 }
 
-/// Recursively traverse and mark all subdirectories (ignore errors, e.g., permission denied)
+/// Recursively traverse and mark all subdirectories (ignore errors, e.g., permission denied).
+/// Strips FAN_FS_ERROR (only works with FS marks).
 fn mark_recursive(fan_fd: &OwnedFd, mask: u64, dir: &Path) {
+    let safe_mask = mask & !FAN_FS_ERROR;
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -1605,8 +1609,8 @@ fn mark_recursive(fan_fd: &OwnedFd, mask: u64, dir: &Path) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            let _ = fanotify_mark(fan_fd, FAN_MARK_ADD, mask, AT_FDCWD, path.as_path());
-            mark_recursive(fan_fd, mask, &path);
+            let _ = fanotify_mark(fan_fd, FAN_MARK_ADD, safe_mask, AT_FDCWD, path.as_path());
+            mark_recursive(fan_fd, safe_mask, &path);
         }
     }
 }
