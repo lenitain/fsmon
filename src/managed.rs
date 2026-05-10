@@ -27,10 +27,10 @@ pub struct PathEntry {
     pub types: Option<Vec<String>>,
     /// Only record events with size change >= this value.
     pub min_size: Option<String>,
-    /// Paths to exclude from monitoring (wildcard patterns).
-    pub exclude: Option<String>,
-    /// Process names to exclude (glob, e.g. "rsync|apt").
-    pub exclude_cmd: Option<String>,
+    /// Paths to exclude from monitoring (glob patterns, repeatable).
+    pub exclude: Option<Vec<String>>,
+    /// Process names to exclude (glob, repeatable).
+    pub exclude_cmd: Option<Vec<String>>,
 }
 
 impl Managed {
@@ -250,7 +250,7 @@ mod tests {
             recursive: Some(true),
             types: Some(vec!["CREATE".into(), "DELETE".into()]),
             min_size: Some("1KB".into()),
-            exclude: Some("*.tmp".into()),
+            exclude: Some(vec!["*.tmp".into()]),
     exclude_cmd: None,
         });
 
@@ -264,7 +264,7 @@ mod tests {
             &["CREATE", "DELETE"]
         );
         assert_eq!(loaded.entries[0].min_size.as_ref().unwrap(), "1KB");
-        assert_eq!(loaded.entries[0].exclude.as_ref().unwrap(), "*.tmp");
+        assert_eq!(loaded.entries[0].exclude.as_ref().unwrap(), &vec!["*.tmp".to_string()]);
     }
 
     #[test]

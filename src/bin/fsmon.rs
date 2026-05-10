@@ -74,21 +74,21 @@ struct AddArgs {
     #[arg(short)]
     recursive: bool,
 
-    /// Event types to monitor (comma-separated; use "all" for all 14 types). Controls kernel mask.
-    #[arg(short, long, value_name = "TYPES")]
-    types: Option<String>,
+    /// Event types to monitor (repeatable; use "all" for all 14 types). Controls kernel mask.
+    #[arg(short, long, value_name = "TYPE")]
+    types: Vec<String>,
 
     /// Only record events with size change >= specified value
     #[arg(short = 'm', long, value_name = "SIZE")]
     min_size: Option<String>,
 
-    /// Path glob patterns (use | for multiple, prefix ! to invert)
+    /// Path glob patterns to exclude (repeatable, prefix ! to invert)
     #[arg(short = 'e', long, value_name = "PATTERN")]
-    exclude: Option<String>,
+    exclude: Vec<String>,
 
-    /// Process names to exclude (glob, use | for multiple, prefix ! to invert)
+    /// Process names to exclude (glob, repeatable, prefix ! to invert)
     #[arg(long, value_name = "PATTERN")]
-    exclude_cmd: Option<String>,
+    exclude_cmd: Vec<String>,
 
 
 }
@@ -304,35 +304,31 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         }
     }
 
-    let types: Option<Vec<String>> = args
-        .types
-        .map(|t| {
-            let parts: Vec<String> = t.split(',').map(|s| s.trim().to_string()).collect();
-            // --types all → expand to all 14 event types
-            if parts.iter().any(|s| s.eq_ignore_ascii_case("all")) {
-                vec![
-                    "ACCESS".into(),
-                    "MODIFY".into(),
-                    "CLOSE_WRITE".into(),
-                    "CLOSE_NOWRITE".into(),
-                    "OPEN".into(),
-                    "OPEN_EXEC".into(),
-                    "ATTRIB".into(),
-                    "CREATE".into(),
-                    "DELETE".into(),
-                    "DELETE_SELF".into(),
-                    "MOVED_FROM".into(),
-                    "MOVED_TO".into(),
-                    "MOVE_SELF".into(),
-                    "FS_ERROR".into(),
-                ]
-            } else {
-                parts
-            }
-        });
+    let types: Option<Vec<String>> = if args.types.is_empty() {
+        None
+    } else if args.types.iter().any(|s| s.eq_ignore_ascii_case("all")) {
+        Some(vec![
+            "ACCESS".into(),
+            "MODIFY".into(),
+            "CLOSE_WRITE".into(),
+            "CLOSE_NOWRITE".into(),
+            "OPEN".into(),
+            "OPEN_EXEC".into(),
+            "ATTRIB".into(),
+            "CREATE".into(),
+            "DELETE".into(),
+            "DELETE_SELF".into(),
+            "MOVED_FROM".into(),
+            "MOVED_TO".into(),
+            "MOVE_SELF".into(),
+            "FS_ERROR".into(),
+        ])
+    } else {
+        Some(args.types.clone())
+    };
     let min_size = args.min_size.clone();
-    let exclude = args.exclude.clone();
-    let exclude_cmd = args.exclude_cmd.clone();
+    let exclude = if args.exclude.is_empty() { None } else { Some(args.exclude.clone()) };
+    let exclude_cmd = if args.exclude_cmd.is_empty() { None } else { Some(args.exclude_cmd.clone()) };
     let recursive = if args.recursive { Some(true) } else { None };
 
     store.add_entry(PathEntry {
@@ -456,8 +452,8 @@ fn cmd_managed() -> Result<()> {
             "non-recursive"
         };
         let min_size_str = entry.min_size.as_deref().unwrap_or("-");
-        let exclude_str = entry.exclude.as_deref().unwrap_or("-");
-        let exclude_cmd_str = entry.exclude_cmd.as_deref().unwrap_or("-");
+        let exclude_str = entry.exclude.as_ref().map(|v| v.join(",")).as_deref().unwrap_or("-").to_string();
+        let exclude_cmd_str = entry.exclude_cmd.as_ref().map(|v| v.join(",")).as_deref().unwrap_or("-").to_string();
         println!(
             "{} | types={} | {} | min_size={} | exclude-path={} | exclude-cmd={}",
             entry.path.display(),
@@ -535,6 +531,29 @@ async fn cmd_clean(args: CleanArgs) -> Result<()> {
     Ok(())
 }
 
+/// Build a combined regex from a list of patterns.
+/// Multiple patterns are OR'd together. If the first pattern starts with `!`,
+/// the entire match is inverted (exclude everything except matching).
+fn build_exclude_regex(patterns: Option<&[String]>, label: &str) -> Result<(Option<regex::Regex>, bool)> {
+    let Some(patterns) = patterns else { return Ok((None, false)); };
+    if patterns.is_empty() {
+        return Ok((None, false));
+    }
+    let invert = patterns[0].starts_with('!');
+    let parts: Vec<String> = patterns.iter().map(|p| {
+        let raw = p.strip_prefix('!').unwrap_or(p);
+        if label == "--exclude-cmd" {
+            raw.replace("*", ".*")
+        } else {
+            regex::escape(raw).replace("\\*", ".*")
+        }
+    }).collect();
+    let pattern = parts.join("|");
+    let regex = regex::Regex::new(&pattern)
+        .with_context(|| format!("invalid {} pattern", label))?;
+    Ok((Some(regex), invert))
+}
+
 fn parse_path_entries(entries: &[PathEntry]) -> Result<Vec<(PathBuf, PathOptions)>> {
     let mut result = Vec::new();
     for entry in entries {
@@ -556,27 +575,8 @@ fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
         })
         .transpose()
         .map_err(|e: String| anyhow::anyhow!(e))?;
-    let (exclude_regex, exclude_invert) = match entry.exclude.as_ref() {
-        Some(p) => {
-            let raw = p.strip_prefix('!').unwrap_or(p);
-            let escaped = regex::escape(raw);
-            let pattern = escaped.replace("\\*", ".*").replace("\\|", "|");
-            let regex = regex::Regex::new(&pattern)
-                .with_context(|| "invalid exclude pattern")?;
-            (Some(regex), p.starts_with('!'))
-        }
-        None => (None, false),
-    };
-    let (exclude_cmd_regex, exclude_cmd_invert) = match entry.exclude_cmd.as_ref() {
-        Some(p) => {
-            let raw = p.strip_prefix('!').unwrap_or(p);
-            let pattern = raw.replace("*", ".*");
-            let regex = regex::Regex::new(&pattern)
-                .with_context(|| "invalid --exclude-cmd pattern")?;
-            (Some(regex), p.starts_with('!'))
-        }
-        None => (None, false),
-    };
+    let (exclude_regex, exclude_invert) = build_exclude_regex(entry.exclude.as_deref(), "exclude")?;
+    let (exclude_cmd_regex, exclude_cmd_invert) = build_exclude_regex(entry.exclude_cmd.as_deref(), "--exclude-cmd")?;
     Ok(PathOptions {
         min_size,
         event_types,

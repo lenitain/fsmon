@@ -421,7 +421,7 @@ impl Monitor {
                         |v| v.iter().map(|t| t.to_string()).collect()
                     ),
                     min_size: opts.min_size.map(|s| s.to_string()),
-                    exclude: opts.exclude_regex.as_ref().map(|r| r.as_str().to_string()),
+                    exclude: opts.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()]),
                     exclude_cmd: None,
                 }));
             }
@@ -756,7 +756,7 @@ impl Monitor {
                                         |v| v.iter().map(|t| t.to_string()).collect()
                                     )),
                                     min_size: opts.and_then(|o| o.min_size.map(|s| s.to_string())),
-                                    exclude: opts.and_then(|o| o.exclude_regex.as_ref().map(|r| r.as_str().to_string())),
+                                    exclude: opts.and_then(|o| o.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()])),
                                     exclude_cmd: None,
                                 };
                                 if let Err(e) = self.remove_path(path) {
@@ -1018,6 +1018,24 @@ impl Monitor {
         });
     }
 
+    /// Build a combined regex from a list of patterns.
+    fn build_exclude_regex(patterns: Option<&[String]>, label: &str) -> Result<(Option<regex::Regex>, bool)> {
+        let Some(patterns) = patterns else { return Ok((None, false)); };
+        if patterns.is_empty() { return Ok((None, false)); }
+        let invert = patterns[0].starts_with('!');
+        let parts: Vec<String> = patterns.iter().map(|p| {
+            let raw = p.strip_prefix('!').unwrap_or(p);
+            if label == "--exclude-cmd" {
+                raw.replace("*", ".*")
+            } else {
+                regex::escape(raw).replace("\\*", ".*")
+            }
+        }).collect();
+        let regex = regex::Regex::new(&parts.join("|"))
+            .with_context(|| format!("invalid {} pattern", label))?;
+        Ok((Some(regex), invert))
+    }
+
     pub fn add_path(&mut self, entry: &PathEntry) -> Result<()> {
         // Normalize path: expand tilde + resolve symlinks/../.
         // Managed the shortest canonical form so all comparisons work consistently.
@@ -1059,27 +1077,8 @@ impl Monitor {
                 .collect()
         });
         let min_size = entry.min_size.as_ref().map(|s| parse_size(s)).transpose()?;
-        let (exclude_regex, exclude_invert) = match entry.exclude.as_ref() {
-            Some(p) => {
-                let raw = p.strip_prefix('!').unwrap_or(p);
-                let escaped = regex::escape(raw);
-                let pattern = escaped.replace("\\*", ".*").replace("\\|", "|");
-                let regex = regex::Regex::new(&pattern)
-                    .with_context(|| "invalid exclude pattern")?;
-                (Some(regex), p.starts_with('!'))
-            }
-            None => (None, false),
-        };
-        let (exclude_cmd_regex, exclude_cmd_invert) = match entry.exclude_cmd.as_ref() {
-            Some(p) => {
-                let raw = p.strip_prefix('!').unwrap_or(p);
-                let pattern = raw.replace("*", ".*");
-                let regex = regex::Regex::new(&pattern)
-                    .with_context(|| "invalid --exclude-cmd pattern")?;
-                (Some(regex), p.starts_with('!'))
-            }
-            None => (None, false),
-        };
+        let (exclude_regex, exclude_invert) = Self::build_exclude_regex(entry.exclude.as_deref(), "exclude")?;
+        let (exclude_cmd_regex, exclude_cmd_invert) = Self::build_exclude_regex(entry.exclude_cmd.as_deref(), "--exclude-cmd")?;
         let recursive = entry.recursive.unwrap_or(false);
         let opts = PathOptions {
             min_size,
@@ -1363,7 +1362,7 @@ impl Monitor {
                             }),
                             min_size: opts.and_then(|o| o.min_size.map(|s| s.to_string())),
                             exclude: opts.and_then(|o| {
-                                o.exclude_regex.as_ref().map(|r| r.as_str().to_string())
+                                o.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()])
                             }),
                             exclude_cmd: None,
                         }

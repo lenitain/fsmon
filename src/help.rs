@@ -54,26 +54,26 @@ No sudo needed — store is updated immediately.
 
 Options:
   -r, --recursive         Watch subdirectories recursively
-  -t, --types             Event types to monitor (comma-separated; use "all" for all 14 types)
+  -t, --types             Event types to monitor (repeatable; use "all" for all 14 types)
   -m, --min-size          Minimum file size change to report (e.g., 100MB, 1GB)
-  -e, --exclude           Path glob patterns (use | for multiple, prefix ! to invert)
-  --exclude-cmd           Process name patterns (glob, use | for multiple, prefix ! to invert)
+  -e, --exclude           Path glob patterns to exclude (repeatable, prefix ! to invert)
+  --exclude-cmd           Process names to exclude (glob, repeatable, prefix ! to invert)
 
 Exclude syntax:
-  --exclude "*.tmp|*.log"         Exclude .tmp and .log files
-  --exclude "!*.py"               Only track .py files, exclude all others
-  --exclude-cmd "rsync|apt"       Exclude rsync and apt processes
-  --exclude-cmd "!nginx|python"   Only track nginx and python processes
-  * matches any chars (except / for --exclude)
-  ** matches any chars (including / for --exclude)
-  | separates multiple patterns in one argument
+  --exclude "*.tmp" --exclude "*.log"   Exclude .tmp and .log files
+  --exclude "!*.py"                      Only track .py files, exclude all others
+  --exclude-cmd rsync --exclude-cmd apt  Exclude rsync and apt processes
+  --exclude-cmd "!nginx" --exclude-cmd "!python"  Only track nginx and python
+  --exclude: * matches any chars (except /), ** matches any chars (including /)
+  --exclude-cmd: * matches any chars
+  prefix ! to invert (only valid as the first pattern)
 
 Examples:
   fsmon add /path/to/project -r                 Default: 8 event types
-  fsmon add /path --types MODIFY,CREATE         Only these 2 types
+  fsmon add /path --types MODIFY --types CREATE  Only these 2 types
   fsmon add /path --types all                   All 14 event types
   fsmon add /etc --types MODIFY --min-size 100KB
-  fsmon add /var/log --exclude-cmd "rsync|apt"
+  fsmon add /var/log --exclude-cmd rsync
   fsmon add /tmp --exclude-cmd nginx"#
         }
         HelpTopic::Remove => {
