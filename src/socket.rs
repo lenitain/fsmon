@@ -22,15 +22,11 @@ pub struct SocketCmd {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub types: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub min_size: Option<String>,
+    pub size: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub exclude: Option<String>,
+    pub exclude: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub exclude_cmd: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub only_cmd: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub all_events: Option<bool>,
+    pub exclude_cmd: Option<Vec<String>>,
 }
 
 /// Classifies whether an error is permanent (will persist after daemon restart)

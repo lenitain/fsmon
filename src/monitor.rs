@@ -1,20 +1,18 @@
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use fanotify_fid::prelude::*;
-use fanotify_fid::types::{FidEvent, HandleKey};
+use fanotify_fid::types::FidEvent;
 use fanotify_fid::consts::{
-    AT_FDCWD, FAN_ACCESS, FAN_ATTRIB, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_CLOSE_NOWRITE,
-    FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE, FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_MARK_ADD,
-    FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE, FAN_MODIFY, FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO,
-    FAN_NONBLOCK, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC, FAN_Q_OVERFLOW, FAN_REPORT_DIR_FID,
-    FAN_REPORT_FID, FAN_REPORT_NAME,
+    AT_FDCWD, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_MARK_ADD,
+    FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE, FAN_NONBLOCK, FAN_Q_OVERFLOW,
+    FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
 };
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::num::NonZeroUsize;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -28,192 +26,13 @@ use crate::proc_cache::{self, ProcCache, ProcInfo};
 use crate::socket::{SocketCmd, SocketResp};
 use crate::managed::PathEntry;
 use crate::managed::Managed;
-use crate::utils::{get_process_info_by_pid, parse_size};
+use crate::utils::{format_size, get_process_info_by_pid, parse_size_filter};
+use crate::filters::{self, PathOptions};
+use crate::fid_parser::{FanFd, FsGroup, read_fid_events_dashmap, mask_to_event_types,
+    path_mask_from_options, mark_directory, mark_recursive, chown_to_user,
+    FILE_SIZE_CACHE_CAP, PROC_CONNECTOR_TIMEOUT_SECS};
 use crate::{EventType, FileEvent};
 
-// ---- FanFd wrapper for AsyncFd ----
-
-/// Newtype wrapper around a raw fanotify file descriptor.
-/// Implements `AsRawFd` and `AsFd` so it can be used with `AsyncFd`.
-struct FanFd(RawFd);
-
-impl AsRawFd for FanFd {
-    fn as_raw_fd(&self) -> RawFd {
-        self.0
-    }
-}
-
-impl AsFd for FanFd {
-    fn as_fd(&self) -> BorrowedFd<'_> {
-        // SAFETY: the fd is valid for the lifetime of the Monitor
-        unsafe { BorrowedFd::borrow_raw(self.0) }
-    }
-}
-
-// ---- FID event helpers ----
-
-/// Convert a fanotify event mask to fsmon's EventType enum.
-fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
-    const BITS: [(u64, EventType); 13] = [
-        (FAN_ACCESS, EventType::Access),
-        (FAN_MODIFY, EventType::Modify),
-        (FAN_CLOSE_WRITE, EventType::CloseWrite),
-        (FAN_CLOSE_NOWRITE, EventType::CloseNowrite),
-        (FAN_OPEN, EventType::Open),
-        (FAN_OPEN_EXEC, EventType::OpenExec),
-        (FAN_ATTRIB, EventType::Attrib),
-        (FAN_CREATE, EventType::Create),
-        (FAN_DELETE, EventType::Delete),
-        (FAN_DELETE_SELF, EventType::DeleteSelf),
-        (FAN_MOVED_FROM, EventType::MovedFrom),
-        (FAN_MOVED_TO, EventType::MovedTo),
-        (FAN_MOVE_SELF, EventType::MoveSelf),
-    ];
-    BITS.iter().filter(|(bit, _)| mask & bit != 0).map(|(_, t)| *t).collect()
-}
-
-/// Read and parse FID events, using a `DashMap`-based cache for path recovery.
-fn read_fid_events_dashmap(
-    fan_fd: &OwnedFd,
-    mount_fds: &[OwnedFd],
-    dir_cache: &DashMap<HandleKey, PathBuf>,
-    buf: &mut Vec<u8>,
-) -> Vec<FidEvent> {
-    // Delegate raw read + parse to fanotify-fid (no cache = first pass only)
-    let mut events = match fanotify_fid::read::read_fid_events(fan_fd, mount_fds, buf, None) {
-        Ok(e) => e,
-        Err(_) => return vec![],
-    };
-
-    // Second-pass: DashMap-based cache recovery (multiple passes for nested deletions).
-    // Inlined instead of using fanotify_fid::resolve_with_cache because that
-    // takes &HashMap — copying the entire DashMap on every event is too expensive.
-    for _ in 0..10 {
-        // Update cache from successfully-resolved events
-        for ev in events.iter() {
-            if ev.path.as_os_str().is_empty() { continue; }
-            if let Some(ref key) = ev.self_handle {
-                dir_cache.entry(key.clone()).or_insert_with(|| ev.path.clone());
-            }
-            if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
-                let dir_path = if !filename.is_empty() {
-                    ev.path.parent().map(|p| p.to_path_buf())
-                } else {
-                    Some(ev.path.clone())
-                };
-                if let Some(dp) = dir_path {
-                    dir_cache.entry(key.clone()).or_insert(dp);
-                }
-            }
-        }
-
-        // Try to recover empty paths from cache (direct DashMap lookup, no copy)
-        let mut made_progress = false;
-        for ev in events.iter_mut() {
-            if !ev.path.as_os_str().is_empty() { continue; }
-
-            if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
-                if let Some(dir_path) = dir_cache.get(key) {
-                    ev.path = if filename.is_empty() {
-                        dir_path.clone()
-                    } else {
-                        dir_path.join(filename)
-                    };
-                    made_progress = true;
-                }
-            }
-
-            if ev.path.as_os_str().is_empty()
-                && let Some(ref key) = ev.self_handle
-                && let Some(cached_path) = dir_cache.get(key)
-            {
-                ev.path = cached_path.clone();
-                made_progress = true;
-            }
-        }
-
-        if !made_progress { break; }
-    }
-    events
-}
-
-/// Chown a file or directory to the original user (daemon runs as root).
-/// Resolves the original user from SUDO_UID/SUDO_GID env vars.
-///
-/// Returns `Ok(true)` if chown succeeded, `Ok(false)` if the filesystem
-/// does not support ownership changes (vfat/exfat/NFS no_root_squash, etc.),
-/// and `Err` for genuine errors (bad path, IO failure).
-fn chown_to_user(path: &Path) -> std::io::Result<bool> {
-    let (uid, gid) = crate::config::resolve_uid_gid();
-    let cpath = std::ffi::CString::new(path.to_string_lossy().as_bytes())
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains null"))?;
-    match nix::unistd::chown(
-        cpath.as_c_str(),
-        Some(nix::unistd::Uid::from_raw(uid)),
-        Some(nix::unistd::Gid::from_raw(gid)),
-    ) {
-        Ok(()) => Ok(true),
-        Err(nix::errno::Errno::EPERM) | Err(nix::errno::Errno::EOPNOTSUPP) | Err(nix::errno::Errno::ENOSYS) => {
-            // FS doesn't support ownership (vfat/exfat/NFS no_root_squash)
-            Ok(false)
-        }
-        Err(e) => Err(std::io::Error::other(e)),
-    }
-}
-
-// ---- Constants ----
-
-const FILE_SIZE_CACHE_CAP: usize = 10_000;
-const PROC_CONNECTOR_TIMEOUT_SECS: u64 = 2;
-
-const DEFAULT_EVENT_MASK: u64 = FAN_CLOSE_WRITE
-    | FAN_ATTRIB
-    | FAN_CREATE
-    | FAN_DELETE
-    | FAN_DELETE_SELF
-    | FAN_MOVED_FROM
-    | FAN_MOVED_TO
-    | FAN_MOVE_SELF
-    | FAN_EVENT_ON_CHILD
-    | FAN_ONDIR;
-
-const ALL_EVENT_MASK: u64 = FAN_ACCESS
-    | FAN_MODIFY
-    | FAN_ATTRIB
-    | FAN_CLOSE_WRITE
-    | FAN_CLOSE_NOWRITE
-    | FAN_OPEN
-    | FAN_OPEN_EXEC
-    | FAN_CREATE
-    | FAN_DELETE
-    | FAN_DELETE_SELF
-    | FAN_MOVED_FROM
-    | FAN_MOVED_TO
-    | FAN_MOVE_SELF
-    | FAN_EVENT_ON_CHILD
-    | FAN_ONDIR;
-
-// ---- PathOptions ----
-
-#[derive(Clone)]
-pub struct PathOptions {
-    pub min_size: Option<i64>,
-    pub event_types: Option<Vec<EventType>>,
-    pub exclude_regex: Option<regex::Regex>,
-    pub exclude_cmd_regex: Option<regex::Regex>,
-    pub only_cmd_regex: Option<regex::Regex>,
-    pub recursive: bool,
-    pub all_events: bool,
-}
-
-
-/// Resolve a path for recursion check: expand tilde, then canonicalize if the path exists
-/// (follows symlinks). Falls back to tilde-expanded path if can't canonicalize.
-fn resolve_recursion_check(path: &Path) -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let expanded = crate::config::expand_tilde(path, &home);
-    expanded.canonicalize().unwrap_or(expanded)
-}
 // ---- Monitor ----
 
 pub struct Monitor {
@@ -227,16 +46,14 @@ pub struct Monitor {
     pid_cache: LruCache<u32, ProcInfo>,
     buffer_size: usize,
     socket_listener: Option<tokio::net::UnixListener>,
-    /// All fanotify fds (one per filesystem group)
-    fan_fds: Vec<OwnedFd>,
-    /// Maps monitored path → fanotify fd index in fan_fds.
-    /// So remove_path can target the right fd without iterating all fds.
-    path_fd: HashMap<PathBuf, usize>,
-    mount_fds: Vec<OwnedFd>,
-    dir_cache: DashMap<HandleKey, PathBuf>,
+    /// One `FsGroup` per unique filesystem (fan_fd + mount_fd dedup'd)
+    fs_groups: Vec<FsGroup>,
+    /// Maps monitored path → index in fs_groups for fast lookup in remove_path
+    path_to_group: HashMap<PathBuf, usize>,
+    dir_cache: DashMap<fanotify_fid::types::HandleKey, PathBuf>,
     /// Shared state for spawning reader tasks during live-add (set in run())
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<FidEvent>>>,
-    shared_dir_cache: Option<Arc<DashMap<HandleKey, PathBuf>>>,
+    shared_dir_cache: Option<Arc<DashMap<fanotify_fid::types::HandleKey, PathBuf>>>,
     /// Paths that didn't exist at add/startup time, retried on directory creation
     pending_paths: Vec<(PathBuf, PathEntry)>,
     /// inotify instance watching parent dirs of pending paths
@@ -268,7 +85,7 @@ impl Monitor {
         for (path, opts) in &paths_and_options {
             // Reject paths that would cause infinite recursion
             // Resolve tilde + symlinks to catch symlink-based conflicts
-            let resolved = resolve_recursion_check(path);
+            let resolved = filters::resolve_recursion_check(path);
             if let Some(ref log_dir) = log_dir_canonical
                 && log_dir.starts_with(&resolved)
             {
@@ -276,7 +93,7 @@ impl Monitor {
                     "Cannot monitor '{}': log directory '{}' is inside this path — \
                      would cause infinite recursion on every log write.\n\
                      Tip: fsmon remove {} or exclude the log directory with --exclude \
-                     or use a different logging.dir",
+                     or use a different logging.path",
                     path.display(),
                     log_dir_canonical.as_ref().unwrap().display(),
                     path.display()
@@ -298,9 +115,8 @@ impl Monitor {
             buffer_size,
 
             socket_listener,
-            fan_fds: Vec::new(),
-            path_fd: HashMap::new(),
-            mount_fds: Vec::new(),
+            fs_groups: Vec::new(),
+            path_to_group: HashMap::new(),
             dir_cache: DashMap::new(),
             event_tx: None,
             shared_dir_cache: None,
@@ -357,12 +173,10 @@ impl Monitor {
             poll_interval = (poll_interval * 2).min(tokio::time::Duration::from_millis(50));
         }
 
-        // Compute combined event mask from all monitored paths
-        let combined_mask = if self.path_options.values().any(|o| o.all_events) {
-            ALL_EVENT_MASK
-        } else {
-            DEFAULT_EVENT_MASK
-        };
+        // Compute combined event mask (OR of all per-path masks)
+        let combined_mask = self.path_options.values()
+            .map(path_mask_from_options)
+            .fold(0, |a, b| a | b);
 
         // Collect canonical paths — non-existent paths go to pending_paths
         // and are removed from paths/path_options so add_path can work on retry
@@ -388,11 +202,9 @@ impl Monitor {
                     types: opts.event_types.as_ref().map(
                         |v| v.iter().map(|t| t.to_string()).collect()
                     ),
-                    min_size: opts.min_size.map(|s| s.to_string()),
-                    exclude: opts.exclude_regex.as_ref().map(|r| r.as_str().to_string()),
+                    size: opts.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes))),
+                    exclude: opts.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()]),
                     exclude_cmd: None,
-                    only_cmd: None,
-                    all_events: Some(opts.all_events),
                 }));
             }
         }
@@ -402,57 +214,64 @@ impl Monitor {
         self.inotify = Some(inotify::Inotify::init().context("inotify_init")?);
         self.setup_inotify_watches();
 
-        // Initialize per-filesystem fanotify fds. The kernel does not allow
-        // marks on different filesystems to coexist on a single fanotify fd
-        // (even inode marks — all return EXDEV). So we create one fd per
-        // filesystem and spawn a reader task for each.
+        // Initialize per-filesystem fanotify fds. One FsGroup per unique
+        // filesystem (grouped by st_dev). All paths on the same filesystem
+        // share one fanotify fd + one directory mount fd.
         //
-        // Strategy: try to add each path to an existing fd's group (same
-        // filesystem), probing with FAN_MARK_ADD|FAN_MARK_FILESYSTEM first.
-        // If EXDEV, the path belongs to a different filesystem — create a
-        // new fd for it. If FS-mark also fails with a non-EXDEV error, fall
-        // back to inode mark on the new fd.
+        // Strategy: try FAN_MARK_FILESYSTEM first. If it succeeds, the FS mark
+        // covers all paths on that superblock. If EXDEV, fall back to per-path
+        // inode marks (plus recursive marking for directories).
 
-        struct FanGroup {
-            fd: OwnedFd,
-        }
-
-        let mut fan_groups: Vec<FanGroup> = Vec::new();
-        for canonical in &self.canonical_paths {
+        let mut fs_group_devs: Vec<u64> = Vec::new();
+        for (i, canonical) in self.canonical_paths.iter().enumerate() {
             let path_mask = combined_mask;
 
-            // Try to add this path to an existing fd (same filesystem)
-            let mut matched = false;
-            for group in &fan_groups {
-                match fanotify_mark(
-                    &group.fd,
-                    FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
-                    path_mask,
-                    AT_FDCWD,
-                    canonical,
-                ) {
-                    Ok(()) => {
-                        matched = true;
-                        eprintln!(
-                            "[INFO] Monitoring {} (fs mark) on existing fd {}",
-                            canonical.display(),
-                            group.fd.as_raw_fd()
-                        );
-                        break;
-                    }
-                    Err(FanotifyError::Mark(code)) if code == libc::EXDEV => {
-                        continue; // different filesystem, try next fd
-                    }
-                    Err(e) => {
-                        eprintln!("[WARNING] Cannot monitor {}: {:#}", canonical.display(), e);
-                    }
+            // Determine filesystem via st_dev
+            let dev_id = std::fs::metadata(canonical)
+                .ok()
+                .map(|m| std::os::linux::fs::MetadataExt::st_dev(&m))
+                .unwrap_or(0);
+
+            // Try to reuse an existing FsGroup on the same filesystem
+            let mut reuse_idx = None;
+            for (gi, gdev) in fs_group_devs.iter().enumerate() {
+                if *gdev == dev_id {
+                    reuse_idx = Some(gi);
+                    break;
                 }
             }
-            if matched {
+
+            if let Some(gi) = reuse_idx {
+                // Same filesystem — just add mark (inode) if group uses inode marks
+                let group = &self.fs_groups[gi];
+                if !group.is_fs_mark {
+                    let fan_fd = &group.fan_fd;
+                    if let Err(e) = mark_directory(fan_fd, path_mask, canonical) {
+                        eprintln!(
+                            "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
+                            canonical.display(),
+                            fan_fd.as_raw_fd(),
+                            e
+                        );
+                    } else {
+                        eprintln!(
+                            "[INFO] Monitoring {} (inode mark) on existing fd {}",
+                            canonical.display(),
+                            fan_fd.as_raw_fd()
+                        );
+                        // mark subdirectories recursively
+                        let opts = self.paths.get(i).and_then(|p| self.path_options.get(p));
+                        if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
+                            mark_recursive(fan_fd, path_mask, canonical);
+                        }
+                    }
+                }
+                self.fs_groups[gi].ref_count += 1;
+                self.path_to_group.insert(self.paths[i].clone(), gi);
                 continue;
             }
 
-            // Create a fresh fd for this filesystem
+            // New filesystem — create fanotify fd + mount fd
             let new_fd = fanotify_init(
                 FAN_CLOEXEC
                     | FAN_NONBLOCK
@@ -469,7 +288,7 @@ impl Monitor {
                 )
             })?;
 
-            let _use_fs = match fanotify_mark(
+            let (is_fs_mark, _) = match fanotify_mark(
                 &new_fd,
                 FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
                 path_mask,
@@ -482,11 +301,9 @@ impl Monitor {
                         canonical.display(),
                         new_fd.as_raw_fd()
                     );
-                    true
+                    (true, true)
                 }
                 Err(FanotifyError::Mark(code)) if code == libc::EXDEV => {
-                    // Filesystem mark EXDEV shouldn't happen on a fresh fd,
-                    // but fall back to inode mark just in case.
                     match mark_directory(&new_fd, path_mask, canonical) {
                         Ok(()) => {
                             eprintln!(
@@ -494,20 +311,11 @@ impl Monitor {
                                 canonical.display(),
                                 new_fd.as_raw_fd()
                             );
-                            // mark subdirectories recursively
-                            let opts = self
-                                .paths
-                                .iter()
-                                .position(|p| {
-                                    canonical == p
-                                        || canonical
-                                            == &p.canonicalize().unwrap_or_else(|_| p.clone())
-                                })
-                                .and_then(|i| self.path_options.get(&self.paths[i]));
+                            let opts = self.paths.get(i).and_then(|p| self.path_options.get(p));
                             if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
                                 mark_recursive(&new_fd, path_mask, canonical);
                             }
-                            false
+                            (false, true)
                         }
                         Err(e) => {
                             eprintln!(
@@ -516,6 +324,7 @@ impl Monitor {
                                 e
                             );
                             drop(new_fd);
+                            // Skip this path, continue to next
                             continue;
                         }
                     }
@@ -526,31 +335,46 @@ impl Monitor {
                     continue;
                 }
             };
-            fan_groups.push(FanGroup { fd: new_fd });
+
+            if !is_fs_mark {
+                // Need to check if this path should have been set up fine above
+                // (inode mark branch handles it)
+            }
+
+            // Open directory fd for open_by_handle_at
+            let mount_fd_raw = nix::fcntl::open(
+                canonical,
+                nix::fcntl::OFlag::O_DIRECTORY,
+                nix::sys::stat::Mode::empty(),
+            );
+            let mount_fd = match mount_fd_raw {
+                Ok(raw) => unsafe { OwnedFd::from_raw_fd(raw) },
+                Err(e) => {
+                    eprintln!(
+                        "[WARNING] Could not open directory fd for {}: {}",
+                        canonical.display(),
+                        e
+                    );
+                    drop(new_fd);
+                    continue;
+                }
+            };
+
+            let gi = self.fs_groups.len();
+            self.fs_groups.push(FsGroup {
+                dev_id,
+                is_fs_mark,
+                fan_fd: new_fd,
+                mount_fd,
+                ref_count: 1,
+            });
+            fs_group_devs.push(dev_id);
+            self.path_to_group.insert(self.paths[i].clone(), gi);
         }
 
-        // Collect metadata before consuming fan_groups
-        let group_fds: Vec<i32> = fan_groups.iter().map(|g| g.fd.as_raw_fd()).collect();
-        let fan_group_count = fan_groups.len();
+        let fan_group_count = self.fs_groups.len();
 
         if fan_group_count > 0 {
-            // Managed fds for live-add reuse via socket commands
-            for group in fan_groups {
-                self.fan_fds.push(group.fd);
-            }
-
-            // Open directory fds for open_by_handle_at to resolve file handles.
-            for canonical in &self.canonical_paths {
-                if let Ok(raw) = nix::fcntl::open(
-                    canonical,
-                    nix::fcntl::OFlag::O_DIRECTORY,
-                    nix::sys::stat::Mode::empty(),
-                ) {
-                    // SAFETY: raw fd just opened successfully, OwnedFd takes ownership
-                    self.mount_fds.push(unsafe { OwnedFd::from_raw_fd(raw) });
-                }
-            }
-
             // Pre-cache directory handles (shared across fds)
             for (i, canonical) in self.canonical_paths.iter().enumerate() {
                 if canonical.is_dir() {
@@ -606,29 +430,50 @@ impl Monitor {
             );
         }
 
-        // Spawn one reader task per fan_fd. Events are sent through an
-        // unbounded mpsc channel to the main loop for processing.
+        // Spawn one reader task per FsGroup (one per filesystem).
+        // Events are sent through an unbounded mpsc channel to the main loop.
         let (event_tx, mut event_rx) =
             tokio::sync::mpsc::unbounded_channel::<Vec<FidEvent>>();
-        let mount_fds = Arc::new(std::mem::take(&mut self.mount_fds));
         let dir_cache = Arc::new(std::mem::take(&mut self.dir_cache));
         let buf_size = self.buffer_size;
 
-        // Managed for live-add (add_path may need to spawn reader tasks)
+        // Shared state for live-add (add_path may need to spawn reader tasks)
         self.event_tx = Some(event_tx.clone());
         self.shared_dir_cache = Some(Arc::clone(&dir_cache));
 
-        for &fd in &group_fds {
+        for gi in 0..self.fs_groups.len() {
+            // Duplicate both fds so reader task owns independent copies
+            let dup_fan_raw = unsafe { libc::dup(self.fs_groups[gi].fan_fd.as_raw_fd()) };
+            if dup_fan_raw < 0 {
+                eprintln!(
+                    "[ERROR] Failed to dup fanotify fd {}: {}",
+                    self.fs_groups[gi].fan_fd.as_raw_fd(),
+                    std::io::Error::last_os_error()
+                );
+                continue;
+            }
+            let dup_mount_raw = unsafe { libc::dup(self.fs_groups[gi].mount_fd.as_raw_fd()) };
+            if dup_mount_raw < 0 {
+                eprintln!(
+                    "[ERROR] Failed to dup mount fd {}: {}",
+                    self.fs_groups[gi].mount_fd.as_raw_fd(),
+                    std::io::Error::last_os_error()
+                );
+                unsafe { libc::close(dup_fan_raw); }
+                continue;
+            }
+            // SAFETY: dup returned valid new fds, wrap them in OwnedFd
+            let owned_fan_fd = unsafe { OwnedFd::from_raw_fd(dup_fan_raw) };
+            let owned_mount_fd = unsafe { OwnedFd::from_raw_fd(dup_mount_raw) };
+            let mfds = Arc::new(vec![owned_mount_fd]);
             let tx = event_tx.clone();
-            let mfds = Arc::clone(&mount_fds);
             let dc = Arc::clone(&dir_cache);
+            let raw_fd = dup_fan_raw;
             tokio::spawn(async move {
-                // SAFETY: fd is a fanotify fd owned by this task from now on
-                let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
-                let afd = match AsyncFd::new(owned_fd) {
+                let afd = match AsyncFd::new(owned_fan_fd) {
                     Ok(a) => a,
                     Err(e) => {
-                        eprintln!("[ERROR] AsyncFd for fd {}: {}", fd, e);
+                        eprintln!("[ERROR] AsyncFd for fd {}: {}", raw_fd, e);
                         return;
                     }
                 };
@@ -638,15 +483,14 @@ impl Monitor {
                     let mut guard = match result {
                         Ok(g) => g,
                         Err(e) => {
-                            eprintln!("[ERROR] fd {} readable: {}", fd, e);
+                            eprintln!("[ERROR] fd {} readable: {}", raw_fd, e);
                             break;
                         }
                     };
-                    // Use the OwnedFd held by AsyncFd (not a temporary — that would close the fd!)
                     let events =
                         read_fid_events_dashmap(afd.get_ref(), &mfds, dc.as_ref(), &mut buf);
                     if !events.is_empty() && tx.send(events).is_err() {
-                        break; // receiver dropped (shutting down)
+                        break;
                     }
                     guard.clear_ready();
                 }
@@ -693,11 +537,9 @@ impl Monitor {
                                     types: opts.and_then(|o| o.event_types.as_ref().map(
                                         |v| v.iter().map(|t| t.to_string()).collect()
                                     )),
-                                    min_size: opts.and_then(|o| o.min_size.map(|s| s.to_string())),
-                                    exclude: opts.and_then(|o| o.exclude_regex.as_ref().map(|r| r.as_str().to_string())),
+                                    size: opts.and_then(|o| o.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes)))),
+                                    exclude: opts.and_then(|o| o.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()])),
                                     exclude_cmd: None,
-                                    only_cmd: None,
-                                    all_events: opts.map(|o| o.all_events),
                                 };
                                 if let Err(e) = self.remove_path(path) {
                                     eprintln!("[WARNING] Failed to remove deleted path '{}': {e}", path.display());
@@ -711,7 +553,7 @@ impl Monitor {
                         for event_type in event_types {
                             let event = self.build_file_event(raw, event_type, matched_path.as_deref());
 
-                            if !self.is_path_in_scope(&event.path, &self.canonical_paths) {
+                            if !self.is_path_in_scope(&event.path) {
                                 continue;
                             }
 
@@ -850,58 +692,15 @@ impl Monitor {
         }
     }
 
+    /// Find the PathOptions matching a given event path.
     fn get_matching_path_options(&self, path: &Path) -> Option<&PathOptions> {
-        for watched in &self.paths {
-            if let Some(opts) = self.path_options.get(watched) {
-                if opts.recursive {
-                    if path.starts_with(watched) {
-                        return Some(opts);
-                    }
-                } else if path == watched.as_path() || path.parent() == Some(watched.as_path()) {
-                    return Some(opts);
-                }
-            }
-        }
-        // Fallback: match against canonical paths (handles symlinks/bind-mounts)
-        for (i, canonical) in self.canonical_paths.iter().enumerate() {
-            if let Some(orig) = self.paths.get(i)
-                && let Some(opts) = self.path_options.get(orig)
-            {
-                if opts.recursive {
-                    if path.starts_with(canonical) {
-                        return Some(opts);
-                    }
-                } else if path == canonical.as_path() || path.parent() == Some(canonical.as_path())
-                {
-                    return Some(opts);
-                }
-            }
-        }
-        None
+        filters::get_matching_path_options(&self.paths, &self.path_options, &self.canonical_paths, path)
     }
 
-    /// Try to add a path to an existing fan_fd via FAN_MARK_FILESYSTEM.
-    /// Returns Ok(fd) on success, Err(()) if no fd accepts this path.
-    fn try_mark_on_existing(fds: &[OwnedFd], mask: u64, path: &Path) -> std::result::Result<i32, ()> {
-        for fd in fds {
-            match fanotify_mark(fd, FAN_MARK_ADD | FAN_MARK_FILESYSTEM, mask, AT_FDCWD, path) {
-                Ok(()) => return Ok(fd.as_raw_fd()),
-                Err(FanotifyError::Mark(code)) if code == libc::EXDEV => continue,
-                Err(e) => {
-                    eprintln!(
-                        "[WARNING] Cannot monitor {} on fd {}: {:#}",
-                        path.display(),
-                        fd.as_raw_fd(),
-                        e
-                    );
-                }
-            }
-        }
-        Err(())
-    }
-
-    /// Spawn a tokio reader task for a newly created fanotify fd.
-    fn spawn_fd_reader(&mut self, fd: i32) {
+    /// Spawn a tokio reader task for `group_idx` in `fs_groups`.
+    /// Both the fanotify fd and mount fd are duplicated so the reader task
+    /// owns independent copies, avoiding double-close with Monitor's OwnedFd.
+    fn spawn_fd_reader(&mut self, group_idx: usize) {
         let tx = match self.event_tx.as_ref() {
             Some(t) => t.clone(),
             None => {
@@ -916,16 +715,41 @@ impl Monitor {
                 return;
             }
         };
-        let mfds = std::mem::take(&mut self.mount_fds);
-        let mfds = Arc::new(mfds);
         let buf_size = self.buffer_size;
+        let group = &self.fs_groups[group_idx];
+
+        // Duplicate fds so the reader task owns independent copies
+        let dup_fan_raw = unsafe { libc::dup(group.fan_fd.as_raw_fd()) };
+        if dup_fan_raw < 0 {
+            eprintln!(
+                "[ERROR] Failed to dup fanotify fd {}: {}",
+                group.fan_fd.as_raw_fd(),
+                std::io::Error::last_os_error()
+            );
+            return;
+        }
+        let dup_mount_raw = unsafe { libc::dup(group.mount_fd.as_raw_fd()) };
+        if dup_mount_raw < 0 {
+            eprintln!(
+                "[ERROR] Failed to dup mount fd {}: {}",
+                group.mount_fd.as_raw_fd(),
+                std::io::Error::last_os_error()
+            );
+            unsafe { libc::close(dup_fan_raw); }
+            return;
+        }
+
+        // SAFETY: dup returned valid new fds, wrap in OwnedFd
+        let owned_fan_fd = unsafe { OwnedFd::from_raw_fd(dup_fan_raw) };
+        let owned_mount_fd = unsafe { OwnedFd::from_raw_fd(dup_mount_raw) };
+        let mfds = Arc::new(vec![owned_mount_fd]);
+        let raw_fd = dup_fan_raw;
+
         tokio::spawn(async move {
-            // SAFETY: fd is a fanotify fd owned by this task from now on
-            let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
-            let afd = match AsyncFd::new(owned_fd) {
+            let afd = match AsyncFd::new(owned_fan_fd) {
                 Ok(a) => a,
                 Err(e) => {
-                    eprintln!("[ERROR] AsyncFd for fd {}: {}", fd, e);
+                    eprintln!("[ERROR] AsyncFd for fd {}: {}", raw_fd, e);
                     return;
                 }
             };
@@ -935,11 +759,10 @@ impl Monitor {
                 let mut guard = match result {
                     Ok(g) => g,
                     Err(e) => {
-                        eprintln!("[ERROR] fd {} readable: {}", fd, e);
+                        eprintln!("[ERROR] fd {} readable: {}", raw_fd, e);
                         break;
                     }
                 };
-                // Use the OwnedFd held by AsyncFd (not a temporary — that would close the fd!)
                 let events =
                     read_fid_events_dashmap(afd.get_ref(), &mfds, dc.as_ref(), &mut buf);
                 if !events.is_empty() && tx.send(events).is_err() {
@@ -947,14 +770,13 @@ impl Monitor {
                 }
                 guard.clear_ready();
             }
-            // OwnedFd dropped here → fd auto-closed
         });
     }
 
     pub fn add_path(&mut self, entry: &PathEntry) -> Result<()> {
         // Normalize path: expand tilde + resolve symlinks/../.
         // Managed the shortest canonical form so all comparisons work consistently.
-        let path = resolve_recursion_check(&entry.path);
+        let path = filters::resolve_recursion_check(&entry.path);
 
         if self.path_options.contains_key(&path) {
             bail!("Path already being monitored: {}", path.display());
@@ -967,7 +789,7 @@ impl Monitor {
             bail!(
                 "Cannot monitor '{}': log directory '{}' is inside this path — \
                  every log write would trigger a new event, causing infinite recursion.\n\
-                 Tip: exclude the log directory with --exclude or use a different logging.dir",
+                 Tip: exclude the log directory with --exclude or use a different logging.path",
                 path.display(),
                 log_dir.display()
             );
@@ -991,147 +813,155 @@ impl Monitor {
                 .filter_map(|s| s.parse::<EventType>().ok())
                 .collect()
         });
-        let min_size = entry.min_size.as_ref().map(|s| parse_size(s)).transpose()?;
-        let exclude_regex = entry
-            .exclude
-            .as_ref()
-            .map(|p| {
-                let escaped = regex::escape(p);
-                let pattern = escaped.replace("\\*", ".*");
-                regex::Regex::new(&pattern).with_context(|| "invalid exclude pattern")
-            })
-            .transpose()?;
-        let exclude_cmd_regex = entry
-            .exclude_cmd
-            .as_ref()
-            .map(|p| {
-                let pattern = p.replace("*", ".*");
-                regex::Regex::new(&pattern).with_context(|| "invalid --exclude-cmd pattern")
-            })
-            .transpose()?;
-        let only_cmd_regex = entry
-            .only_cmd
-            .as_ref()
-            .map(|p| {
-                let pattern = p.replace("*", ".*");
-                regex::Regex::new(&pattern).with_context(|| "invalid --only-cmd pattern")
-            })
-            .transpose()?;
+        let size_filter = entry.size.as_ref().map(|s| parse_size_filter(s)).transpose()?;
+        let (exclude_regex, exclude_invert) = filters::build_exclude_regex(entry.exclude.as_deref(), "exclude")?;
+        let (exclude_cmd_regex, exclude_cmd_invert) = filters::build_exclude_regex(entry.exclude_cmd.as_deref(), "--exclude-cmd")?;
         let recursive = entry.recursive.unwrap_or(false);
-        let all_events = entry.all_events.unwrap_or(false);
-
         let opts = PathOptions {
-            min_size,
+            size_filter,
             event_types,
             exclude_regex,
+            exclude_invert,
             exclude_cmd_regex,
-            only_cmd_regex,
+            exclude_cmd_invert,
             recursive,
-            all_events,
         };
 
-        let path_mask = if all_events {
-            ALL_EVENT_MASK
+        let path_mask = path_mask_from_options(&opts);
+
+        println!(
+            "Added path: {} (recursive={})",
+            path.display(),
+            recursive,
+        );
+
+        // Determine filesystem device ID for dedup lookup
+        let dev_id = std::fs::metadata(&canonical)
+            .ok()
+            .map(|m| std::os::linux::fs::MetadataExt::st_dev(&m))
+            .unwrap_or(0);
+
+        // Find existing FsGroup for this filesystem
+        let existing_idx = self.fs_groups.iter().position(|g| g.dev_id == dev_id);
+
+        let group_idx = if let Some(idx) = existing_idx {
+            // Reuse existing group — just add inode mark if needed
+            if !self.fs_groups[idx].is_fs_mark {
+                let fan_fd = &self.fs_groups[idx].fan_fd;
+                if let Err(e) = mark_directory(fan_fd, path_mask, &canonical) {
+                    eprintln!(
+                        "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
+                        canonical.display(),
+                        fan_fd.as_raw_fd(),
+                        e
+                    );
+                } else {
+                    if recursive && canonical.is_dir() {
+                        mark_recursive(fan_fd, path_mask, &canonical);
+                    }
+                }
+            }
+            self.fs_groups[idx].ref_count += 1;
+            eprintln!(
+                "[INFO] Monitoring {} on existing fd {}",
+                canonical.display(),
+                self.fs_groups[idx].fan_fd.as_raw_fd()
+            );
+            idx
         } else {
-            DEFAULT_EVENT_MASK
-        };
+            // New filesystem — create fanotify fd + mount fd
+            let new_fd = fanotify_init(
+                FAN_CLOEXEC
+                    | FAN_NONBLOCK
+                    | FAN_CLASS_NOTIF
+                    | FAN_REPORT_FID
+                    | FAN_REPORT_DIR_FID
+                    | FAN_REPORT_NAME,
+                (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
+            )
+            .with_context(|| {
+                format!(
+                    "fanotify_init failed for {} (requires Linux 5.9+ kernel)",
+                    canonical.display()
+                )
+            })?;
 
-        // Find or create a fanotify fd for this path's filesystem.
-        // Try each existing fd first (same filesystem → OK, EXDEV → try next).
-        let (fan_fd, is_new_fd) =
-            match Self::try_mark_on_existing(&self.fan_fds, path_mask, &canonical) {
-                Ok(fd) => (fd, false),
-                Err(()) => {
-                    // No existing fd works — create a new one
-                    let new_fd = fanotify_init(
-                        FAN_CLOEXEC
-                            | FAN_NONBLOCK
-                            | FAN_CLASS_NOTIF
-                            | FAN_REPORT_FID
-                            | FAN_REPORT_DIR_FID
-                            | FAN_REPORT_NAME,
-                        (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
-                    )
-                    .with_context(|| {
-                        format!(
-                            "fanotify_init failed for {} (requires Linux 5.9+ kernel)",
-                            canonical.display()
-                        )
-                    })?;
-                    let fd = new_fd.as_raw_fd();
-                    self.fan_fds.push(new_fd);
-
-                    // Try filesystem mark on the new fd
-                    match fanotify_mark(
-                        &self.fan_fds.last().unwrap(),
-                        FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
-                        path_mask,
-                        AT_FDCWD,
-                        &canonical,
-                    ) {
+            let is_fs_mark = match fanotify_mark(
+                &new_fd,
+                FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
+                path_mask,
+                AT_FDCWD,
+                &canonical,
+            ) {
+                Ok(()) => {
+                    eprintln!(
+                        "[INFO] Monitoring {} (fs mark) on new fd {}",
+                        canonical.display(),
+                        new_fd.as_raw_fd()
+                    );
+                    true
+                }
+                Err(FanotifyError::Mark(code)) if code == libc::EXDEV => {
+                    // Fall back to inode mark
+                    match mark_directory(&new_fd, path_mask, &canonical) {
                         Ok(()) => {
                             eprintln!(
-                                "[INFO] Monitoring {} (fs mark) on new fd {}",
+                                "[INFO] Monitoring {} (inode mark) on new fd {}",
                                 canonical.display(),
-                                fd
+                                new_fd.as_raw_fd()
                             );
-                        }
-                        Err(FanotifyError::Mark(code)) if code == libc::EXDEV => {
-                            // Fall back to inode mark
-                            let last_fd = &self.fan_fds[self.fan_fds.len() - 1];
-                            if let Err(e) = mark_directory(last_fd, path_mask, &canonical) {
-                                eprintln!(
-                                    "[WARNING] Cannot monitor {} (inode mark): {:#}",
-                                    canonical.display(),
-                                    e
-                                );
-                            } else {
-                                eprintln!(
-                                    "[INFO] Monitoring {} (inode mark) on new fd {}",
-                                    canonical.display(),
-                                    fd
-                                );
-                                if recursive && canonical.is_dir() {
-                                    let last_fd = &self.fan_fds[self.fan_fds.len() - 1];
-                                    mark_recursive(last_fd, path_mask, &canonical);
-                                }
+                            if recursive && canonical.is_dir() {
+                                mark_recursive(&new_fd, path_mask, &canonical);
                             }
+                            false
                         }
                         Err(e) => {
-                            eprintln!("[WARNING] Cannot monitor {}: {:#}", canonical.display(), e);
+                            eprintln!(
+                                "[WARNING] Cannot monitor {} (inode mark): {:#}",
+                                canonical.display(),
+                                e
+                            );
+                            drop(new_fd);
+                            bail!("Failed to mark {}: {:#}", canonical.display(), e);
                         }
                     }
-                    (fd, true)
+                }
+                Err(e) => {
+                    eprintln!("[WARNING] Cannot monitor {}: {:#}", canonical.display(), e);
+                    drop(new_fd);
+                    bail!("Failed to mark {}: {:#}", canonical.display(), e);
                 }
             };
 
-        // Open directory fd for handle resolution BEFORE spawning reader,
-        // so the new reader task can resolve file handles for this path.
-        if let Ok(raw) = nix::fcntl::open(
-            canonical.as_path(),
-            nix::fcntl::OFlag::O_DIRECTORY,
-            nix::sys::stat::Mode::empty(),
-        ) {
-            // SAFETY: raw fd just opened successfully, OwnedFd takes ownership
-            self.mount_fds.push(unsafe { OwnedFd::from_raw_fd(raw) });
-        }
+            // Open directory fd for handle resolution
+            let mount_fd_raw = nix::fcntl::open(
+                &canonical,
+                nix::fcntl::OFlag::O_DIRECTORY,
+                nix::sys::stat::Mode::empty(),
+            )?;
+            let mount_fd = unsafe { OwnedFd::from_raw_fd(mount_fd_raw) };
 
-        // Record which fd this path is on (for fast remove_path lookup)
-        let fd_idx = if is_new_fd {
-            self.fan_fds.len() - 1
-        } else {
-            self.fan_fds.iter().position(|f| f.as_raw_fd() == fan_fd)
-                .expect("fan_fd not found in fan_fds")
+            let idx = self.fs_groups.len();
+            self.fs_groups.push(FsGroup {
+                dev_id,
+                is_fs_mark,
+                fan_fd: new_fd,
+                mount_fd,
+                ref_count: 1,
+            });
+
+            // Spawn reader for this new group
+            self.spawn_fd_reader(idx);
+            idx
         };
-        self.path_fd.insert(path.clone(), fd_idx);
 
         // Update path tracking
+        self.path_to_group.insert(path.clone(), group_idx);
         self.paths.push(path.clone());
         self.canonical_paths.push(canonical.clone());
         self.path_options.insert(path.clone(), opts);
 
-        // Pre-cache directory handles in the shared cache (used by all reader tasks)
-        // before spawning the reader, so second-pass path recovery works.
+        // Pre-cache directory handles in the shared cache
         if canonical.is_dir()
             && let Some(ref cache) = self.shared_dir_cache
         {
@@ -1142,23 +972,6 @@ impl Monitor {
             }
         }
 
-        // Spawn reader task + confirm monitoring (after mount_fd + cache are ready)
-        if is_new_fd {
-            self.spawn_fd_reader(fan_fd);
-        } else {
-            eprintln!(
-                "[INFO] Monitoring {} on existing fd {}",
-                canonical.display(),
-                fan_fd
-            );
-        }
-
-        println!(
-            "Added path: {} (recursive={}, all_events={})",
-            path.display(),
-            recursive,
-            all_events
-        );
         Ok(())
     }
 
@@ -1174,15 +987,12 @@ impl Monitor {
             .path_options
             .get(path)
             .ok_or_else(|| anyhow::anyhow!("No options for path: {}", path.display()))?;
-        let path_mask = if opts.all_events {
-            ALL_EVENT_MASK
-        } else {
-            DEFAULT_EVENT_MASK
-        };
+        let path_mask = path_mask_from_options(opts);
 
-        // Look up which fd this path is on (recorded by add_path).
-        let fan_fd = self.path_fd.remove(path).and_then(|idx| self.fan_fds.get(idx));
-        if let Some(fan_fd) = fan_fd {
+        // Look up which FsGroup this path belongs to
+        if let Some(&gi) = self.path_to_group.get(path) {
+            // Remove fanotify mark
+            let fan_fd = &self.fs_groups[gi].fan_fd;
             let _ = fanotify_mark(
                 fan_fd,
                 FAN_MARK_REMOVE | FAN_MARK_FILESYSTEM,
@@ -1191,16 +1001,24 @@ impl Monitor {
                 canonical,
             );
             let _ = fanotify_mark(fan_fd, FAN_MARK_REMOVE, path_mask, AT_FDCWD, canonical);
+
+            // Decrement ref_count; if zero, drop the entire FsGroup (close both fds)
+            self.fs_groups[gi].ref_count = self.fs_groups[gi].ref_count.saturating_sub(1);
+            if self.fs_groups[gi].ref_count == 0 {
+                self.fs_groups.remove(gi);
+                // Shift indices in path_to_group for groups after the removed one
+                self.path_to_group.iter_mut().for_each(|(_, idx)| {
+                    if *idx > gi {
+                        *idx -= 1;
+                    }
+                });
+            }
         }
 
         self.paths.remove(pos);
         self.canonical_paths.remove(pos);
         self.path_options.remove(path);
-
-        // Remove the matching mount fd (OwnedFd dropped → auto-closed)
-        if pos < self.mount_fds.len() {
-            self.mount_fds.remove(pos);
-        }
+        self.path_to_group.remove(path);
 
         println!("Removed path: {}", path.display());
         Ok(())
@@ -1224,11 +1042,9 @@ impl Monitor {
                     path,
                     recursive: cmd.recursive,
                     types: cmd.types.clone(),
-                    min_size: cmd.min_size.clone(),
+                    size: cmd.size.clone(),
                     exclude: cmd.exclude.clone(),
                     exclude_cmd: cmd.exclude_cmd.clone(),
-                    only_cmd: cmd.only_cmd.clone(),
-                    all_events: cmd.all_events,
                 };
                 match self.add_path(&entry) {
                     Ok(()) => {
@@ -1281,13 +1097,11 @@ impl Monitor {
                                     .as_ref()
                                     .map(|v| v.iter().map(|t| t.to_string()).collect())
                             }),
-                            min_size: opts.and_then(|o| o.min_size.map(|s| s.to_string())),
+                            size: opts.and_then(|o| o.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes)))),
                             exclude: opts.and_then(|o| {
-                                o.exclude_regex.as_ref().map(|r| r.as_str().to_string())
+                                o.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()])
                             }),
                             exclude_cmd: None,
-                            only_cmd: None,
-                            all_events: opts.map(|o| o.all_events),
                         }
                     })
                     .collect();
@@ -1401,68 +1215,14 @@ impl Monitor {
     }
 
     fn should_output(&self, event: &FileEvent) -> bool {
-        let opts = match self.get_matching_path_options(&event.path) {
-            Some(o) => o,
-            None => return true,
-        };
-
-        if let Some(ref types) = opts.event_types
-            && !types.contains(&event.event_type)
-        {
-            return false;
-        }
-
-        if let Some(min) = opts.min_size
-            && event.file_size < min as u64
-        {
-            return false;
-        }
-
-        if let Some(ref regex) = opts.exclude_regex
-            && regex.is_match(&event.path.to_string_lossy())
-        {
-            return false;
-        }
-
-        if let Some(ref regex) = opts.exclude_cmd_regex
-            && regex.is_match(&event.cmd)
-        {
-            return false;
-        }
-
-        if let Some(ref regex) = opts.only_cmd_regex
-            && !regex.is_match(&event.cmd)
-        {
-            return false;
-        }
-
-        true
+        let opts = self.get_matching_path_options(&event.path);
+        filters::should_output(opts, event)
     }
 
     /// Find the configured path that matches a given event path.
     /// Checks configured paths (direct or recursive prefix), then canonical paths.
     fn matching_path(&self, path: &Path) -> Option<&PathBuf> {
-        // Direct match first: find the configured PathBuf that matches this path
-        for watched in &self.paths {
-            if watched == path && self.path_options.contains_key(watched) {
-                return Some(watched);
-            }
-        }
-        // Recursive match: find watched path that is a prefix of event path
-        for watched in self.path_options.keys() {
-            if path.starts_with(watched) {
-                return Some(watched);
-            }
-        }
-        // Fallback: match against canonical paths (handles symlinks/bind-mounts)
-        for (i, canonical) in self.canonical_paths.iter().enumerate() {
-            if (path == canonical.as_path() || path.starts_with(canonical))
-                && let Some(orig) = self.paths.get(i)
-            {
-                return Some(orig);
-            }
-        }
-        None
+        filters::matching_path(&self.paths, &self.path_options, &self.canonical_paths, path)
     }
 
     /// Write an event to its path-based log file.
@@ -1497,46 +1257,8 @@ impl Monitor {
 
     /// Check if path is within monitoring scope
     /// Uses per-path recursive setting from path_options
-    fn is_path_in_scope(&self, path: &Path, canonical_paths: &[PathBuf]) -> bool {
-        for (i, watched) in canonical_paths.iter().enumerate() {
-            let recursive = self
-                .paths
-                .get(i)
-                .and_then(|p| self.path_options.get(p))
-                .map(|o| o.recursive)
-                .unwrap_or(false);
-            if recursive {
-                if path.starts_with(watched) {
-                    return true;
-                }
-            } else if path == watched.as_path() || path.parent() == Some(watched.as_path()) {
-                return true;
-            }
-        }
-        false
-    }
-}
-
-// ---- Directory marking (used by inode mark fallback mode) ----
-
-/// Mark a single directory
-fn mark_directory(fan_fd: &OwnedFd, mask: u64, path: &Path) -> Result<()> {
-    fanotify_mark(fan_fd, FAN_MARK_ADD, mask, AT_FDCWD, path)
-        .with_context(|| format!("fanotify_mark failed: {}", path.display()))
-}
-
-/// Recursively traverse and mark all subdirectories (ignore errors, e.g., permission denied)
-fn mark_recursive(fan_fd: &OwnedFd, mask: u64, dir: &Path) {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            let _ = fanotify_mark(fan_fd, FAN_MARK_ADD, mask, AT_FDCWD, path.as_path());
-            mark_recursive(fan_fd, mask, &path);
-        }
+    fn is_path_in_scope(&self, path: &Path) -> bool {
+        filters::is_path_in_scope(&self.paths, &self.path_options, &self.canonical_paths, path)
     }
 }
 
@@ -1545,6 +1267,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use fanotify_fid::consts::{FAN_CREATE, FAN_DELETE, FAN_EVENT_ON_CHILD, FAN_MODIFY, FAN_ONDIR};
+    use crate::utils::{SizeFilter, SizeOp};
 
     // ---- mask_to_event_types ----
 
@@ -1575,14 +1298,14 @@ mod tests {
     fn test_mask_to_event_types_all() {
         use fanotify_fid::consts::{
             FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE,
-            FAN_DELETE_SELF, FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO,
+            FAN_DELETE_SELF, FAN_FS_ERROR, FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO,
             FAN_OPEN, FAN_OPEN_EXEC,
         };
         let mask = FAN_ACCESS | FAN_MODIFY | FAN_CLOSE_WRITE | FAN_CLOSE_NOWRITE
             | FAN_OPEN | FAN_OPEN_EXEC | FAN_ATTRIB | FAN_CREATE | FAN_DELETE
-            | FAN_DELETE_SELF | FAN_MOVED_FROM | FAN_MOVED_TO | FAN_MOVE_SELF;
+            | FAN_DELETE_SELF | FAN_FS_ERROR | FAN_MOVED_FROM | FAN_MOVED_TO | FAN_MOVE_SELF;
         let types = mask_to_event_types(mask);
-        assert_eq!(types.len(), 13);
+        assert_eq!(types.len(), 14);
     }
 
     #[test]
@@ -1596,35 +1319,31 @@ mod tests {
     // ---- Monitor tests ----
 
     fn options(
-        min_size: Option<i64>,
+        size_filter: Option<SizeFilter>,
         event_types: Option<Vec<EventType>>,
         exclude: Option<&str>,
         recursive: bool,
-        all_events: bool,
     ) -> PathOptions {
         let exclude_regex = exclude.map(|p| {
-            let escaped = regex::escape(p);
-            let pattern = escaped.replace("\\*", ".*");
-            regex::Regex::new(&pattern).expect("invalid exclude pattern")
+            regex::Regex::new(p).expect("invalid exclude pattern")
         });
         PathOptions {
-            min_size,
+            size_filter,
             event_types,
             exclude_regex,
+            exclude_invert: false,
             exclude_cmd_regex: None,
-            only_cmd_regex: None,
+            exclude_cmd_invert: false,
             recursive,
-            all_events,
         }
     }
 
     fn make_monitor(
         paths: Vec<&str>,
-        min_size: Option<i64>,
+        size_filter: Option<SizeFilter>,
         event_types: Option<Vec<EventType>>,
         exclude: Option<&str>,
         recursive: bool,
-        all_events: bool,
     ) -> Monitor {
         Monitor::new(
             paths
@@ -1633,11 +1352,10 @@ mod tests {
                     (
                         PathBuf::from(p),
                         options(
-                            min_size,
+                            size_filter,
                             event_types.clone(),
                             exclude,
                             recursive,
-                            all_events,
                         ),
                     )
                 })
@@ -1652,7 +1370,7 @@ mod tests {
 
     #[test]
     fn test_should_output_no_filters() {
-        let m = make_monitor(vec!["/tmp"], None, None, None, false, false);
+        let m = make_monitor(vec!["/tmp"], None, None, None, false);
         let event = make_event("/tmp/test.txt", EventType::Create, 1000, 1024);
         assert!(m.should_output(&event));
     }
@@ -1665,7 +1383,6 @@ mod tests {
             Some(vec![EventType::Create, EventType::Delete]),
             None,
             false,
-            false,
         );
         assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, 0)));
         assert!(m.should_output(&make_event("/tmp/a", EventType::Delete, 1, 0)));
@@ -1673,22 +1390,22 @@ mod tests {
     }
 
     #[test]
-    fn test_should_output_min_size_filter() {
-        let m = make_monitor(vec!["/tmp"], Some(1000), None, None, false, false);
+    fn test_should_output_size_filter() {
+        let m = make_monitor(vec!["/tmp"], Some(SizeFilter { op: SizeOp::Ge, bytes: 1000 }), None, None, false);
         assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, 2000)));
         assert!(!m.should_output(&make_event("/tmp/a", EventType::Create, 1, 500)));
     }
 
     #[test]
     fn test_should_output_exclude_pattern() {
-        let m = make_monitor(vec!["/tmp"], None, None, Some("*.tmp"), false, false);
+        let m = make_monitor(vec!["/tmp"], None, None, Some(".*\\.tmp$"), false);
         assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/foo.tmp", EventType::Delete, 1, 0)));
     }
 
     #[test]
     fn test_should_output_exclude_exact_pattern() {
-        let m = make_monitor(vec!["/tmp"], None, None, Some("test.tmp"), false, false);
+        let m = make_monitor(vec!["/tmp"], None, None, Some("test\\.tmp$"), false);
         assert!(m.should_output(&make_event("/tmp/test.txt", EventType::Create, 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
         assert!(m.should_output(&make_event("/tmp/foo.tmp", EventType::Delete, 1, 0)));
@@ -1699,10 +1416,9 @@ mod tests {
     fn test_should_output_combined_filters() {
         let m = make_monitor(
             vec!["/tmp"],
-            Some(100),
+            Some(SizeFilter { op: SizeOp::Ge, bytes: 100 }),
             Some(vec![EventType::Create]),
-            Some("*.log"),
-            false,
+            Some(".*\\.log$"),
             false,
         );
         assert!(m.should_output(&make_event("/tmp/data", EventType::Create, 1, 200)));
@@ -1713,32 +1429,91 @@ mod tests {
 
     #[test]
     fn test_is_path_in_scope_recursive() {
-        let m = make_monitor(vec!["/tmp"], None, None, None, true, false);
-        let watched = vec![PathBuf::from("/tmp")];
-        assert!(m.is_path_in_scope(Path::new("/tmp"), &watched));
-        assert!(m.is_path_in_scope(Path::new("/tmp/sub"), &watched));
-        assert!(m.is_path_in_scope(Path::new("/tmp/sub/deep/file.txt"), &watched));
-        assert!(!m.is_path_in_scope(Path::new("/var/log"), &watched));
-        assert!(!m.is_path_in_scope(Path::new("/tmpfile"), &watched));
+        let m = make_monitor(vec!["/tmp"], None, None, None, true);
+        assert!(m.is_path_in_scope(Path::new("/tmp")));
+        assert!(m.is_path_in_scope(Path::new("/tmp/sub")));
+        assert!(m.is_path_in_scope(Path::new("/tmp/sub/deep/file.txt")));
+        assert!(!m.is_path_in_scope(Path::new("/var/log")));
+        assert!(!m.is_path_in_scope(Path::new("/tmpfile")));
     }
 
     #[test]
     fn test_is_path_in_scope_non_recursive() {
-        let m = make_monitor(vec!["/tmp"], None, None, None, false, false);
-        let watched = vec![PathBuf::from("/tmp")];
-        assert!(m.is_path_in_scope(Path::new("/tmp"), &watched));
-        assert!(m.is_path_in_scope(Path::new("/tmp/file.txt"), &watched));
-        assert!(!m.is_path_in_scope(Path::new("/tmp/sub/file.txt"), &watched));
-        assert!(!m.is_path_in_scope(Path::new("/var/log"), &watched));
+        let m = make_monitor(vec!["/tmp"], None, None, None, false);
+        assert!(m.is_path_in_scope(Path::new("/tmp")));
+        assert!(m.is_path_in_scope(Path::new("/tmp/file.txt")));
+        assert!(!m.is_path_in_scope(Path::new("/tmp/sub/file.txt")));
+        assert!(!m.is_path_in_scope(Path::new("/var/log")));
     }
 
     #[test]
     fn test_is_path_in_scope_multiple_paths() {
-        let m = make_monitor(vec!["/tmp", "/var/log"], None, None, None, true, false);
-        let watched = vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")];
-        assert!(m.is_path_in_scope(Path::new("/tmp/file"), &watched));
-        assert!(m.is_path_in_scope(Path::new("/var/log/syslog"), &watched));
-        assert!(!m.is_path_in_scope(Path::new("/etc/passwd"), &watched));
+        let m = make_monitor(vec!["/tmp", "/var/log"], None, None, None, true);
+        assert!(m.is_path_in_scope(Path::new("/tmp/file")));
+        assert!(m.is_path_in_scope(Path::new("/var/log/syslog")));
+        assert!(!m.is_path_in_scope(Path::new("/etc/passwd")));
+    }
+
+    #[test]
+    fn test_should_output_exclude_pipe_multiple() {
+        // --exclude '.*\.tmp$|.*\.log$' → excludes both .tmp and .log
+        let m = make_monitor_exclude(Some(".*\\.tmp$|.*\\.log$"), None, false, false);
+        assert!(!m.should_output(&make_event("/tmp/a.tmp", EventType::Create, 1, 0)));
+        assert!(!m.should_output(&make_event("/tmp/a.log", EventType::Create, 1, 0)));
+        assert!(m.should_output(&make_event("/tmp/a.txt", EventType::Create, 1, 0)));
+    }
+
+    #[test]
+    fn test_should_output_exclude_invert() {
+        // --exclude "!.*\.py$" → only .py files pass
+        let m = make_monitor_exclude(Some("!.*\\.py$"), None, false, false);
+        assert!(m.should_output(&make_event("/tmp/main.py", EventType::Create, 1, 0)));
+        assert!(!m.should_output(&make_event("/tmp/main.rs", EventType::Create, 1, 0)));
+        assert!(!m.should_output(&make_event("/tmp/a.txt", EventType::Create, 1, 0)));
+    }
+
+    #[test]
+    fn test_should_output_exclude_cmd_basic() {
+        // --exclude-cmd "rsync" → excludes rsync
+        let m = make_monitor_exclude(None, Some("rsync"), false, false);
+        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 1, 0, "rsync")));
+        assert!(m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 2, 0, "nginx")));
+    }
+
+    #[test]
+    fn test_should_output_exclude_cmd_pipe() {
+        // --exclude-cmd "rsync|apt" → excludes both
+        let m = make_monitor_exclude(None, Some("rsync|apt"), false, false);
+        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 1, 0, "rsync")));
+        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 2, 0, "apt")));
+        assert!(m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 3, 0, "nginx")));
+    }
+
+    #[test]
+    fn test_should_output_exclude_cmd_invert() {
+        // --exclude-cmd "!nginx" → only nginx passes
+        let m = make_monitor_exclude(None, Some("!nginx"), false, false);
+        assert!(m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 1, 0, "nginx")));
+        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 2, 0, "rsync")));
+        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 3, 0, "apt")));
+    }
+
+    #[test]
+    fn test_should_output_exclude_cmd_invert_multi() {
+        // --exclude-cmd "!nginx|python" → only nginx and python pass
+        let m = make_monitor_exclude(None, Some("!nginx|python"), false, false);
+        assert!(m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 1, 0, "nginx")));
+        assert!(m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 2, 0, "python")));
+        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 3, 0, "rsync")));
+    }
+
+    #[test]
+    fn test_should_output_exclude_and_exclude_cmd() {
+        // --exclude '.*\.tmp$' --exclude-cmd "rsync" → both filters
+        let m = make_monitor_exclude(Some(".*\\.tmp$"), Some("rsync"), false, false);
+        assert!(!m.should_output(&make_event_cmd("/tmp/a.tmp", EventType::Create, 1, 0, "vim")));
+        assert!(!m.should_output(&make_event_cmd("/tmp/a.txt", EventType::Create, 1, 0, "rsync")));
+        assert!(m.should_output(&make_event_cmd("/tmp/a.txt", EventType::Create, 2, 0, "vim")));
     }
 
     #[test]
@@ -1767,7 +1542,7 @@ mod tests {
 
     #[test]
     fn test_monitor_buffer_size_validation() {
-        let opts = options(None, None, None, false, false);
+        let opts = options(None, None, None, false);
 
         let result = Monitor::new(
             vec![(PathBuf::from("/tmp"), opts.clone())],
@@ -1802,19 +1577,14 @@ mod tests {
     #[test]
     fn test_add_path_and_remove_path() {
         let mut m = Monitor::new(vec![], None, None, None, None).unwrap();
-        // Open /dev/null as a dummy fd for testing (OwnedFd panics on from_raw_fd(-1))
-        let dummy = std::fs::File::open("/dev/null").unwrap();
-        m.fan_fds.push(dummy.into());
 
         let entry = PathEntry {
             path: PathBuf::from("/tmp/test_add"),
             recursive: Some(true),
             types: None,
-            min_size: None,
+            size: None,
             exclude: None,
             exclude_cmd: None,
-            only_cmd: None,
-            all_events: None,
         };
 
         // add_path on non-existent path → goes to pending_paths
@@ -1828,6 +1598,48 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// Build a Monitor with custom exclude/exclude_cmd patterns for testing.
+    fn make_monitor_exclude(
+        exclude: Option<&str>,
+        exclude_cmd: Option<&str>,
+        _exclude_invert: bool,
+        _exclude_cmd_invert: bool,
+    ) -> Monitor {
+        let (exclude_regex, exclude_invert) = match exclude {
+            Some(p) => {
+                let raw = p.strip_prefix('!').unwrap_or(p);
+                (Some(regex::Regex::new(raw).expect("invalid exclude pattern")), p.starts_with('!'))
+            }
+            None => (None, false),
+        };
+        let (exclude_cmd_regex, exclude_cmd_invert) = match exclude_cmd {
+            Some(p) => {
+                let raw = p.strip_prefix('!').unwrap_or(p);
+                (Some(regex::Regex::new(raw).expect("invalid exclude-cmd pattern")), p.starts_with('!'))
+            }
+            None => (None, false),
+        };
+        Monitor::new(
+            vec![(
+                PathBuf::from("/tmp"),
+                PathOptions {
+                    size_filter: None,
+                    event_types: None,
+                    exclude_regex,
+                    exclude_invert,
+                    exclude_cmd_regex,
+                    exclude_cmd_invert,
+                    recursive: false,
+                },
+            )],
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
     fn make_event(path: &str, event_type: EventType, pid: u32, size: u64) -> FileEvent {
         FileEvent {
             time: Utc::now(),
@@ -1835,6 +1647,19 @@ mod tests {
             path: PathBuf::from(path),
             pid,
             cmd: "test".to_string(),
+            user: "root".to_string(),
+            file_size: size,
+            monitored_path: PathBuf::from("/watched"),
+        }
+    }
+
+    fn make_event_cmd(path: &str, event_type: EventType, pid: u32, size: u64, cmd: &str) -> FileEvent {
+        FileEvent {
+            time: Utc::now(),
+            event_type,
+            path: PathBuf::from(path),
+            pid,
+            cmd: cmd.to_string(),
             user: "root".to_string(),
             file_size: size,
             monitored_path: PathBuf::from("/watched"),
@@ -1992,5 +1817,73 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&test_dir_for_cleanup);
+    }
+
+    // ---- build_exclude_regex ----
+
+    #[test]
+    fn test_build_exclude_regex_none() {
+        let (re, inv) = filters::build_exclude_regex(None, "exclude").unwrap();
+        assert!(re.is_none());
+        assert!(!inv);
+    }
+
+    #[test]
+    fn test_build_exclude_regex_empty() {
+        let (re, inv) = filters::build_exclude_regex(Some(&[]), "exclude").unwrap();
+        assert!(re.is_none());
+        assert!(!inv);
+    }
+
+    #[test]
+    fn test_build_exclude_regex_single_pattern() {
+        let patterns = vec![".*\\.tmp$".to_string()];
+        let (re, inv) = filters::build_exclude_regex(Some(&patterns), "exclude").unwrap();
+        assert!(re.is_some());
+        assert!(!inv);
+        assert!(re.as_ref().unwrap().is_match("foo.tmp"));
+        assert!(!re.as_ref().unwrap().is_match("foo.txt"));
+    }
+
+    #[test]
+    fn test_build_exclude_regex_multiple_patterns() {
+        let patterns = vec![".*\\.tmp$".to_string(), ".*\\.log$".to_string()];
+        let (re, inv) = filters::build_exclude_regex(Some(&patterns), "exclude").unwrap();
+        assert!(re.is_some());
+        assert!(!inv);
+        assert!(re.as_ref().unwrap().is_match("foo.tmp"));
+        assert!(re.as_ref().unwrap().is_match("bar.log"));
+        assert!(!re.as_ref().unwrap().is_match("foo.txt"));
+    }
+
+    #[test]
+    fn test_build_exclude_regex_invert() {
+        let patterns = vec!["!.*\\.py$".to_string()];
+        let (re, inv) = filters::build_exclude_regex(Some(&patterns), "exclude").unwrap();
+        assert!(re.is_some());
+        assert!(inv);
+        assert!(re.as_ref().unwrap().is_match("foo.py"));
+        assert!(!re.as_ref().unwrap().is_match("foo.tmp"));
+    }
+
+    #[test]
+    fn test_build_exclude_regex_cmd() {
+        let patterns = vec!["rsync".to_string(), "apt".to_string()];
+        let (re, inv) = filters::build_exclude_regex(Some(&patterns), "--exclude-cmd").unwrap();
+        assert!(re.is_some());
+        assert!(!inv);
+        assert!(re.as_ref().unwrap().is_match("rsync"));
+        assert!(re.as_ref().unwrap().is_match("apt"));
+        assert!(!re.as_ref().unwrap().is_match("nginx"));
+    }
+
+    #[test]
+    fn test_build_exclude_regex_cmd_wildcard() {
+        let patterns = vec!["nginx.*".to_string()];
+        let (re, _inv) = filters::build_exclude_regex(Some(&patterns), "--exclude-cmd").unwrap();
+        assert!(re.is_some());
+        assert!(re.as_ref().unwrap().is_match("nginx"));
+        assert!(re.as_ref().unwrap().is_match("nginx-worker"));
+        assert!(!re.as_ref().unwrap().is_match("apache"));
     }
 }

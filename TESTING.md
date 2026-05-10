@@ -9,38 +9,25 @@ alias fsmon=sudo\ /home/pilot/.projects/fsmon/target/release/fsmon
 
 ---
 
-## 1. 配置生成（无需 root）
+## 1. 初始化（无需 root）
 
-### 1.1 首次生成
-
-```bash
-# 确保没有已有配置
-mv ~/.config/fsmon/config.toml ~/.config/fsmon/config.toml.bak 2>/dev/null
-fsmon generate
-```
-
-预期：输出 `Default config generated at ~/.config/fsmon/config.toml`
-
-### 1.2 再次生成（不传 --force）
+### 1.1 首次初始化
 
 ```bash
-fsmon generate
+fsmon init
 ```
 
-预期：报错 `Config already exists at ... Use --force to overwrite`
+预期：创建以下目录：
+- `~/.local/state/fsmon/` （事件日志目录）
+- `~/.local/share/fsmon/` （managed 数据目录）
 
-### 1.3 强制覆盖
+### 1.2 进入日志目录
 
 ```bash
-fsmon generate --force
+fsmon cd
 ```
 
-预期：成功覆盖，无错误
-
-**恢复备份**：
-```bash
-mv ~/.config/fsmon/config.toml.bak ~/.config/fsmon/config.toml 2>/dev/null
-```
+预期：在日志目录中打开子 shell，exit 返回原目录
 
 ---
 
@@ -144,7 +131,7 @@ fsmon add /tmp/subdir
 ### 3.8 添加带排除模式的路径
 
 ```bash
-fsmon add ~/Documents -r --exclude "*.tmp"
+fsmon add ~/Documents -r --exclude '\.tmp$'
 ```
 
 预期：添加成功
@@ -152,7 +139,7 @@ fsmon add ~/Documents -r --exclude "*.tmp"
 ### 3.9 添加带类型过滤的路径
 
 ```bash
-fsmon add /var/log --types CREATE,MODIFY
+fsmon add /var/log --types CREATE --types MODIFY
 ```
 
 预期：添加成功
@@ -356,10 +343,13 @@ fsmon query --path /tmp/fsmon_test
 
 ```bash
 # 查询最近 1 小时的事件
-fsmon query --since "1h"
+fsmon query -t '>1h'
 
 # 查询某个时间点之后的事件
-fsmon query --since "2025-01-01 00:00:00"
+fsmon query -t '>=2025-01-01 00:00:00'
+
+# 时间范围
+fsmon query -t '>1h' -t '<now'
 ```
 
 预期：正确过滤
@@ -384,10 +374,10 @@ fsmon clean --dry-run
 
 预期：显示会删除哪些日志文件，但不实际删除
 
-### 8.2 按天数清理
+### 8.2 按时间清理
 
 ```bash
-fsmon clean --keep-days 30
+fsmon clean --time '>30d'
 ```
 
 预期：删除 30 天前的日志
@@ -395,10 +385,10 @@ fsmon clean --keep-days 30
 ### 8.3 按大小清理
 
 ```bash
-fsmon clean --max-size 100M
+fsmon clean --size '>=100MB'
 ```
 
-预期：删除最旧的日志直到总大小小于 100M
+预期：删除最旧的日志直到总大小小于 100MB
 
 ### 8.4 清理特定路径的日志
 
@@ -425,7 +415,7 @@ echo "hi" > /tmp/fsmon_filter_test/created.txt  # → MODIFY，不应记录
 ### 9.2 按最小文件大小过滤
 
 ```bash
-fsmon add /tmp/fsmon_size_test -m 1K
+fsmon add /tmp/fsmon_size_test -s '>=1K'
 touch /tmp/fsmon_size_test/small.txt            # 0 字节 → 不应记录
 echo "0123456789" > /tmp/fsmon_size_test/big.txt # >1K → 应记录
 ```
@@ -435,7 +425,7 @@ echo "0123456789" > /tmp/fsmon_size_test/big.txt # >1K → 应记录
 ### 9.3 路径排除模式
 
 ```bash
-fsmon add /tmp/fsmon_exclude_test -r --exclude "*.log"
+fsmon add /tmp/fsmon_exclude_test -r --exclude '\.log$'
 touch /tmp/fsmon_exclude_test/a.log             # → 不应记录
 touch /tmp/fsmon_exclude_test/a.txt             # → 应记录
 ```
@@ -445,7 +435,7 @@ touch /tmp/fsmon_exclude_test/a.txt             # → 应记录
 ### 9.4 进程名排除
 
 ```bash
-fsmon add /tmp/fsmon_cmd_test --exclude-cmd "cat"
+fsmon add /tmp/fsmon_cmd_test --exclude-cmd 'cat'
 touch /tmp/fsmon_cmd_test/test.txt              # 由 shell(bash) 创建 → 应记录
 cat /tmp/fsmon_cmd_test/test.txt                # cat 进程 → 不应记录
 ```
@@ -455,7 +445,7 @@ cat /tmp/fsmon_cmd_test/test.txt                # cat 进程 → 不应记录
 ### 9.5 组合过滤
 
 ```bash
-fsmon add /tmp/fsmon_combo_test --types CREATE,MODIFY -m 100 --exclude "*.tmp"
+fsmon add /tmp/fsmon_combo_test --types CREATE --types MODIFY -s '>=100' --exclude '\.tmp$'
 ```
 
 预期：只有 CREATE/MODIFY 事件、文件 ≥100 字节、不是 .tmp 后缀的才被记录

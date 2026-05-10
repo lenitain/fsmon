@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::chown_to_original_user;
 
-/// The monitored paths database, stored in the file configured by `[store].file`.
+/// The monitored paths database, stored in the file configured by `[managed].path`.
 ///
 /// Managed automatically by `fsmon add` and `fsmon remove`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -25,16 +25,12 @@ pub struct PathEntry {
     pub recursive: Option<bool>,
     /// Only monitor specified event types (e.g. `["MODIFY", "CREATE"]`).
     pub types: Option<Vec<String>>,
-    /// Only record events with size change >= this value.
-    pub min_size: Option<String>,
-    /// Paths to exclude from monitoring (wildcard patterns).
-    pub exclude: Option<String>,
-    /// Process names to exclude (glob, e.g. "rsync|apt").
-    pub exclude_cmd: Option<String>,
-    /// Only capture events from these process names (glob).
-    pub only_cmd: Option<String>,
-    /// Capture all 14 fanotify event types.
-    pub all_events: Option<bool>,
+    /// Size filter with comparison operator (e.g. >1MB, >=500KB, <100MB).
+    pub size: Option<String>,
+    /// Paths to exclude from monitoring (glob patterns, repeatable).
+    pub exclude: Option<Vec<String>>,
+    /// Process names to exclude (glob, repeatable).
+    pub exclude_cmd: Option<Vec<String>>,
 }
 
 impl Managed {
@@ -167,11 +163,9 @@ mod tests {
             path: PathBuf::from("/tmp"),
             recursive: Some(true),
             types: None,
-            min_size: None,
+            size: None,
             exclude: None,
     exclude_cmd: None,
-    only_cmd: None,
-            all_events: None,
         });
         assert_eq!(store.entries.len(), 1);
         assert!(store.get(Path::new("/tmp")).is_some());
@@ -180,11 +174,9 @@ mod tests {
             path: PathBuf::from("/var/log"),
             recursive: Some(false),
             types: Some(vec!["MODIFY".into()]),
-            min_size: None,
+            size: None,
             exclude: None,
     exclude_cmd: None,
-    only_cmd: None,
-            all_events: None,
         });
         assert_eq!(store.entries.len(), 2);
     }
@@ -198,11 +190,9 @@ mod tests {
             path: PathBuf::from("/home"),
             recursive: Some(true),
             types: None,
-            min_size: None,
+            size: None,
             exclude: None,
     exclude_cmd: None,
-    only_cmd: None,
-            all_events: None,
         });
         assert_eq!(store.entries.len(), 1);
 
@@ -211,11 +201,9 @@ mod tests {
             path: PathBuf::from("/home"),
             recursive: Some(false),
             types: Some(vec!["MODIFY".into()]),
-            min_size: None,
+            size: None,
             exclude: None,
     exclude_cmd: None,
-    only_cmd: None,
-            all_events: None,
         });
         assert_eq!(store.entries.len(), 1); // replaced, not duplicated
         assert_eq!(store.entries[0].path, PathBuf::from("/home"));
@@ -231,21 +219,17 @@ mod tests {
             path: PathBuf::from("/tmp"),
             recursive: None,
             types: None,
-            min_size: None,
+            size: None,
             exclude: None,
     exclude_cmd: None,
-    only_cmd: None,
-            all_events: None,
         });
         store.add_entry(PathEntry {
             path: PathBuf::from("/var"),
             recursive: None,
             types: None,
-            min_size: None,
+            size: None,
             exclude: None,
     exclude_cmd: None,
-    only_cmd: None,
-            all_events: None,
         });
 
         assert!(store.remove_entry(Path::new("/tmp")));
@@ -265,11 +249,9 @@ mod tests {
             path: PathBuf::from("/srv"),
             recursive: Some(true),
             types: Some(vec!["CREATE".into(), "DELETE".into()]),
-            min_size: Some("1KB".into()),
-            exclude: Some("*.tmp".into()),
+            size: Some("1KB".into()),
+            exclude: Some(vec!["*.tmp".into()]),
     exclude_cmd: None,
-    only_cmd: None,
-            all_events: Some(false),
         });
 
         store.save(&path).unwrap();
@@ -281,8 +263,8 @@ mod tests {
             loaded.entries[0].types.as_ref().unwrap(),
             &["CREATE", "DELETE"]
         );
-        assert_eq!(loaded.entries[0].min_size.as_ref().unwrap(), "1KB");
-        assert_eq!(loaded.entries[0].exclude.as_ref().unwrap(), "*.tmp");
+        assert_eq!(loaded.entries[0].size.as_ref().unwrap(), "1KB");
+        assert_eq!(loaded.entries[0].exclude.as_ref().unwrap(), &vec!["*.tmp".to_string()]);
     }
 
     #[test]
@@ -294,11 +276,9 @@ mod tests {
             path: PathBuf::from("/data"),
             recursive: None,
             types: None,
-            min_size: None,
+            size: None,
             exclude: None,
     exclude_cmd: None,
-    only_cmd: None,
-            all_events: None,
         });
 
         let entry = store.get(Path::new("/data"));
@@ -322,31 +302,25 @@ mod tests {
                     path: PathBuf::from("/home"),
                     recursive: Some(true),
                     types: None,
-                    min_size: None,
+                    size: None,
                     exclude: None,
     exclude_cmd: None,
-    only_cmd: None,
-                    all_events: None,
                 },
                 PathEntry {
                     path: PathBuf::from("/tmp"),
                     recursive: Some(false),
                     types: None,
-                    min_size: None,
+                    size: None,
                     exclude: None,
     exclude_cmd: None,
-    only_cmd: None,
-                    all_events: None,
                 },
                 PathEntry {
                     path: PathBuf::from("/home"), // dup path, should keep last
                     recursive: Some(false),
                     types: Some(vec!["MODIFY".into()]),
-                    min_size: None,
+                    size: None,
                     exclude: None,
     exclude_cmd: None,
-    only_cmd: None,
-                    all_events: None,
                 },
             ],
         };
@@ -366,31 +340,25 @@ mod tests {
                     path: PathBuf::from("/a"),
                     recursive: None,
                     types: None,
-                    min_size: None,
+                    size: None,
                     exclude: None,
     exclude_cmd: None,
-    only_cmd: None,
-                    all_events: None,
                 },
                 PathEntry {
                     path: PathBuf::from("/b"),
                     recursive: None,
                     types: None,
-                    min_size: None,
+                    size: None,
                     exclude: None,
     exclude_cmd: None,
-    only_cmd: None,
-                    all_events: None,
                 },
                 PathEntry {
                     path: PathBuf::from("/c"),
                     recursive: None,
                     types: None,
-                    min_size: None,
+                    size: None,
                     exclude: None,
     exclude_cmd: None,
-    only_cmd: None,
-                    all_events: None,
                 },
             ],
         };
@@ -406,21 +374,17 @@ mod tests {
                     path: PathBuf::from("/a"),
                     recursive: None,
                     types: None,
-                    min_size: None,
+                    size: None,
                     exclude: None,
     exclude_cmd: None,
-    only_cmd: None,
-                    all_events: None,
                 },
                 PathEntry {
                     path: PathBuf::from("/b"),
                     recursive: None,
                     types: None,
-                    min_size: None,
+                    size: None,
                     exclude: None,
     exclude_cmd: None,
-    only_cmd: None,
-                    all_events: None,
                 },
             ],
         };

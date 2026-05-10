@@ -18,7 +18,7 @@
 
 ## Features
 
-- **Real-time Monitoring**: Captures 14 fanotify events (default: 8 core change events, `--all-events` for all 14)
+- **Real-time Monitoring**: Captures 14 fanotify events (default: 8 core events, `--types all` for all 14)
 - **Process Attribution**: Tracks PID, command name, and user for every file change — even short-lived processes like `touch`, `rm`, `mv`
 - **Recursive Monitoring**: Watch entire directory trees with automatic tracking of newly created subdirectories
 - **Complete Deletion Capture**: Captures every file deleted during `rm -rf` via persistent directory handle cache
@@ -71,11 +71,11 @@ sudo fsmon daemon &
 # Terminal 1 (or another): add paths to monitor
 # Monitor /var/www/myapp recursively, only MODIFY + CREATE events,
 # exclude editor temp files, only capture nginx and vim processes
-fsmon add /var/www/myapp -r --types MODIFY,CREATE --exclude "*.swp" --only-cmd nginx,vim
+fsmon add /var/www/myapp -r --types MODIFY --types CREATE --exclude '\.swp$' --exclude-cmd '!nginx|vim'
 
 # List what's being monitored
 fsmon managed
-# → /var/www/myapp | types=MODIFY,CREATE | recursive | min_size=- | exclude-path=*.swp | exclude-cmd=- | only-cmd=nginx,vim | events=filtered
+# → /var/www/myapp | types=MODIFY,CREATE | recursive | size=- | exclude-path=\.swp | exclude-cmd=!nginx|vim
 ```
 
 Now trigger some real file changes:
@@ -99,7 +99,7 @@ cat ~/.local/state/fsmon/*_log.jsonl
 # → {"time":"2026-05-07T10:00:05+00:00","event_type":"CREATE","path":"/var/www/myapp/.config.json.swp","pid":9012,"cmd":"vim","user":"dev","file_size":4096,"monitored_path":"/var/www/myapp"}
 ```
 
-Notice: vim's `.swp` was captured but won't be logged — the `--exclude "*.swp"` filter drops it before writing. That means **it never touches disk**.
+Notice: vim's `.swp` was captured but won't be logged — the `--exclude '\.swp$'` filter drops it before writing. That means **it never touches disk**.
 
 #### Query with pipe
 
@@ -107,7 +107,7 @@ Now use standard tools, not fsmon options:
 
 ```bash
 # What did nginx do in the last hour?
-fsmon query --since 1h | jq 'select(.cmd == "nginx")'
+fsmon query -t '>1h' | jq 'select(.cmd == "nginx")'
 
 # What files were deleted?
 fsmon query | jq 'select(.event_type == "DELETE")'
@@ -128,7 +128,7 @@ No built-in `--pid`, `--cmd`, `--user`, `--sort` flags needed — `jq` does it a
 fsmon clean --dry-run
 
 # Actually clean with custom retention
-fsmon clean --keep-days 7
+fsmon clean --time '>7d'
 
 # Or just use Unix tools directly on the files
 # Delete events older than 2026-04-01:
@@ -147,13 +147,13 @@ kill %1
 
 | Purpose | Path | Format |
 |---|---|---|
-| Infrastructure config | `~/.config/fsmon/config.toml` | TOML (generated via `fsmon generate`) |
+| Infrastructure config | `~/.config/fsmon/fsmon.toml` | TOML (optional — defaults without it) |
 | Path database | `~/.local/share/fsmon/managed.jsonl` | JSONL (one entry per line) |
 | Event logs | `~/.local/state/fsmon/*_log.jsonl` | JSONL (one event per line) |
 | Unix socket | `/tmp/fsmon-<UID>.sock` | TOML over stream |
 
-Both the store path and log directory are configurable in `~/.config/fsmon/config.toml`
-(see `[managed].file` and `[logging].dir`).
+Both the store path and log directory are configurable in `~/.config/fsmon/fsmon.toml`
+(see `[managed].path` and `[logging].path`).
 
 The daemon runs as root (via sudo) but resolves your original user's home directory
 via `SUDO_UID` + `getpwuid_r`, so it writes to `/home/<you>/...` not `/root/...`.
@@ -187,7 +187,7 @@ sudo fsmon daemon          Start daemon in foreground
 sudo fsmon daemon &        Start daemon in background
 ```
 
-Config:           `~/.config/fsmon/config.toml`
+Config:           `~/.config/fsmon/fsmon.toml` (optional — defaults without it)
 Managed paths:    `~/.local/share/fsmon/managed.jsonl`
 Log dir:          `~/.local/state/fsmon/`
 Socket:           `/tmp/fsmon-<UID>.sock`
@@ -199,12 +199,13 @@ Add a path to the monitoring list. No sudo needed.
 ```
 fsmon add <path>                           Monitor a path
 fsmon add <path> -r                        Monitor recursively
-fsmon add <path> --types MODIFY,CREATE     Filter by event types
-fsmon add <path> --exclude "*.swp"         Exclude path patterns
-fsmon add <path> --min-size 1MB            Minimum file size change
-fsmon add <path> --exclude-cmd rsync       Exclude by process name
-fsmon add <path> --only-cmd nginx,vim      Only capture these processes
-fsmon add <path> --all-events              Capture all 14 fanotify events
+fsmon add <path> --types MODIFY --types CREATE     Filter by event types
+fsmon add <path> --types all               All 14 event types
+fsmon add <path> --exclude '\.swp$' --exclude '\.tmp$'   Exclude path patterns
+fsmon add <path> --exclude '!.*\.py$'     Only track .py files
+fsmon add <path> -s '>=1MB'                Minimum file size change
+fsmon add <path> --exclude-cmd 'rsync'     Exclude by process name
+fsmon add <path> --exclude-cmd '!nginx'    Only track nginx process
 ```
 
 All capture filters run inside the daemon process (nanosecond-fast, no fork).
@@ -212,10 +213,11 @@ Events that don't match never touch disk.
 
 ### remove
 
-Remove a path from the monitoring list. No sudo needed.
+Remove one or more paths from the monitoring list. No sudo needed.
 
 ```
 fsmon remove <path>                        Remove a monitored path
+fsmon remove <path1> <path2> <path3>       Remove multiple paths at once
 ```
 
 ### managed
@@ -234,64 +236,92 @@ Query historical events from log files. Output is JSONL — pipe to `jq` for fil
 fsmon query                                Query all log files
 fsmon query --path /tmp                    Query specific path's log
 fsmon query --path /tmp --path /var        Query multiple paths
-fsmon query --since 1h                     Events from last hour
-fsmon query --since "2026-05-01T00:00:00Z" From absolute time
-fsmon query --until 30m                    Events until 30 minutes ago
-fsmon query --since 1h --until now         Time range
+fsmon query -t '>1h'                     Events from last hour
+fsmon query -t '>=2026-05-01'             From absolute time
+fsmon query -t '<30m'                     Events until 30 minutes ago
+fsmon query -t '>1h' -t '<now'            Time range
 ```
 
 Examples with `jq`:
 
 ```bash
-fsmon query --since 1h | jq 'select(.cmd == "nginx")'
+fsmon query -t '>1h' | jq 'select(.cmd == "nginx")'
 fsmon query | jq 'select(.event_type == "DELETE")'
 fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 ```
 
 ### clean
 
-Clean historical log files. Defaults from `config.toml`: `keep_days=30`, `max_size=1GB`.
+Clean historical log files. Defaults from `fsmon.toml`: `keep_days=30`, `size=>=1GB`.
 
 ```bash
 fsmon clean                                Use config defaults
-fsmon clean --keep-days 7                  Override retention (days)
-fsmon clean --max-size 500MB               Max size per log file
+fsmon clean --time '>7d'                 Keep last 7 days
+fsmon clean --size '>=500MB'              Size limit per log file
 fsmon clean --path /tmp                    Clean specific path's log
 fsmon clean --dry-run                      Preview without deleting
 ```
 
-Priority: CLI arg > config.toml > code default (30)
+Priority: CLI arg > fsmon.toml > code default (keep_days=30)
 
-### generate
+You can also clean the raw log files directly without `fsmon clean`:
 
-Generate a default configuration file at `~/.config/fsmon/config.toml`.
+```bash
+# Keep only last 500 lines per log file
+for f in ~/.local/state/fsmon/*_log.jsonl; do
+  tail -500 "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
+done
+
+# Delete logs older than 30 days by mtime
+find ~/.local/state/fsmon/ -name '*.jsonl' -mtime +30 -delete
+```
+
+> **Performance note:** Native `fsmon clean` parses JSONL accurately (won't cut in the middle of a line) and handles both time+size rules atomically. Raw Unix tools are simpler but may produce partial/corrupt lines.
+
+### init
+
+Initialize fsmon data directories (chezmoi-style). Creates the log directory,
+managed data directory. Does NOT write a config file —
+config is optional, defaults apply without it.
 
 ```
-fsmon generate                             Create default config
-fsmon generate -f                          Overwrite existing config
+fsmon init                                 Create log & managed directories
+```
+
+### cd
+
+Open a subshell in the log directory. Type `exit` to return:
+
+```
+fsmon cd                                   Enter log directory in subshell
+ls                                         List log files
 ```
 
 ## Configuration
 
-Auto-generated on first daemon start or via `fsmon generate`.
+Config file is optional — defaults apply without it.
 
 ```toml
 # fsmon configuration file
 #
 # Infrastructure paths for fsmon. Monitored paths are managed separately
-# via 'fsmon add' / 'fsmon remove' and persisted in [managed].file.
+# via 'fsmon add' / 'fsmon remove' and persisted in [managed].path.
 # All paths support ~ expansion. <UID> is replaced with the numeric UID at runtime.
 
 [managed]
 # Path to the auto-managed monitored paths database.
-file = "~/.local/share/fsmon/managed.jsonl"
+path = "~/.local/share/fsmon/managed.jsonl"
 
 [logging]
-# Directory containing per-path log files (named by path hash).
-dir = "~/.local/state/fsmon"
-# Safety nets: keep at most 30 days, max 1GB per log file.
+# Path to the event log directory (per-path *_log.jsonl files).
+path = "~/.local/state/fsmon"
+# Defaults for 'fsmon clean' (not auto-cleaned by daemon; use cron/timer).
+#   keep_days: delete entries older than N days
+#   size:  truncate log file when exceeding this size
+# Both can be overridden at runtime:
+#   fsmon clean --time '>14d' --size '>=1GB'
 keep_days = 30
-max_size = "1GB"
+size = ">=1GB"
 
 [socket]
 # Unix socket path for daemon-CLI live communication.
@@ -300,11 +330,11 @@ path = "/tmp/fsmon-<UID>.sock"
 
 ## Event Types
 
-Default captures 8 core events. Use `--all-events` for all 14.
+Default captures 8 core events. Use `--types all` for all 14.
 
 **Default (8):** CLOSE_WRITE, ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF
 
-**Additional (6, via --all-events):** ACCESS, MODIFY, OPEN, OPEN_EXEC, CLOSE_NOWRITE, FS_ERROR
+**All 14 (via --types all):** + ACCESS, MODIFY, OPEN, OPEN_EXEC, CLOSE_NOWRITE, FS_ERROR
 
 ## Architecture
 
@@ -313,23 +343,38 @@ Linux Kernel (fanotify)
     → FID events pushed to queue
     → tokio reads events asynchronously
     → fid_parser resolves paths (two-pass + dir cache)
-    → Monitor filters (types, size, path pattern, cmd pattern)
+    → filters: event type, size, path pattern, process name
     → JSONL → per-path log files (*_log.jsonl)
 
 User pipe:
     cat/ tail *.jsonl → jq → your custom logic
+
+Clean:
+    fsmon clean → clean engine parses JSONL, trims by time/size
 ```
 
 ### Source Tree
 
 ```
 src/
-├── bin/fsmon.rs       CLI: daemon, add, remove, managed, query, clean, generate
-├── lib.rs             FileEvent, EventType, clean engine, temp file safety
+├── bin/
+│   ├── fsmon.rs               CLI entry: main(), CLI structs, arg parsing tests
+│   └── commands/
+│       ├── mod.rs              Dispatch: run() → per-command handler
+│       ├── daemon.rs           cmd_daemon: fanotify init, socket setup, Monitor::run()
+│       ├── add.rs              cmd_add: path normalization, store update, live socket
+│       ├── remove.rs           cmd_remove: store update, live socket
+│       ├── manage.rs           cmd_managed, cmd_list_managed_paths
+│       ├── query.rs            cmd_query: time filter, Query::execute()
+│       ├── clean.rs            cmd_clean: time/size filter delegation
+│       └── init_cd.rs          cmd_init, cmd_cd
+├── lib.rs             FileEvent, EventType, DaemonLock (singleton via flock)
+├── clean.rs           Log cleanup engine: time/size trim, tail-offset, dry-run
 ├── config.rs          Infrastructure config, SUDO_UID home resolution
 ├── managed.rs         Managed paths database (JSONL)
-├── monitor.rs         Fanotify loop, socket handler, all capture filters
+├── monitor.rs         Fanotify loop, socket handler, add/remove/event processing
 ├── fid_parser.rs      Low-level FID event parsing, two-pass path recovery
+├── filters.rs         PathOptions, event/size/path/process filters, path matching
 ├── dir_cache.rs       Directory handle cache for rm -rf recovery
 ├── proc_cache.rs      Netlink proc connector (short-lived process attribution)
 ├── query.rs           Binary-search log query, JSONL output
