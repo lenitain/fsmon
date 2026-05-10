@@ -29,7 +29,7 @@ use crate::proc_cache::{self, ProcCache, ProcInfo};
 use crate::socket::{SocketCmd, SocketResp};
 use crate::managed::PathEntry;
 use crate::managed::Managed;
-use crate::utils::{get_process_info_by_pid, parse_size};
+use crate::utils::{format_size, get_process_info_by_pid, parse_size_filter, SizeFilter, SizeOp};
 use crate::{EventType, FileEvent};
 
 // ---- FanFd wrapper for AsyncFd ----
@@ -234,7 +234,7 @@ const DEFAULT_EVENT_MASK: u64 = FAN_CLOSE_WRITE
 
 #[derive(Clone)]
 pub struct PathOptions {
-    pub min_size: Option<i64>,
+    pub size_filter: Option<SizeFilter>,
     pub event_types: Option<Vec<EventType>>,
     pub exclude_regex: Option<regex::Regex>,
     pub exclude_invert: bool,
@@ -420,7 +420,7 @@ impl Monitor {
                     types: opts.event_types.as_ref().map(
                         |v| v.iter().map(|t| t.to_string()).collect()
                     ),
-                    min_size: opts.min_size.map(|s| s.to_string()),
+                    size: opts.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes))),
                     exclude: opts.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()]),
                     exclude_cmd: None,
                 }));
@@ -755,7 +755,7 @@ impl Monitor {
                                     types: opts.and_then(|o| o.event_types.as_ref().map(
                                         |v| v.iter().map(|t| t.to_string()).collect()
                                     )),
-                                    min_size: opts.and_then(|o| o.min_size.map(|s| s.to_string())),
+                                    size: opts.and_then(|o| o.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes)))),
                                     exclude: opts.and_then(|o| o.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()])),
                                     exclude_cmd: None,
                                 };
@@ -1019,20 +1019,15 @@ impl Monitor {
     }
 
     /// Build a combined regex from a list of patterns.
-    fn build_exclude_regex(patterns: Option<&[String]>, label: &str) -> Result<(Option<regex::Regex>, bool)> {
+    fn build_exclude_regex(patterns: Option<&[String]>, _label: &str) -> Result<(Option<regex::Regex>, bool)> {
         let Some(patterns) = patterns else { return Ok((None, false)); };
         if patterns.is_empty() { return Ok((None, false)); }
         let invert = patterns[0].starts_with('!');
         let parts: Vec<String> = patterns.iter().map(|p| {
-            let raw = p.strip_prefix('!').unwrap_or(p);
-            if label == "--exclude-cmd" {
-                raw.replace("*", ".*")
-            } else {
-                regex::escape(raw).replace("\\*", ".*")
-            }
+            p.strip_prefix('!').unwrap_or(p).to_string()
         }).collect();
         let regex = regex::Regex::new(&parts.join("|"))
-            .with_context(|| format!("invalid {} pattern", label))?;
+            .with_context(|| format!("invalid {} pattern", _label))?;
         Ok((Some(regex), invert))
     }
 
@@ -1076,12 +1071,12 @@ impl Monitor {
                 .filter_map(|s| s.parse::<EventType>().ok())
                 .collect()
         });
-        let min_size = entry.min_size.as_ref().map(|s| parse_size(s)).transpose()?;
+        let size_filter = entry.size.as_ref().map(|s| parse_size_filter(s)).transpose()?;
         let (exclude_regex, exclude_invert) = Self::build_exclude_regex(entry.exclude.as_deref(), "exclude")?;
         let (exclude_cmd_regex, exclude_cmd_invert) = Self::build_exclude_regex(entry.exclude_cmd.as_deref(), "--exclude-cmd")?;
         let recursive = entry.recursive.unwrap_or(false);
         let opts = PathOptions {
-            min_size,
+            size_filter,
             event_types,
             exclude_regex,
             exclude_invert,
@@ -1305,7 +1300,7 @@ impl Monitor {
                     path,
                     recursive: cmd.recursive,
                     types: cmd.types.clone(),
-                    min_size: cmd.min_size.clone(),
+                    size: cmd.size.clone(),
                     exclude: cmd.exclude.clone(),
                     exclude_cmd: cmd.exclude_cmd.clone(),
                 };
@@ -1360,7 +1355,7 @@ impl Monitor {
                                     .as_ref()
                                     .map(|v| v.iter().map(|t| t.to_string()).collect())
                             }),
-                            min_size: opts.and_then(|o| o.min_size.map(|s| s.to_string())),
+                            size: opts.and_then(|o| o.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes)))),
                             exclude: opts.and_then(|o| {
                                 o.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()])
                             }),
@@ -1489,10 +1484,15 @@ impl Monitor {
             return false;
         }
 
-        if let Some(min) = opts.min_size
-            && event.file_size < min as u64
-        {
-            return false;
+        if let Some(ref filter) = opts.size_filter {
+            let passes = match filter.op {
+                SizeOp::Gt => event.file_size > filter.bytes as u64,
+                SizeOp::Ge => event.file_size >= filter.bytes as u64,
+                SizeOp::Lt => event.file_size < filter.bytes as u64,
+                SizeOp::Le => event.file_size <= filter.bytes as u64,
+                SizeOp::Eq => event.file_size == filter.bytes as u64,
+            };
+            if !passes { return false; }
         }
 
         if let Some(ref regex) = opts.exclude_regex {
@@ -1676,18 +1676,16 @@ mod tests {
     // ---- Monitor tests ----
 
     fn options(
-        min_size: Option<i64>,
+        size_filter: Option<SizeFilter>,
         event_types: Option<Vec<EventType>>,
         exclude: Option<&str>,
         recursive: bool,
     ) -> PathOptions {
         let exclude_regex = exclude.map(|p| {
-            let escaped = regex::escape(p);
-            let pattern = escaped.replace("\\*", ".*").replace("\\|", "|");
-            regex::Regex::new(&pattern).expect("invalid exclude pattern")
+            regex::Regex::new(p).expect("invalid exclude pattern")
         });
         PathOptions {
-            min_size,
+            size_filter,
             event_types,
             exclude_regex,
             exclude_invert: false,
@@ -1699,7 +1697,7 @@ mod tests {
 
     fn make_monitor(
         paths: Vec<&str>,
-        min_size: Option<i64>,
+        size_filter: Option<SizeFilter>,
         event_types: Option<Vec<EventType>>,
         exclude: Option<&str>,
         recursive: bool,
@@ -1711,7 +1709,7 @@ mod tests {
                     (
                         PathBuf::from(p),
                         options(
-                            min_size,
+                            size_filter,
                             event_types.clone(),
                             exclude,
                             recursive,
@@ -1749,22 +1747,22 @@ mod tests {
     }
 
     #[test]
-    fn test_should_output_min_size_filter() {
-        let m = make_monitor(vec!["/tmp"], Some(1000), None, None, false);
+    fn test_should_output_size_filter() {
+        let m = make_monitor(vec!["/tmp"], Some(SizeFilter { op: SizeOp::Ge, bytes: 1000 }), None, None, false);
         assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, 2000)));
         assert!(!m.should_output(&make_event("/tmp/a", EventType::Create, 1, 500)));
     }
 
     #[test]
     fn test_should_output_exclude_pattern() {
-        let m = make_monitor(vec!["/tmp"], None, None, Some("*.tmp"), false);
+        let m = make_monitor(vec!["/tmp"], None, None, Some(".*\\.tmp$"), false);
         assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/foo.tmp", EventType::Delete, 1, 0)));
     }
 
     #[test]
     fn test_should_output_exclude_exact_pattern() {
-        let m = make_monitor(vec!["/tmp"], None, None, Some("test.tmp"), false);
+        let m = make_monitor(vec!["/tmp"], None, None, Some("test\\.tmp$"), false);
         assert!(m.should_output(&make_event("/tmp/test.txt", EventType::Create, 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
         assert!(m.should_output(&make_event("/tmp/foo.tmp", EventType::Delete, 1, 0)));
@@ -1775,9 +1773,9 @@ mod tests {
     fn test_should_output_combined_filters() {
         let m = make_monitor(
             vec!["/tmp"],
-            Some(100),
+            Some(SizeFilter { op: SizeOp::Ge, bytes: 100 }),
             Some(vec![EventType::Create]),
-            Some("*.log"),
+            Some(".*\\.log$"),
             false,
         );
         assert!(m.should_output(&make_event("/tmp/data", EventType::Create, 1, 200)));
@@ -1818,8 +1816,8 @@ mod tests {
 
     #[test]
     fn test_should_output_exclude_pipe_multiple() {
-        // --exclude "*.tmp|*.log" → excludes both .tmp and .log
-        let m = make_monitor_exclude(Some("*.tmp|*.log"), None, false, false);
+        // --exclude '.*\.tmp$|.*\.log$' → excludes both .tmp and .log
+        let m = make_monitor_exclude(Some(".*\\.tmp$|.*\\.log$"), None, false, false);
         assert!(!m.should_output(&make_event("/tmp/a.tmp", EventType::Create, 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/a.log", EventType::Create, 1, 0)));
         assert!(m.should_output(&make_event("/tmp/a.txt", EventType::Create, 1, 0)));
@@ -1827,8 +1825,8 @@ mod tests {
 
     #[test]
     fn test_should_output_exclude_invert() {
-        // --exclude "!*.py" → only .py files pass
-        let m = make_monitor_exclude(Some("!*.py"), None, false, false);
+        // --exclude "!.*\.py$" → only .py files pass
+        let m = make_monitor_exclude(Some("!.*\\.py$"), None, false, false);
         assert!(m.should_output(&make_event("/tmp/main.py", EventType::Create, 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/main.rs", EventType::Create, 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/a.txt", EventType::Create, 1, 0)));
@@ -1871,8 +1869,8 @@ mod tests {
 
     #[test]
     fn test_should_output_exclude_and_exclude_cmd() {
-        // --exclude "*.tmp" --exclude-cmd "rsync" → both filters
-        let m = make_monitor_exclude(Some("*.tmp"), Some("rsync"), false, false);
+        // --exclude '.*\.tmp$' --exclude-cmd "rsync" → both filters
+        let m = make_monitor_exclude(Some(".*\\.tmp$"), Some("rsync"), false, false);
         assert!(!m.should_output(&make_event_cmd("/tmp/a.tmp", EventType::Create, 1, 0, "vim")));
         assert!(!m.should_output(&make_event_cmd("/tmp/a.txt", EventType::Create, 1, 0, "rsync")));
         assert!(m.should_output(&make_event_cmd("/tmp/a.txt", EventType::Create, 2, 0, "vim")));
@@ -1944,7 +1942,7 @@ mod tests {
             path: PathBuf::from("/tmp/test_add"),
             recursive: Some(true),
             types: None,
-            min_size: None,
+            size: None,
             exclude: None,
             exclude_cmd: None,
         };
@@ -1970,17 +1968,14 @@ mod tests {
         let (exclude_regex, exclude_invert) = match exclude {
             Some(p) => {
                 let raw = p.strip_prefix('!').unwrap_or(p);
-                let escaped = regex::escape(raw);
-                let pattern = escaped.replace("\\*", ".*").replace("\\|", "|");
-                (Some(regex::Regex::new(&pattern).expect("invalid exclude pattern")), p.starts_with('!'))
+                (Some(regex::Regex::new(raw).expect("invalid exclude pattern")), p.starts_with('!'))
             }
             None => (None, false),
         };
         let (exclude_cmd_regex, exclude_cmd_invert) = match exclude_cmd {
             Some(p) => {
                 let raw = p.strip_prefix('!').unwrap_or(p);
-                let pattern = raw.replace("*", ".*");
-                (Some(regex::Regex::new(&pattern).expect("invalid exclude-cmd pattern")), p.starts_with('!'))
+                (Some(regex::Regex::new(raw).expect("invalid exclude-cmd pattern")), p.starts_with('!'))
             }
             None => (None, false),
         };
@@ -1988,7 +1983,7 @@ mod tests {
             vec![(
                 PathBuf::from("/tmp"),
                 PathOptions {
-                    min_size: None,
+                    size_filter: None,
                     event_types: None,
                     exclude_regex,
                     exclude_invert,
@@ -2202,7 +2197,7 @@ mod tests {
 
     #[test]
     fn test_build_exclude_regex_single_pattern() {
-        let patterns = vec!["*.tmp".to_string()];
+        let patterns = vec![".*\\.tmp$".to_string()];
         let (re, inv) = Monitor::build_exclude_regex(Some(&patterns), "exclude").unwrap();
         assert!(re.is_some());
         assert!(!inv);
@@ -2212,7 +2207,7 @@ mod tests {
 
     #[test]
     fn test_build_exclude_regex_multiple_patterns() {
-        let patterns = vec!["*.tmp".to_string(), "*.log".to_string()];
+        let patterns = vec![".*\\.tmp$".to_string(), ".*\\.log$".to_string()];
         let (re, inv) = Monitor::build_exclude_regex(Some(&patterns), "exclude").unwrap();
         assert!(re.is_some());
         assert!(!inv);
@@ -2223,7 +2218,7 @@ mod tests {
 
     #[test]
     fn test_build_exclude_regex_invert() {
-        let patterns = vec!["!*.py".to_string()];
+        let patterns = vec!["!.*\\.py$".to_string()];
         let (re, inv) = Monitor::build_exclude_regex(Some(&patterns), "exclude").unwrap();
         assert!(re.is_some());
         assert!(inv);
@@ -2244,7 +2239,7 @@ mod tests {
 
     #[test]
     fn test_build_exclude_regex_cmd_wildcard() {
-        let patterns = vec!["nginx*".to_string()];
+        let patterns = vec!["nginx.*".to_string()];
         let (re, _inv) = Monitor::build_exclude_regex(Some(&patterns), "--exclude-cmd").unwrap();
         assert!(re.is_some());
         assert!(re.as_ref().unwrap().is_match("nginx"));

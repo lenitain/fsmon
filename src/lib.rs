@@ -7,6 +7,7 @@ pub mod query;
 pub mod socket;
 pub mod managed;
 pub mod utils;
+pub use utils::{SizeOp, SizeFilter, parse_size_filter};
 
 use crate::config::chown_to_original_user;
 use anyhow::{Result, bail};

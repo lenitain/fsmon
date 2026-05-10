@@ -1,10 +1,60 @@
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Duration, Local, NaiveDateTime, Utc};
 use std::collections::HashMap;
+use std::fmt;
 use std::path::Path;
 use std::sync::OnceLock;
 
 use crate::proc_cache::ProcCache;
+
+/// Size comparison operator.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SizeOp {
+    Gt,
+    Ge,
+    Lt,
+    Le,
+    Eq,
+}
+
+impl fmt::Display for SizeOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SizeOp::Gt => write!(f, ">"),
+            SizeOp::Ge => write!(f, ">="),
+            SizeOp::Lt => write!(f, "<"),
+            SizeOp::Le => write!(f, "<="),
+            SizeOp::Eq => write!(f, "="),
+        }
+    }
+}
+
+/// A size filter with operator (e.g., >1MB).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SizeFilter {
+    pub op: SizeOp,
+    pub bytes: i64,
+}
+
+/// Parse a size filter string like ">1MB", ">=500KB", "<100MB", "=0", or plain "1GB" (defaults to >=).
+pub fn parse_size_filter(s: &str) -> Result<SizeFilter> {
+    let s = s.trim();
+    let (op, rest) = if s.starts_with(">=") {
+        (SizeOp::Ge, &s[2..])
+    } else if s.starts_with("<=") {
+        (SizeOp::Le, &s[2..])
+    } else if s.starts_with('>') {
+        (SizeOp::Gt, &s[1..])
+    } else if s.starts_with('<') {
+        (SizeOp::Lt, &s[1..])
+    } else if s.starts_with('=') {
+        (SizeOp::Eq, &s[1..])
+    } else {
+        (SizeOp::Ge, s) // default: >=
+    };
+    let bytes = parse_size(rest)?;
+    Ok(SizeFilter { op, bytes })
+}
 
 /// Parse human-readable size (e.g., "1GB", "100MB", "1024")
 pub fn parse_size(size_str: &str) -> Result<i64> {

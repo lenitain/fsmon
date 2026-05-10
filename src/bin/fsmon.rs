@@ -7,7 +7,7 @@ use fsmon::monitor::{Monitor, PathOptions};
 use fsmon::query::Query;
 use fsmon::socket::{self, SocketCmd};
 use fsmon::managed::{PathEntry, Managed};
-use fsmon::utils::parse_size;
+use fsmon::utils::{parse_size, parse_size_filter};
 use fsmon::{DEFAULT_KEEP_DAYS, DEFAULT_MAX_SIZE, EventType, clean_logs};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -78,9 +78,9 @@ struct AddArgs {
     #[arg(short, long, value_name = "TYPE")]
     types: Vec<String>,
 
-    /// Only record events with size change >= specified value
+    /// Size filter with comparison operator (e.g. >1MB, >=500KB, <100MB, =0). Default: >=
     #[arg(short, long, value_name = "SIZE")]
-    min_size: Option<String>,
+    size: Option<String>,
 
     /// Path glob patterns to exclude (repeatable, prefix ! to invert)
     #[arg(short, long, value_name = "PATTERN")]
@@ -326,7 +326,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     } else {
         Some(args.types.clone())
     };
-    let min_size = args.min_size.clone();
+    let size_val = args.size.clone();
     let exclude = if args.exclude.is_empty() { None } else { Some(args.exclude.clone()) };
     let exclude_cmd = if args.exclude_cmd.is_empty() { None } else { Some(args.exclude_cmd.clone()) };
     let recursive = if args.recursive { Some(true) } else { None };
@@ -335,7 +335,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         path: path.clone(),
         recursive,
         types: types.clone(),
-        min_size: min_size.clone(),
+        size: size_val.clone(),
         exclude: exclude.clone(),
         exclude_cmd: exclude_cmd.clone(),
     });
@@ -351,7 +351,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             path: Some(path.clone()),
             recursive,
             types,
-            min_size,
+            size: size_val,
             exclude,
             exclude_cmd,
         },
@@ -414,7 +414,7 @@ fn cmd_remove(raw: PathBuf) -> Result<()> {
             path: Some(path),
             recursive: None,
             types: None,
-            min_size: None,
+            size: None,
             exclude: None,
             exclude_cmd: None,
         },
@@ -451,15 +451,15 @@ fn cmd_managed() -> Result<()> {
         } else {
             "non-recursive"
         };
-        let min_size_str = entry.min_size.as_deref().unwrap_or("-");
+        let size_str = entry.size.as_deref().unwrap_or("-");
         let exclude_str = entry.exclude.as_ref().map(|v| v.join(",")).as_deref().unwrap_or("-").to_string();
         let exclude_cmd_str = entry.exclude_cmd.as_ref().map(|v| v.join(",")).as_deref().unwrap_or("-").to_string();
         println!(
-            "{} | types={} | {} | min_size={} | exclude-path={} | exclude-cmd={}",
+            "{} | types={} | {} | size={} | exclude-path={} | exclude-cmd={}",
             entry.path.display(),
             types_str,
             recursive_str,
-            min_size_str,
+            size_str,
             exclude_str,
             exclude_cmd_str,
         );
@@ -535,23 +535,17 @@ async fn cmd_clean(args: CleanArgs) -> Result<()> {
 /// Build a combined regex from a list of patterns.
 /// Multiple patterns are OR'd together. If the first pattern starts with `!`,
 /// the entire match is inverted (exclude everything except matching).
-fn build_exclude_regex(patterns: Option<&[String]>, label: &str) -> Result<(Option<regex::Regex>, bool)> {
+fn build_exclude_regex(patterns: Option<&[String]>, _label: &str) -> Result<(Option<regex::Regex>, bool)> {
     let Some(patterns) = patterns else { return Ok((None, false)); };
     if patterns.is_empty() {
         return Ok((None, false));
     }
     let invert = patterns[0].starts_with('!');
     let parts: Vec<String> = patterns.iter().map(|p| {
-        let raw = p.strip_prefix('!').unwrap_or(p);
-        if label == "--exclude-cmd" {
-            raw.replace("*", ".*")
-        } else {
-            regex::escape(raw).replace("\\*", ".*")
-        }
+        p.strip_prefix('!').unwrap_or(p).to_string()
     }).collect();
-    let pattern = parts.join("|");
-    let regex = regex::Regex::new(&pattern)
-        .with_context(|| format!("invalid {} pattern", label))?;
+    let regex = regex::Regex::new(&parts.join("|"))
+        .with_context(|| format!("invalid {} pattern", _label))?;
     Ok((Some(regex), invert))
 }
 
@@ -565,7 +559,7 @@ fn parse_path_entries(entries: &[PathEntry]) -> Result<Vec<(PathBuf, PathOptions
 }
 
 fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
-    let min_size = entry.min_size.as_ref().map(|s| parse_size(s)).transpose()?;
+    let size_filter = entry.size.as_ref().map(|s| parse_size_filter(s)).transpose()?;
     let event_types = entry
         .types
         .as_ref()
@@ -579,7 +573,7 @@ fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
     let (exclude_regex, exclude_invert) = build_exclude_regex(entry.exclude.as_deref(), "exclude")?;
     let (exclude_cmd_regex, exclude_cmd_invert) = build_exclude_regex(entry.exclude_cmd.as_deref(), "--exclude-cmd")?;
     Ok(PathOptions {
-        min_size,
+        size_filter,
         event_types,
         exclude_regex,
         exclude_invert,
@@ -604,7 +598,7 @@ mod tests {
         assert!(args.exclude.is_empty());
         assert!(args.exclude_cmd.is_empty());
         assert!(!args.recursive);
-        assert!(args.min_size.is_none());
+        assert!(args.size.is_none());
     }
 
     #[test]
@@ -694,15 +688,15 @@ mod tests {
     }
 
     #[test]
-    fn test_add_min_size_short() {
-        let args = AddArgs::try_parse_from(&["add", "/tmp", "-m", "1GB"]).unwrap();
-        assert_eq!(args.min_size, Some("1GB".into()));
+    fn test_add_size_short() {
+        let args = AddArgs::try_parse_from(&["add", "/tmp", "-s", "1GB"]).unwrap();
+        assert_eq!(args.size, Some("1GB".into()));
     }
 
     #[test]
-    fn test_add_min_size_long() {
-        let args = AddArgs::try_parse_from(&["add", "/tmp", "--min-size", "100MB"]).unwrap();
-        assert_eq!(args.min_size, Some("100MB".into()));
+    fn test_add_size_long() {
+        let args = AddArgs::try_parse_from(&["add", "/tmp", "--size", "100MB"]).unwrap();
+        assert_eq!(args.size, Some("100MB".into()));
     }
 
     #[test]
@@ -713,14 +707,14 @@ mod tests {
             "-t", "MODIFY", "--types", "CREATE",
             "-e", "*.tmp", "--exclude", "*.log",
             "--exclude-cmd", "rsync",
-            "-m", "1KB",
+            "-s", "1KB",
         ]).unwrap();
         assert_eq!(args.path, PathBuf::from("/tmp"));
         assert!(args.recursive);
         assert_eq!(args.types, vec!["MODIFY", "CREATE"]);
         assert_eq!(args.exclude, vec!["*.tmp", "*.log"]);
         assert_eq!(args.exclude_cmd, vec!["rsync"]);
-        assert_eq!(args.min_size, Some("1KB".into()));
+        assert_eq!(args.size, Some("1KB".into()));
     }
 
     // ---- QueryArgs CLI parsing ----

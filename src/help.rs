@@ -35,7 +35,7 @@ restarting the daemon.
 Usage:
   sudo fsmon daemon &       Start daemon in background
   fsmon add /path --types all       All 14 event types
-  fsmon add /path --exclude-cmd rsync  Exclude by process name
+  fsmon add /path --exclude-cmd 'rsync'  Exclude by process name
   fsmon managed                       List monitored paths
   fsmon query --since 1h    Query events
 
@@ -55,27 +55,26 @@ No sudo needed — store is updated immediately.
 Options:
   -r, --recursive         Watch subdirectories recursively
   -t, --types             Event types to monitor (repeatable; use "all" for all 14 types)
-  -m, --min-size          Minimum file size change to report (e.g., 100MB, 1GB)
-                          Note: -m in add means minimum; in clean -m means maximum
-  -e, --exclude           Path glob patterns to exclude (repeatable, prefix ! to invert)
-  --exclude-cmd           Process names to exclude (glob, repeatable, prefix ! to invert)
+  -s, --size             Size filter with comparison operator (e.g. >1MB, >=500KB, <100MB)
+                          Note: -s in add means size filter; in clean -m means max size limit
+  -e, --exclude           Path regex patterns to exclude (repeatable, prefix ! to invert)
+  --exclude-cmd           Process name regex patterns to exclude (repeatable, prefix ! to invert)
 
-Exclude syntax:
-  --exclude "*.tmp" --exclude "*.log"   Exclude .tmp and .log files
-  --exclude "!*.py"                      Only track .py files, exclude all others
-  --exclude-cmd rsync --exclude-cmd apt  Exclude rsync and apt processes
-  --exclude-cmd "!nginx" --exclude-cmd "!python"  Only track nginx and python
-  --exclude: * matches any chars (except /), ** matches any chars (including /)
-  --exclude-cmd: * matches any chars
+Regex syntax:
+  --exclude '\.tmp$' --exclude '\.log$'   Exclude .tmp and .log files
+  --exclude '!.*\.py$'                      Only track .py files, exclude all others
+  --exclude-cmd 'rsync' --exclude-cmd 'apt'  Exclude rsync and apt processes
+  --exclude-cmd '!nginx|python'              Only track nginx and python processes
+  Standard Rust regex syntax supported.
   prefix ! to invert (only valid as the first pattern)
 
 Examples:
   fsmon add /path/to/project -r                 Default: 8 event types
   fsmon add /path --types MODIFY --types CREATE  Only these 2 types
   fsmon add /path --types all                   All 14 event types
-  fsmon add /etc --types MODIFY --min-size 100KB
-  fsmon add /var/log --exclude-cmd rsync
-  fsmon add /tmp --exclude-cmd nginx"#
+  fsmon add /etc --size '>=100KB'
+  fsmon add /var/log --exclude-cmd 'rsync'
+  fsmon add /tmp --exclude-cmd 'nginx'"#
         }
         HelpTopic::Remove => {
             r#"Remove a path from the monitoring list.
@@ -131,8 +130,7 @@ Examples:
         HelpTopic::Generate => {
             r#"Generate a default configuration file at ~/.config/fsmon/config.toml.
 
-The config includes safety nets (keep_days=30, max_size="1GB")
-that prevent disk overflow even if you never run 'fsmon clean'.
+The config includes defaults for 'fsmon clean' (keep_days=30, max_size="1GB").
 
 Monitored paths are managed separately via 'fsmon add'/'fsmon remove'.
 The daemon also auto-generates a default config if none exists when started.
@@ -152,7 +150,7 @@ Daemon (requires sudo):
 
 Management (no sudo needed):
   fsmon add /path -r                Add path (recursive, default 8 types)
-  fsmon add /path --exclude-cmd rsync  Exclude by process name
+  fsmon add /path --exclude-cmd 'rsync'  Exclude by process name
   fsmon remove /path                Remove path
   fsmon managed                     List monitored paths
 

@@ -25,8 +25,8 @@ pub struct PathEntry {
     pub recursive: Option<bool>,
     /// Only monitor specified event types (e.g. `["MODIFY", "CREATE"]`).
     pub types: Option<Vec<String>>,
-    /// Only record events with size change >= this value.
-    pub min_size: Option<String>,
+    /// Size filter with comparison operator (e.g. >1MB, >=500KB, <100MB).
+    pub size: Option<String>,
     /// Paths to exclude from monitoring (glob patterns, repeatable).
     pub exclude: Option<Vec<String>>,
     /// Process names to exclude (glob, repeatable).
@@ -163,7 +163,7 @@ mod tests {
             path: PathBuf::from("/tmp"),
             recursive: Some(true),
             types: None,
-            min_size: None,
+            size: None,
             exclude: None,
     exclude_cmd: None,
         });
@@ -174,7 +174,7 @@ mod tests {
             path: PathBuf::from("/var/log"),
             recursive: Some(false),
             types: Some(vec!["MODIFY".into()]),
-            min_size: None,
+            size: None,
             exclude: None,
     exclude_cmd: None,
         });
@@ -190,7 +190,7 @@ mod tests {
             path: PathBuf::from("/home"),
             recursive: Some(true),
             types: None,
-            min_size: None,
+            size: None,
             exclude: None,
     exclude_cmd: None,
         });
@@ -201,7 +201,7 @@ mod tests {
             path: PathBuf::from("/home"),
             recursive: Some(false),
             types: Some(vec!["MODIFY".into()]),
-            min_size: None,
+            size: None,
             exclude: None,
     exclude_cmd: None,
         });
@@ -219,7 +219,7 @@ mod tests {
             path: PathBuf::from("/tmp"),
             recursive: None,
             types: None,
-            min_size: None,
+            size: None,
             exclude: None,
     exclude_cmd: None,
         });
@@ -227,7 +227,7 @@ mod tests {
             path: PathBuf::from("/var"),
             recursive: None,
             types: None,
-            min_size: None,
+            size: None,
             exclude: None,
     exclude_cmd: None,
         });
@@ -249,7 +249,7 @@ mod tests {
             path: PathBuf::from("/srv"),
             recursive: Some(true),
             types: Some(vec!["CREATE".into(), "DELETE".into()]),
-            min_size: Some("1KB".into()),
+            size: Some("1KB".into()),
             exclude: Some(vec!["*.tmp".into()]),
     exclude_cmd: None,
         });
@@ -263,7 +263,7 @@ mod tests {
             loaded.entries[0].types.as_ref().unwrap(),
             &["CREATE", "DELETE"]
         );
-        assert_eq!(loaded.entries[0].min_size.as_ref().unwrap(), "1KB");
+        assert_eq!(loaded.entries[0].size.as_ref().unwrap(), "1KB");
         assert_eq!(loaded.entries[0].exclude.as_ref().unwrap(), &vec!["*.tmp".to_string()]);
     }
 
@@ -276,7 +276,7 @@ mod tests {
             path: PathBuf::from("/data"),
             recursive: None,
             types: None,
-            min_size: None,
+            size: None,
             exclude: None,
     exclude_cmd: None,
         });
@@ -302,7 +302,7 @@ mod tests {
                     path: PathBuf::from("/home"),
                     recursive: Some(true),
                     types: None,
-                    min_size: None,
+                    size: None,
                     exclude: None,
     exclude_cmd: None,
                 },
@@ -310,7 +310,7 @@ mod tests {
                     path: PathBuf::from("/tmp"),
                     recursive: Some(false),
                     types: None,
-                    min_size: None,
+                    size: None,
                     exclude: None,
     exclude_cmd: None,
                 },
@@ -318,7 +318,7 @@ mod tests {
                     path: PathBuf::from("/home"), // dup path, should keep last
                     recursive: Some(false),
                     types: Some(vec!["MODIFY".into()]),
-                    min_size: None,
+                    size: None,
                     exclude: None,
     exclude_cmd: None,
                 },
@@ -340,7 +340,7 @@ mod tests {
                     path: PathBuf::from("/a"),
                     recursive: None,
                     types: None,
-                    min_size: None,
+                    size: None,
                     exclude: None,
     exclude_cmd: None,
                 },
@@ -348,7 +348,7 @@ mod tests {
                     path: PathBuf::from("/b"),
                     recursive: None,
                     types: None,
-                    min_size: None,
+                    size: None,
                     exclude: None,
     exclude_cmd: None,
                 },
@@ -356,7 +356,7 @@ mod tests {
                     path: PathBuf::from("/c"),
                     recursive: None,
                     types: None,
-                    min_size: None,
+                    size: None,
                     exclude: None,
     exclude_cmd: None,
                 },
@@ -374,7 +374,7 @@ mod tests {
                     path: PathBuf::from("/a"),
                     recursive: None,
                     types: None,
-                    min_size: None,
+                    size: None,
                     exclude: None,
     exclude_cmd: None,
                 },
@@ -382,7 +382,7 @@ mod tests {
                     path: PathBuf::from("/b"),
                     recursive: None,
                     types: None,
-                    min_size: None,
+                    size: None,
                     exclude: None,
     exclude_cmd: None,
                 },
