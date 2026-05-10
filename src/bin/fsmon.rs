@@ -291,8 +291,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         // New path is recursive and covers an existing monitored path
         if new_recursive && ep.starts_with(&path) && *ep != path {
             eprintln!(
-                "[Note] already monitored path '{}' is under new recursive path '{}' — \
-                 may cause duplicate events.",
+                "[Note] already monitored path '{}' is under new recursive path '{}' — events already covered.",
                 ep.display(),
                 path.display()
             );
