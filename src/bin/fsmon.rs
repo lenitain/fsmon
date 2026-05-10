@@ -78,7 +78,7 @@ struct AddArgs {
     #[arg(short = 'm', long, value_name = "SIZE")]
     min_size: Option<String>,
 
-    /// Paths to exclude (wildcards, use | for multiple, prefix ! to invert)
+    /// Path glob patterns (use | for multiple, prefix ! to invert)
     #[arg(short = 'e', long, value_name = "PATTERN")]
     exclude: Option<String>,
 

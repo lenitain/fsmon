@@ -56,8 +56,17 @@ Options:
   -r, --recursive         Watch subdirectories recursively
   -t, --types             Event types to monitor (comma-separated; use "all" for all 14 types)
   -m, --min-size          Minimum file size change to report (e.g., 100MB, 1GB)
-  -e, --exclude           Glob patterns to exclude (use | for multiple, prefix ! to invert)
-  --exclude-cmd           Process names to exclude (glob, use | for multiple, prefix ! to invert)
+  -e, --exclude           Path glob patterns (use | for multiple, prefix ! to invert)
+  --exclude-cmd           Process name patterns (glob, use | for multiple, prefix ! to invert)
+
+Exclude syntax:
+  --exclude "*.tmp|*.log"         Exclude .tmp and .log files
+  --exclude "!*.py"               Only track .py files, exclude all others
+  --exclude-cmd "rsync|apt"       Exclude rsync and apt processes
+  --exclude-cmd "!nginx|python"   Only track nginx and python processes
+  * matches any chars (except / for --exclude)
+  ** matches any chars (including / for --exclude)
+  | separates multiple patterns in one argument
 
 Examples:
   fsmon add /path/to/project -r                 Default: 8 event types
