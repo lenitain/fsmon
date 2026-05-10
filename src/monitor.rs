@@ -2,7 +2,6 @@ use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use fanotify_fid::prelude::*;
 use fanotify_fid::types::{FidEvent, HandleKey};
-use fanotify_fid::handle::resolve_file_handle;
 use fanotify_fid::consts::{
     AT_FDCWD, FAN_ACCESS, FAN_ATTRIB, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_CLOSE_NOWRITE,
     FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE, FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_FS_ERROR,
@@ -158,16 +157,11 @@ fn read_fid_events_dashmap(
             if !ev.path.as_os_str().is_empty() { continue; }
 
             if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
-                let dir_path = dir_cache.get(key).map(|p| p.clone()).or_else(|| {
-                    // Cache miss: try direct handle resolution for first CREATE event
-                    resolve_file_handle(mount_fds, key.as_slice())
-                });
-                if let Some(ref dp) = dir_path {
-                    dir_cache.insert(key.clone(), dp.clone());
+                if let Some(dir_path) = dir_cache.get(key) {
                     ev.path = if filename.is_empty() {
-                        dp.clone()
+                        dir_path.clone()
                     } else {
-                        dp.join(filename)
+                        dir_path.join(filename)
                     };
                     made_progress = true;
                 }

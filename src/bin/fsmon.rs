@@ -59,10 +59,6 @@ enum Commands {
         #[arg(short, long)]
         force: bool,
     },
-
-    /// List managed paths (one per line, for shell completion use)
-    #[command(hide = true)]
-    ListManagedPaths,
 }
 
 #[derive(Parser)]
@@ -134,7 +130,6 @@ async fn main() -> Result<()> {
         Commands::Query(args) => cmd_query(args).await?,
         Commands::Clean(args) => cmd_clean(args).await?,
         Commands::Generate { force } => cmd_generate(force)?,
-        Commands::ListManagedPaths => cmd_list_managed_paths()?,
     }
 
     Ok(())
@@ -586,17 +581,4 @@ fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
         exclude_cmd_invert,
         recursive: entry.recursive.unwrap_or(false),
     })
-}
-
-/// Output all managed paths (one per line) — used by shell completion scripts.
-fn cmd_list_managed_paths() -> Result<()> {
-    let mut cfg = Config::load()?;
-    cfg.resolve_paths()?;
-    let entries = Managed::load(&cfg.managed.file)
-        .map(|s| s.entries)
-        .unwrap_or_default();
-    for entry in &entries {
-        println!("{}", entry.path.display());
-    }
-    Ok(())
 }
