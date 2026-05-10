@@ -62,6 +62,37 @@ struct FsGroup {
     ref_count: usize,
 }
 
+/// Convert an EventType to its fanotify kernel flag.
+fn event_type_to_kernel_flag(t: &EventType) -> u64 {
+    match t {
+        EventType::Access => FAN_ACCESS,
+        EventType::Modify => FAN_MODIFY,
+        EventType::CloseWrite => FAN_CLOSE_WRITE,
+        EventType::CloseNowrite => FAN_CLOSE_NOWRITE,
+        EventType::Open => FAN_OPEN,
+        EventType::OpenExec => FAN_OPEN_EXEC,
+        EventType::Attrib => FAN_ATTRIB,
+        EventType::Create => FAN_CREATE,
+        EventType::Delete => FAN_DELETE,
+        EventType::DeleteSelf => FAN_DELETE_SELF,
+        EventType::MovedFrom => FAN_MOVED_FROM,
+        EventType::MovedTo => FAN_MOVED_TO,
+        EventType::MoveSelf => FAN_MOVE_SELF,
+        EventType::FsError => FAN_FS_ERROR,
+    }
+}
+
+/// Build kernel mask from PathOptions: explicit types or default.
+fn path_mask_from_options(opts: &PathOptions) -> u64 {
+    match &opts.event_types {
+        Some(types) if !types.is_empty() => {
+            types.iter()
+                .fold(FAN_EVENT_ON_CHILD | FAN_ONDIR, |m, t| m | event_type_to_kernel_flag(t))
+        }
+        _ => DEFAULT_EVENT_MASK,
+    }
+}
+
 // ---- FID event helpers ----
 
 /// Convert a fanotify event mask to fsmon's EventType enum.
@@ -191,22 +222,6 @@ const DEFAULT_EVENT_MASK: u64 = FAN_CLOSE_WRITE
     | FAN_EVENT_ON_CHILD
     | FAN_ONDIR;
 
-const ALL_EVENT_MASK: u64 = FAN_ACCESS
-    | FAN_MODIFY
-    | FAN_ATTRIB
-    | FAN_CLOSE_WRITE
-    | FAN_CLOSE_NOWRITE
-    | FAN_OPEN
-    | FAN_OPEN_EXEC
-    | FAN_CREATE
-    | FAN_DELETE
-    | FAN_DELETE_SELF
-    | FAN_FS_ERROR
-    | FAN_MOVED_FROM
-    | FAN_MOVED_TO
-    | FAN_MOVE_SELF
-    | FAN_EVENT_ON_CHILD
-    | FAN_ONDIR;
 
 // ---- PathOptions ----
 
@@ -218,7 +233,6 @@ pub struct PathOptions {
     pub exclude_cmd_regex: Option<regex::Regex>,
     pub only_cmd_regex: Option<regex::Regex>,
     pub recursive: bool,
-    pub all_events: bool,
 }
 
 
@@ -369,12 +383,10 @@ impl Monitor {
             poll_interval = (poll_interval * 2).min(tokio::time::Duration::from_millis(50));
         }
 
-        // Compute combined event mask from all monitored paths
-        let combined_mask = if self.path_options.values().any(|o| o.all_events) {
-            ALL_EVENT_MASK
-        } else {
-            DEFAULT_EVENT_MASK
-        };
+        // Compute combined event mask (OR of all per-path masks)
+        let combined_mask = self.path_options.values()
+            .map(path_mask_from_options)
+            .fold(0, |a, b| a | b);
 
         // Collect canonical paths — non-existent paths go to pending_paths
         // and are removed from paths/path_options so add_path can work on retry
@@ -404,7 +416,6 @@ impl Monitor {
                     exclude: opts.exclude_regex.as_ref().map(|r| r.as_str().to_string()),
                     exclude_cmd: None,
                     only_cmd: None,
-                    all_events: Some(opts.all_events),
                 }));
             }
         }
@@ -741,7 +752,6 @@ impl Monitor {
                                     exclude: opts.and_then(|o| o.exclude_regex.as_ref().map(|r| r.as_str().to_string())),
                                     exclude_cmd: None,
                                     only_cmd: None,
-                                    all_events: opts.map(|o| o.all_events),
                                 };
                                 if let Err(e) = self.remove_path(path) {
                                     eprintln!("[WARNING] Failed to remove deleted path '{}': {e}", path.display());
@@ -1069,8 +1079,6 @@ impl Monitor {
             })
             .transpose()?;
         let recursive = entry.recursive.unwrap_or(false);
-        let all_events = entry.all_events.unwrap_or(false);
-
         let opts = PathOptions {
             min_size,
             event_types,
@@ -1078,14 +1086,9 @@ impl Monitor {
             exclude_cmd_regex,
             only_cmd_regex,
             recursive,
-            all_events,
         };
 
-        let path_mask = if all_events {
-            ALL_EVENT_MASK
-        } else {
-            DEFAULT_EVENT_MASK
-        };
+        let path_mask = path_mask_from_options(&opts);
 
         // Determine filesystem device ID for dedup lookup
         let dev_id = std::fs::metadata(&canonical)
@@ -1225,10 +1228,9 @@ impl Monitor {
         }
 
         println!(
-            "Added path: {} (recursive={}, all_events={})",
+            "Added path: {} (recursive={})",
             path.display(),
             recursive,
-            all_events
         );
         Ok(())
     }
@@ -1245,11 +1247,7 @@ impl Monitor {
             .path_options
             .get(path)
             .ok_or_else(|| anyhow::anyhow!("No options for path: {}", path.display()))?;
-        let path_mask = if opts.all_events {
-            ALL_EVENT_MASK
-        } else {
-            DEFAULT_EVENT_MASK
-        };
+        let path_mask = path_mask_from_options(opts);
 
         // Look up which FsGroup this path belongs to
         if let Some(&gi) = self.path_to_group.get(path) {
@@ -1308,7 +1306,6 @@ impl Monitor {
                     exclude: cmd.exclude.clone(),
                     exclude_cmd: cmd.exclude_cmd.clone(),
                     only_cmd: cmd.only_cmd.clone(),
-                    all_events: cmd.all_events,
                 };
                 match self.add_path(&entry) {
                     Ok(()) => {
@@ -1367,7 +1364,6 @@ impl Monitor {
                             }),
                             exclude_cmd: None,
                             only_cmd: None,
-                            all_events: opts.map(|o| o.all_events),
                         }
                     })
                     .collect();
@@ -1680,7 +1676,6 @@ mod tests {
         event_types: Option<Vec<EventType>>,
         exclude: Option<&str>,
         recursive: bool,
-        all_events: bool,
     ) -> PathOptions {
         let exclude_regex = exclude.map(|p| {
             let escaped = regex::escape(p);
@@ -1694,7 +1689,6 @@ mod tests {
             exclude_cmd_regex: None,
             only_cmd_regex: None,
             recursive,
-            all_events,
         }
     }
 
@@ -1704,7 +1698,6 @@ mod tests {
         event_types: Option<Vec<EventType>>,
         exclude: Option<&str>,
         recursive: bool,
-        all_events: bool,
     ) -> Monitor {
         Monitor::new(
             paths
@@ -1717,7 +1710,6 @@ mod tests {
                             event_types.clone(),
                             exclude,
                             recursive,
-                            all_events,
                         ),
                     )
                 })
@@ -1732,7 +1724,7 @@ mod tests {
 
     #[test]
     fn test_should_output_no_filters() {
-        let m = make_monitor(vec!["/tmp"], None, None, None, false, false);
+        let m = make_monitor(vec!["/tmp"], None, None, None, false);
         let event = make_event("/tmp/test.txt", EventType::Create, 1000, 1024);
         assert!(m.should_output(&event));
     }
@@ -1745,7 +1737,6 @@ mod tests {
             Some(vec![EventType::Create, EventType::Delete]),
             None,
             false,
-            false,
         );
         assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, 0)));
         assert!(m.should_output(&make_event("/tmp/a", EventType::Delete, 1, 0)));
@@ -1754,21 +1745,21 @@ mod tests {
 
     #[test]
     fn test_should_output_min_size_filter() {
-        let m = make_monitor(vec!["/tmp"], Some(1000), None, None, false, false);
+        let m = make_monitor(vec!["/tmp"], Some(1000), None, None, false);
         assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, 2000)));
         assert!(!m.should_output(&make_event("/tmp/a", EventType::Create, 1, 500)));
     }
 
     #[test]
     fn test_should_output_exclude_pattern() {
-        let m = make_monitor(vec!["/tmp"], None, None, Some("*.tmp"), false, false);
+        let m = make_monitor(vec!["/tmp"], None, None, Some("*.tmp"), false);
         assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/foo.tmp", EventType::Delete, 1, 0)));
     }
 
     #[test]
     fn test_should_output_exclude_exact_pattern() {
-        let m = make_monitor(vec!["/tmp"], None, None, Some("test.tmp"), false, false);
+        let m = make_monitor(vec!["/tmp"], None, None, Some("test.tmp"), false);
         assert!(m.should_output(&make_event("/tmp/test.txt", EventType::Create, 1, 0)));
         assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
         assert!(m.should_output(&make_event("/tmp/foo.tmp", EventType::Delete, 1, 0)));
@@ -1783,7 +1774,6 @@ mod tests {
             Some(vec![EventType::Create]),
             Some("*.log"),
             false,
-            false,
         );
         assert!(m.should_output(&make_event("/tmp/data", EventType::Create, 1, 200)));
         assert!(!m.should_output(&make_event("/tmp/data", EventType::Delete, 1, 200)));
@@ -1793,7 +1783,7 @@ mod tests {
 
     #[test]
     fn test_is_path_in_scope_recursive() {
-        let m = make_monitor(vec!["/tmp"], None, None, None, true, false);
+        let m = make_monitor(vec!["/tmp"], None, None, None, true);
         let watched = vec![PathBuf::from("/tmp")];
         assert!(m.is_path_in_scope(Path::new("/tmp"), &watched));
         assert!(m.is_path_in_scope(Path::new("/tmp/sub"), &watched));
@@ -1804,7 +1794,7 @@ mod tests {
 
     #[test]
     fn test_is_path_in_scope_non_recursive() {
-        let m = make_monitor(vec!["/tmp"], None, None, None, false, false);
+        let m = make_monitor(vec!["/tmp"], None, None, None, false);
         let watched = vec![PathBuf::from("/tmp")];
         assert!(m.is_path_in_scope(Path::new("/tmp"), &watched));
         assert!(m.is_path_in_scope(Path::new("/tmp/file.txt"), &watched));
@@ -1814,7 +1804,7 @@ mod tests {
 
     #[test]
     fn test_is_path_in_scope_multiple_paths() {
-        let m = make_monitor(vec!["/tmp", "/var/log"], None, None, None, true, false);
+        let m = make_monitor(vec!["/tmp", "/var/log"], None, None, None, true);
         let watched = vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")];
         assert!(m.is_path_in_scope(Path::new("/tmp/file"), &watched));
         assert!(m.is_path_in_scope(Path::new("/var/log/syslog"), &watched));
@@ -1847,7 +1837,7 @@ mod tests {
 
     #[test]
     fn test_monitor_buffer_size_validation() {
-        let opts = options(None, None, None, false, false);
+        let opts = options(None, None, None, false);
 
         let result = Monitor::new(
             vec![(PathBuf::from("/tmp"), opts.clone())],
@@ -1891,7 +1881,6 @@ mod tests {
             exclude: None,
             exclude_cmd: None,
             only_cmd: None,
-            all_events: None,
         };
 
         // add_path on non-existent path → goes to pending_paths

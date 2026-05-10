@@ -29,8 +29,6 @@ pub struct SocketCmd {
     pub exclude_cmd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub only_cmd: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub all_events: Option<bool>,
 }
 
 /// Classifies whether an error is permanent (will persist after daemon restart)

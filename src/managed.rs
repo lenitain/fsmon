@@ -33,8 +33,6 @@ pub struct PathEntry {
     pub exclude_cmd: Option<String>,
     /// Only capture events from these process names (glob).
     pub only_cmd: Option<String>,
-    /// Capture all 14 fanotify event types.
-    pub all_events: Option<bool>,
 }
 
 impl Managed {
@@ -171,7 +169,6 @@ mod tests {
             exclude: None,
     exclude_cmd: None,
     only_cmd: None,
-            all_events: None,
         });
         assert_eq!(store.entries.len(), 1);
         assert!(store.get(Path::new("/tmp")).is_some());
@@ -184,7 +181,6 @@ mod tests {
             exclude: None,
     exclude_cmd: None,
     only_cmd: None,
-            all_events: None,
         });
         assert_eq!(store.entries.len(), 2);
     }
@@ -202,7 +198,6 @@ mod tests {
             exclude: None,
     exclude_cmd: None,
     only_cmd: None,
-            all_events: None,
         });
         assert_eq!(store.entries.len(), 1);
 
@@ -215,7 +210,6 @@ mod tests {
             exclude: None,
     exclude_cmd: None,
     only_cmd: None,
-            all_events: None,
         });
         assert_eq!(store.entries.len(), 1); // replaced, not duplicated
         assert_eq!(store.entries[0].path, PathBuf::from("/home"));
@@ -235,7 +229,6 @@ mod tests {
             exclude: None,
     exclude_cmd: None,
     only_cmd: None,
-            all_events: None,
         });
         store.add_entry(PathEntry {
             path: PathBuf::from("/var"),
@@ -245,7 +238,6 @@ mod tests {
             exclude: None,
     exclude_cmd: None,
     only_cmd: None,
-            all_events: None,
         });
 
         assert!(store.remove_entry(Path::new("/tmp")));
@@ -269,7 +261,6 @@ mod tests {
             exclude: Some("*.tmp".into()),
     exclude_cmd: None,
     only_cmd: None,
-            all_events: Some(false),
         });
 
         store.save(&path).unwrap();
@@ -298,7 +289,6 @@ mod tests {
             exclude: None,
     exclude_cmd: None,
     only_cmd: None,
-            all_events: None,
         });
 
         let entry = store.get(Path::new("/data"));
@@ -326,7 +316,6 @@ mod tests {
                     exclude: None,
     exclude_cmd: None,
     only_cmd: None,
-                    all_events: None,
                 },
                 PathEntry {
                     path: PathBuf::from("/tmp"),
@@ -336,7 +325,6 @@ mod tests {
                     exclude: None,
     exclude_cmd: None,
     only_cmd: None,
-                    all_events: None,
                 },
                 PathEntry {
                     path: PathBuf::from("/home"), // dup path, should keep last
@@ -346,7 +334,6 @@ mod tests {
                     exclude: None,
     exclude_cmd: None,
     only_cmd: None,
-                    all_events: None,
                 },
             ],
         };
@@ -370,7 +357,6 @@ mod tests {
                     exclude: None,
     exclude_cmd: None,
     only_cmd: None,
-                    all_events: None,
                 },
                 PathEntry {
                     path: PathBuf::from("/b"),
@@ -380,7 +366,6 @@ mod tests {
                     exclude: None,
     exclude_cmd: None,
     only_cmd: None,
-                    all_events: None,
                 },
                 PathEntry {
                     path: PathBuf::from("/c"),
@@ -390,7 +375,6 @@ mod tests {
                     exclude: None,
     exclude_cmd: None,
     only_cmd: None,
-                    all_events: None,
                 },
             ],
         };
@@ -410,7 +394,6 @@ mod tests {
                     exclude: None,
     exclude_cmd: None,
     only_cmd: None,
-                    all_events: None,
                 },
                 PathEntry {
                     path: PathBuf::from("/b"),
@@ -420,7 +403,6 @@ mod tests {
                     exclude: None,
     exclude_cmd: None,
     only_cmd: None,
-                    all_events: None,
                 },
             ],
         };

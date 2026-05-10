@@ -90,9 +90,7 @@ struct AddArgs {
     #[arg(long, value_name = "PATTERN")]
     only_cmd: Option<String>,
 
-    /// Capture all 14 fanotify events
-    #[arg(long)]
-    all_events: bool,
+
 }
 
 #[derive(Parser)]
@@ -307,13 +305,35 @@ fn cmd_add(args: AddArgs) -> Result<()> {
 
     let types: Option<Vec<String>> = args
         .types
-        .map(|t| t.split(',').map(|s| s.trim().to_string()).collect());
+        .map(|t| {
+            let parts: Vec<String> = t.split(',').map(|s| s.trim().to_string()).collect();
+            // --types all → expand to all 14 event types
+            if parts.iter().any(|s| s.eq_ignore_ascii_case("all")) {
+                vec![
+                    "ACCESS".into(),
+                    "MODIFY".into(),
+                    "CLOSE_WRITE".into(),
+                    "CLOSE_NOWRITE".into(),
+                    "OPEN".into(),
+                    "OPEN_EXEC".into(),
+                    "ATTRIB".into(),
+                    "CREATE".into(),
+                    "DELETE".into(),
+                    "DELETE_SELF".into(),
+                    "MOVED_FROM".into(),
+                    "MOVED_TO".into(),
+                    "MOVE_SELF".into(),
+                    "FS_ERROR".into(),
+                ]
+            } else {
+                parts
+            }
+        });
     let min_size = args.min_size.clone();
     let exclude = args.exclude.clone();
     let exclude_cmd = args.exclude_cmd.clone();
     let only_cmd = args.only_cmd.clone();
     let recursive = if args.recursive { Some(true) } else { None };
-    let all_events = if args.all_events { Some(true) } else { None };
 
     store.add_entry(PathEntry {
         path: path.clone(),
@@ -323,7 +343,6 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         exclude: exclude.clone(),
         exclude_cmd: exclude_cmd.clone(),
         only_cmd: only_cmd.clone(),
-        all_events,
     });
 
     store.save(&cfg.managed.file)?;
@@ -341,7 +360,6 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             exclude,
             exclude_cmd,
             only_cmd,
-            all_events,
         },
     );
 
@@ -406,7 +424,6 @@ fn cmd_remove(raw: PathBuf) -> Result<()> {
             exclude: None,
             exclude_cmd: None,
             only_cmd: None,
-            all_events: None,
         },
     ) {
         Ok(resp) if resp.ok => {
@@ -445,14 +462,8 @@ fn cmd_managed() -> Result<()> {
         let exclude_str = entry.exclude.as_deref().unwrap_or("-");
         let exclude_cmd_str = entry.exclude_cmd.as_deref().unwrap_or("-");
         let only_cmd_str = entry.only_cmd.as_deref().unwrap_or("-");
-        let all_events_str = if entry.all_events.unwrap_or(false) {
-            "all"
-        } else {
-            "filtered"
-        };
-
         println!(
-            "{} | types={} | {} | min_size={} | exclude-path={} | exclude-cmd={} | only-cmd={} | events={}",
+            "{} | types={} | {} | min_size={} | exclude-path={} | exclude-cmd={} | only-cmd={}",
             entry.path.display(),
             types_str,
             recursive_str,
@@ -460,7 +471,6 @@ fn cmd_managed() -> Result<()> {
             exclude_str,
             exclude_cmd_str,
             only_cmd_str,
-            all_events_str,
         );
     }
 
@@ -583,6 +593,5 @@ fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
         exclude_cmd_regex,
         only_cmd_regex,
         recursive: entry.recursive.unwrap_or(false),
-        all_events: entry.all_events.unwrap_or(false),
     })
 }
