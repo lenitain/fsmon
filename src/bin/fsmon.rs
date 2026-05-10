@@ -249,7 +249,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             if cleaned.components().count() == 0 {
                 bail!("Invalid path (empty after normalization): {}", args.path.display());
             }
-            eprintln!("Note: path does not exist yet — will start monitoring when created.");
+            eprintln!("[Note] path does not exist yet — will start monitoring when created.");
             cleaned
         }
     };
@@ -269,7 +269,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     // 4. Check if already monitored
     if let Some(_existing) = store.get(&path) {
         eprintln!(
-            "Note: '{}' is already monitored — new parameters will replace the existing configuration.",
+            "[Note] '{}' is already monitored — new parameters will replace the existing configuration.",
             path.display()
         );
     }
@@ -282,7 +282,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         // New path is a subdirectory of an existing recursive path
         if e_recursive && path.starts_with(ep) && path != *ep {
             eprintln!(
-                "Note: '{}' is under recursively monitored path '{}' — \
+                "[Note] '{}' is under recursively monitored path '{}' — \
                  events are already captured by the parent.",
                 path.display(),
                 ep.display()
@@ -291,7 +291,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         // New path is recursive and covers an existing monitored path
         if new_recursive && ep.starts_with(&path) && *ep != path {
             eprintln!(
-                "Note: already monitored path '{}' is under new recursive path '{}' — \
+                "[Note] already monitored path '{}' is under new recursive path '{}' — \
                  may cause duplicate events.",
                 ep.display(),
                 path.display()
