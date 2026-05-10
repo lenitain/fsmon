@@ -98,9 +98,9 @@ struct QueryArgs {
     /// Path(s) to query. Repeatable. Default: all.
     #[arg(short, long, value_name = "PATH")]
     path: Vec<PathBuf>,
-    #[arg(short = 'S', long)]
+    #[arg(short, long)]
     since: Option<String>,
-    #[arg(short = 'U', long)]
+    #[arg(short, long)]
     until: Option<String>,
 }
 
@@ -752,7 +752,7 @@ mod tests {
 
     #[test]
     fn test_query_since_short() {
-        let args = QueryArgs::try_parse_from(&["query", "-S", "1h"]).unwrap();
+        let args = QueryArgs::try_parse_from(&["query", "-s", "1h"]).unwrap();
         assert_eq!(args.since, Some("1h".into()));
     }
 
@@ -773,7 +773,7 @@ mod tests {
         let args = QueryArgs::try_parse_from(&[
             "query",
             "-p", "/tmp", "--path", "/home",
-            "-S", "1h", "--until", "now",
+            "-s", "1h", "--until", "now",
         ]).unwrap();
         assert_eq!(args.path, vec![PathBuf::from("/tmp"), PathBuf::from("/home")]);
         assert_eq!(args.since, Some("1h".into()));

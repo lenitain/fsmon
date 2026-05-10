@@ -100,8 +100,8 @@ Output is JSONL (one JSON object per line), pipe to jq for custom filtering.
 
 Options:
   -p, --path        Path(s) to query. Repeatable. Default: all.
-  -S, --since       Start time: relative (1h, 30m, 7d) or absolute
-  -U, --until       End time
+  -s, --since       Start time: relative (1h, 30m, 7d) or absolute
+  -u, --until       End time
 
 Examples:
   fsmon query --since 1h
