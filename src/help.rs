@@ -56,6 +56,7 @@ Options:
   -r, --recursive         Watch subdirectories recursively
   -t, --types             Event types to monitor (repeatable; use "all" for all 14 types)
   -m, --min-size          Minimum file size change to report (e.g., 100MB, 1GB)
+                          Note: -m in add means minimum; in clean -m means maximum
   -e, --exclude           Path glob patterns to exclude (repeatable, prefix ! to invert)
   --exclude-cmd           Process names to exclude (glob, repeatable, prefix ! to invert)
 
@@ -118,7 +119,8 @@ CLI args override config overrides code defaults.
 Options:
   --path            Path(s) to clean. Repeatable. Default: all.
   --keep-days       Keep logs from last N days
-  --max-size        Maximum log file size (e.g., 100MB, 1GB)
+  --max-size        Maximum log file size (e.g., 100MB, 1GB) (short: -m)
+                          Note: -m in clean means maximum; in add -m means minimum
   --dry-run         Preview mode, don't actually delete
 
 Examples:
