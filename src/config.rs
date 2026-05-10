@@ -228,8 +228,11 @@ file = "~/.local/share/fsmon/managed.jsonl"
 [logging]
 # Directory containing per-path log files (named by path hash).
 dir = "~/.local/state/fsmon"
-# Safety nets: keep at most 30 days of logs, max 1GB per log file.
-# These prevent disk overflow even if you never run 'fsmon clean'.
+# Defaults for 'fsmon clean' (not auto-cleaned by daemon; use cron/timer).
+#   keep_days: delete entries older than N days (default: 30)
+#   max_size:  truncate log file when exceeding this size (default: 1GB)
+# Both can be overridden at runtime:
+#   fsmon clean --keep-days 7 --max-size 500MB
 keep_days = 30
 max_size = "1GB"
 
