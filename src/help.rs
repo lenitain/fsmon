@@ -56,9 +56,8 @@ Options:
   -r, --recursive         Watch subdirectories recursively
   -t, --types             Event types to monitor (comma-separated; use "all" for all 14 types)
   -m, --min-size          Minimum file size change to report (e.g., 100MB, 1GB)
-  -e, --exclude           Glob patterns to exclude (e.g., "*.tmp")
+  -e, --exclude           Glob patterns to exclude (e.g., "*.tmp|*.log")
   --exclude-cmd           Process names to exclude (glob, e.g. "rsync|apt")
-  --only-cmd              Only capture from these process names (glob)
 
 Examples:
   fsmon add /path/to/project -r                 Default: 8 event types
@@ -66,7 +65,7 @@ Examples:
   fsmon add /path --types all                   All 14 event types
   fsmon add /etc --types MODIFY --min-size 100KB
   fsmon add /var/log --exclude-cmd "rsync|apt"
-  fsmon add /tmp --only-cmd nginx"#
+  fsmon add /tmp --exclude-cmd nginx"#
         }
         HelpTopic::Remove => {
             r#"Remove a path from the monitoring list.
@@ -142,7 +141,7 @@ Daemon (requires sudo):
 
 Management (no sudo needed):
   fsmon add /path -r                Add path (recursive, default 8 types)
-  fsmon add /path --only-cmd nginx  Filter by process name
+  fsmon add /path --exclude-cmd rsync  Exclude by process name
   fsmon remove /path                Remove path
   fsmon managed                     List monitored paths
 

@@ -231,7 +231,6 @@ pub struct PathOptions {
     pub event_types: Option<Vec<EventType>>,
     pub exclude_regex: Option<regex::Regex>,
     pub exclude_cmd_regex: Option<regex::Regex>,
-    pub only_cmd_regex: Option<regex::Regex>,
     pub recursive: bool,
 }
 
@@ -415,7 +414,6 @@ impl Monitor {
                     min_size: opts.min_size.map(|s| s.to_string()),
                     exclude: opts.exclude_regex.as_ref().map(|r| r.as_str().to_string()),
                     exclude_cmd: None,
-                    only_cmd: None,
                 }));
             }
         }
@@ -751,7 +749,6 @@ impl Monitor {
                                     min_size: opts.and_then(|o| o.min_size.map(|s| s.to_string())),
                                     exclude: opts.and_then(|o| o.exclude_regex.as_ref().map(|r| r.as_str().to_string())),
                                     exclude_cmd: None,
-                                    only_cmd: None,
                                 };
                                 if let Err(e) = self.remove_path(path) {
                                     eprintln!("[WARNING] Failed to remove deleted path '{}': {e}", path.display());
@@ -1070,21 +1067,12 @@ impl Monitor {
                 regex::Regex::new(&pattern).with_context(|| "invalid --exclude-cmd pattern")
             })
             .transpose()?;
-        let only_cmd_regex = entry
-            .only_cmd
-            .as_ref()
-            .map(|p| {
-                let pattern = p.replace("*", ".*");
-                regex::Regex::new(&pattern).with_context(|| "invalid --only-cmd pattern")
-            })
-            .transpose()?;
         let recursive = entry.recursive.unwrap_or(false);
         let opts = PathOptions {
             min_size,
             event_types,
             exclude_regex,
             exclude_cmd_regex,
-            only_cmd_regex,
             recursive,
         };
 
@@ -1305,7 +1293,6 @@ impl Monitor {
                     min_size: cmd.min_size.clone(),
                     exclude: cmd.exclude.clone(),
                     exclude_cmd: cmd.exclude_cmd.clone(),
-                    only_cmd: cmd.only_cmd.clone(),
                 };
                 match self.add_path(&entry) {
                     Ok(()) => {
@@ -1363,7 +1350,6 @@ impl Monitor {
                                 o.exclude_regex.as_ref().map(|r| r.as_str().to_string())
                             }),
                             exclude_cmd: None,
-                            only_cmd: None,
                         }
                     })
                     .collect();
@@ -1502,12 +1488,6 @@ impl Monitor {
 
         if let Some(ref regex) = opts.exclude_cmd_regex
             && regex.is_match(&event.cmd)
-        {
-            return false;
-        }
-
-        if let Some(ref regex) = opts.only_cmd_regex
-            && !regex.is_match(&event.cmd)
         {
             return false;
         }
@@ -1679,7 +1659,7 @@ mod tests {
     ) -> PathOptions {
         let exclude_regex = exclude.map(|p| {
             let escaped = regex::escape(p);
-            let pattern = escaped.replace("\\*", ".*");
+            let pattern = escaped.replace("\\*", ".*").replace("\\|", "|");
             regex::Regex::new(&pattern).expect("invalid exclude pattern")
         });
         PathOptions {
@@ -1687,7 +1667,6 @@ mod tests {
             event_types,
             exclude_regex,
             exclude_cmd_regex: None,
-            only_cmd_regex: None,
             recursive,
         }
     }
@@ -1880,7 +1859,6 @@ mod tests {
             min_size: None,
             exclude: None,
             exclude_cmd: None,
-            only_cmd: None,
         };
 
         // add_path on non-existent path → goes to pending_paths
