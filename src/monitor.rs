@@ -50,6 +50,18 @@ impl AsFd for FanFd {
     }
 }
 
+// ---- FsGroup: one per unique filesystem ----
+
+/// A group of fds for a single filesystem.
+/// One fanotify fd + one directory fd per filesystem, shared by all paths on it.
+struct FsGroup {
+    dev_id: u64,
+    is_fs_mark: bool,
+    fan_fd: OwnedFd,
+    mount_fd: OwnedFd,
+    ref_count: usize,
+}
+
 // ---- FID event helpers ----
 
 /// Convert a fanotify event mask to fsmon's EventType enum.
@@ -227,12 +239,10 @@ pub struct Monitor {
     pid_cache: LruCache<u32, ProcInfo>,
     buffer_size: usize,
     socket_listener: Option<tokio::net::UnixListener>,
-    /// All fanotify fds (one per filesystem group)
-    fan_fds: Vec<OwnedFd>,
-    /// Maps monitored path → fanotify fd index in fan_fds.
-    /// So remove_path can target the right fd without iterating all fds.
-    path_fd: HashMap<PathBuf, usize>,
-    mount_fds: Vec<OwnedFd>,
+    /// One `FsGroup` per unique filesystem (fan_fd + mount_fd dedup'd)
+    fs_groups: Vec<FsGroup>,
+    /// Maps monitored path → index in fs_groups for fast lookup in remove_path
+    path_to_group: HashMap<PathBuf, usize>,
     dir_cache: DashMap<HandleKey, PathBuf>,
     /// Shared state for spawning reader tasks during live-add (set in run())
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<FidEvent>>>,
@@ -298,9 +308,8 @@ impl Monitor {
             buffer_size,
 
             socket_listener,
-            fan_fds: Vec::new(),
-            path_fd: HashMap::new(),
-            mount_fds: Vec::new(),
+            fs_groups: Vec::new(),
+            path_to_group: HashMap::new(),
             dir_cache: DashMap::new(),
             event_tx: None,
             shared_dir_cache: None,
@@ -402,57 +411,64 @@ impl Monitor {
         self.inotify = Some(inotify::Inotify::init().context("inotify_init")?);
         self.setup_inotify_watches();
 
-        // Initialize per-filesystem fanotify fds. The kernel does not allow
-        // marks on different filesystems to coexist on a single fanotify fd
-        // (even inode marks — all return EXDEV). So we create one fd per
-        // filesystem and spawn a reader task for each.
+        // Initialize per-filesystem fanotify fds. One FsGroup per unique
+        // filesystem (grouped by st_dev). All paths on the same filesystem
+        // share one fanotify fd + one directory mount fd.
         //
-        // Strategy: try to add each path to an existing fd's group (same
-        // filesystem), probing with FAN_MARK_ADD|FAN_MARK_FILESYSTEM first.
-        // If EXDEV, the path belongs to a different filesystem — create a
-        // new fd for it. If FS-mark also fails with a non-EXDEV error, fall
-        // back to inode mark on the new fd.
+        // Strategy: try FAN_MARK_FILESYSTEM first. If it succeeds, the FS mark
+        // covers all paths on that superblock. If EXDEV, fall back to per-path
+        // inode marks (plus recursive marking for directories).
 
-        struct FanGroup {
-            fd: OwnedFd,
-        }
-
-        let mut fan_groups: Vec<FanGroup> = Vec::new();
-        for canonical in &self.canonical_paths {
+        let mut fs_group_devs: Vec<u64> = Vec::new();
+        for (i, canonical) in self.canonical_paths.iter().enumerate() {
             let path_mask = combined_mask;
 
-            // Try to add this path to an existing fd (same filesystem)
-            let mut matched = false;
-            for group in &fan_groups {
-                match fanotify_mark(
-                    &group.fd,
-                    FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
-                    path_mask,
-                    AT_FDCWD,
-                    canonical,
-                ) {
-                    Ok(()) => {
-                        matched = true;
-                        eprintln!(
-                            "[INFO] Monitoring {} (fs mark) on existing fd {}",
-                            canonical.display(),
-                            group.fd.as_raw_fd()
-                        );
-                        break;
-                    }
-                    Err(FanotifyError::Mark(code)) if code == libc::EXDEV => {
-                        continue; // different filesystem, try next fd
-                    }
-                    Err(e) => {
-                        eprintln!("[WARNING] Cannot monitor {}: {:#}", canonical.display(), e);
-                    }
+            // Determine filesystem via st_dev
+            let dev_id = std::fs::metadata(canonical)
+                .ok()
+                .map(|m| std::os::linux::fs::MetadataExt::st_dev(&m))
+                .unwrap_or(0);
+
+            // Try to reuse an existing FsGroup on the same filesystem
+            let mut reuse_idx = None;
+            for (gi, gdev) in fs_group_devs.iter().enumerate() {
+                if *gdev == dev_id {
+                    reuse_idx = Some(gi);
+                    break;
                 }
             }
-            if matched {
+
+            if let Some(gi) = reuse_idx {
+                // Same filesystem — just add mark (inode) if group uses inode marks
+                let group = &self.fs_groups[gi];
+                if !group.is_fs_mark {
+                    let fan_fd = &group.fan_fd;
+                    if let Err(e) = mark_directory(fan_fd, path_mask, canonical) {
+                        eprintln!(
+                            "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
+                            canonical.display(),
+                            fan_fd.as_raw_fd(),
+                            e
+                        );
+                    } else {
+                        eprintln!(
+                            "[INFO] Monitoring {} (inode mark) on existing fd {}",
+                            canonical.display(),
+                            fan_fd.as_raw_fd()
+                        );
+                        // mark subdirectories recursively
+                        let opts = self.paths.get(i).and_then(|p| self.path_options.get(p));
+                        if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
+                            mark_recursive(fan_fd, path_mask, canonical);
+                        }
+                    }
+                }
+                self.fs_groups[gi].ref_count += 1;
+                self.path_to_group.insert(self.paths[i].clone(), gi);
                 continue;
             }
 
-            // Create a fresh fd for this filesystem
+            // New filesystem — create fanotify fd + mount fd
             let new_fd = fanotify_init(
                 FAN_CLOEXEC
                     | FAN_NONBLOCK
@@ -469,7 +485,7 @@ impl Monitor {
                 )
             })?;
 
-            let _use_fs = match fanotify_mark(
+            let (is_fs_mark, _) = match fanotify_mark(
                 &new_fd,
                 FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
                 path_mask,
@@ -482,11 +498,9 @@ impl Monitor {
                         canonical.display(),
                         new_fd.as_raw_fd()
                     );
-                    true
+                    (true, true)
                 }
                 Err(FanotifyError::Mark(code)) if code == libc::EXDEV => {
-                    // Filesystem mark EXDEV shouldn't happen on a fresh fd,
-                    // but fall back to inode mark just in case.
                     match mark_directory(&new_fd, path_mask, canonical) {
                         Ok(()) => {
                             eprintln!(
@@ -494,20 +508,11 @@ impl Monitor {
                                 canonical.display(),
                                 new_fd.as_raw_fd()
                             );
-                            // mark subdirectories recursively
-                            let opts = self
-                                .paths
-                                .iter()
-                                .position(|p| {
-                                    canonical == p
-                                        || canonical
-                                            == &p.canonicalize().unwrap_or_else(|_| p.clone())
-                                })
-                                .and_then(|i| self.path_options.get(&self.paths[i]));
+                            let opts = self.paths.get(i).and_then(|p| self.path_options.get(p));
                             if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
                                 mark_recursive(&new_fd, path_mask, canonical);
                             }
-                            false
+                            (false, true)
                         }
                         Err(e) => {
                             eprintln!(
@@ -516,6 +521,7 @@ impl Monitor {
                                 e
                             );
                             drop(new_fd);
+                            // Skip this path, continue to next
                             continue;
                         }
                     }
@@ -526,31 +532,46 @@ impl Monitor {
                     continue;
                 }
             };
-            fan_groups.push(FanGroup { fd: new_fd });
+
+            if !is_fs_mark {
+                // Need to check if this path should have been set up fine above
+                // (inode mark branch handles it)
+            }
+
+            // Open directory fd for open_by_handle_at
+            let mount_fd_raw = nix::fcntl::open(
+                canonical,
+                nix::fcntl::OFlag::O_DIRECTORY,
+                nix::sys::stat::Mode::empty(),
+            );
+            let mount_fd = match mount_fd_raw {
+                Ok(raw) => unsafe { OwnedFd::from_raw_fd(raw) },
+                Err(e) => {
+                    eprintln!(
+                        "[WARNING] Could not open directory fd for {}: {}",
+                        canonical.display(),
+                        e
+                    );
+                    drop(new_fd);
+                    continue;
+                }
+            };
+
+            let gi = self.fs_groups.len();
+            self.fs_groups.push(FsGroup {
+                dev_id,
+                is_fs_mark,
+                fan_fd: new_fd,
+                mount_fd,
+                ref_count: 1,
+            });
+            fs_group_devs.push(dev_id);
+            self.path_to_group.insert(self.paths[i].clone(), gi);
         }
 
-        // Collect metadata before consuming fan_groups
-        let group_fds: Vec<i32> = fan_groups.iter().map(|g| g.fd.as_raw_fd()).collect();
-        let fan_group_count = fan_groups.len();
+        let fan_group_count = self.fs_groups.len();
 
         if fan_group_count > 0 {
-            // Managed fds for live-add reuse via socket commands
-            for group in fan_groups {
-                self.fan_fds.push(group.fd);
-            }
-
-            // Open directory fds for open_by_handle_at to resolve file handles.
-            for canonical in &self.canonical_paths {
-                if let Ok(raw) = nix::fcntl::open(
-                    canonical,
-                    nix::fcntl::OFlag::O_DIRECTORY,
-                    nix::sys::stat::Mode::empty(),
-                ) {
-                    // SAFETY: raw fd just opened successfully, OwnedFd takes ownership
-                    self.mount_fds.push(unsafe { OwnedFd::from_raw_fd(raw) });
-                }
-            }
-
             // Pre-cache directory handles (shared across fds)
             for (i, canonical) in self.canonical_paths.iter().enumerate() {
                 if canonical.is_dir() {
@@ -606,29 +627,50 @@ impl Monitor {
             );
         }
 
-        // Spawn one reader task per fan_fd. Events are sent through an
-        // unbounded mpsc channel to the main loop for processing.
+        // Spawn one reader task per FsGroup (one per filesystem).
+        // Events are sent through an unbounded mpsc channel to the main loop.
         let (event_tx, mut event_rx) =
             tokio::sync::mpsc::unbounded_channel::<Vec<FidEvent>>();
-        let mount_fds = Arc::new(std::mem::take(&mut self.mount_fds));
         let dir_cache = Arc::new(std::mem::take(&mut self.dir_cache));
         let buf_size = self.buffer_size;
 
-        // Managed for live-add (add_path may need to spawn reader tasks)
+        // Shared state for live-add (add_path may need to spawn reader tasks)
         self.event_tx = Some(event_tx.clone());
         self.shared_dir_cache = Some(Arc::clone(&dir_cache));
 
-        for &fd in &group_fds {
+        for gi in 0..self.fs_groups.len() {
+            // Duplicate both fds so reader task owns independent copies
+            let dup_fan_raw = unsafe { libc::dup(self.fs_groups[gi].fan_fd.as_raw_fd()) };
+            if dup_fan_raw < 0 {
+                eprintln!(
+                    "[ERROR] Failed to dup fanotify fd {}: {}",
+                    self.fs_groups[gi].fan_fd.as_raw_fd(),
+                    std::io::Error::last_os_error()
+                );
+                continue;
+            }
+            let dup_mount_raw = unsafe { libc::dup(self.fs_groups[gi].mount_fd.as_raw_fd()) };
+            if dup_mount_raw < 0 {
+                eprintln!(
+                    "[ERROR] Failed to dup mount fd {}: {}",
+                    self.fs_groups[gi].mount_fd.as_raw_fd(),
+                    std::io::Error::last_os_error()
+                );
+                unsafe { libc::close(dup_fan_raw); }
+                continue;
+            }
+            // SAFETY: dup returned valid new fds, wrap them in OwnedFd
+            let owned_fan_fd = unsafe { OwnedFd::from_raw_fd(dup_fan_raw) };
+            let owned_mount_fd = unsafe { OwnedFd::from_raw_fd(dup_mount_raw) };
+            let mfds = Arc::new(vec![owned_mount_fd]);
             let tx = event_tx.clone();
-            let mfds = Arc::clone(&mount_fds);
             let dc = Arc::clone(&dir_cache);
+            let raw_fd = dup_fan_raw;
             tokio::spawn(async move {
-                // SAFETY: fd is a fanotify fd owned by this task from now on
-                let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
-                let afd = match AsyncFd::new(owned_fd) {
+                let afd = match AsyncFd::new(owned_fan_fd) {
                     Ok(a) => a,
                     Err(e) => {
-                        eprintln!("[ERROR] AsyncFd for fd {}: {}", fd, e);
+                        eprintln!("[ERROR] AsyncFd for fd {}: {}", raw_fd, e);
                         return;
                     }
                 };
@@ -638,15 +680,14 @@ impl Monitor {
                     let mut guard = match result {
                         Ok(g) => g,
                         Err(e) => {
-                            eprintln!("[ERROR] fd {} readable: {}", fd, e);
+                            eprintln!("[ERROR] fd {} readable: {}", raw_fd, e);
                             break;
                         }
                     };
-                    // Use the OwnedFd held by AsyncFd (not a temporary — that would close the fd!)
                     let events =
                         read_fid_events_dashmap(afd.get_ref(), &mfds, dc.as_ref(), &mut buf);
                     if !events.is_empty() && tx.send(events).is_err() {
-                        break; // receiver dropped (shutting down)
+                        break;
                     }
                     guard.clear_ready();
                 }
@@ -880,28 +921,12 @@ impl Monitor {
         None
     }
 
-    /// Try to add a path to an existing fan_fd via FAN_MARK_FILESYSTEM.
-    /// Returns Ok(fd) on success, Err(()) if no fd accepts this path.
-    fn try_mark_on_existing(fds: &[OwnedFd], mask: u64, path: &Path) -> std::result::Result<i32, ()> {
-        for fd in fds {
-            match fanotify_mark(fd, FAN_MARK_ADD | FAN_MARK_FILESYSTEM, mask, AT_FDCWD, path) {
-                Ok(()) => return Ok(fd.as_raw_fd()),
-                Err(FanotifyError::Mark(code)) if code == libc::EXDEV => continue,
-                Err(e) => {
-                    eprintln!(
-                        "[WARNING] Cannot monitor {} on fd {}: {:#}",
-                        path.display(),
-                        fd.as_raw_fd(),
-                        e
-                    );
-                }
-            }
-        }
-        Err(())
-    }
 
-    /// Spawn a tokio reader task for a newly created fanotify fd.
-    fn spawn_fd_reader(&mut self, fd: i32) {
+
+    /// Spawn a tokio reader task for `group_idx` in `fs_groups`.
+    /// Both the fanotify fd and mount fd are duplicated so the reader task
+    /// owns independent copies, avoiding double-close with Monitor's OwnedFd.
+    fn spawn_fd_reader(&mut self, group_idx: usize) {
         let tx = match self.event_tx.as_ref() {
             Some(t) => t.clone(),
             None => {
@@ -916,16 +941,41 @@ impl Monitor {
                 return;
             }
         };
-        let mfds = std::mem::take(&mut self.mount_fds);
-        let mfds = Arc::new(mfds);
         let buf_size = self.buffer_size;
+        let group = &self.fs_groups[group_idx];
+
+        // Duplicate fds so the reader task owns independent copies
+        let dup_fan_raw = unsafe { libc::dup(group.fan_fd.as_raw_fd()) };
+        if dup_fan_raw < 0 {
+            eprintln!(
+                "[ERROR] Failed to dup fanotify fd {}: {}",
+                group.fan_fd.as_raw_fd(),
+                std::io::Error::last_os_error()
+            );
+            return;
+        }
+        let dup_mount_raw = unsafe { libc::dup(group.mount_fd.as_raw_fd()) };
+        if dup_mount_raw < 0 {
+            eprintln!(
+                "[ERROR] Failed to dup mount fd {}: {}",
+                group.mount_fd.as_raw_fd(),
+                std::io::Error::last_os_error()
+            );
+            unsafe { libc::close(dup_fan_raw); }
+            return;
+        }
+
+        // SAFETY: dup returned valid new fds, wrap in OwnedFd
+        let owned_fan_fd = unsafe { OwnedFd::from_raw_fd(dup_fan_raw) };
+        let owned_mount_fd = unsafe { OwnedFd::from_raw_fd(dup_mount_raw) };
+        let mfds = Arc::new(vec![owned_mount_fd]);
+        let raw_fd = dup_fan_raw;
+
         tokio::spawn(async move {
-            // SAFETY: fd is a fanotify fd owned by this task from now on
-            let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
-            let afd = match AsyncFd::new(owned_fd) {
+            let afd = match AsyncFd::new(owned_fan_fd) {
                 Ok(a) => a,
                 Err(e) => {
-                    eprintln!("[ERROR] AsyncFd for fd {}: {}", fd, e);
+                    eprintln!("[ERROR] AsyncFd for fd {}: {}", raw_fd, e);
                     return;
                 }
             };
@@ -935,11 +985,10 @@ impl Monitor {
                 let mut guard = match result {
                     Ok(g) => g,
                     Err(e) => {
-                        eprintln!("[ERROR] fd {} readable: {}", fd, e);
+                        eprintln!("[ERROR] fd {} readable: {}", raw_fd, e);
                         break;
                     }
                 };
-                // Use the OwnedFd held by AsyncFd (not a temporary — that would close the fd!)
                 let events =
                     read_fid_events_dashmap(afd.get_ref(), &mfds, dc.as_ref(), &mut buf);
                 if !events.is_empty() && tx.send(events).is_err() {
@@ -947,7 +996,6 @@ impl Monitor {
                 }
                 guard.clear_ready();
             }
-            // OwnedFd dropped here → fd auto-closed
         });
     }
 
@@ -1036,102 +1084,133 @@ impl Monitor {
             DEFAULT_EVENT_MASK
         };
 
-        // Find or create a fanotify fd for this path's filesystem.
-        // Try each existing fd first (same filesystem → OK, EXDEV → try next).
-        let (fan_fd, is_new_fd) =
-            match Self::try_mark_on_existing(&self.fan_fds, path_mask, &canonical) {
-                Ok(fd) => (fd, false),
-                Err(()) => {
-                    // No existing fd works — create a new one
-                    let new_fd = fanotify_init(
-                        FAN_CLOEXEC
-                            | FAN_NONBLOCK
-                            | FAN_CLASS_NOTIF
-                            | FAN_REPORT_FID
-                            | FAN_REPORT_DIR_FID
-                            | FAN_REPORT_NAME,
-                        (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
-                    )
-                    .with_context(|| {
-                        format!(
-                            "fanotify_init failed for {} (requires Linux 5.9+ kernel)",
-                            canonical.display()
-                        )
-                    })?;
-                    let fd = new_fd.as_raw_fd();
-                    self.fan_fds.push(new_fd);
+        // Determine filesystem device ID for dedup lookup
+        let dev_id = std::fs::metadata(&canonical)
+            .ok()
+            .map(|m| std::os::linux::fs::MetadataExt::st_dev(&m))
+            .unwrap_or(0);
 
-                    // Try filesystem mark on the new fd
-                    match fanotify_mark(
-                        &self.fan_fds.last().unwrap(),
-                        FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
-                        path_mask,
-                        AT_FDCWD,
-                        &canonical,
-                    ) {
+        // Find existing FsGroup for this filesystem
+        let existing_idx = self.fs_groups.iter().position(|g| g.dev_id == dev_id);
+
+        let group_idx = if let Some(idx) = existing_idx {
+            // Reuse existing group — just add inode mark if needed
+            if !self.fs_groups[idx].is_fs_mark {
+                let fan_fd = &self.fs_groups[idx].fan_fd;
+                if let Err(e) = mark_directory(fan_fd, path_mask, &canonical) {
+                    eprintln!(
+                        "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
+                        canonical.display(),
+                        fan_fd.as_raw_fd(),
+                        e
+                    );
+                } else {
+                    if recursive && canonical.is_dir() {
+                        mark_recursive(fan_fd, path_mask, &canonical);
+                    }
+                }
+            }
+            self.fs_groups[idx].ref_count += 1;
+            eprintln!(
+                "[INFO] Monitoring {} on existing fd {}",
+                canonical.display(),
+                self.fs_groups[idx].fan_fd.as_raw_fd()
+            );
+            idx
+        } else {
+            // New filesystem — create fanotify fd + mount fd
+            let new_fd = fanotify_init(
+                FAN_CLOEXEC
+                    | FAN_NONBLOCK
+                    | FAN_CLASS_NOTIF
+                    | FAN_REPORT_FID
+                    | FAN_REPORT_DIR_FID
+                    | FAN_REPORT_NAME,
+                (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
+            )
+            .with_context(|| {
+                format!(
+                    "fanotify_init failed for {} (requires Linux 5.9+ kernel)",
+                    canonical.display()
+                )
+            })?;
+
+            let is_fs_mark = match fanotify_mark(
+                &new_fd,
+                FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
+                path_mask,
+                AT_FDCWD,
+                &canonical,
+            ) {
+                Ok(()) => {
+                    eprintln!(
+                        "[INFO] Monitoring {} (fs mark) on new fd {}",
+                        canonical.display(),
+                        new_fd.as_raw_fd()
+                    );
+                    true
+                }
+                Err(FanotifyError::Mark(code)) if code == libc::EXDEV => {
+                    // Fall back to inode mark
+                    match mark_directory(&new_fd, path_mask, &canonical) {
                         Ok(()) => {
                             eprintln!(
-                                "[INFO] Monitoring {} (fs mark) on new fd {}",
+                                "[INFO] Monitoring {} (inode mark) on new fd {}",
                                 canonical.display(),
-                                fd
+                                new_fd.as_raw_fd()
                             );
-                        }
-                        Err(FanotifyError::Mark(code)) if code == libc::EXDEV => {
-                            // Fall back to inode mark
-                            let last_fd = &self.fan_fds[self.fan_fds.len() - 1];
-                            if let Err(e) = mark_directory(last_fd, path_mask, &canonical) {
-                                eprintln!(
-                                    "[WARNING] Cannot monitor {} (inode mark): {:#}",
-                                    canonical.display(),
-                                    e
-                                );
-                            } else {
-                                eprintln!(
-                                    "[INFO] Monitoring {} (inode mark) on new fd {}",
-                                    canonical.display(),
-                                    fd
-                                );
-                                if recursive && canonical.is_dir() {
-                                    let last_fd = &self.fan_fds[self.fan_fds.len() - 1];
-                                    mark_recursive(last_fd, path_mask, &canonical);
-                                }
+                            if recursive && canonical.is_dir() {
+                                mark_recursive(&new_fd, path_mask, &canonical);
                             }
+                            false
                         }
                         Err(e) => {
-                            eprintln!("[WARNING] Cannot monitor {}: {:#}", canonical.display(), e);
+                            eprintln!(
+                                "[WARNING] Cannot monitor {} (inode mark): {:#}",
+                                canonical.display(),
+                                e
+                            );
+                            drop(new_fd);
+                            bail!("Failed to mark {}: {:#}", canonical.display(), e);
                         }
                     }
-                    (fd, true)
+                }
+                Err(e) => {
+                    eprintln!("[WARNING] Cannot monitor {}: {:#}", canonical.display(), e);
+                    drop(new_fd);
+                    bail!("Failed to mark {}: {:#}", canonical.display(), e);
                 }
             };
 
-        // Open directory fd for handle resolution BEFORE spawning reader,
-        // so the new reader task can resolve file handles for this path.
-        if let Ok(raw) = nix::fcntl::open(
-            canonical.as_path(),
-            nix::fcntl::OFlag::O_DIRECTORY,
-            nix::sys::stat::Mode::empty(),
-        ) {
-            // SAFETY: raw fd just opened successfully, OwnedFd takes ownership
-            self.mount_fds.push(unsafe { OwnedFd::from_raw_fd(raw) });
-        }
+            // Open directory fd for handle resolution
+            let mount_fd_raw = nix::fcntl::open(
+                &canonical,
+                nix::fcntl::OFlag::O_DIRECTORY,
+                nix::sys::stat::Mode::empty(),
+            )?;
+            let mount_fd = unsafe { OwnedFd::from_raw_fd(mount_fd_raw) };
 
-        // Record which fd this path is on (for fast remove_path lookup)
-        let fd_idx = if is_new_fd {
-            self.fan_fds.len() - 1
-        } else {
-            self.fan_fds.iter().position(|f| f.as_raw_fd() == fan_fd)
-                .expect("fan_fd not found in fan_fds")
+            let idx = self.fs_groups.len();
+            self.fs_groups.push(FsGroup {
+                dev_id,
+                is_fs_mark,
+                fan_fd: new_fd,
+                mount_fd,
+                ref_count: 1,
+            });
+
+            // Spawn reader for this new group
+            self.spawn_fd_reader(idx);
+            idx
         };
-        self.path_fd.insert(path.clone(), fd_idx);
 
         // Update path tracking
+        self.path_to_group.insert(path.clone(), group_idx);
         self.paths.push(path.clone());
         self.canonical_paths.push(canonical.clone());
         self.path_options.insert(path.clone(), opts);
 
-        // Pre-cache directory handles in the shared cache (used by all reader tasks)
-        // before spawning the reader, so second-pass path recovery works.
+        // Pre-cache directory handles in the shared cache
         if canonical.is_dir()
             && let Some(ref cache) = self.shared_dir_cache
         {
@@ -1140,17 +1219,6 @@ impl Monitor {
             } else {
                 dir_cache::cache_dir_handle(cache.as_ref(), &canonical);
             }
-        }
-
-        // Spawn reader task + confirm monitoring (after mount_fd + cache are ready)
-        if is_new_fd {
-            self.spawn_fd_reader(fan_fd);
-        } else {
-            eprintln!(
-                "[INFO] Monitoring {} on existing fd {}",
-                canonical.display(),
-                fan_fd
-            );
         }
 
         println!(
@@ -1180,9 +1248,10 @@ impl Monitor {
             DEFAULT_EVENT_MASK
         };
 
-        // Look up which fd this path is on (recorded by add_path).
-        let fan_fd = self.path_fd.remove(path).and_then(|idx| self.fan_fds.get(idx));
-        if let Some(fan_fd) = fan_fd {
+        // Look up which FsGroup this path belongs to
+        if let Some(&gi) = self.path_to_group.get(path) {
+            // Remove fanotify mark
+            let fan_fd = &self.fs_groups[gi].fan_fd;
             let _ = fanotify_mark(
                 fan_fd,
                 FAN_MARK_REMOVE | FAN_MARK_FILESYSTEM,
@@ -1191,16 +1260,24 @@ impl Monitor {
                 canonical,
             );
             let _ = fanotify_mark(fan_fd, FAN_MARK_REMOVE, path_mask, AT_FDCWD, canonical);
+
+            // Decrement ref_count; if zero, drop the entire FsGroup (close both fds)
+            self.fs_groups[gi].ref_count = self.fs_groups[gi].ref_count.saturating_sub(1);
+            if self.fs_groups[gi].ref_count == 0 {
+                self.fs_groups.remove(gi);
+                // Shift indices in path_to_group for groups after the removed one
+                self.path_to_group.iter_mut().for_each(|(_, idx)| {
+                    if *idx > gi {
+                        *idx -= 1;
+                    }
+                });
+            }
         }
 
         self.paths.remove(pos);
         self.canonical_paths.remove(pos);
         self.path_options.remove(path);
-
-        // Remove the matching mount fd (OwnedFd dropped → auto-closed)
-        if pos < self.mount_fds.len() {
-            self.mount_fds.remove(pos);
-        }
+        self.path_to_group.remove(path);
 
         println!("Removed path: {}", path.display());
         Ok(())
@@ -1802,9 +1879,6 @@ mod tests {
     #[test]
     fn test_add_path_and_remove_path() {
         let mut m = Monitor::new(vec![], None, None, None, None).unwrap();
-        // Open /dev/null as a dummy fd for testing (OwnedFd panics on from_raw_fd(-1))
-        let dummy = std::fs::File::open("/dev/null").unwrap();
-        m.fan_fds.push(dummy.into());
 
         let entry = PathEntry {
             path: PathBuf::from("/tmp/test_add"),
