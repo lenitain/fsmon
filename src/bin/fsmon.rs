@@ -70,7 +70,7 @@ struct AddArgs {
     #[arg(short)]
     recursive: bool,
 
-    /// Only monitor specified operation types, comma-separated
+    /// Event types to monitor (comma-separated; use "all" for all 14 types). Controls kernel mask.
     #[arg(short, long, value_name = "TYPES")]
     types: Option<String>,
 

@@ -34,7 +34,7 @@ restarting the daemon.
 
 Usage:
   sudo fsmon daemon &       Start daemon in background
-  fsmon add /path -r --types MODIFY  Filter by event types
+  fsmon add /path --types all       All 14 event types
   fsmon add /path --exclude-cmd rsync  Exclude by process name
   fsmon managed                       List monitored paths
   fsmon query --since 1h    Query events
@@ -54,15 +54,16 @@ No sudo needed — store is updated immediately.
 
 Options:
   -r, --recursive         Watch subdirectories recursively
-  -t, --types             Event types to monitor (comma-separated)
+  -t, --types             Event types to monitor (comma-separated; use "all" for all 14 types)
   -m, --min-size          Minimum file size change to report (e.g., 100MB, 1GB)
   -e, --exclude           Glob patterns to exclude (e.g., "*.tmp")
   --exclude-cmd           Process names to exclude (glob, e.g. "rsync|apt")
   --only-cmd              Only capture from these process names (glob)
-  --all-events            Monitor all 14 fanotify event types
 
 Examples:
-  fsmon add /path/to/project -r --types MODIFY,CREATE
+  fsmon add /path/to/project -r                 Default: 8 event types
+  fsmon add /path --types MODIFY,CREATE         Only these 2 types
+  fsmon add /path --types all                   All 14 event types
   fsmon add /etc --types MODIFY --min-size 100KB
   fsmon add /var/log --exclude-cmd "rsync|apt"
   fsmon add /tmp --only-cmd nginx"#
@@ -140,7 +141,7 @@ Daemon (requires sudo):
   kill %1                           Stop daemon (or Ctrl+C)
 
 Management (no sudo needed):
-  fsmon add /path -r                Add path (recursive)
+  fsmon add /path -r                Add path (recursive, default 8 types)
   fsmon add /path --only-cmd nginx  Filter by process name
   fsmon remove /path                Remove path
   fsmon managed                     List monitored paths
