@@ -1807,6 +1807,68 @@ mod tests {
     }
 
     #[test]
+    fn test_should_output_exclude_pipe_multiple() {
+        // --exclude "*.tmp|*.log" → excludes both .tmp and .log
+        let m = make_monitor_exclude(Some("*.tmp|*.log"), None, false, false);
+        assert!(!m.should_output(&make_event("/tmp/a.tmp", EventType::Create, 1, 0)));
+        assert!(!m.should_output(&make_event("/tmp/a.log", EventType::Create, 1, 0)));
+        assert!(m.should_output(&make_event("/tmp/a.txt", EventType::Create, 1, 0)));
+    }
+
+    #[test]
+    fn test_should_output_exclude_invert() {
+        // --exclude "!*.py" → only .py files pass
+        let m = make_monitor_exclude(Some("!*.py"), None, false, false);
+        assert!(m.should_output(&make_event("/tmp/main.py", EventType::Create, 1, 0)));
+        assert!(!m.should_output(&make_event("/tmp/main.rs", EventType::Create, 1, 0)));
+        assert!(!m.should_output(&make_event("/tmp/a.txt", EventType::Create, 1, 0)));
+    }
+
+    #[test]
+    fn test_should_output_exclude_cmd_basic() {
+        // --exclude-cmd "rsync" → excludes rsync
+        let m = make_monitor_exclude(None, Some("rsync"), false, false);
+        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 1, 0, "rsync")));
+        assert!(m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 2, 0, "nginx")));
+    }
+
+    #[test]
+    fn test_should_output_exclude_cmd_pipe() {
+        // --exclude-cmd "rsync|apt" → excludes both
+        let m = make_monitor_exclude(None, Some("rsync|apt"), false, false);
+        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 1, 0, "rsync")));
+        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 2, 0, "apt")));
+        assert!(m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 3, 0, "nginx")));
+    }
+
+    #[test]
+    fn test_should_output_exclude_cmd_invert() {
+        // --exclude-cmd "!nginx" → only nginx passes
+        let m = make_monitor_exclude(None, Some("!nginx"), false, false);
+        assert!(m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 1, 0, "nginx")));
+        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 2, 0, "rsync")));
+        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 3, 0, "apt")));
+    }
+
+    #[test]
+    fn test_should_output_exclude_cmd_invert_multi() {
+        // --exclude-cmd "!nginx|python" → only nginx and python pass
+        let m = make_monitor_exclude(None, Some("!nginx|python"), false, false);
+        assert!(m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 1, 0, "nginx")));
+        assert!(m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 2, 0, "python")));
+        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 3, 0, "rsync")));
+    }
+
+    #[test]
+    fn test_should_output_exclude_and_exclude_cmd() {
+        // --exclude "*.tmp" --exclude-cmd "rsync" → both filters
+        let m = make_monitor_exclude(Some("*.tmp"), Some("rsync"), false, false);
+        assert!(!m.should_output(&make_event_cmd("/tmp/a.tmp", EventType::Create, 1, 0, "vim")));
+        assert!(!m.should_output(&make_event_cmd("/tmp/a.txt", EventType::Create, 1, 0, "rsync")));
+        assert!(m.should_output(&make_event_cmd("/tmp/a.txt", EventType::Create, 2, 0, "vim")));
+    }
+
+    #[test]
     fn test_file_size_cache_eviction() {
         use lru::LruCache;
         use std::num::NonZeroUsize;
@@ -1888,6 +1950,51 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// Build a Monitor with custom exclude/exclude_cmd patterns for testing.
+    fn make_monitor_exclude(
+        exclude: Option<&str>,
+        exclude_cmd: Option<&str>,
+        _exclude_invert: bool,
+        _exclude_cmd_invert: bool,
+    ) -> Monitor {
+        let (exclude_regex, exclude_invert) = match exclude {
+            Some(p) => {
+                let raw = p.strip_prefix('!').unwrap_or(p);
+                let escaped = regex::escape(raw);
+                let pattern = escaped.replace("\\*", ".*").replace("\\|", "|");
+                (Some(regex::Regex::new(&pattern).expect("invalid exclude pattern")), p.starts_with('!'))
+            }
+            None => (None, false),
+        };
+        let (exclude_cmd_regex, exclude_cmd_invert) = match exclude_cmd {
+            Some(p) => {
+                let raw = p.strip_prefix('!').unwrap_or(p);
+                let pattern = raw.replace("*", ".*");
+                (Some(regex::Regex::new(&pattern).expect("invalid exclude-cmd pattern")), p.starts_with('!'))
+            }
+            None => (None, false),
+        };
+        Monitor::new(
+            vec![(
+                PathBuf::from("/tmp"),
+                PathOptions {
+                    min_size: None,
+                    event_types: None,
+                    exclude_regex,
+                    exclude_invert,
+                    exclude_cmd_regex,
+                    exclude_cmd_invert,
+                    recursive: false,
+                },
+            )],
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
     fn make_event(path: &str, event_type: EventType, pid: u32, size: u64) -> FileEvent {
         FileEvent {
             time: Utc::now(),
@@ -1895,6 +2002,19 @@ mod tests {
             path: PathBuf::from(path),
             pid,
             cmd: "test".to_string(),
+            user: "root".to_string(),
+            file_size: size,
+            monitored_path: PathBuf::from("/watched"),
+        }
+    }
+
+    fn make_event_cmd(path: &str, event_type: EventType, pid: u32, size: u64, cmd: &str) -> FileEvent {
+        FileEvent {
+            time: Utc::now(),
+            event_type,
+            path: PathBuf::from(path),
+            pid,
+            cmd: cmd.to_string(),
             user: "root".to_string(),
             file_size: size,
             monitored_path: PathBuf::from("/watched"),
