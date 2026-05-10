@@ -78,11 +78,11 @@ struct AddArgs {
     #[arg(short = 'm', long, value_name = "SIZE")]
     min_size: Option<String>,
 
-    /// Paths to exclude (wildcards, use | for multiple patterns)
+    /// Paths to exclude (wildcards, use | for multiple, prefix ! to invert)
     #[arg(short = 'e', long, value_name = "PATTERN")]
     exclude: Option<String>,
 
-    /// Process names to exclude (glob, e.g. "rsync|apt")
+    /// Process names to exclude (glob, use | for multiple, prefix ! to invert)
     #[arg(long, value_name = "PATTERN")]
     exclude_cmd: Option<String>,
 
@@ -551,28 +551,34 @@ fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
         })
         .transpose()
         .map_err(|e: String| anyhow::anyhow!(e))?;
-    let exclude_regex = entry
-        .exclude
-        .as_ref()
-        .map(|p| {
-            let escaped = regex::escape(p);
+    let (exclude_regex, exclude_invert) = match entry.exclude.as_ref() {
+        Some(p) => {
+            let raw = p.strip_prefix('!').unwrap_or(p);
+            let escaped = regex::escape(raw);
             let pattern = escaped.replace("\\*", ".*").replace("\\|", "|");
-            regex::Regex::new(&pattern).with_context(|| "invalid exclude pattern")
-        })
-        .transpose()?;
-    let exclude_cmd_regex = entry
-        .exclude_cmd
-        .as_ref()
-        .map(|p| {
-            let pattern = p.replace("*", ".*");
-            regex::Regex::new(&pattern).with_context(|| "invalid --exclude-cmd pattern")
-        })
-        .transpose()?;
+            let regex = regex::Regex::new(&pattern)
+                .with_context(|| "invalid exclude pattern")?;
+            (Some(regex), p.starts_with('!'))
+        }
+        None => (None, false),
+    };
+    let (exclude_cmd_regex, exclude_cmd_invert) = match entry.exclude_cmd.as_ref() {
+        Some(p) => {
+            let raw = p.strip_prefix('!').unwrap_or(p);
+            let pattern = raw.replace("*", ".*");
+            let regex = regex::Regex::new(&pattern)
+                .with_context(|| "invalid --exclude-cmd pattern")?;
+            (Some(regex), p.starts_with('!'))
+        }
+        None => (None, false),
+    };
     Ok(PathOptions {
         min_size,
         event_types,
         exclude_regex,
+        exclude_invert,
         exclude_cmd_regex,
+        exclude_cmd_invert,
         recursive: entry.recursive.unwrap_or(false),
     })
 }

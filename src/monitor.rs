@@ -230,7 +230,9 @@ pub struct PathOptions {
     pub min_size: Option<i64>,
     pub event_types: Option<Vec<EventType>>,
     pub exclude_regex: Option<regex::Regex>,
+    pub exclude_invert: bool,
     pub exclude_cmd_regex: Option<regex::Regex>,
+    pub exclude_cmd_invert: bool,
     pub recursive: bool,
 }
 
@@ -1050,29 +1052,35 @@ impl Monitor {
                 .collect()
         });
         let min_size = entry.min_size.as_ref().map(|s| parse_size(s)).transpose()?;
-        let exclude_regex = entry
-            .exclude
-            .as_ref()
-            .map(|p| {
-                let escaped = regex::escape(p);
-                let pattern = escaped.replace("\\*", ".*");
-                regex::Regex::new(&pattern).with_context(|| "invalid exclude pattern")
-            })
-            .transpose()?;
-        let exclude_cmd_regex = entry
-            .exclude_cmd
-            .as_ref()
-            .map(|p| {
-                let pattern = p.replace("*", ".*");
-                regex::Regex::new(&pattern).with_context(|| "invalid --exclude-cmd pattern")
-            })
-            .transpose()?;
+        let (exclude_regex, exclude_invert) = match entry.exclude.as_ref() {
+            Some(p) => {
+                let raw = p.strip_prefix('!').unwrap_or(p);
+                let escaped = regex::escape(raw);
+                let pattern = escaped.replace("\\*", ".*").replace("\\|", "|");
+                let regex = regex::Regex::new(&pattern)
+                    .with_context(|| "invalid exclude pattern")?;
+                (Some(regex), p.starts_with('!'))
+            }
+            None => (None, false),
+        };
+        let (exclude_cmd_regex, exclude_cmd_invert) = match entry.exclude_cmd.as_ref() {
+            Some(p) => {
+                let raw = p.strip_prefix('!').unwrap_or(p);
+                let pattern = raw.replace("*", ".*");
+                let regex = regex::Regex::new(&pattern)
+                    .with_context(|| "invalid --exclude-cmd pattern")?;
+                (Some(regex), p.starts_with('!'))
+            }
+            None => (None, false),
+        };
         let recursive = entry.recursive.unwrap_or(false);
         let opts = PathOptions {
             min_size,
             event_types,
             exclude_regex,
+            exclude_invert,
             exclude_cmd_regex,
+            exclude_cmd_invert,
             recursive,
         };
 
@@ -1480,16 +1488,22 @@ impl Monitor {
             return false;
         }
 
-        if let Some(ref regex) = opts.exclude_regex
-            && regex.is_match(&event.path.to_string_lossy())
-        {
-            return false;
+        if let Some(ref regex) = opts.exclude_regex {
+            let matched = regex.is_match(&event.path.to_string_lossy());
+            if opts.exclude_invert {
+                if !matched { return false; }
+            } else if matched {
+                return false;
+            }
         }
 
-        if let Some(ref regex) = opts.exclude_cmd_regex
-            && regex.is_match(&event.cmd)
-        {
-            return false;
+        if let Some(ref regex) = opts.exclude_cmd_regex {
+            let matched = regex.is_match(&event.cmd);
+            if opts.exclude_cmd_invert {
+                if !matched { return false; }
+            } else if matched {
+                return false;
+            }
         }
 
         true
@@ -1666,7 +1680,9 @@ mod tests {
             min_size,
             event_types,
             exclude_regex,
+            exclude_invert: false,
             exclude_cmd_regex: None,
+            exclude_cmd_invert: false,
             recursive,
         }
     }
