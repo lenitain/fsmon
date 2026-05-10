@@ -2183,4 +2183,72 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&test_dir_for_cleanup);
     }
+
+    // ---- build_exclude_regex ----
+
+    #[test]
+    fn test_build_exclude_regex_none() {
+        let (re, inv) = Monitor::build_exclude_regex(None, "exclude").unwrap();
+        assert!(re.is_none());
+        assert!(!inv);
+    }
+
+    #[test]
+    fn test_build_exclude_regex_empty() {
+        let (re, inv) = Monitor::build_exclude_regex(Some(&[]), "exclude").unwrap();
+        assert!(re.is_none());
+        assert!(!inv);
+    }
+
+    #[test]
+    fn test_build_exclude_regex_single_pattern() {
+        let patterns = vec!["*.tmp".to_string()];
+        let (re, inv) = Monitor::build_exclude_regex(Some(&patterns), "exclude").unwrap();
+        assert!(re.is_some());
+        assert!(!inv);
+        assert!(re.as_ref().unwrap().is_match("foo.tmp"));
+        assert!(!re.as_ref().unwrap().is_match("foo.txt"));
+    }
+
+    #[test]
+    fn test_build_exclude_regex_multiple_patterns() {
+        let patterns = vec!["*.tmp".to_string(), "*.log".to_string()];
+        let (re, inv) = Monitor::build_exclude_regex(Some(&patterns), "exclude").unwrap();
+        assert!(re.is_some());
+        assert!(!inv);
+        assert!(re.as_ref().unwrap().is_match("foo.tmp"));
+        assert!(re.as_ref().unwrap().is_match("bar.log"));
+        assert!(!re.as_ref().unwrap().is_match("foo.txt"));
+    }
+
+    #[test]
+    fn test_build_exclude_regex_invert() {
+        let patterns = vec!["!*.py".to_string()];
+        let (re, inv) = Monitor::build_exclude_regex(Some(&patterns), "exclude").unwrap();
+        assert!(re.is_some());
+        assert!(inv);
+        assert!(re.as_ref().unwrap().is_match("foo.py"));
+        assert!(!re.as_ref().unwrap().is_match("foo.tmp"));
+    }
+
+    #[test]
+    fn test_build_exclude_regex_cmd() {
+        let patterns = vec!["rsync".to_string(), "apt".to_string()];
+        let (re, inv) = Monitor::build_exclude_regex(Some(&patterns), "--exclude-cmd").unwrap();
+        assert!(re.is_some());
+        assert!(!inv);
+        assert!(re.as_ref().unwrap().is_match("rsync"));
+        assert!(re.as_ref().unwrap().is_match("apt"));
+        assert!(!re.as_ref().unwrap().is_match("nginx"));
+    }
+
+    #[test]
+    fn test_build_exclude_regex_cmd_wildcard() {
+        let patterns = vec!["nginx*".to_string()];
+        let (re, inv) = Monitor::build_exclude_regex(Some(&patterns), "--exclude-cmd").unwrap();
+        assert!(re.is_some());
+        assert!(re.as_ref().unwrap().is_match("nginx"));
+        assert!(re.as_ref().unwrap().is_match("nginx-worker"));
+        assert!(!re.as_ref().unwrap().is_match("apache"));
+    }
 }
