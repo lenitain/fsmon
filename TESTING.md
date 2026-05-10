@@ -395,7 +395,7 @@ fsmon clean --keep-days 30
 ### 8.3 按大小清理
 
 ```bash
-fsmon clean --max-size 100M
+fsmon clean --size '>100M'
 ```
 
 预期：删除最旧的日志直到总大小小于 100M

@@ -56,7 +56,7 @@ Options:
   -r, --recursive         Watch subdirectories recursively
   -t, --types             Event types to monitor (repeatable; use "all" for all 14 types)
   -s, --size             Size filter with comparison operator (e.g. >1MB, >=500KB, <100MB)
-                          Note: -s in add means size filter; in clean -m means max size limit
+                          Note: -s in add means size filter; -s in clean means size limit
   -e, --exclude           Path regex patterns to exclude (repeatable, prefix ! to invert)
   --exclude-cmd           Process name regex patterns to exclude (repeatable, prefix ! to invert)
 
@@ -118,8 +118,8 @@ CLI args override config. Daemon does not auto-clean; use cron/systemd timer.
 Options:
   --path            Path(s) to clean. Repeatable. Default: all.
   --keep-days       Keep logs from last N days
-  --max-size        Maximum log file size (e.g., 100MB, 1GB) (short: -m)
-                          Note: -m in clean means maximum; in add -m means minimum
+  --size            Size limit for log file truncation (e.g. >500MB, >=1GB) (short: -s)
+                          Note: -m in clean means size limit; -s in add means size filter
   --dry-run         Preview mode, don't actually delete
 
 Examples:

@@ -256,7 +256,7 @@ Clean historical log files. Defaults from `config.toml`: `keep_days=30`, `max_si
 ```bash
 fsmon clean                                Use config defaults
 fsmon clean --keep-days 7                  Override retention (days)
-fsmon clean --max-size 500MB               Max size per log file
+fsmon clean --size '>500MB'               Size limit per log file
 fsmon clean --path /tmp                    Clean specific path's log
 fsmon clean --dry-run                      Preview without deleting
 ```

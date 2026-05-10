@@ -232,7 +232,7 @@ dir = "~/.local/state/fsmon"
 #   keep_days: delete entries older than N days
 #   max_size:  truncate log file when exceeding this size
 # Both can be overridden at runtime:
-#   fsmon clean --keep-days 14 --max-size 1GB
+#   fsmon clean --keep-days 14 --size '>1GB'
 keep_days = 30
 max_size = "1GB"
 

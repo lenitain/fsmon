@@ -249,7 +249,7 @@ fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 ```bash
 fsmon clean                                使用 config 默认值
 fsmon clean --keep-days 7                  覆盖保留天数
-fsmon clean --max-size 500MB               每个日志文件大小上限
+fsmon clean --size '>500MB'               每个日志文件大小上限
 fsmon clean --path /tmp                    清理指定路径的日志
 fsmon clean --dry-run                      预览模式，不实际删除
 ```

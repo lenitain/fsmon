@@ -112,7 +112,7 @@ struct CleanArgs {
     #[arg(short, long)]
     keep_days: Option<u32>,
     #[arg(short, long)]
-    max_size: Option<String>,
+    size: Option<String>,
     #[arg(short, long)]
     dry_run: bool,
 }
@@ -515,7 +515,7 @@ async fn cmd_clean(args: CleanArgs) -> Result<()> {
         .or(cfg.logging.keep_days)
         .unwrap_or(DEFAULT_KEEP_DAYS);
     let max_size_bytes = args
-        .max_size
+        .size
         .clone()
         .or(cfg.logging.max_size.clone())
         .or_else(|| Some(DEFAULT_MAX_SIZE.to_string()))
@@ -782,7 +782,7 @@ mod tests {
         let args = CleanArgs::try_parse_from(&["clean"]).unwrap();
         assert!(args.path.is_empty());
         assert!(args.keep_days.is_none());
-        assert!(args.max_size.is_none());
+        assert!(args.size.is_none());
         assert!(!args.dry_run);
     }
 
@@ -811,15 +811,15 @@ mod tests {
     }
 
     #[test]
-    fn test_clean_max_size_short() {
-        let args = CleanArgs::try_parse_from(&["clean", "-m", "500MB"]).unwrap();
-        assert_eq!(args.max_size, Some("500MB".into()));
+    fn test_clean_size_short() {
+        let args = CleanArgs::try_parse_from(&["clean", "-s", "500MB"]).unwrap();
+        assert_eq!(args.size, Some("500MB".into()));
     }
 
     #[test]
-    fn test_clean_max_size_long() {
-        let args = CleanArgs::try_parse_from(&["clean", "--max-size", "1GB"]).unwrap();
-        assert_eq!(args.max_size, Some("1GB".into()));
+    fn test_clean_size_long() {
+        let args = CleanArgs::try_parse_from(&["clean", "--size", "1GB"]).unwrap();
+        assert_eq!(args.size, Some("1GB".into()));
     }
 
     #[test]
@@ -834,12 +834,12 @@ mod tests {
             "clean",
             "-p", "/tmp", "--path", "/var/log",
             "--keep-days", "14",
-            "-m", "100MB",
+            "-s", "100MB",
             "--dry-run",
         ]).unwrap();
         assert_eq!(args.path, vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")]);
         assert_eq!(args.keep_days, Some(14));
-        assert_eq!(args.max_size, Some("100MB".into()));
+        assert_eq!(args.size, Some("100MB".into()));
         assert!(args.dry_run);
     }
 
