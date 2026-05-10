@@ -33,9 +33,12 @@ enum Commands {
     #[command(about = help::about(HelpTopic::Add), long_about = help::long_about(HelpTopic::Add))]
     Add(AddArgs),
 
-    /// Remove a path from the monitoring list
+    /// Remove one or more paths from the monitoring list
     #[command(about = help::about(HelpTopic::Remove), long_about = help::long_about(HelpTopic::Remove))]
-    Remove { path: PathBuf },
+    Remove {
+        /// Path(s) to remove. Multiple paths can be specified.
+        paths: Vec<PathBuf>,
+    },
 
     /// List all monitored paths with their configuration
     #[command(about = help::about(HelpTopic::Managed), long_about = help::long_about(HelpTopic::Managed))]
@@ -123,7 +126,12 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Daemon => cmd_daemon().await?,
         Commands::Add(args) => cmd_add(args)?,
-        Commands::Remove { path } => cmd_remove(path)?,
+        Commands::Remove { paths } => {
+            for path in paths {
+                eprintln!("[Info] Removing {}...", path.display());
+                cmd_remove(path)?;
+            }
+        }
         Commands::Managed => cmd_managed()?,
         Commands::Query(args) => cmd_query(args).await?,
         Commands::Clean(args) => cmd_clean(args).await?,
