@@ -4,10 +4,10 @@ use fanotify_fid::prelude::*;
 use fanotify_fid::types::{FidEvent, HandleKey};
 use fanotify_fid::consts::{
     AT_FDCWD, FAN_ACCESS, FAN_ATTRIB, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_CLOSE_NOWRITE,
-    FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE, FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_MARK_ADD,
-    FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE, FAN_MODIFY, FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO,
-    FAN_NONBLOCK, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC, FAN_Q_OVERFLOW, FAN_REPORT_DIR_FID,
-    FAN_REPORT_FID, FAN_REPORT_NAME,
+    FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE, FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_FS_ERROR,
+    FAN_MARK_ADD, FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE, FAN_MODIFY, FAN_MOVE_SELF, FAN_MOVED_FROM,
+    FAN_MOVED_TO, FAN_NONBLOCK, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC, FAN_Q_OVERFLOW,
+    FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
 };
 use dashmap::DashMap;
 use std::collections::HashMap;
@@ -66,7 +66,7 @@ struct FsGroup {
 
 /// Convert a fanotify event mask to fsmon's EventType enum.
 fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
-    const BITS: [(u64, EventType); 13] = [
+    const BITS: [(u64, EventType); 14] = [
         (FAN_ACCESS, EventType::Access),
         (FAN_MODIFY, EventType::Modify),
         (FAN_CLOSE_WRITE, EventType::CloseWrite),
@@ -80,6 +80,7 @@ fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
         (FAN_MOVED_FROM, EventType::MovedFrom),
         (FAN_MOVED_TO, EventType::MovedTo),
         (FAN_MOVE_SELF, EventType::MoveSelf),
+        (FAN_FS_ERROR, EventType::FsError),
     ];
     BITS.iter().filter(|(bit, _)| mask & bit != 0).map(|(_, t)| *t).collect()
 }
@@ -183,6 +184,7 @@ const DEFAULT_EVENT_MASK: u64 = FAN_CLOSE_WRITE
     | FAN_CREATE
     | FAN_DELETE
     | FAN_DELETE_SELF
+    | FAN_FS_ERROR
     | FAN_MOVED_FROM
     | FAN_MOVED_TO
     | FAN_MOVE_SELF
@@ -199,6 +201,7 @@ const ALL_EVENT_MASK: u64 = FAN_ACCESS
     | FAN_CREATE
     | FAN_DELETE
     | FAN_DELETE_SELF
+    | FAN_FS_ERROR
     | FAN_MOVED_FROM
     | FAN_MOVED_TO
     | FAN_MOVE_SELF
@@ -1652,14 +1655,14 @@ mod tests {
     fn test_mask_to_event_types_all() {
         use fanotify_fid::consts::{
             FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE,
-            FAN_DELETE_SELF, FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO,
+            FAN_DELETE_SELF, FAN_FS_ERROR, FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO,
             FAN_OPEN, FAN_OPEN_EXEC,
         };
         let mask = FAN_ACCESS | FAN_MODIFY | FAN_CLOSE_WRITE | FAN_CLOSE_NOWRITE
             | FAN_OPEN | FAN_OPEN_EXEC | FAN_ATTRIB | FAN_CREATE | FAN_DELETE
-            | FAN_DELETE_SELF | FAN_MOVED_FROM | FAN_MOVED_TO | FAN_MOVE_SELF;
+            | FAN_DELETE_SELF | FAN_FS_ERROR | FAN_MOVED_FROM | FAN_MOVED_TO | FAN_MOVE_SELF;
         let types = mask_to_event_types(mask);
-        assert_eq!(types.len(), 13);
+        assert_eq!(types.len(), 14);
     }
 
     #[test]
