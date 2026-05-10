@@ -32,7 +32,6 @@ pub struct LoggingConfig {
     pub keep_days: Option<u32>,
     /// Maximum size per log file before truncation.
     /// Size limit per log file before truncation.
-    #[serde(alias = "max_size")]
     pub size: Option<String>,
 }
 
