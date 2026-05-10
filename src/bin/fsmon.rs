@@ -8,7 +8,7 @@ use fsmon::query::Query;
 use fsmon::socket::{self, SocketCmd};
 use fsmon::managed::{PathEntry, Managed};
 use fsmon::utils::parse_size;
-use fsmon::{DEFAULT_KEEP_DAYS, EventType, clean_logs};
+use fsmon::{DEFAULT_KEEP_DAYS, DEFAULT_MAX_SIZE, EventType, clean_logs};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -518,6 +518,7 @@ async fn cmd_clean(args: CleanArgs) -> Result<()> {
         .max_size
         .clone()
         .or(cfg.logging.max_size.clone())
+        .or_else(|| Some(DEFAULT_MAX_SIZE.to_string()))
         .map(|s| parse_size(&s))
         .transpose()?;
     clean_logs(

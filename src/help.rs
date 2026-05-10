@@ -113,8 +113,8 @@ Examples:
         HelpTopic::Clean => {
             r#"Clean historical log files, retain by time or size.
 
-Defaults come from config.toml [logging] section (keep_days=30, max_size="1GB").
-CLI args override config overrides code defaults.
+Defaults: keep_days=30, max_size=1GB (from config.toml [logging] section or code fallback).
+CLI args override config. Daemon does not auto-clean; use cron/systemd timer.
 
 Options:
   --path            Path(s) to clean. Repeatable. Default: all.

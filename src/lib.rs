@@ -70,6 +70,7 @@ impl Drop for DaemonLock {
 use std::str::FromStr;
 
 pub const DEFAULT_KEEP_DAYS: u32 = 30;
+pub const DEFAULT_MAX_SIZE: &str = "1GB";
 
 pub const EXIT_CONFIG: i32 = 78;
 
