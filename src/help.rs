@@ -17,7 +17,7 @@ pub const fn about(topic: HelpTopic) -> &'static str {
         HelpTopic::Init => "Initialize log and managed data directories",
         HelpTopic::Cd => "Open a subshell in the log directory",
         HelpTopic::Add => "Add a path to the monitoring list",
-        HelpTopic::Remove => "Remove a path from the monitoring list",
+        HelpTopic::Remove => "Remove one or more paths from the monitoring list",
         HelpTopic::Managed => "List all monitored paths with their configuration",
         HelpTopic::Query => "Query historical file change events from log files",
         HelpTopic::Clean => "Clean historical log files, retain by time or size",
@@ -103,12 +103,13 @@ Examples:
   fsmon add /tmp --exclude-cmd 'nginx'"#
         }
         HelpTopic::Remove => {
-            r#"Remove a path from the monitoring list.
+            r#"Remove one or more paths from the monitoring list.
 
-The path is removed immediately if the daemon is running.
+Paths are removed immediately if the daemon is running.
 
 Examples:
-  fsmon remove /path/to/watch"#
+  fsmon remove /path/to/watch
+  fsmon remove /path/a /path/b /path/c"#
         }
         HelpTopic::Managed => {
             r#"List all monitored paths with their configuration.
@@ -172,7 +173,7 @@ Daemon (requires sudo):
 Management (no sudo needed):
   fsmon add /path -r                Add path (recursive, default 8 types)
   fsmon add /path --exclude-cmd 'rsync'  Exclude by process name
-  fsmon remove /path                Remove path
+  fsmon remove /path                Remove path(s), multiple paths OK
   fsmon managed                     List monitored paths
 
 Query (stdout JSONL, pipe to jq):

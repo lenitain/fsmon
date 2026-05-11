@@ -213,10 +213,11 @@ Events that don't match never touch disk.
 
 ### remove
 
-Remove a path from the monitoring list. No sudo needed.
+Remove one or more paths from the monitoring list. No sudo needed.
 
 ```
 fsmon remove <path>                        Remove a monitored path
+fsmon remove <path1> <path2> <path3>       Remove multiple paths at once
 ```
 
 ### managed

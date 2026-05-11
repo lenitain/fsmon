@@ -206,10 +206,11 @@ fsmon add <path> --exclude-cmd '!nginx'    只跟踪 nginx 进程
 
 ### remove
 
-移除监控路径。无需 sudo。
+移除一个或多个监控路径。无需 sudo。
 
 ```
 fsmon remove <path>                        移除一个监控路径
+fsmon remove <path1> <path2> <path3>       一次移除多个路径
 ```
 
 ### managed
