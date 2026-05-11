@@ -167,8 +167,8 @@ impl Config {
         PathBuf::from(xdg_config).join("fsmon").join("fsmon.toml")
     }
 
-    /// Load config from file. Returns default Config if file doesn't exist.
-    /// If the file exists but is invalid, overwrites with fresh defaults.
+    /// Load config from file. Returns default Config if file doesn't exist
+    /// or if the file is invalid (file is never modified).
     pub fn load() -> Result<Self> {
         let p = Self::path();
         if !p.exists() {
@@ -180,11 +180,10 @@ impl Config {
             Ok(cfg) => Ok(cfg),
             Err(e) => {
                 eprintln!(
-                    "[WARNING] Invalid config file at {}, overwriting with defaults.\n  Reason: {}",
+                    "[WARNING] Invalid config file at {}, using defaults.\n  Reason: {}",
                     p.display(),
                     e
                 );
-                Self::init_config()?;
                 Ok(Config::default())
             }
         }
@@ -203,52 +202,6 @@ impl Config {
         self.socket.path = PathBuf::from(socket_str.replace("<UID>", &uid.to_string()));
         // Also expand tilde in socket path if present
         self.socket.path = expand_tilde(&self.socket.path, &home);
-
-        Ok(())
-    }
-
-    /// Generate a default configuration file at Config::path().
-    /// Creates parent directories if needed.
-    pub fn init_config() -> Result<()> {
-        let path = Self::path();
-        let parent = path.parent().context("Config path has no parent")?;
-        fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create directory {}", parent.display()))?;
-        let content = r#"# fsmon configuration file
-#
-# Infrastructure paths for fsmon. Monitored paths are managed separately
-# via 'fsmon add' / 'fsmon remove' and persisted in [managed].path.
-# All paths support ~ expansion. <UID> is replaced with the numeric UID at runtime.
-#
-# The defaults work out of the box. Change only if you need custom locations.
-
-[managed]
-# Path to the auto-managed monitored paths database.
-path = "~/.local/share/fsmon/managed.jsonl"
-
-[logging]
-# Path to the event log directory (per-path *_log.jsonl files).
-path = "~/.local/state/fsmon"
-# Defaults for 'fsmon clean' (not auto-cleaned by daemon; use cron/timer).
-#   keep_days: delete entries older than N days
-#   size:  truncate log file when exceeding this size
-# Both can be overridden at runtime:
-#   fsmon clean --time '>14d' --size '>=1GB'
-keep_days = 30
-size = ">=1GB"
-
-[socket]
-# Unix socket path for daemon-CLI live communication.
-path = "/tmp/fsmon-<UID>.sock"
-"#;
-        fs::write(&path, content)
-            .with_context(|| format!("Failed to write config to {}", path.display()))?;
-
-        // Chown to original user if running as root (daemon via sudo)
-        chown_to_original_user(&path);
-        if let Some(parent) = path.parent() {
-            chown_to_original_user(parent);
-        }
 
         Ok(())
     }
@@ -401,6 +354,31 @@ path = "/tmp/custom.sock"
     }
 
     #[test]
+    #[test]
+    #[test]
+    fn test_load_invalid_config_does_not_overwrite_file() {
+        with_isolated_home(|_| {
+            let config_path = Config::path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            // Write an empty (invalid) config
+            fs::write(&config_path, "").unwrap();
+
+            let original_modified = fs::metadata(&config_path).unwrap().modified().unwrap();
+            let cfg = Config::load().unwrap();
+            // Returns defaults but file should be unchanged
+            assert!(cfg.managed.path.to_string_lossy().contains("~"));
+            let after_modified = fs::metadata(&config_path).unwrap().modified().unwrap();
+            assert_eq!(
+                original_modified, after_modified,
+                "load() must NOT modify invalid config files"
+            );
+            // File content should still be empty
+            let content = fs::read_to_string(&config_path).unwrap();
+            assert!(content.trim().is_empty(), "file content should be untouched");
+        });
+    }
+
+    #[test]
     fn test_resolve_paths_expands_tilde_and_uid() {
         with_isolated_home(|home| {
             let mut cfg = Config::default();
@@ -429,39 +407,6 @@ path = "/tmp/custom.sock"
     }
 
     #[test]
-    fn test_init_config_creates_valid_config() {
-        with_isolated_home(|_| {
-            let path = Config::path();
-            assert!(!path.exists(), "config should not exist before init");
-
-            Config::init_config().unwrap();
-            assert!(path.exists(), "config should exist after init");
-
-            // Must be parseable
-            let cfg = Config::load().unwrap();
-            assert_eq!(
-                cfg.managed.path.to_string_lossy(),
-                "~/.local/share/fsmon/managed.jsonl"
-            );
-            assert_eq!(cfg.logging.path.to_string_lossy(), "~/.local/state/fsmon");
-            assert_eq!(cfg.socket.path.to_string_lossy(), "/tmp/fsmon-<UID>.sock");
-        });
-    }
-
-    #[test]
-    fn test_init_config_overwrites_without_error() {
-        with_isolated_home(|_| {
-            Config::init_config().unwrap();
-            // Init again — should overwrite without error
-            Config::init_config().unwrap();
-            let cfg = Config::load().unwrap();
-            assert_eq!(
-                cfg.managed.path.to_string_lossy(),
-                "~/.local/share/fsmon/managed.jsonl"
-            );
-        });
-    }
-
     #[test]
     fn test_config_path_uses_xdg_config_home() {
         let _lock = ENV_LOCK.lock().unwrap();
