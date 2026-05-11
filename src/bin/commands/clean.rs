@@ -2,7 +2,8 @@ use anyhow::Result;
 use chrono::Utc;
 use fsmon::config::Config;
 use fsmon::utils::{parse_size_filter, SizeFilter};
-use fsmon::{SizeOp, clean_logs, parse_time_filter, TimeFilter, DEFAULT_KEEP_DAYS, DEFAULT_MAX_SIZE};
+use fsmon::{SizeOp, parse_time_filter, TimeFilter, DEFAULT_KEEP_DAYS, DEFAULT_MAX_SIZE};
+use fsmon::clean::clean_logs;
 
 use crate::CleanArgs;
 

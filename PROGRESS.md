@@ -10,9 +10,11 @@
 |------|------|------|
 | ✅ | `src/monitor.rs` 拆出 `filters.rs` + `fid_parser.rs` | `monitor.rs` 从 2249 行降至 ~1660 行 |
 | ✅ | `src/bin/fsmon.rs` 拆出 `commands/` 目录 | `fsmon.rs` 从 937 行降至 ~120 行（CLI 定义 + 测试） |
-| ⏳ | `src/lib.rs` 拆出 `clean.rs` | 待完成 |
+| ✅ | `src/lib.rs` 拆出 `clean.rs` | `lib.rs` 从 966 行降至 ~260 行（仅保留核心类型 + DaemonLock） |
 
 当前行数：
+- `src/lib.rs`: ~260 (核心类型 + DaemonLock)
+- `src/clean.rs`: ~760 (清理逻辑 + 测试)
 - `src/bin/fsmon.rs`: ~120 (CLI 定义 + 测试)
 - `src/bin/commands/`: ~550 (7 个命令文件 + mod.rs)
 - `src/monitor.rs`: ~1660
