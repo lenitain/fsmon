@@ -1,0 +1,62 @@
+# PROGRESS — unsafe 代码清理计划
+
+> 目标：消除所有可安全化的 `unsafe`，在无法消除处记录原因并添加 safety 注释。
+
+## 当前 unsafe 分布总览
+
+| 文件 | Unsafe 类型 | 数量 | 状态 |
+|------|-----------|------|------|
+| `src/monitor.rs` | `libc::dup` + `OwnedFd::from_raw_fd` | 9 | ⏳ 待改 |
+| `src/monitor.rs` | `OwnedFd::from_raw_fd` (open) | 2 | ⏳ 待改 |
+| `src/monitor.rs` | `libc::read` (集成测试) | 1 | ⏳ 待改 |
+| `src/proc_cache.rs` | Netlink conn: `socket/bind/recv/send/zeroed` | 5+5 | ❌ 无safe替代 |
+| `src/fid_parser.rs` | `BorrowedFd::borrow_raw` | 1 | ⏳ 待改 |
+| `src/config.rs` | `std::env::set_var/remove_var` (测试) | 8 | ⏳ 待改（低优） |
+
+## 改造计划（按优先级）
+
+### P0 — monitor.rs: 用 `nix::unistd::dup()` 替代 `libc::dup` + `from_raw_fd`
+
+- **文件**: `src/monitor.rs`，共 9 处 unsafe（L446~467, L720~742 两组）
+- **方案**: `nix::unistd::dup(fd: &Fd)` 返回 `Result<OwnedFd>`，一站式替代两步操作
+- **效益**: 一次性消除 9 个 unsafe
+- **状态**: ⏳
+
+### P1 — monitor.rs: `from_raw_fd` for mount fd（open 结果）
+
+- **文件**: `src/monitor.rs` L351, L940
+- **方案**: 用 `nix::unistd::dup()` 配合 `nix::fcntl::open` 的结果，或使用 `std::fs::File::into_raw_fd` + `OwnedFd::from` 链路
+- **状态**: ⏳
+
+### P2 — fid_parser.rs: `BorrowedFd::borrow_raw`
+
+- **文件**: `src/fid_parser.rs` L34
+- **方案**: 将 `FanFd` 内部改为 `OwnedFd`，`as_fd()` 直接调用 `self.0.as_fd()`
+- **风险**: `FanFd` 同时用于 `AsyncFd` 包装（`inotify`），需确认兼容性
+- **状态**: ⏳
+
+### P3 — config.rs 测试中环境变量 unsafe
+
+- **文件**: `src/config.rs`，8 处 `std::env::set_var`/`remove_var`
+- **方案**: 引入 `temp_env` crate，用 `temp_env::with_var` 替代
+- **状态**: ⏳
+
+### ❌ 无法消除 — proc_cache.rs
+
+- **原因**: Linux Netlink Proc Connector 没有主流 Rust safe 封装，FFI 调用不可避免
+- **措施**: 已有 `SockGuard` RAII 保证 close，补充 safety 注释说明不可消除的理由
+- **状态**: ✅ 已完成注释
+
+### ❌ 无法消除 — monitor.rs 集成测试 `libc::read`
+
+- **原因**: `fanotify_fid::read::read_fid_events` 需要完整的 `mount_fds` + `dir_cache` 参数，测试中只是原始读取验证事件计数，改用封装反而复杂
+- **措施**: 补充 safety 注释
+- **状态**: ✅ 已完成注释
+
+## 实施顺序
+
+1. ✅ proc_cache.rs + monitor.rs 集成测试 — safety 注释完善
+2. ⏳ P0 — monitor.rs `libc::dup` → `nix::unistd::dup`
+3. ⏳ P1 — monitor.rs `from_raw_fd` for mount fd
+4. ⏳ P2 — fid_parser.rs `BorrowedFd` → `OwnedFd`
+5. ⏳ P3 — config.rs 测试环境变量
