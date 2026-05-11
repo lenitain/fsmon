@@ -351,8 +351,6 @@ path = "/tmp/custom.sock"
     }
 
     #[test]
-    #[test]
-    #[test]
     fn test_load_invalid_config_returns_error() {
         with_isolated_home(|_| {
             let config_path = Config::path();
@@ -396,7 +394,6 @@ path = "/tmp/custom.sock"
         });
     }
 
-    #[test]
     #[test]
     fn test_config_path_uses_xdg_config_home() {
         let _lock = ENV_LOCK.lock().unwrap();
@@ -486,7 +483,7 @@ path = "/tmp/fsmon-<UID>.sock"
             fs::create_dir_all(config_path.parent().unwrap()).unwrap();
             let custom_log = home.join("my_logs");
             let custom_managed_dir = home.join("my_data");
-            let custom_managed_file = custom_managed_dir.join("paths.jsonl");
+            let _custom_managed_file = custom_managed_dir.join("paths.jsonl");
             let content = format!(
                 r#"[managed]
 path = "{}/my_data/paths.jsonl"

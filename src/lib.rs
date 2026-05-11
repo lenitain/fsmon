@@ -690,13 +690,6 @@ mod tests {
         assert!(!should_trim(30, &SizeFilter { op: SizeOp::Eq, bytes: 50 }));
     }
 
-    #[test]
-    fn test_should_trim_none() {
-        // No filter = always keep
-        let no_filter: Option<SizeFilter> = None;
-        // should_trim is only called when filter is Some, so None is handled at caller level
-    }
-
     // ---- integration: size filter edge cases ----
 
     #[test]
