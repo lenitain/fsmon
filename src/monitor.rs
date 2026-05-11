@@ -531,6 +531,24 @@ impl Monitor {
         loop {
             tokio::select! {
                 Some(events) = event_rx.recv() => {
+                    // Drain proc connector events first (non-blocking) to
+                    // minimize window between exec and fanotify arrival.
+                    if let Some(afd) = proc_afd.as_ref() {
+                        let conn = afd.get_ref();
+                        loop {
+                            match conn.recv_raw(&mut proc_buf) {
+                                Ok(n) => {
+                                    proc_cache::handle_proc_events(&proc_cache, &proc_buf, n);
+                                }
+                                Err(proc_connector::Error::WouldBlock) => break,
+                                Err(proc_connector::Error::Interrupted) => continue,
+                                Err(e) => {
+                                    eprintln!("proc connector error: {e}");
+                                    break;
+                                }
+                            }
+                        }
+                    }
                     for raw in &events {
                         if raw.mask & FAN_Q_OVERFLOW != 0 {
                             eprintln!("[WARNING] fanotify queue overflow - some events may have been lost");
