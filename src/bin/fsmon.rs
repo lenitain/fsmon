@@ -3,7 +3,8 @@ use path_clean::PathClean;
 use clap::{Parser, Subcommand};
 use fsmon::config::Config;
 use fsmon::help::{self, HelpTopic};
-use fsmon::monitor::{Monitor, PathOptions};
+use fsmon::monitor::Monitor;
+use fsmon::filters::{self, PathOptions};
 use fsmon::query::Query;
 use fsmon::socket::{self, SocketCmd};
 use fsmon::{TimeFilter, SizeOp, parse_time_filter};
@@ -560,23 +561,6 @@ async fn cmd_clean(args: CleanArgs) -> Result<()> {
     Ok(())
 }
 
-/// Build a combined regex from a list of patterns.
-/// Multiple patterns are OR'd together. If the first pattern starts with `!`,
-/// the entire match is inverted (exclude everything except matching).
-fn build_exclude_regex(patterns: Option<&[String]>, _label: &str) -> Result<(Option<regex::Regex>, bool)> {
-    let Some(patterns) = patterns else { return Ok((None, false)); };
-    if patterns.is_empty() {
-        return Ok((None, false));
-    }
-    let invert = patterns[0].starts_with('!');
-    let parts: Vec<String> = patterns.iter().map(|p| {
-        p.strip_prefix('!').unwrap_or(p).to_string()
-    }).collect();
-    let regex = regex::Regex::new(&parts.join("|"))
-        .with_context(|| format!("invalid {} pattern", _label))?;
-    Ok((Some(regex), invert))
-}
-
 fn parse_path_entries(entries: &[PathEntry]) -> Result<Vec<(PathBuf, PathOptions)>> {
     let mut result = Vec::new();
     for entry in entries {
@@ -598,8 +582,8 @@ fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
         })
         .transpose()
         .map_err(|e: String| anyhow::anyhow!(e))?;
-    let (exclude_regex, exclude_invert) = build_exclude_regex(entry.exclude.as_deref(), "exclude")?;
-    let (exclude_cmd_regex, exclude_cmd_invert) = build_exclude_regex(entry.exclude_cmd.as_deref(), "--exclude-cmd")?;
+    let (exclude_regex, exclude_invert) = filters::build_exclude_regex(entry.exclude.as_deref(), "exclude")?;
+    let (exclude_cmd_regex, exclude_cmd_invert) = filters::build_exclude_regex(entry.exclude_cmd.as_deref(), "--exclude-cmd")?;
     Ok(PathOptions {
         size_filter,
         event_types,

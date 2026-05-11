@@ -4,19 +4,24 @@
 
 无 — 当前无已知运行时 bug。
 
-## 🧹 代码组织（待决策）
+## 🧹 代码组织
 
-| 问题 | 行数 | 建议 |
+| 等级 | 问题 | 状态 |
 |------|------|------|
-| `src/monitor.rs` | 2249 | 拆出 `filters.rs` + `fid_parser.rs` |
-| `src/bin/fsmon.rs` | 953 | 拆出 `commands/` 目录 |
-| `src/lib.rs` | 966 | 拆出 `clean.rs` |
+| ✅ | `src/monitor.rs` 拆出 `filters.rs` + `fid_parser.rs` | `monitor.rs` 从 2249 行降至 ~1660 行 |
+| ⏳ | `src/bin/fsmon.rs` 拆出 `commands/` 目录 | 待完成 |
+| ⏳ | `src/lib.rs` 拆出 `clean.rs` | 待完成 |
+
+当前行数：
+- `src/monitor.rs`: ~1660
+- `src/filters.rs`: ~160
+- `src/fid_parser.rs`: ~240
 
 ## 📄 文档不一致
 
 | 位置 | 问题 |
 |------|------|
-| `README.md`/`README.zh-CN.md` | 源码结构图提到不存在的 `fid_parser.rs` |
+| `README.md`/`README.zh-CN.md` | 源码结构图现在有 `fid_parser.rs` 了，但需确认位置 |
 | `README.md` 架构图 | 同上 |
 | `docs/` 下 5 个 `.md` | 引用 `config.toml`、`--since`/`--until`、`generate` 等已废弃接口 |
 
