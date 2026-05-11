@@ -8,7 +8,7 @@
 |------|-----------|------|------|
 | `src/monitor.rs` | `libc::dup` + `OwnedFd::from_raw_fd` | 10→2 | ✅ `safe_dup()` 集中到1处 |
 | `src/monitor.rs` | `nix::fcntl::open` + `from_raw_fd` | 2→2 | ✅ `safe_open_dir()` 集中到1处 |
-| `src/monitor.rs` | `libc::read` (集成测试) | 1 | ✅ 加safety注释 |
+| `src/monitor.rs` | `libc::read` (集成测试) | 1→0 | ✅ `fanotify_fid::read::read_fid_events` 替代 |
 | `src/proc_cache.rs` | Netlink conn: `socket/bind/recv/send/zeroed` | 5+5 | ❌ 无safe替代 |
 | `src/fid_parser.rs` | `BorrowedFd::borrow_raw` | 1→0 | ✅ 死代码，直接删除 |
 | `src/config.rs` | `std::env::set_var/remove_var` (测试) | 8→0 | ✅ `temp-env` crate 替代 |
@@ -49,11 +49,11 @@
 - **措施**: 已有 `SockGuard` RAII 保证 close，补充 safety 注释说明不可消除的理由
 - **状态**: ✅ 已完成注释
 
-### ❌ 无法消除 — monitor.rs 集成测试 `libc::read`
+### ✅ monitor.rs 集成测试 `libc::read`
 
-- **原因**: `fanotify_fid::read::read_fid_events` 需要完整的 `mount_fds` + `dir_cache` 参数，测试中只是原始读取验证事件计数，改用封装反而复杂
-- **措施**: 补充 safety 注释
-- **状态**: ✅ 已完成注释
+- **方案**: 用 `fanotify_fid::read::read_fid_events` 替代 `libc::read`。传 `&[]` 给 mount_fds（无需路径解析，只计数事件即可）
+- **风险**: 无。`read_fid_events` 对 non-blocking fd 的 EAGAIN 正确处理
+- **状态**: ✅ 已完成
 
 ## 实施顺序
 

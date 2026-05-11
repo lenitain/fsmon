@@ -1803,12 +1803,14 @@ mod tests {
             .unwrap();
 
             let mut buf = vec![0u8; 4096];
-            let raw_fd = fd.as_raw_fd();
             let start = std::time::Instant::now();
             while start.elapsed() < std::time::Duration::from_millis(200) {
-                let n = unsafe { libc::read(raw_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
-                if n > 0 {
-                    counter_clone.fetch_add(1, Ordering::SeqCst);
+                if let Ok(events) = fanotify_fid::read::read_fid_events(
+                    &fd, &[], &mut buf, None,
+                ) {
+                    if !events.is_empty() {
+                        counter_clone.fetch_add(events.len(), Ordering::SeqCst);
+                    }
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
