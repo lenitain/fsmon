@@ -256,8 +256,16 @@ path = "/tmp/fsmon-<UID>.sock"
     /// Create the default data directories (chezmoi-style init).
     /// Creates log dir and managed data dir. Config file is optional.
     pub fn init_dirs() -> Result<()> {
-        let mut cfg = Config::default();
+        let config_path = Self::path();
+        let using_defaults = !config_path.exists();
+
+        let mut cfg = if config_path.exists() {
+            Config::load()?
+        } else {
+            Config::default()
+        };
         cfg.resolve_paths()?;
+
         let managed_dir = cfg
             .managed
             .path
@@ -284,11 +292,12 @@ path = "/tmp/fsmon-<UID>.sock"
 
         eprintln!("Created log directory:  {}", cfg.logging.path.display());
         eprintln!("Created managed directory: {}", managed_dir.display());
-        let config_path = Self::path();
-        eprintln!(
-            "(config file is optional \u{2014} defaults apply without {})",
-            config_path.display()
-        );
+        if using_defaults {
+            eprintln!(
+                "(config file is optional \u{2014} defaults apply without {})",
+                config_path.display()
+            );
+        }
         Ok(())
     }
 }
@@ -507,6 +516,61 @@ path = "/tmp/custom.sock"
                 !config_dir.exists(),
                 "config dir should NOT be created by init"
             );
+        });
+    }
+
+    #[test]
+    fn test_init_dirs_uses_config_when_present() {
+        with_isolated_home(|home| {
+            let config_path = Config::path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            // Write config with default paths
+            fs::write(&config_path, r#"[managed]
+path = "~/.local/share/fsmon/managed.jsonl"
+
+[logging]
+path = "~/.local/state/fsmon"
+
+[socket]
+path = "/tmp/fsmon-<UID>.sock"
+"#).unwrap();
+
+            Config::init_dirs().unwrap();
+
+            let log_dir = home.join(".local/state/fsmon");
+            let managed_dir = home.join(".local/share/fsmon");
+            assert!(log_dir.exists(), "log dir should exist");
+            assert!(managed_dir.exists(), "managed dir should exist");
+        });
+    }
+
+    #[test]
+    fn test_init_dirs_uses_custom_config_paths() {
+        with_isolated_home(|home| {
+            let config_path = Config::path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            let custom_log = home.join("my_logs");
+            let custom_managed_dir = home.join("my_data");
+            let custom_managed_file = custom_managed_dir.join("paths.jsonl");
+            let content = format!(
+                r#"[managed]
+path = "{}/my_data/paths.jsonl"
+
+[logging]
+path = "{}/my_logs"
+
+[socket]
+path = "/tmp/test.sock"
+"#,
+                home.to_string_lossy(),
+                home.to_string_lossy(),
+            );
+            fs::write(&config_path, content).unwrap();
+
+            Config::init_dirs().unwrap();
+
+            assert!(custom_log.exists(), "custom log dir should exist");
+            assert!(custom_managed_dir.exists(), "custom managed dir should exist");
         });
     }
 
