@@ -269,88 +269,234 @@ mod tests {
         path
     }
 
+    // ---- basic ----
+
     #[test]
     fn test_read_events_basic() {
         let dir = std::env::temp_dir().join("fsmon_query_test_basic");
         fs::create_dir_all(&dir).unwrap();
-
         let events = vec![
             FileEvent {
                 time: Utc::now(),
                 event_type: EventType::Create,
                 path: PathBuf::from("/tmp/test"),
-                pid: 100,
-                cmd: "touch".into(),
-                user: "root".into(),
-                file_size: 0,
-                monitored_path: PathBuf::from("/tmp"),
+                pid: 100, cmd: "touch".into(), user: "root".into(),
+                file_size: 0, monitored_path: PathBuf::from("/tmp"),
             },
             FileEvent {
                 time: Utc::now(),
                 event_type: EventType::Modify,
                 path: PathBuf::from("/tmp/test"),
-                pid: 200,
-                cmd: "vim".into(),
-                user: "root".into(),
-                file_size: 100,
-                monitored_path: PathBuf::from("/tmp"),
+                pid: 200, cmd: "vim".into(), user: "root".into(),
+                file_size: 100, monitored_path: PathBuf::from("/tmp"),
             },
         ];
-
         let log_path = create_log_file(&dir, &events);
-        let q = Query::new(dir.clone(), None, vec![]);
         let log_dir = log_path.parent().unwrap().to_path_buf();
         let q = Query::new(log_dir, None, vec![]);
         let result = q.read_events_from(&log_path, None, None).unwrap();
-
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].pid, 100);
         assert_eq!(result[1].pid, 200);
-
         let _ = fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn test_read_events_empty_file() {
+        let dir = std::env::temp_dir().join("fsmon_query_test_empty");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = create_log_file(&dir, &[]);
+        let log_dir = log_path.parent().unwrap().to_path_buf();
+        let q = Query::new(log_dir, None, vec![]);
+        let result = q.read_events_from(&log_path, None, None).unwrap();
+        assert!(result.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolve_log_files_by_path() {
+        let dir = std::env::temp_dir().join("fsmon_query_test_resolve");
+        fs::create_dir_all(&dir).unwrap();
+        let events = vec![
+            FileEvent {
+                time: Utc::now(), event_type: EventType::Create,
+                path: PathBuf::from("/a"), pid: 1, cmd: "a".into(), user: "r".into(),
+                file_size: 0, monitored_path: PathBuf::from("/a"),
+            },
+        ];
+        let _path = create_log_file(&dir, &events);
+        // resolve by specific path — log file named by hash, not by path string
+        let q = Query::new(dir.clone(), Some(vec![PathBuf::from("/nonexistent")]), vec![]);
+        let files = q.resolve_log_files().unwrap();
+        assert!(files.is_empty(), "nonexistent path should match no log files");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ---- time filter operators ----
 
     #[test]
     fn test_read_events_with_since_filter() {
         let dir = std::env::temp_dir().join("fsmon_query_test_since");
         fs::create_dir_all(&dir).unwrap();
-
         let now = Utc::now();
         let old_time = now - chrono::Duration::hours(2);
         let recent_time = now - chrono::Duration::minutes(30);
-
         let events = vec![
             FileEvent {
-                time: old_time,
-                event_type: EventType::Create,
-                path: PathBuf::from("/tmp/old"),
-                pid: 100,
-                cmd: "test".into(),
-                user: "root".into(),
-                file_size: 0,
-                monitored_path: PathBuf::from("/tmp"),
+                time: old_time, event_type: EventType::Create,
+                path: PathBuf::from("/tmp/old"), pid: 100,
+                cmd: "test".into(), user: "root".into(),
+                file_size: 0, monitored_path: PathBuf::from("/tmp"),
             },
             FileEvent {
-                time: recent_time,
-                event_type: EventType::Modify,
-                path: PathBuf::from("/tmp/recent"),
-                pid: 200,
-                cmd: "test".into(),
-                user: "root".into(),
-                file_size: 50,
-                monitored_path: PathBuf::from("/tmp"),
+                time: recent_time, event_type: EventType::Modify,
+                path: PathBuf::from("/tmp/recent"), pid: 200,
+                cmd: "test".into(), user: "root".into(),
+                file_size: 50, monitored_path: PathBuf::from("/tmp"),
             },
         ];
-
         let log_path = create_log_file(&dir, &events);
         let since = now - chrono::Duration::hours(1);
         let log_dir = log_path.parent().unwrap().to_path_buf();
         let q = Query::new(log_dir, None, vec![]);
         let result = q.read_events_from(&log_path, Some(since), None).unwrap();
-
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].pid, 200);
-
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_read_events_until_filter() {
+        let dir = std::env::temp_dir().join("fsmon_query_test_until");
+        fs::create_dir_all(&dir).unwrap();
+        let now = Utc::now();
+        let old_time = now - chrono::Duration::hours(2);
+        let recent_time = now - chrono::Duration::minutes(30);
+        let events = vec![
+            FileEvent {
+                time: old_time, event_type: EventType::Create,
+                path: PathBuf::from("/tmp/old"), pid: 100,
+                cmd: "test".into(), user: "root".into(),
+                file_size: 0, monitored_path: PathBuf::from("/tmp"),
+            },
+            FileEvent {
+                time: recent_time, event_type: EventType::Modify,
+                path: PathBuf::from("/tmp/recent"), pid: 200,
+                cmd: "test".into(), user: "root".into(),
+                file_size: 50, monitored_path: PathBuf::from("/tmp"),
+            },
+        ];
+        let log_path = create_log_file(&dir, &events);
+        let until = now - chrono::Duration::hours(1);
+        let log_dir = log_path.parent().unwrap().to_path_buf();
+        let q = Query::new(log_dir, None, vec![]);
+        let result = q.read_events_from(&log_path, None, Some(until)).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].pid, 100);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_read_events_time_range() {
+        let dir = std::env::temp_dir().join("fsmon_query_test_range");
+        fs::create_dir_all(&dir).unwrap();
+        let now = Utc::now();
+        let t1 = now - chrono::Duration::hours(3);
+        let t2 = now - chrono::Duration::hours(2);
+        let t3 = now - chrono::Duration::hours(1);
+        let events = vec![
+            FileEvent {
+                time: t1, event_type: EventType::Create,
+                path: PathBuf::from("/a"), pid: 1,
+                cmd: "t".into(), user: "r".into(),
+                file_size: 0, monitored_path: PathBuf::from("/a"),
+            },
+            FileEvent {
+                time: t2, event_type: EventType::Modify,
+                path: PathBuf::from("/b"), pid: 2,
+                cmd: "t".into(), user: "r".into(),
+                file_size: 0, monitored_path: PathBuf::from("/b"),
+            },
+            FileEvent {
+                time: t3, event_type: EventType::Delete,
+                path: PathBuf::from("/c"), pid: 3,
+                cmd: "t".into(), user: "r".into(),
+                file_size: 0, monitored_path: PathBuf::from("/c"),
+            },
+        ];
+        let log_path = create_log_file(&dir, &events);
+        let log_dir = log_path.parent().unwrap().to_path_buf();
+        let q = Query::new(log_dir, None, vec![]);
+        // range: between 2.5h ago and 1.5h ago (only t2 at 2h ago fits)
+        let since = now - chrono::Duration::minutes(150);
+        let until = now - chrono::Duration::minutes(90);
+        let result = q.read_events_from(&log_path, Some(since), Some(until)).unwrap();
+        assert_eq!(result.len(), 1, "expected only t2 in range");
+        assert_eq!(result[0].pid, 2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ---- extract_since / extract_until ----
+
+    #[test]
+    fn test_extract_since_and_until() {
+        let now = Utc::now();
+        let t1 = now - chrono::Duration::hours(2);
+        let t2 = now - chrono::Duration::hours(1);
+
+        // > filter → since
+        let q = Query::new(PathBuf::from("/tmp"), None, vec![
+            TimeFilter { op: SizeOp::Gt, time: t1 },
+        ]);
+        assert!(q.extract_since().is_some());
+        assert!(q.extract_until().is_none());
+
+        // < filter → until
+        let q = Query::new(PathBuf::from("/tmp"), None, vec![
+            TimeFilter { op: SizeOp::Lt, time: t2 },
+        ]);
+        assert!(q.extract_since().is_none());
+        assert!(q.extract_until().is_some());
+
+        // both
+        let q = Query::new(PathBuf::from("/tmp"), None, vec![
+            TimeFilter { op: SizeOp::Gt, time: t1 },
+            TimeFilter { op: SizeOp::Lt, time: t2 },
+        ]);
+        assert!(q.extract_since().is_some());
+        assert!(q.extract_until().is_some());
+
+        // empty
+        let q = Query::new(PathBuf::from("/tmp"), None, vec![]);
+        assert!(q.extract_since().is_none());
+        assert!(q.extract_until().is_none());
+    }
+
+    #[test]
+    fn test_extract_since_takes_latest_ge() {
+        let now = Utc::now();
+        let t_early = now - chrono::Duration::hours(3);
+        let t_late = now - chrono::Duration::hours(1);
+        // Multiple > filters — takes the latest (most restrictive)
+        let q = Query::new(PathBuf::from("/tmp"), None, vec![
+            TimeFilter { op: SizeOp::Ge, time: t_early },
+            TimeFilter { op: SizeOp::Ge, time: t_late },
+        ]);
+        let s = q.extract_since().unwrap();
+        assert_eq!(s, t_late, "should pick the later/more-restrictive time");
+    }
+
+    #[test]
+    fn test_extract_until_takes_earliest_le() {
+        let now = Utc::now();
+        let t_early = now - chrono::Duration::hours(3);
+        let t_late = now - chrono::Duration::hours(1);
+        // Multiple < filters — takes the earliest (most restrictive)
+        let q = Query::new(PathBuf::from("/tmp"), None, vec![
+            TimeFilter { op: SizeOp::Le, time: t_late },
+            TimeFilter { op: SizeOp::Le, time: t_early },
+        ]);
+        let u = q.extract_until().unwrap();
+        assert_eq!(u, t_early, "should pick the earlier/more-restrictive time");
     }
 }
