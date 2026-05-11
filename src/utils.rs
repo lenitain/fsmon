@@ -291,7 +291,7 @@ pub fn uid_to_username(uid: u32) -> Option<String> {
 ///
 /// Uses FNV-1a 64-bit hash (stable across runs, no dependencies) to avoid
 /// the 255-byte filename limit that the old escape-based encoding could exceed.
-/// The original path is preserved in every event's `monitored_path` field.
+/// Use `fsmon log-path <PATH>` to resolve the hashed log filename back to path.
 ///
 /// Examples:
 /// - `/tmp/foo`          → `a1b2c3d4e5f6a7b8_log.jsonl`

@@ -551,7 +551,7 @@ impl Monitor {
                         }
 
                         for event_type in event_types {
-                            let event = self.build_file_event(raw, event_type, matched_path.as_deref());
+                            let event = self.build_file_event(raw, event_type);
 
                             if !self.is_path_in_scope(&event.path) {
                                 continue;
@@ -644,7 +644,6 @@ impl Monitor {
         &mut self,
         raw: &FidEvent,
         event_type: EventType,
-        matched_path: Option<&Path>,
     ) -> FileEvent {
         let pid = raw.pid.unsigned_abs();
         let (cmd, user) = if let Some(info) = self.pid_cache.get(&pid) {
@@ -688,7 +687,6 @@ impl Monitor {
             cmd,
             user,
             file_size,
-            monitored_path: matched_path.map_or(PathBuf::new(), |p| p.to_path_buf()),
         }
     }
 
@@ -1231,8 +1229,11 @@ impl Monitor {
             Some(d) => d,
             None => return Ok(()),
         };
-        let matched_path = &event.monitored_path;
-        let log_path = log_dir.join(crate::utils::path_to_log_name(matched_path));
+        // Resolve the monitored root path from the event path for log file naming
+        let matched_path = self.matching_path(&event.path)
+            .cloned()
+            .unwrap_or_else(|| event.path.clone());
+        let log_path = log_dir.join(crate::utils::path_to_log_name(&matched_path));
         let is_new = !log_path.exists();
         let mut file = OpenOptions::new()
             .create(true)
@@ -1649,7 +1650,6 @@ mod tests {
             cmd: "test".to_string(),
             user: "root".to_string(),
             file_size: size,
-            monitored_path: PathBuf::from("/watched"),
         }
     }
 
@@ -1662,7 +1662,6 @@ mod tests {
             cmd: cmd.to_string(),
             user: "root".to_string(),
             file_size: size,
-            monitored_path: PathBuf::from("/watched"),
         }
     }
 

@@ -53,6 +53,13 @@ pub enum Commands {
     #[command(about = help::about(HelpTopic::Cd), long_about = help::long_about(HelpTopic::Cd))]
     Cd,
 
+    /// Resolve the log file path for a monitored path
+    #[command(about = help::about(HelpTopic::LogPath), long_about = help::long_about(HelpTopic::LogPath))]
+    LogPath {
+        /// Path to resolve
+        path: PathBuf,
+    },
+
     /// List managed paths (one per line, for shell completion use)
     #[command(hide = true)]
     ListManagedPaths,
