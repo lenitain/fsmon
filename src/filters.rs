@@ -254,7 +254,6 @@ mod tests {
             cmd: "test".to_string(),
             user: "root".to_string(),
             file_size: size,
-            monitored_path: PathBuf::from("/watched"),
         }
     }
 
@@ -267,7 +266,6 @@ mod tests {
             cmd: cmd.to_string(),
             user: "root".to_string(),
             file_size: size,
-            monitored_path: PathBuf::from("/watched"),
         }
     }
 

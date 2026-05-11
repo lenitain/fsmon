@@ -256,6 +256,7 @@ impl Config {
 mod tests {
     use super::*;
     use std::fs;
+    use temp_env;
 
     fn unique_home_dir() -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -275,42 +276,24 @@ mod tests {
         let lock = ENV_LOCK.lock().unwrap();
         let dir = unique_home_dir();
         let _ = fs::remove_dir_all(&dir);
+        let home_val = dir.to_string_lossy().to_string();
 
-        let old_home = std::env::var("HOME").ok();
-        let old_xdg_config = std::env::var("XDG_CONFIG_HOME").ok();
-        let old_sudo_uid = std::env::var("SUDO_UID").ok();
+        temp_env::with_vars(
+            &[
+                ("HOME", Some(home_val.as_str())),
+                ("XDG_CONFIG_HOME", None::<&str>),
+                ("SUDO_UID", None::<&str>),
+            ],
+            || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&dir)));
+                let _ = fs::remove_dir_all(&dir);
+                if let Err(e) = result {
+                    std::panic::resume_unwind(e);
+                }
+            },
+        );
 
-        unsafe {
-            std::env::set_var("HOME", dir.to_str().unwrap());
-            std::env::remove_var("XDG_CONFIG_HOME");
-            std::env::remove_var("SUDO_UID");
-        }
-
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&dir)));
-
-        unsafe {
-            if let Some(v) = old_home {
-                std::env::set_var("HOME", v);
-            } else {
-                std::env::remove_var("HOME");
-            }
-            if let Some(v) = old_xdg_config {
-                std::env::set_var("XDG_CONFIG_HOME", v);
-            } else {
-                std::env::remove_var("XDG_CONFIG_HOME");
-            }
-            if let Some(v) = old_sudo_uid {
-                std::env::set_var("SUDO_UID", v);
-            } else {
-                std::env::remove_var("SUDO_UID");
-            }
-        }
-        let _ = fs::remove_dir_all(dir);
         drop(lock);
-
-        if let Err(e) = result {
-            std::panic::resume_unwind(e);
-        }
     }
 
     #[test]
@@ -397,40 +380,28 @@ path = "/tmp/custom.sock"
     #[test]
     fn test_config_path_uses_xdg_config_home() {
         let _lock = ENV_LOCK.lock().unwrap();
-        let old = std::env::var("XDG_CONFIG_HOME").ok();
-        let old_home = std::env::var("HOME").ok();
 
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", "/custom/xdg/config");
-            std::env::set_var("HOME", "/home/test");
-        }
+        temp_env::with_vars(
+            &[
+                ("XDG_CONFIG_HOME", Some("/custom/xdg/config")),
+                ("HOME", Some("/home/test")),
+            ],
+            || {
+                let path = Config::path();
+                assert!(
+                    path.to_string_lossy()
+                        .contains("/custom/xdg/config/fsmon/fsmon.toml")
+                );
 
-        let path = Config::path();
-        assert!(
-            path.to_string_lossy()
-                .contains("/custom/xdg/config/fsmon/fsmon.toml")
+                temp_env::with_var_unset("XDG_CONFIG_HOME", || {
+                    let path = Config::path();
+                    assert!(
+                        path.to_string_lossy()
+                            .contains("/home/test/.config/fsmon/fsmon.toml")
+                    );
+                });
+            },
         );
-
-        unsafe {
-            std::env::remove_var("XDG_CONFIG_HOME");
-        }
-        let path = Config::path();
-        assert!(
-            path.to_string_lossy()
-                .contains("/home/test/.config/fsmon/fsmon.toml")
-        );
-
-        // Restore
-        if let Some(v) = old {
-            unsafe {
-                std::env::set_var("XDG_CONFIG_HOME", v);
-            }
-        }
-        if let Some(v) = old_home {
-            unsafe {
-                std::env::set_var("HOME", v);
-            }
-        }
     }
 
     #[test]
@@ -510,18 +481,10 @@ path = "/tmp/test.sock"
     fn test_resolve_uid_no_sudo() {
         // Without SUDO_UID, resolve_uid returns our own UID
         let _lock = ENV_LOCK.lock().unwrap();
-        let old = std::env::var("SUDO_UID").ok();
-        unsafe {
-            std::env::remove_var("SUDO_UID");
-        }
-        let uid = resolve_uid();
-        assert_eq!(uid, nix::unistd::geteuid().as_raw());
-        // Restore
-        if let Some(v) = old {
-            unsafe {
-                std::env::set_var("SUDO_UID", v);
-            }
-        }
+        temp_env::with_var_unset("SUDO_UID", || {
+            let uid = resolve_uid();
+            assert_eq!(uid, nix::unistd::geteuid().as_raw());
+        });
     }
 
     #[test]

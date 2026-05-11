@@ -10,7 +10,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/fsmon)](https://crates.io/crates/fsmon)
 
-**fsmon** 是一款基于 Linux fanotify 的实时文件系统变更监控工具。它监视文件和目录，捕获每一次创建、修改、删除、移动、属性变更等事件，并追溯每个变更的来源进程 — 包括 PID、命令名和用户。与轮询式工具（如 `watch`、`find -newer`）不同，fsmon 从内核接收推送通知，零忙等。与通用审计工具（如 `auditd`、`inotifywait`）不同，fsmon 专为**开发者工作流**打造：在线排障、部署取证、安全事件重建、系统行为分析 — 内存占用不到 5MB，纳秒级进程内过滤，标准 JSONL 日志可管道到 `jq` 自由分析。
+**fsmon** 是一款基于 Linux fanotify 的实时文件系统变更监控工具。它监视文件和目录，捕获每一次创建、修改、删除、移动、属性变更等事件，并追溯每个变更的来源进程 — 包括 PID、命令名和用户。
 
 <div align="center">
 <img width="1200" alt="fsmon demo" src="./images/fsmon.png" />
@@ -93,9 +93,9 @@ vim /var/www/myapp/config.json                            # vim 创建交换文�
 ```bash
 # 原始日志 — 每行一个 JSONL 事件
 cat ~/.local/state/fsmon/*_log.jsonl
-# → {"time":"2026-05-07T10:00:01+00:00","event_type":"MODIFY","path":"/var/www/myapp/index.html","pid":1234,"cmd":"nginx","user":"www-data","file_size":21,"monitored_path":"/var/www/myapp"}
-# → {"time":"2026-05-07T10:00:03+00:00","event_type":"DELETE","path":"/var/www/myapp/index.html","pid":5678,"cmd":"rm","user":"deploy","file_size":0,"monitored_path":"/var/www/myapp"}
-# → {"time":"2026-05-07T10:00:05+00:00","event_type":"CREATE","path":"/var/www/myapp/.config.json.swp","pid":9012,"cmd":"vim","user":"dev","file_size":4096,"monitored_path":"/var/www/myapp"}
+# → {"time":"2026-05-07T10:00:01+00:00","event_type":"MODIFY","path":"/var/www/myapp/index.html","pid":1234,"cmd":"nginx","user":"www-data","file_size":21}
+# → {"time":"2026-05-07T10:00:03+00:00","event_type":"DELETE","path":"/var/www/myapp/index.html","pid":5678,"cmd":"rm","user":"deploy","file_size":0}
+# → {"time":"2026-05-07T10:00:05+00:00","event_type":"CREATE","path":"/var/www/myapp/.config.json.swp","pid":9012,"cmd":"vim","user":"dev","file_size":4096}
 ```
 
 注意：vim 的 `.swp` 虽然被 fanotify 捕获，但 **不会落盘**——`--exclude '\.swp$'` 在写磁盘前就拦截了。
@@ -290,6 +290,17 @@ find ~/.local/state/fsmon/ -name '*.jsonl' -mtime +30 -delete
 fsmon init                                 创建日志 & managed 目录
 ```
 
+### p2l
+
+路径转日志文件名 — 纯哈希计算，无 I/O。将受监控路径解析为日志文件路径，
+方便管道和 tail。
+
+```
+fsmon p2l /path                             解析日志文件路径
+tail -f "$(fsmon p2l /path)"                实时查看某路径事件
+fsmon p2l /path1 /path2 /path3              多路径，每行一个
+```
+
 ### cd
 
 在日志目录中打开子 shell。输入 `exit` 返回原目录：
@@ -367,7 +378,8 @@ src/
 │       ├── manage.rs           cmd_managed, cmd_list_managed_paths
 │       ├── query.rs            cmd_query: 时间过滤, Query::execute()
 │       ├── clean.rs            cmd_clean: 时间/大小过滤委托
-│       └── init_cd.rs          cmd_init, cmd_cd
+│       ├── init_cd.rs          cmd_init, cmd_cd
+│       └── p2l.rs              cmd_p2l: 路径→日志文件名的哈希计算
 ├── lib.rs             FileEvent, EventType, DaemonLock (flock 进程单例)
 ├── clean.rs           日志清理引擎: 时间/大小截断, 尾部偏移, 预览模式
 ├── config.rs          基础设施配置, SUDO_UID 用户解析

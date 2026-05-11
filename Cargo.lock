@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "fsmon"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "anyhow",
  "chrono",
@@ -307,11 +307,13 @@ dependencies = [
  "lru",
  "nix",
  "path-clean",
+ "proc-connector",
  "procfs",
  "regex",
  "serde",
  "serde_json",
  "smallvec",
+ "temp-env",
  "tempfile",
  "tokio",
  "toml",
@@ -628,6 +630,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "proc-connector"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a81758b717926ad3dd12222e1512c83089b7294bfafcff6206a465834e8c491f"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -864,6 +875,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "temp-env"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96374855068f47402c3121c6eed88d29cb1de8f3ab27090e273e420bdabcf050"
+dependencies = [
+ "parking_lot",
 ]
 
 [[package]]

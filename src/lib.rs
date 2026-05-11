@@ -169,9 +169,6 @@ pub struct FileEvent {
     pub cmd: String,
     pub user: String,
     pub file_size: u64,
-    /// The monitored (watched) path this event belongs to.
-    /// Allows filtering events by which watched path triggered the log entry.
-    pub monitored_path: PathBuf,
 }
 
 impl FileEvent {

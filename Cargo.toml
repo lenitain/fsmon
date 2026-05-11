@@ -1,6 +1,6 @@
 [package]
 name = "fsmon"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2024"
 license = "MIT"
 description = "Lightweight High-Performance File System Change Tracking Tool"
@@ -33,6 +33,7 @@ serde_json = "1.0"
 dashmap = "5.5"
 procfs = "0.16"
 libc = "0.2"
+proc-connector = "0.1"
 nix = { version = "0.29", default-features = false, features = ["user", "fs", "socket"] }
 anyhow = "1.0"
 users = "0.11"
@@ -50,4 +51,5 @@ strip = true
 lto = true
 
 [dev-dependencies]
+temp-env = "0.3.6"
 tempfile = "3.27.0"
