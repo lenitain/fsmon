@@ -9,38 +9,26 @@ alias fsmon=sudo\ /home/pilot/.projects/fsmon/target/release/fsmon
 
 ---
 
-## 1. 配置生成（无需 root）
+## 1. 初始化（无需 root）
 
-### 1.1 首次生成
-
-```bash
-# 确保没有已有配置
-mv ~/.config/fsmon/config.toml ~/.config/fsmon/config.toml.bak 2>/dev/null
-fsmon generate
-```
-
-预期：输出 `Default config generated at ~/.config/fsmon/config.toml`
-
-### 1.2 再次生成（不传 --force）
+### 1.1 首次初始化
 
 ```bash
-fsmon generate
+fsmon init
 ```
 
-预期：报错 `Config already exists at ... Use --force to overwrite`
+预期：创建以下目录：
+- `~/.local/state/fsmon/` （事件日志目录）
+- `~/.local/share/fsmon/` （managed 数据目录）
+- `~/.config/fsmon/` （配置目录）
 
-### 1.3 强制覆盖
+### 1.2 查看日志目录路径
 
 ```bash
-fsmon generate --force
+cd $(fsmon cd)
 ```
 
-预期：成功覆盖，无错误
-
-**恢复备份**：
-```bash
-mv ~/.config/fsmon/config.toml.bak ~/.config/fsmon/config.toml 2>/dev/null
-```
+预期：当前目录切换到 `~/.local/state/fsmon`
 
 ---
 

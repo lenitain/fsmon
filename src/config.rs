@@ -6,7 +6,7 @@ use users::os::unix::UserExt;
 
 /// Infrastructure configuration for fsmon.
 ///
-/// The config file lives at `~/.config/fsmon/config.toml`.
+/// The config file lives at `~/.config/fsmon/fsmon.toml`.
 /// All path resolution is based on the **original user** (not root's HOME).
 /// Daemon (running as root via sudo) uses SUDO_UID to find the right home.
 /// CLI (running as user) uses the user's own HOME directly.
@@ -158,13 +158,13 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Return the config file path: `$XDG_CONFIG_HOME/fsmon/config.toml`
-    /// Falls back to `~/.config/fsmon/config.toml`.
+    /// Return the config file path: `$XDG_CONFIG_HOME/fsmon/fsmon.toml`
+    /// Falls back to `~/.config/fsmon/fsmon.toml`.
     pub fn path() -> PathBuf {
         let home = guess_home();
         let xdg_config =
             std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{}/.config", home));
-        PathBuf::from(xdg_config).join("fsmon").join("config.toml")
+        PathBuf::from(xdg_config).join("fsmon").join("fsmon.toml")
     }
 
     /// Load config from file. Returns default Config if file doesn't exist.
@@ -250,6 +250,39 @@ path = "/tmp/fsmon-<UID>.sock"
             chown_to_original_user(parent);
         }
 
+        Ok(())
+    }
+
+    /// Create the default data directories (chezmoi-style init).
+    /// Creates log dir, managed data dir, and config dir.
+    /// Does NOT write a config file — config is optional, defaults apply without it.
+    pub fn init_dirs() -> Result<()> {
+        let mut cfg = Config::default();
+        cfg.resolve_paths()?;
+        let managed_dir = cfg.managed.file.parent()
+            .context("Managed file path has no parent")?
+            .to_path_buf();
+
+        fs::create_dir_all(&cfg.logging.dir)
+            .with_context(|| format!("Failed to create log directory: {}", cfg.logging.dir.display()))?;
+        fs::create_dir_all(&managed_dir)
+            .with_context(|| format!("Failed to create managed directory: {}", managed_dir.display()))?;
+
+        // Also create config dir as courtesy (where fsmon.toml would live)
+        let config_path = Self::path();
+        let config_dir = config_path.parent()
+            .context("Config path has no parent")?;
+        fs::create_dir_all(config_dir)
+            .with_context(|| format!("Failed to create config directory: {}", config_dir.display()))?;
+
+        // Chown to original user
+        chown_to_original_user(&cfg.logging.dir);
+        chown_to_original_user(&managed_dir);
+        chown_to_original_user(config_dir);
+
+        eprintln!("Created log directory:  {}", cfg.logging.dir.display());
+        eprintln!("Created data directory: {}", managed_dir.display());
+        eprintln!("(config is optional \u{2014} defaults apply without ~/.config/fsmon/fsmon.toml)");
         Ok(())
     }
 }
@@ -421,7 +454,7 @@ path = "/tmp/custom.sock"
         let path = Config::path();
         assert!(
             path.to_string_lossy()
-                .contains("/custom/xdg/config/fsmon/config.toml")
+                .contains("/custom/xdg/config/fsmon/fsmon.toml")
         );
 
         unsafe {
@@ -430,7 +463,7 @@ path = "/tmp/custom.sock"
         let path = Config::path();
         assert!(
             path.to_string_lossy()
-                .contains("/home/test/.config/fsmon/config.toml")
+                .contains("/home/test/.config/fsmon/fsmon.toml")
         );
 
         // Restore
@@ -444,6 +477,25 @@ path = "/tmp/custom.sock"
                 std::env::set_var("HOME", v);
             }
         }
+    }
+
+    #[test]
+    fn test_init_dirs_creates_directories() {
+        with_isolated_home(|home| {
+            Config::init_dirs().unwrap();
+
+            let log_dir = home.join(".local/state/fsmon");
+            let managed_dir = home.join(".local/share/fsmon");
+            let config_dir = home.join(".config/fsmon");
+
+            assert!(log_dir.exists(), "log dir should exist");
+            assert!(managed_dir.exists(), "managed dir should exist");
+            assert!(config_dir.exists(), "config dir should exist");
+
+            // Config file should NOT be created
+            let config_file = config_dir.join("fsmon.toml");
+            assert!(!config_file.exists(), "config file should NOT be created by init");
+        });
     }
 
     #[test]

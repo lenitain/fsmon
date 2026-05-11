@@ -187,7 +187,7 @@ sudo fsmon daemon          Start daemon in foreground
 sudo fsmon daemon &        Start daemon in background
 ```
 
-Config:           `~/.config/fsmon/config.toml`
+Config:           `~/.config/fsmon/fsmon.toml` (optional — defaults without it)
 Managed paths:    `~/.local/share/fsmon/managed.jsonl`
 Log dir:          `~/.local/state/fsmon/`
 Socket:           `/tmp/fsmon-<UID>.sock`
@@ -251,7 +251,7 @@ fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 
 ### clean
 
-Clean historical log files. Defaults from `config.toml`: `keep_days=30`, `size=1GB`.
+Clean historical log files. Defaults from `fsmon.toml`: `keep_days=30`, `size=1GB`.
 
 ```bash
 fsmon clean                                Use config defaults
@@ -261,20 +261,29 @@ fsmon clean --path /tmp                    Clean specific path's log
 fsmon clean --dry-run                      Preview without deleting
 ```
 
-Priority: CLI arg > config.toml > code default (30)
+Priority: CLI arg > fsmon.toml > code default (30)
 
-### generate
+### init
 
-Generate a default configuration file at `~/.config/fsmon/config.toml`.
+Initialize fsmon data directories (chezmoi-style). Creates the log directory,
+managed data directory, and config directory. Does NOT write a config file —
+config is optional, defaults apply without it.
 
 ```
-fsmon generate                             Create default config
-fsmon generate -f                          Overwrite existing config
+fsmon init                                 Create log & managed directories
+```
+
+### cd
+
+Print the log directory path. Useful for quickly navigating to the event logs:
+
+```
+cd $(fsmon cd)                             Navigate to log directory
 ```
 
 ## Configuration
 
-Auto-generated on first daemon start or via `fsmon generate`.
+Auto-generated on first daemon start. Config file is optional — defaults apply without it.
 
 ```toml
 # fsmon configuration file
@@ -325,7 +334,7 @@ User pipe:
 
 ```
 src/
-├── bin/fsmon.rs       CLI: daemon, add, remove, managed, query, clean, generate
+├── bin/fsmon.rs       CLI: daemon, init, cd, add, remove, managed, query, clean
 ├── lib.rs             FileEvent, EventType, clean engine, temp file safety
 ├── config.rs          Infrastructure config, SUDO_UID home resolution
 ├── managed.rs         Managed paths database (JSONL)

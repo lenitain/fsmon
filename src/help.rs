@@ -1,24 +1,26 @@
 pub enum HelpTopic {
     Root,
     Daemon,
+    Init,
+    Cd,
     Add,
     Remove,
     Managed,
     Query,
     Clean,
-    Generate,
 }
 
 pub const fn about(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::Root => "Lightweight high-performance file change tracking tool",
         HelpTopic::Daemon => "Run the fsmon daemon (requires sudo for fanotify)",
+        HelpTopic::Init => "Initialize log and managed data directories",
+        HelpTopic::Cd => "Print the log directory path",
         HelpTopic::Add => "Add a path to the monitoring list",
         HelpTopic::Remove => "Remove a path from the monitoring list",
         HelpTopic::Managed => "List all monitored paths with their configuration",
         HelpTopic::Query => "Query historical file change events from log files",
         HelpTopic::Clean => "Clean historical log files, retain by time or size",
-        HelpTopic::Generate => "Generate a default configuration file",
     }
 }
 
@@ -39,16 +41,41 @@ Usage:
   fsmon managed                       List monitored paths
   fsmon query --since 1h    Query events
 
-Config:           ~/.config/fsmon/config.toml
+Config:           ~/.config/fsmon/fsmon.toml
 Managed:          ~/.local/share/fsmon/managed.jsonl (configurable via [managed].file)
 Log dir:          ~/.local/state/fsmon/ (configurable via [logging].dir)
 Socket:           /tmp/fsmon-<UID>.sock (configurable via [socket].path)"#
+        }
+        HelpTopic::Init => {
+            r#"Initialize fsmon data directories (chezmoi-style).
+
+Creates the default log directory and managed data directory.
+Config file at ~/.config/fsmon/fsmon.toml is optional — defaults
+apply without it.
+
+Created:
+  ~/.local/state/fsmon/     Event log storage
+  ~/.local/share/fsmon/     Managed paths database
+  ~/.config/fsmon/          Config directory (for optional fsmon.toml)
+
+Examples:
+  fsmon init"#
+        }
+        HelpTopic::Cd => {
+            r#"Print the log directory path.
+
+Useful for quickly navigating to the event logs:
+  cd $(fsmon cd)
+
+Examples:
+  fsmon cd                       Print log directory path
+  cd $(fsmon cd) && ls           Navigate to logs"#
         }
         HelpTopic::Add => {
             r#"Add a path to the monitoring list.
 
 The path is added immediately if the daemon is running, and persisted
-in ~/.config/fsmon/config.toml for automatic monitoring on daemon restart.
+in the managed paths database for automatic monitoring on daemon restart.
 
 No sudo needed — store is updated immediately.
 
@@ -112,7 +139,7 @@ Examples:
         HelpTopic::Clean => {
             r#"Clean historical log files, retain by time or size.
 
-Defaults: keep_days=30, size=1GB (from config.toml [logging] section or code fallback).
+Defaults: keep_days=30, size=1GB (from fsmon.toml [logging] section or code fallback).
 CLI args override config. Daemon does not auto-clean; use cron/systemd timer.
 
 Options:
@@ -127,22 +154,15 @@ Examples:
   fsmon clean --keep-days 7         Override retention
   fsmon clean --path /tmp --dry-run Preview without deleting"#
         }
-        HelpTopic::Generate => {
-            r#"Generate a default configuration file at ~/.config/fsmon/config.toml.
-
-The config includes defaults for 'fsmon clean' (keep_days=30, size="1GB").
-
-Monitored paths are managed separately via 'fsmon add'/'fsmon remove'.
-The daemon also auto-generates a default config if none exists when started.
-
-Examples:
-  fsmon generate"#
-        }
     }
 }
 
 pub const fn after_help() -> &'static str {
     r#"Use 'fsmon <COMMAND> --help' for detailed help
+
+Setup (no sudo needed):
+  fsmon init                        Create log and managed directories
+  cd $(fsmon cd)                    Navigate to log directory
 
 Daemon (requires sudo):
   sudo fsmon daemon &               Start daemon in background
@@ -163,7 +183,7 @@ Clean (config defaults: keep_days=30, size=1GB):
   fsmon clean --keep-days 7         Override retention
   fsmon clean --dry-run             Preview without deleting
 
-Config: ~/.config/fsmon/config.toml
+Config: ~/.config/fsmon/fsmon.toml (optional — defaults without it)
 Managed: ~/.local/share/fsmon/managed.jsonl (configurable via [managed].file)
 Logs:   ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].dir)"#
 }

@@ -142,12 +142,12 @@ kill %1
 
 | 用途 | 路径 | 格式 |
 |---|---|---|
-| 基础设施配置 | `~/.config/fsmon/config.toml` | TOML（可通过fsmon generate生成） |
+| 基础设施配置 | `~/.config/fsmon/fsmon.toml` | TOML（可选 — 无配置文件时使用默认值） |
 | Managed 路径数据库 | `~/.local/share/fsmon/managed.jsonl` | JSONL（每行一条目） |
 | 事件日志 | `~/.local/state/fsmon/*_log.jsonl` | JSONL（每行一事件） |
 | Unix Socket | `/tmp/fsmon-<UID>.sock` | TOML over stream |
 
-managed 路径和日志目录均在 `~/.config/fsmon/config.toml` 中可配
+managed 路径和日志目录均在 `~/.config/fsmon/fsmon.toml` 中可配
 （见 `[managed].file` 和 `[logging].dir`）。
 
 daemon 通过 sudo 以 root 运行，但通过 `SUDO_UID` + `getpwuid_r` 解析原始用户的 home 目录，
@@ -181,7 +181,7 @@ sudo fsmon daemon          启动守护进程（前台）
 sudo fsmon daemon &        后台启动守护进程
 ```
 
-配置：            `~/.config/fsmon/config.toml`
+配置：            `~/.config/fsmon/fsmon.toml`（可选 — 无配置文件时使用默认值）
 监控路径数据库：  `~/.local/share/fsmon/managed.jsonl`
 日志目录：        `~/.local/state/fsmon/`
 Socket：          `/tmp/fsmon-<UID>.sock`
@@ -244,7 +244,7 @@ fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 
 ### clean
 
-清理历史日志文件。默认值来自 `config.toml`：`keep_days=30`，`size=1GB`。
+清理历史日志文件。默认值来自 `fsmon.toml`：`keep_days=30`，`size=1GB`。
 
 ```bash
 fsmon clean                                使用 config 默认值
@@ -254,20 +254,28 @@ fsmon clean --path /tmp                    清理指定路径的日志
 fsmon clean --dry-run                      预览模式，不实际删除
 ```
 
-优先级：CLI 参数 > config.toml > 代码默认值（30 天）
+优先级：CLI 参数 > fsmon.toml > 代码默认值（30 天）
 
-### generate
+### init
 
-在 `~/.config/fsmon/config.toml` 生成默认配置文件。
+初始化 fsmon 数据目录（chezmoi 风格）。创建日志目录、managed 数据目录和配置目录。
+**不会**写入配置文件 — 配置文件是可选的，无配置时使用默认值。
 
 ```
-fsmon generate                             创建默认配置
-fsmon generate -f                          覆盖已有配置
+fsmon init                                 创建日志 & managed 目录
+```
+
+### cd
+
+打印日志目录路径。快速跳转到事件日志目录：
+
+```
+cd $(fsmon cd)                             跳转到日志目录
 ```
 
 ## 配置
 
-首次启动 daemon 或执行 `fsmon generate` 自动生成。
+首次启动 daemon 时自动生成。配置文件是可选的 — 无配置时使用默认值。
 
 ```toml
 # fsmon 配置文件
@@ -317,7 +325,7 @@ Linux Kernel (fanotify)
 
 ```
 src/
-├── bin/fsmon.rs       CLI: daemon, add, remove, managed, query, clean, generate
+├── bin/fsmon.rs       CLI: daemon, init, cd, add, remove, managed, query, clean
 ├── lib.rs             FileEvent、EventType、清理引擎、临时文件安全
 ├── config.rs          基础设施配置、SUDO_UID 用户解析
 ├── managed.rs         Managed 路径数据库（JSONL 格式）

@@ -52,13 +52,13 @@ enum Commands {
     #[command(about = help::about(HelpTopic::Clean), long_about = help::long_about(HelpTopic::Clean))]
     Clean(CleanArgs),
 
-    /// Generate a default configuration file
-    #[command(about = help::about(HelpTopic::Generate), long_about = help::long_about(HelpTopic::Generate))]
-    Generate {
-        /// Overwrite existing configuration file if it exists
-        #[arg(short, long)]
-        force: bool,
-    },
+    /// Initialize log and managed data directories
+    #[command(about = help::about(HelpTopic::Init), long_about = help::long_about(HelpTopic::Init))]
+    Init,
+
+    /// Print the log directory path
+    #[command(about = help::about(HelpTopic::Cd), long_about = help::long_about(HelpTopic::Cd))]
+    Cd,
 
     /// List managed paths (one per line, for shell completion use)
     #[command(hide = true)]
@@ -133,7 +133,8 @@ async fn main() -> Result<()> {
         Commands::Managed => cmd_managed()?,
         Commands::Query(args) => cmd_query(args).await?,
         Commands::Clean(args) => cmd_clean(args).await?,
-        Commands::Generate { force } => cmd_generate(force)?,
+        Commands::Init => cmd_init()?,
+        Commands::Cd => cmd_cd()?,
         Commands::ListManagedPaths => cmd_list_managed_paths()?,
     }
 
@@ -489,15 +490,15 @@ async fn cmd_query(args: QueryArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_generate(force: bool) -> Result<()> {
-    let config_path = Config::path();
-    if config_path.exists() && !force {
-        eprintln!("Config already exists at {}", config_path.display());
-        eprintln!("Use -f or --force to overwrite");
-        std::process::exit(1);
-    }
-    Config::generate_default()?;
-    println!("Default config generated at {}", config_path.display());
+fn cmd_init() -> Result<()> {
+    Config::init_dirs()?;
+    Ok(())
+}
+
+fn cmd_cd() -> Result<()> {
+    let mut cfg = Config::load()?;
+    cfg.resolve_paths()?;
+    println!("{}", cfg.logging.dir.display());
     Ok(())
 }
 
