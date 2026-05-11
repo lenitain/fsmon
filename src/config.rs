@@ -184,7 +184,7 @@ impl Config {
                     p.display(),
                     e
                 );
-                Self::generate_default()?;
+                Self::init_config()?;
                 Ok(Config::default())
             }
         }
@@ -209,7 +209,7 @@ impl Config {
 
     /// Generate a default configuration file at Config::path().
     /// Creates parent directories if needed.
-    pub fn generate_default() -> Result<()> {
+    pub fn init_config() -> Result<()> {
         let path = Self::path();
         let parent = path.parent().context("Config path has no parent")?;
         fs::create_dir_all(parent)
@@ -254,8 +254,7 @@ path = "/tmp/fsmon-<UID>.sock"
     }
 
     /// Create the default data directories (chezmoi-style init).
-    /// Creates log dir, managed data dir, and config dir.
-    /// Does NOT write a config file — config is optional, defaults apply without it.
+    /// Creates log dir and managed data dir. Config file is optional.
     pub fn init_dirs() -> Result<()> {
         let mut cfg = Config::default();
         cfg.resolve_paths()?;
@@ -268,21 +267,13 @@ path = "/tmp/fsmon-<UID>.sock"
         fs::create_dir_all(&managed_dir)
             .with_context(|| format!("Failed to create managed directory: {}", managed_dir.display()))?;
 
-        // Also create config dir as courtesy (where fsmon.toml would live)
-        let config_path = Self::path();
-        let config_dir = config_path.parent()
-            .context("Config path has no parent")?;
-        fs::create_dir_all(config_dir)
-            .with_context(|| format!("Failed to create config directory: {}", config_dir.display()))?;
-
         // Chown to original user
         chown_to_original_user(&cfg.logging.dir);
         chown_to_original_user(&managed_dir);
-        chown_to_original_user(config_dir);
 
         eprintln!("Created log directory:  {}", cfg.logging.dir.display());
         eprintln!("Created data directory: {}", managed_dir.display());
-        eprintln!("(config is optional \u{2014} defaults apply without ~/.config/fsmon/fsmon.toml)");
+        eprintln!("(config file is optional \u{2014} defaults apply without it)");
         Ok(())
     }
 }
@@ -309,7 +300,6 @@ mod tests {
         let _lock = ENV_LOCK.lock().unwrap();
         let dir = unique_home_dir();
         let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(dir.join(".config/fsmon")).unwrap();
 
         let old_home = std::env::var("HOME").ok();
         let old_xdg_config = std::env::var("XDG_CONFIG_HOME").ok();
@@ -360,6 +350,8 @@ mod tests {
     fn test_load_reads_existing_file() {
         with_isolated_home(|_| {
             // Write a config file
+            let config_path = Config::path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
             let content = r#"[managed]
 file = "/custom/managed.jsonl"
 
@@ -369,7 +361,7 @@ dir = "/custom/logs"
 [socket]
 path = "/tmp/custom.sock"
 "#;
-            fs::write(Config::path(), content).unwrap();
+            fs::write(&config_path, content).unwrap();
 
             let cfg = Config::load().unwrap();
             assert_eq!(cfg.managed.file, PathBuf::from("/custom/managed.jsonl"));
@@ -407,13 +399,13 @@ path = "/tmp/custom.sock"
     }
 
     #[test]
-    fn test_generate_default_creates_valid_config() {
+    fn test_init_config_creates_valid_config() {
         with_isolated_home(|_| {
             let path = Config::path();
-            assert!(!path.exists(), "config should not exist before generate");
+            assert!(!path.exists(), "config should not exist before init");
 
-            Config::generate_default().unwrap();
-            assert!(path.exists(), "config should exist after generate");
+            Config::init_config().unwrap();
+            assert!(path.exists(), "config should exist after init");
 
             // Must be parseable
             let cfg = Config::load().unwrap();
@@ -427,11 +419,11 @@ path = "/tmp/custom.sock"
     }
 
     #[test]
-    fn test_generate_default_overwrites_without_error() {
+    fn test_init_config_overwrites_without_error() {
         with_isolated_home(|_| {
-            Config::generate_default().unwrap();
-            // Generate again — should overwrite without error
-            Config::generate_default().unwrap();
+            Config::init_config().unwrap();
+            // Init again — should overwrite without error
+            Config::init_config().unwrap();
             let cfg = Config::load().unwrap();
             assert_eq!(
                 cfg.managed.file.to_string_lossy(),
@@ -490,11 +482,7 @@ path = "/tmp/custom.sock"
 
             assert!(log_dir.exists(), "log dir should exist");
             assert!(managed_dir.exists(), "managed dir should exist");
-            assert!(config_dir.exists(), "config dir should exist");
-
-            // Config file should NOT be created
-            let config_file = config_dir.join("fsmon.toml");
-            assert!(!config_file.exists(), "config file should NOT be created by init");
+            assert!(!config_dir.exists(), "config dir should NOT be created by init");
         });
     }
 

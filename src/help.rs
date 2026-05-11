@@ -56,7 +56,6 @@ apply without it.
 Created:
   ~/.local/state/fsmon/     Event log storage
   ~/.local/share/fsmon/     Managed paths database
-  ~/.config/fsmon/          Config directory (for optional fsmon.toml)
 
 Examples:
   fsmon init"#

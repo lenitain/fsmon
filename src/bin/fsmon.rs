@@ -146,17 +146,6 @@ async fn cmd_daemon() -> Result<()> {
     let (uid, _gid) = fsmon::config::resolve_uid_gid();
     let _lock = fsmon::DaemonLock::acquire(uid)?;
 
-    // Auto-generate config if it doesn't exist
-    let config_path = Config::path();
-    if !config_path.exists() {
-        eprintln!(
-            "Config not found at {}, generating default config...",
-            config_path.display()
-        );
-        Config::generate_default()?;
-        eprintln!("Default config generated at {}", config_path.display());
-    }
-
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
 
@@ -183,12 +172,8 @@ async fn cmd_daemon() -> Result<()> {
     // Set socket permissions to 0666 so any user can send commands
     set_socket_permissions(&socket_path)?;
 
-    // Chown config file + store parent dir to the original user (daemon runs as root)
+    // Chown store parent dir to the original user (daemon runs as root)
     let (uid, gid) = fsmon::config::resolve_uid_gid();
-    chown_path(&config_path, uid, gid);
-    if let Some(parent) = config_path.parent() {
-        chown_path(parent, uid, gid);
-    }
     if let Some(parent) = cfg.managed.file.parent() {
         chown_path(parent, uid, gid);
     }

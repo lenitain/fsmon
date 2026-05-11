@@ -147,12 +147,12 @@ kill %1
 
 | Purpose | Path | Format |
 |---|---|---|
-| Infrastructure config | `~/.config/fsmon/config.toml` | TOML (generated via `fsmon generate`) |
+| Infrastructure config | `~/.config/fsmon/fsmon.toml` | TOML (optional — defaults without it) |
 | Path database | `~/.local/share/fsmon/managed.jsonl` | JSONL (one entry per line) |
 | Event logs | `~/.local/state/fsmon/*_log.jsonl` | JSONL (one event per line) |
 | Unix socket | `/tmp/fsmon-<UID>.sock` | TOML over stream |
 
-Both the store path and log directory are configurable in `~/.config/fsmon/config.toml`
+Both the store path and log directory are configurable in `~/.config/fsmon/fsmon.toml`
 (see `[managed].file` and `[logging].dir`).
 
 The daemon runs as root (via sudo) but resolves your original user's home directory
