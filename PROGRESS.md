@@ -21,13 +21,14 @@
 - `src/filters.rs`: ~160
 - `src/fid_parser.rs`: ~240
 
-## 📄 文档不一致
+## 📄 文档一致性
 
-| 位置 | 问题 |
+| 位置 | 状态 |
 |------|------|
-| `README.md`/`README.zh-CN.md` | 源码结构图现在有 `fid_parser.rs` 了，但需确认位置 |
-| `README.md` 架构图 | 同上 |
-| `docs/` 下 5 个 `.md` | 引用 `config.toml`、`--since`/`--until`、`generate` 等已废弃接口 |
+| `README.md` / `README.zh-CN.md` 源码结构图 | ✅ 更新为当前实际树（含 `commands/`, `clean.rs`, `filters.rs`） |
+| `README.md` / `README.zh-CN.md` 架构图 | ✅ 更新为当前数据流（含 `filters` 模块 + `clean` 引擎） |
+| `docs/` 目录 | ✅ 已不存在，无需处理 |
+| `TESTING.md` | ✅ 无需更新 |
 
 ## 🔧 技术债务
 

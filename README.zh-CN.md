@@ -343,28 +343,43 @@ Linux Kernel (fanotify)
     → FID 事件推入队列
     → tokio 异步读取
     → fid_parser 解析路径（两阶段 + 目录缓存）
-    → Monitor 过滤（类型、大小、路径模式、进程名）
+    → filters 过滤（事件类型、大小、路径模式、进程名）
     → JSONL → 按路径分文件日志 (*_log.jsonl)
 
 用户管道:
     cat/ tail *.jsonl → jq → 你的自定义逻辑
+
+清理:
+    fsmon clean → clean 引擎解析 JSONL，按时间/大小截断
 ```
 
 ### 源码结构
 
 ```
 src/
-├── bin/fsmon.rs       CLI: daemon, init, cd, add, remove, managed, query, clean
-├── lib.rs             FileEvent、EventType、清理引擎、临时文件安全
-├── config.rs          基础设施配置、SUDO_UID 用户解析
+├── bin/
+│   ├── fsmon.rs               CLI 入口: main(), CLI 结构体, 参数解析测试
+│   └── commands/
+│       ├── mod.rs              分发: run() → 各命令处理函数
+│       ├── daemon.rs           cmd_daemon: fanotify 初始化, socket 设置, Monitor::run()
+│       ├── add.rs              cmd_add: 路径标准化, store 更新, socket 热更新
+│       ├── remove.rs           cmd_remove: store 更新, socket 热更新
+│       ├── manage.rs           cmd_managed, cmd_list_managed_paths
+│       ├── query.rs            cmd_query: 时间过滤, Query::execute()
+│       ├── clean.rs            cmd_clean: 时间/大小过滤委托
+│       └── init_cd.rs          cmd_init, cmd_cd
+├── lib.rs             FileEvent, EventType, DaemonLock (flock 进程单例)
+├── clean.rs           日志清理引擎: 时间/大小截断, 尾部偏移, 预览模式
+├── config.rs          基础设施配置, SUDO_UID 用户解析
 ├── managed.rs         Managed 路径数据库（JSONL 格式）
-├── monitor.rs         Fanotify 循环、socket 处理、所有捕获过滤
-├── fid_parser.rs      FID 事件底层解析、两阶段路径恢复
+├── monitor.rs         Fanotify 循环, socket 处理, add/remove/事件处理
+├── fid_parser.rs      FID 事件底层解析, 两阶段路径恢复
+├── filters.rs         PathOptions, 事件/大小/路径/进程过滤, 路径匹配
 ├── dir_cache.rs       目录句柄缓存（rm -rf 路径恢复）
 ├── proc_cache.rs      Netlink proc 连接器（短命进程归因）
-├── query.rs           二分查找日志查询、JSONL 输出
-├── socket.rs          Unix socket 协议（TOML）、错误分类
-├── utils.rs           大小/时间解析、uid 查询、路径→日志名哈希
+├── query.rs           二分查找日志查询, JSONL 输出
+├── socket.rs          Unix socket 协议（TOML）, 错误分类
+├── utils.rs           大小/时间解析, uid 查询, 路径→日志名哈希
 └── help.rs            所有命令的帮助文本
 ```
 

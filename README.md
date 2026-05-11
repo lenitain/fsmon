@@ -343,23 +343,38 @@ Linux Kernel (fanotify)
     → FID events pushed to queue
     → tokio reads events asynchronously
     → fid_parser resolves paths (two-pass + dir cache)
-    → Monitor filters (types, size, path pattern, process name)
+    → filters: event type, size, path pattern, process name
     → JSONL → per-path log files (*_log.jsonl)
 
 User pipe:
     cat/ tail *.jsonl → jq → your custom logic
+
+Clean:
+    fsmon clean → clean engine parses JSONL, trims by time/size
 ```
 
 ### Source Tree
 
 ```
 src/
-├── bin/fsmon.rs       CLI: daemon, init, cd, add, remove, managed, query, clean
-├── lib.rs             FileEvent, EventType, clean engine, temp file safety
+├── bin/
+│   ├── fsmon.rs               CLI entry: main(), CLI structs, arg parsing tests
+│   └── commands/
+│       ├── mod.rs              Dispatch: run() → per-command handler
+│       ├── daemon.rs           cmd_daemon: fanotify init, socket setup, Monitor::run()
+│       ├── add.rs              cmd_add: path normalization, store update, live socket
+│       ├── remove.rs           cmd_remove: store update, live socket
+│       ├── manage.rs           cmd_managed, cmd_list_managed_paths
+│       ├── query.rs            cmd_query: time filter, Query::execute()
+│       ├── clean.rs            cmd_clean: time/size filter delegation
+│       └── init_cd.rs          cmd_init, cmd_cd
+├── lib.rs             FileEvent, EventType, DaemonLock (singleton via flock)
+├── clean.rs           Log cleanup engine: time/size trim, tail-offset, dry-run
 ├── config.rs          Infrastructure config, SUDO_UID home resolution
 ├── managed.rs         Managed paths database (JSONL)
-├── monitor.rs         Fanotify loop, socket handler, all capture filters
+├── monitor.rs         Fanotify loop, socket handler, add/remove/event processing
 ├── fid_parser.rs      Low-level FID event parsing, two-pass path recovery
+├── filters.rs         PathOptions, event/size/path/process filters, path matching
 ├── dir_cache.rs       Directory handle cache for rm -rf recovery
 ├── proc_cache.rs      Netlink proc connector (short-lived process attribution)
 ├── query.rs           Binary-search log query, JSONL output
