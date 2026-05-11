@@ -86,6 +86,10 @@ fn run_listener(cache: ProcCache, ready: Arc<AtomicBool>) -> anyhow::Result<()> 
             Err(proc_connector::Error::Overrun) => {
                 eprintln!("[WARNING] proc connector overrun — some exec events may have been lost");
             }
+            Err(proc_connector::Error::Truncated) => {
+                // Malformed or unexpected message — log and continue
+                eprintln!("[WARNING] proc connector truncated message, continuing...");
+            }
             Err(e) => {
                 eprintln!("proc connector recv error: {}", e);
                 // Non-recoverable error, exit
