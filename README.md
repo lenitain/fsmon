@@ -94,9 +94,9 @@ Look at what fsmon captured:
 ```bash
 # The raw log — one JSONL line per event
 cat ~/.local/state/fsmon/*_log.jsonl
-# → {"time":"2026-05-07T10:00:01+00:00","event_type":"MODIFY","path":"/var/www/myapp/index.html","pid":1234,"cmd":"nginx","user":"www-data","file_size":21,"monitored_path":"/var/www/myapp"}
-# → {"time":"2026-05-07T10:00:03+00:00","event_type":"DELETE","path":"/var/www/myapp/index.html","pid":5678,"cmd":"rm","user":"deploy","file_size":0,"monitored_path":"/var/www/myapp"}
-# → {"time":"2026-05-07T10:00:05+00:00","event_type":"CREATE","path":"/var/www/myapp/.config.json.swp","pid":9012,"cmd":"vim","user":"dev","file_size":4096,"monitored_path":"/var/www/myapp"}
+# → {"time":"2026-05-07T10:00:01+00:00","event_type":"MODIFY","path":"/var/www/myapp/index.html","pid":1234,"cmd":"nginx","user":"www-data","file_size":21}
+# → {"time":"2026-05-07T10:00:03+00:00","event_type":"DELETE","path":"/var/www/myapp/index.html","pid":5678,"cmd":"rm","user":"deploy","file_size":0}
+# → {"time":"2026-05-07T10:00:05+00:00","event_type":"CREATE","path":"/var/www/myapp/.config.json.swp","pid":9012,"cmd":"vim","user":"dev","file_size":4096}
 ```
 
 Notice: vim's `.swp` was captured but won't be logged — the `--exclude '\.swp$'` filter drops it before writing. That means **it never touches disk**.
@@ -288,6 +288,17 @@ config is optional, defaults apply without it.
 fsmon init                                 Create log & managed directories
 ```
 
+### p2l
+
+Path to log filename — pure hash computation, no I/O. Resolve a monitored path
+to its log file path for piping or tailing.
+
+```
+fsmon p2l /path                            Resolve log file path
+tail -f "$(fsmon p2l /path)"               Tail events for a path
+fsmon p2l /path1 /path2 /path3             Multiple paths, one per line
+```
+
 ### cd
 
 Open a subshell in the log directory. Type `exit` to return:
@@ -367,7 +378,8 @@ src/
 │       ├── manage.rs           cmd_managed, cmd_list_managed_paths
 │       ├── query.rs            cmd_query: time filter, Query::execute()
 │       ├── clean.rs            cmd_clean: time/size filter delegation
-│       └── init_cd.rs          cmd_init, cmd_cd
+│       ├── init_cd.rs          cmd_init, cmd_cd
+│       └── p2l.rs              cmd_p2l: path→log filename hash resolve
 ├── lib.rs             FileEvent, EventType, DaemonLock (singleton via flock)
 ├── clean.rs           Log cleanup engine: time/size trim, tail-offset, dry-run
 ├── config.rs          Infrastructure config, SUDO_UID home resolution

@@ -9,7 +9,7 @@ mod add;
 mod clean;
 mod daemon;
 mod init_cd;
-mod log_path;
+mod p2l;
 mod manage;
 mod query;
 mod remove;
@@ -18,7 +18,7 @@ pub use add::cmd_add;
 pub use clean::cmd_clean;
 pub use daemon::cmd_daemon;
 pub use init_cd::{cmd_cd, cmd_init};
-pub use log_path::cmd_log_path;
+pub use p2l::cmd_p2l;
 pub use manage::{cmd_list_managed_paths, cmd_managed};
 pub use query::cmd_query;
 pub use remove::cmd_remove;
@@ -41,7 +41,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
         Clean(args) => cmd_clean(args).await_(),
         Init => cmd_init(),
         Cd => cmd_cd(),
-        LogPath { path } => cmd_log_path(path),
+        P2l { paths } => cmd_p2l(paths),
         ListManagedPaths => cmd_list_managed_paths(),
     }
 }

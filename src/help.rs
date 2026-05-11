@@ -8,7 +8,7 @@ pub enum HelpTopic {
     Managed,
     Query,
     Clean,
-    LogPath,
+    P2l,
 }
 
 pub const fn about(topic: HelpTopic) -> &'static str {
@@ -22,7 +22,7 @@ pub const fn about(topic: HelpTopic) -> &'static str {
         HelpTopic::Managed => "List all monitored paths with their configuration",
         HelpTopic::Query => "Query historical file change events from log files",
         HelpTopic::Clean => "Clean historical log files, retain by time or size",
-        HelpTopic::LogPath => "Resolve the log file path for a path",
+        HelpTopic::P2l => "Path to log filename (pure hash, no I/O)",
     }
 }
 
@@ -170,20 +170,22 @@ Examples:
   fsmon clean --time '>7d'          Keep last 7 days
   fsmon clean --path /tmp --dry-run Preview without deleting"#
         }
-        HelpTopic::LogPath => {
-            r#"Resolve the log file path for a given path.
+        HelpTopic::P2l => {
+            r#"Resolve the log file path for one or more paths.
 
 Log files are named by FNV-1a hash of the path (to avoid Linux's 255-byte
 filename limit). This command computes the hash and outputs the full log
 file path — pure computation, no I/O beyond loading the tiny config file.
 
+Multiple paths can be specified; each result is printed on its own line.
+
 Use it to pipe or tail logs for a specific path:
-  tail -f "$(fsmon log-path /home/user/projects)"
-  cat "$(fsmon log-path /tmp)" | jq '.'
+  tail -f "$(fsmon p2l /home/user/projects)"
+  cat "$(fsmon p2l /tmp)" | jq '.'
 
 Examples:
-  fsmon log-path /home/user/projects
-  fsmon log-path /tmp"#
+  fsmon p2l /home/user/projects
+  fsmon p2l /tmp /var/log /etc"#
         }
     }
 }
@@ -204,7 +206,7 @@ Management (no sudo needed):
   fsmon add /path --exclude-cmd 'rsync'  Exclude by process name
   fsmon remove /path                Remove path(s), multiple paths OK
   fsmon managed                     List monitored paths
-  fsmon log-path /path              Resolve log file path for a path
+  fsmon p2l /path1 /path2      Resolve log file path(s)
 
 Query (stdout JSONL, pipe to jq):
   fsmon query -t '>1h'             Events from last hour
