@@ -652,8 +652,6 @@ dependencies = [
 [[package]]
 name = "proc-connector"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a81758b717926ad3dd12222e1512c83089b7294bfafcff6206a465834e8c491f"
 dependencies = [
  "libc",
 ]

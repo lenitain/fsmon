@@ -30,7 +30,7 @@ use crate::utils::{format_size, get_process_info_by_pid, parse_size_filter};
 use crate::filters::{self, PathOptions};
 use crate::fid_parser::{FanFd, FsGroup, read_fid_events_dashmap, mask_to_event_types,
     path_mask_from_options, mark_directory, mark_recursive, chown_to_user,
-    FILE_SIZE_CACHE_CAP, PROC_CONNECTOR_TIMEOUT_SECS};
+    FILE_SIZE_CACHE_CAP};
 use crate::{EventType, FileEvent};
 
 // ---- Monitor ----
@@ -175,30 +175,11 @@ impl Monitor {
             );
         }
 
-        // Start proc connector listener thread, cache process exec info
-        let (proc_cache, proc_ready) = proc_cache::start_proc_listener();
-        self.proc_cache = Some(proc_cache);
-
-        // Wait for proc connector subscription to complete (poll with backoff)
-        let deadline = tokio::time::Instant::now()
-            + tokio::time::Duration::from_secs(PROC_CONNECTOR_TIMEOUT_SECS);
-        let mut poll_interval = tokio::time::Duration::from_millis(1);
-        loop {
-            if proc_ready.load(std::sync::atomic::Ordering::Acquire) {
-                break;
-            }
-            if tokio::time::Instant::now() >= deadline {
-                eprintln!(
-                    "[WARNING] proc connector subscription timed out after {}s. \
-                     Process name attribution may be incomplete. Monitoring continues.",
-                    PROC_CONNECTOR_TIMEOUT_SECS
-                );
-                self.proc_cache = None;
-                break;
-            }
-            tokio::time::sleep(poll_interval).await;
-            poll_interval = (poll_interval * 2).min(tokio::time::Duration::from_millis(50));
-        }
+        // Create proc connector (event-driven, non-blocking).
+        // The fd is polled via AsyncFd in the main event loop below.
+        let proc_conn = proc_cache::try_create_connector();
+        let proc_cache = proc_cache::new_cache();
+        self.proc_cache = Some(proc_cache.clone());
 
         // Compute combined event mask (OR of all per-path masks)
         let combined_mask = self.path_options.values()
@@ -533,6 +514,20 @@ impl Monitor {
             AsyncFd::new(FanFd(fd)).expect("inotify AsyncFd")
         });
 
+        // Build proc connector AsyncFd for tokio event loop
+        // Use 64KB buffer to avoid truncation (was: fixed 4096)
+        let proc_afd = proc_conn.and_then(|conn| {
+            let fd = conn.as_raw_fd();
+            match AsyncFd::new(conn) {
+                Ok(a) => Some(a),
+                Err(e) => {
+                    eprintln!("[ERROR] AsyncFd for proc connector fd {}: {}", fd, e);
+                    None
+                }
+            }
+        });
+        let mut proc_buf = vec![0u8; 65536];
+
         loop {
             tokio::select! {
                 Some(events) = event_rx.recv() => {
@@ -597,6 +592,29 @@ impl Monitor {
                 _ = sighup.recv() => {
                     if let Err(e) = self.reload_config() {
                         eprintln!("Config reload error: {e}");
+                    }
+                }
+                proc_readable = async {
+                    match proc_afd.as_ref() {
+                        Some(afd) => afd.readable().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    if let Ok(mut guard) = proc_readable {
+                        loop {
+                            match guard.get_inner().recv_raw(&mut proc_buf) {
+                                Ok(n) => {
+                                    proc_cache::handle_proc_events(&proc_cache, &proc_buf, n);
+                                }
+                                Err(proc_connector::Error::WouldBlock) => break,
+                                Err(proc_connector::Error::Interrupted) => continue,
+                                Err(e) => {
+                                    eprintln!("proc connector error: {e}");
+                                    break;
+                                }
+                            }
+                        }
+                        guard.clear_ready();
                     }
                 }
                 inotify_ready = async {
