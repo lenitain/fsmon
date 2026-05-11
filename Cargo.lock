@@ -307,6 +307,7 @@ dependencies = [
  "lru",
  "nix",
  "path-clean",
+ "proc-connector",
  "procfs",
  "regex",
  "serde",
@@ -626,6 +627,13 @@ checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
  "syn",
+]
+
+[[package]]
+name = "proc-connector"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
