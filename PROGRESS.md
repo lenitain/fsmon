@@ -7,7 +7,7 @@
 | 文件 | Unsafe 类型 | 数量 | 状态 |
 |------|-----------|------|------|
 | `src/monitor.rs` | `libc::dup` + `OwnedFd::from_raw_fd` | 10→2 | ✅ `safe_dup()` 集中到1处 |
-| `src/monitor.rs` | `OwnedFd::from_raw_fd` (open) | 2 | ⏳ 待改（加safety注释） |
+| `src/monitor.rs` | `nix::fcntl::open` + `from_raw_fd` | 2→2 | ✅ `safe_open_dir()` 集中到1处 |
 | `src/monitor.rs` | `libc::read` (集成测试) | 1 | ✅ 加safety注释 |
 | `src/proc_cache.rs` | Netlink conn: `socket/bind/recv/send/zeroed` | 5+5 | ❌ 无safe替代 |
 | `src/fid_parser.rs` | `BorrowedFd::borrow_raw` | 1 | ⏳ 待改 |
@@ -22,11 +22,12 @@
 - **效益**: 10 个分散 unsafe → 2 个集中 unsafe（在 `safe_dup` 函数内）
 - **状态**: ✅ 已完成
 
-### P1 — monitor.rs: `from_raw_fd` for mount fd（open 结果）
+### ✅ P1 — monitor.rs: `from_raw_fd` for mount fd（open 结果）
 
-- **文件**: `src/monitor.rs` L351, L940
-- **方案**: 用 `nix::unistd::dup()` 配合 `nix::fcntl::open` 的结果，或使用 `std::fs::File::into_raw_fd` + `OwnedFd::from` 链路
-- **状态**: ⏳
+- **文件**: `src/monitor.rs` 2 处 `nix::fcntl::open` + `OwnedFd::from_raw_fd`
+- **方案**: `nix::unistd::dup` 不能消除这类 —— 因为 `nix::fcntl::open` 本身已 safe，unsafe 仅来自 `OwnedFd::from_raw_fd`（Rust 语言限制：从裸整数构造 owned fd 必然 unsafe）。改用 `safe_open_dir()` 辅助函数集中管理
+- **效益**: 2 个分散 unsafe → 1 处集中（在 `safe_open_dir` 内）
+- **状态**: ✅ 已完成
 
 ### P2 — fid_parser.rs: `BorrowedFd::borrow_raw`
 
@@ -57,6 +58,6 @@
 
 1. ✅ proc_cache.rs + monitor.rs 集成测试 — safety 注释完善
 2. ✅ P0 — monitor.rs `safe_dup()` 辅助函数
-3. ⏳ P1 — monitor.rs `from_raw_fd` for mount fd（加 safety 注释）
+3. ✅ P1 — monitor.rs `safe_open_dir()` 辅助函数
 4. ⏳ P2 — fid_parser.rs `BorrowedFd` → `OwnedFd`
 5. ⏳ P3 — config.rs 测试环境变量

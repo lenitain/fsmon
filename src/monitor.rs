@@ -138,6 +138,21 @@ impl Monitor {
         Ok(unsafe { OwnedFd::from_raw_fd(new_raw) })
     }
 
+    /// Open a directory and return an owned fd.
+    /// The returned `OwnedFd` has the directory open and will be
+    /// closed on drop.
+    fn safe_open_dir(path: &Path) -> std::io::Result<OwnedFd> {
+        let raw = nix::fcntl::open(
+            path,
+            nix::fcntl::OFlag::O_DIRECTORY,
+            nix::sys::stat::Mode::empty(),
+        )
+        .map_err(|e| std::io::Error::other(e))?;
+        // SAFETY: nix::fcntl::open succeeded, returning a new valid fd
+        // that we exclusively own. It will be closed when OwnedFd drops.
+        Ok(unsafe { OwnedFd::from_raw_fd(raw) })
+    }
+
     pub async fn run(&mut self) -> Result<()> {
         if nix::unistd::geteuid().as_raw() != 0 {
             let hint = if let Ok(exe) = std::env::current_exe() {
@@ -354,17 +369,8 @@ impl Monitor {
             }
 
             // Open directory fd for open_by_handle_at
-            let mount_fd_raw = nix::fcntl::open(
-                canonical,
-                nix::fcntl::OFlag::O_DIRECTORY,
-                nix::sys::stat::Mode::empty(),
-            );
-            let mount_fd = match mount_fd_raw {
-                Ok(raw) => {
-                    // SAFETY: nix::fcntl::open returns a new valid fd that we
-                    // exclusively own. It will be closed when OwnedFd drops.
-                    unsafe { OwnedFd::from_raw_fd(raw) }
-                },
+            let mount_fd = match Self::safe_open_dir(canonical) {
+                Ok(fd) => fd,
                 Err(e) => {
                     eprintln!(
                         "[WARNING] Could not open directory fd for {}: {}",
@@ -949,14 +955,7 @@ impl Monitor {
             };
 
             // Open directory fd for handle resolution
-            let mount_fd_raw = nix::fcntl::open(
-                &canonical,
-                nix::fcntl::OFlag::O_DIRECTORY,
-                nix::sys::stat::Mode::empty(),
-            )?;
-            // SAFETY: nix::fcntl::open succeeded, returning a new valid fd
-            // that we exclusively own. It will be closed when OwnedFd drops.
-            let mount_fd = unsafe { OwnedFd::from_raw_fd(mount_fd_raw) };
+            let mount_fd = Self::safe_open_dir(&canonical)?;
 
             let idx = self.fs_groups.len();
             self.fs_groups.push(FsGroup {
