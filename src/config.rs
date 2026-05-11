@@ -258,22 +258,37 @@ path = "/tmp/fsmon-<UID>.sock"
     pub fn init_dirs() -> Result<()> {
         let mut cfg = Config::default();
         cfg.resolve_paths()?;
-        let managed_dir = cfg.managed.file.parent()
+        let managed_dir = cfg
+            .managed
+            .file
+            .parent()
             .context("Managed file path has no parent")?
             .to_path_buf();
 
-        fs::create_dir_all(&cfg.logging.dir)
-            .with_context(|| format!("Failed to create log directory: {}", cfg.logging.dir.display()))?;
-        fs::create_dir_all(&managed_dir)
-            .with_context(|| format!("Failed to create managed directory: {}", managed_dir.display()))?;
+        fs::create_dir_all(&cfg.logging.dir).with_context(|| {
+            format!(
+                "Failed to create log directory: {}",
+                cfg.logging.dir.display()
+            )
+        })?;
+        fs::create_dir_all(&managed_dir).with_context(|| {
+            format!(
+                "Failed to create managed directory: {}",
+                managed_dir.display()
+            )
+        })?;
 
         // Chown to original user
         chown_to_original_user(&cfg.logging.dir);
         chown_to_original_user(&managed_dir);
 
         eprintln!("Created log directory:  {}", cfg.logging.dir.display());
-        eprintln!("Created data directory: {}", managed_dir.display());
-        eprintln!("(config file is optional \u{2014} defaults apply without it)");
+        eprintln!("Created managed directory: {}", managed_dir.display());
+        let config_path = Self::path();
+        eprintln!(
+            "(config file is optional \u{2014} directory: {})",
+            config_path.display()
+        );
         Ok(())
     }
 }
@@ -482,7 +497,10 @@ path = "/tmp/custom.sock"
 
             assert!(log_dir.exists(), "log dir should exist");
             assert!(managed_dir.exists(), "managed dir should exist");
-            assert!(!config_dir.exists(), "config dir should NOT be created by init");
+            assert!(
+                !config_dir.exists(),
+                "config dir should NOT be created by init"
+            );
         });
     }
 

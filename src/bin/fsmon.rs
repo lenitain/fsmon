@@ -483,7 +483,29 @@ fn cmd_init() -> Result<()> {
 fn cmd_cd() -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
-    println!("{}", cfg.logging.dir.display());
+    let dir = cfg.logging.dir.clone();
+
+    if !dir.exists() {
+        eprintln!("Log directory does not exist yet. Run 'fsmon init' first.");
+        std::process::exit(1);
+    }
+
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+
+    eprintln!("Entering fsmon log directory (type 'exit' to return)...");
+    eprintln!("  {}", dir.display());
+    eprintln!();
+
+    let status = std::process::Command::new(&shell)
+        .current_dir(&dir)
+        .status()
+        .with_context(|| format!("Failed to start shell: {}", shell))?;
+
+    if !status.success() {
+        let code = status.code().unwrap_or(-1);
+        std::process::exit(code);
+    }
+
     Ok(())
 }
 

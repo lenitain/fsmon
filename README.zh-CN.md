@@ -267,10 +267,11 @@ fsmon init                                 创建日志 & managed 目录
 
 ### cd
 
-打印日志目录路径。快速跳转到事件日志目录：
+在日志目录中打开子 shell。输入 `exit` 返回原目录：
 
 ```
-cd $(fsmon cd)                             跳转到日志目录
+fsmon cd                                   进入日志目录子 shell
+ls                                         查看日志文件
 ```
 
 ## 配置

@@ -275,10 +275,11 @@ fsmon init                                 Create log & managed directories
 
 ### cd
 
-Print the log directory path. Useful for quickly navigating to the event logs:
+Open a subshell in the log directory. Type `exit` to return:
 
 ```
-cd $(fsmon cd)                             Navigate to log directory
+fsmon cd                                   Enter log directory in subshell
+ls                                         List log files
 ```
 
 ## Configuration

@@ -61,14 +61,14 @@ Examples:
   fsmon init"#
         }
         HelpTopic::Cd => {
-            r#"Print the log directory path.
+            r#"Open a subshell in the log directory.
 
-Useful for quickly navigating to the event logs:
-  cd $(fsmon cd)
+Spawns a new shell (using $SHELL, fallback /bin/sh) inside the
+log directory. Type 'exit' to return to the original directory.
 
 Examples:
-  fsmon cd                       Print log directory path
-  cd $(fsmon cd) && ls           Navigate to logs"#
+  fsmon cd                       Enter log directory in subshell
+  fsmon cd && ls                 List log files, then exit"#
         }
         HelpTopic::Add => {
             r#"Add a path to the monitoring list.
@@ -161,7 +161,7 @@ pub const fn after_help() -> &'static str {
 
 Setup (no sudo needed):
   fsmon init                        Create log and managed directories
-  cd $(fsmon cd)                    Navigate to log directory
+  fsmon cd                          Open subshell in log directory
 
 Daemon (requires sudo):
   sudo fsmon daemon &               Start daemon in background
