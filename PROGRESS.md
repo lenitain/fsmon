@@ -6,21 +6,21 @@
 
 | 文件 | Unsafe 类型 | 数量 | 状态 |
 |------|-----------|------|------|
-| `src/monitor.rs` | `libc::dup` + `OwnedFd::from_raw_fd` | 9 | ⏳ 待改 |
-| `src/monitor.rs` | `OwnedFd::from_raw_fd` (open) | 2 | ⏳ 待改 |
-| `src/monitor.rs` | `libc::read` (集成测试) | 1 | ⏳ 待改 |
+| `src/monitor.rs` | `libc::dup` + `OwnedFd::from_raw_fd` | 10→2 | ✅ `safe_dup()` 集中到1处 |
+| `src/monitor.rs` | `OwnedFd::from_raw_fd` (open) | 2 | ⏳ 待改（加safety注释） |
+| `src/monitor.rs` | `libc::read` (集成测试) | 1 | ✅ 加safety注释 |
 | `src/proc_cache.rs` | Netlink conn: `socket/bind/recv/send/zeroed` | 5+5 | ❌ 无safe替代 |
 | `src/fid_parser.rs` | `BorrowedFd::borrow_raw` | 1 | ⏳ 待改 |
 | `src/config.rs` | `std::env::set_var/remove_var` (测试) | 8 | ⏳ 待改（低优） |
 
 ## 改造计划（按优先级）
 
-### P0 — monitor.rs: 用 `nix::unistd::dup()` 替代 `libc::dup` + `from_raw_fd`
+### ✅ P0 — monitor.rs: 用 `safe_dup()` 替代 `libc::dup` + `from_raw_fd`
 
-- **文件**: `src/monitor.rs`，共 9 处 unsafe（L446~467, L720~742 两组）
-- **方案**: `nix::unistd::dup(fd: &Fd)` 返回 `Result<OwnedFd>`，一站式替代两步操作
-- **效益**: 一次性消除 9 个 unsafe
-- **状态**: ⏳
+- **文件**: `src/monitor.rs`，run() + spawn_fd_reader() 两组
+- **方案**: 新增 `Monitor::safe_dup()` 辅助函数，内部用 `nix::unistd::dup` + `OwnedFd::from_raw_fd`（唯一unsafe集中点），外部用 RAII drop 自动清理
+- **效益**: 10 个分散 unsafe → 2 个集中 unsafe（在 `safe_dup` 函数内）
+- **状态**: ✅ 已完成
 
 ### P1 — monitor.rs: `from_raw_fd` for mount fd（open 结果）
 
@@ -56,7 +56,7 @@
 ## 实施顺序
 
 1. ✅ proc_cache.rs + monitor.rs 集成测试 — safety 注释完善
-2. ⏳ P0 — monitor.rs `libc::dup` → `nix::unistd::dup`
-3. ⏳ P1 — monitor.rs `from_raw_fd` for mount fd
+2. ✅ P0 — monitor.rs `safe_dup()` 辅助函数
+3. ⏳ P1 — monitor.rs `from_raw_fd` for mount fd（加 safety 注释）
 4. ⏳ P2 — fid_parser.rs `BorrowedFd` → `OwnedFd`
 5. ⏳ P3 — config.rs 测试环境变量

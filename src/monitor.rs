@@ -126,6 +126,18 @@ impl Monitor {
         })
     }
 
+    /// Duplicate a file descriptor, returning an owned fd.
+    /// The returned `OwnedFd` has independent lifetime from the source
+    /// and will be closed on drop.
+    fn safe_dup(fd: &impl AsRawFd) -> std::io::Result<OwnedFd> {
+        let new_raw = nix::unistd::dup(fd.as_raw_fd())
+            .map_err(|e| std::io::Error::other(e))?;
+        // SAFETY: nix::unistd::dup returned a new valid fd that we
+        // exclusively own. The kernel guarantees dup returns the
+        // lowest-numbered unused fd, not owned by any other OwnedFd.
+        Ok(unsafe { OwnedFd::from_raw_fd(new_raw) })
+    }
+
     pub async fn run(&mut self) -> Result<()> {
         if nix::unistd::geteuid().as_raw() != 0 {
             let hint = if let Ok(exe) = std::env::current_exe() {
@@ -348,7 +360,11 @@ impl Monitor {
                 nix::sys::stat::Mode::empty(),
             );
             let mount_fd = match mount_fd_raw {
-                Ok(raw) => unsafe { OwnedFd::from_raw_fd(raw) },
+                Ok(raw) => {
+                    // SAFETY: nix::fcntl::open returns a new valid fd that we
+                    // exclusively own. It will be closed when OwnedFd drops.
+                    unsafe { OwnedFd::from_raw_fd(raw) }
+                },
                 Err(e) => {
                     eprintln!(
                         "[WARNING] Could not open directory fd for {}: {}",
@@ -443,32 +459,33 @@ impl Monitor {
 
         for gi in 0..self.fs_groups.len() {
             // Duplicate both fds so reader task owns independent copies
-            let dup_fan_raw = unsafe { libc::dup(self.fs_groups[gi].fan_fd.as_raw_fd()) };
-            if dup_fan_raw < 0 {
-                eprintln!(
-                    "[ERROR] Failed to dup fanotify fd {}: {}",
-                    self.fs_groups[gi].fan_fd.as_raw_fd(),
-                    std::io::Error::last_os_error()
-                );
-                continue;
-            }
-            let dup_mount_raw = unsafe { libc::dup(self.fs_groups[gi].mount_fd.as_raw_fd()) };
-            if dup_mount_raw < 0 {
-                eprintln!(
-                    "[ERROR] Failed to dup mount fd {}: {}",
-                    self.fs_groups[gi].mount_fd.as_raw_fd(),
-                    std::io::Error::last_os_error()
-                );
-                unsafe { libc::close(dup_fan_raw); }
-                continue;
-            }
-            // SAFETY: dup returned valid new fds, wrap them in OwnedFd
-            let owned_fan_fd = unsafe { OwnedFd::from_raw_fd(dup_fan_raw) };
-            let owned_mount_fd = unsafe { OwnedFd::from_raw_fd(dup_mount_raw) };
+            let owned_fan_fd = match Self::safe_dup(&self.fs_groups[gi].fan_fd) {
+                Ok(fd) => fd,
+                Err(e) => {
+                    eprintln!(
+                        "[ERROR] Failed to dup fanotify fd {}: {}",
+                        self.fs_groups[gi].fan_fd.as_raw_fd(),
+                        e
+                    );
+                    continue;
+                }
+            };
+            let owned_mount_fd = match Self::safe_dup(&self.fs_groups[gi].mount_fd) {
+                Ok(fd) => fd,
+                Err(e) => {
+                    eprintln!(
+                        "[ERROR] Failed to dup mount fd {}: {}",
+                        self.fs_groups[gi].mount_fd.as_raw_fd(),
+                        e
+                    );
+                    // owned_fan_fd drops here, closing the dup'd fan fd
+                    continue;
+                }
+            };
             let mfds = Arc::new(vec![owned_mount_fd]);
             let tx = event_tx.clone();
             let dc = Arc::clone(&dir_cache);
-            let raw_fd = dup_fan_raw;
+            let raw_fd = owned_fan_fd.as_raw_fd();
             tokio::spawn(async move {
                 let afd = match AsyncFd::new(owned_fan_fd) {
                     Ok(a) => a,
@@ -717,31 +734,31 @@ impl Monitor {
         let group = &self.fs_groups[group_idx];
 
         // Duplicate fds so the reader task owns independent copies
-        let dup_fan_raw = unsafe { libc::dup(group.fan_fd.as_raw_fd()) };
-        if dup_fan_raw < 0 {
-            eprintln!(
-                "[ERROR] Failed to dup fanotify fd {}: {}",
-                group.fan_fd.as_raw_fd(),
-                std::io::Error::last_os_error()
-            );
-            return;
-        }
-        let dup_mount_raw = unsafe { libc::dup(group.mount_fd.as_raw_fd()) };
-        if dup_mount_raw < 0 {
-            eprintln!(
-                "[ERROR] Failed to dup mount fd {}: {}",
-                group.mount_fd.as_raw_fd(),
-                std::io::Error::last_os_error()
-            );
-            unsafe { libc::close(dup_fan_raw); }
-            return;
-        }
-
-        // SAFETY: dup returned valid new fds, wrap in OwnedFd
-        let owned_fan_fd = unsafe { OwnedFd::from_raw_fd(dup_fan_raw) };
-        let owned_mount_fd = unsafe { OwnedFd::from_raw_fd(dup_mount_raw) };
+        let owned_fan_fd = match Self::safe_dup(&group.fan_fd) {
+            Ok(fd) => fd,
+            Err(e) => {
+                eprintln!(
+                    "[ERROR] Failed to dup fanotify fd {}: {}",
+                    group.fan_fd.as_raw_fd(),
+                    e
+                );
+                return;
+            }
+        };
+        let owned_mount_fd = match Self::safe_dup(&group.mount_fd) {
+            Ok(fd) => fd,
+            Err(e) => {
+                eprintln!(
+                    "[ERROR] Failed to dup mount fd {}: {}",
+                    group.mount_fd.as_raw_fd(),
+                    e
+                );
+                // owned_fan_fd drops here, closing the dup'd fan fd
+                return;
+            }
+        };
+        let raw_fd = owned_fan_fd.as_raw_fd();
         let mfds = Arc::new(vec![owned_mount_fd]);
-        let raw_fd = dup_fan_raw;
 
         tokio::spawn(async move {
             let afd = match AsyncFd::new(owned_fan_fd) {
@@ -937,6 +954,8 @@ impl Monitor {
                 nix::fcntl::OFlag::O_DIRECTORY,
                 nix::sys::stat::Mode::empty(),
             )?;
+            // SAFETY: nix::fcntl::open succeeded, returning a new valid fd
+            // that we exclusively own. It will be closed when OwnedFd drops.
             let mount_fd = unsafe { OwnedFd::from_raw_fd(mount_fd_raw) };
 
             let idx = self.fs_groups.len();
