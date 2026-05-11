@@ -9,10 +9,12 @@
 | 等级 | 问题 | 状态 |
 |------|------|------|
 | ✅ | `src/monitor.rs` 拆出 `filters.rs` + `fid_parser.rs` | `monitor.rs` 从 2249 行降至 ~1660 行 |
-| ⏳ | `src/bin/fsmon.rs` 拆出 `commands/` 目录 | 待完成 |
+| ✅ | `src/bin/fsmon.rs` 拆出 `commands/` 目录 | `fsmon.rs` 从 937 行降至 ~120 行（CLI 定义 + 测试） |
 | ⏳ | `src/lib.rs` 拆出 `clean.rs` | 待完成 |
 
 当前行数：
+- `src/bin/fsmon.rs`: ~120 (CLI 定义 + 测试)
+- `src/bin/commands/`: ~550 (7 个命令文件 + mod.rs)
 - `src/monitor.rs`: ~1660
 - `src/filters.rs`: ~160
 - `src/fid_parser.rs`: ~240
