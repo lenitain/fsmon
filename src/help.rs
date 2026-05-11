@@ -132,6 +132,12 @@ Options:
                     <2026-05-01 — events before a date (until)
                     Combine both for a range: -t '>1h' -t '<now'
 
+Alternatively, query the log files directly with standard Unix tools:
+  cat ~/.local/state/fsmon/*_log.jsonl | jq 'select(.cmd == "nginx")'
+  grep '"event_type":"MODIFY"' ~/.local/state/fsmon/*_log.jsonl
+  tail -f ~/.local/state/fsmon/*_log.jsonl | jq 'select(.user == "deploy")'
+(Note: native fsmon query uses binary search and is significantly faster on large logs)
+
 Examples:
   fsmon query -t '>1h'
   fsmon query --path /tmp -t '>1h'
@@ -150,6 +156,12 @@ Options:
   --size            Size limit for log file truncation with operator (e.g. >500MB, >=1GB).
                           Operator required: >=, >, <=, <, = (short: -s)
   --dry-run         Preview mode, don't actually delete
+
+Alternatively, clean the log files directly with standard Unix tools:
+  truncate --size 100M ~/.local/state/fsmon/*_log.jsonl
+  for f in ~/.local/state/fsmon/*_log.jsonl; do tail -500 "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"; done
+  find ~/.local/state/fsmon/ -name '*.jsonl' -mtime +30 -delete
+(Note: native fsmon clean uses accurate JSONL parsing and is safer for large files)
 
 Examples:
   fsmon clean                       Use config defaults (>=30d)
@@ -179,11 +191,13 @@ Management (no sudo needed):
 Query (stdout JSONL, pipe to jq):
   fsmon query -t '>1h'             Events from last hour
   fsmon query | jq 'select(.cmd == "nginx")'  Custom filter
+  cat ~/.local/state/fsmon/*_log.jsonl | jq ...  Or direct pipe (slower)
 
 Clean (config defaults: keep_days=30, size=>=1GB):
   fsmon clean                       Clean all logs (keep >30d)
   fsmon clean --time '>7d'         Keep last 7 days
   fsmon clean --dry-run             Preview without deleting
+  tail -500 ...                     Or direct Unix tools (slower)
 
 Config: ~/.config/fsmon/fsmon.toml (optional — defaults without it)
 Managed: ~/.local/share/fsmon/managed.jsonl (configurable via [managed].path)

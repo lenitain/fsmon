@@ -128,7 +128,7 @@ No built-in `--pid`, `--cmd`, `--user`, `--sort` flags needed — `jq` does it a
 fsmon clean --dry-run
 
 # Actually clean with custom retention
-fsmon clean --keep-days 7
+fsmon clean --time '>7d'
 
 # Or just use Unix tools directly on the files
 # Delete events older than 2026-04-01:
@@ -257,12 +257,26 @@ Clean historical log files. Defaults from `fsmon.toml`: `keep_days=30`, `size=>=
 ```bash
 fsmon clean                                Use config defaults
 fsmon clean --time '>7d'                 Keep last 7 days
-fsmon clean --size '>500MB'               Size limit per log file
+fsmon clean --size '>=500MB'              Size limit per log file
 fsmon clean --path /tmp                    Clean specific path's log
 fsmon clean --dry-run                      Preview without deleting
 ```
 
 Priority: CLI arg > fsmon.toml > code default (keep_days=30)
+
+You can also clean the raw log files directly without `fsmon clean`:
+
+```bash
+# Keep only last 500 lines per log file
+for f in ~/.local/state/fsmon/*_log.jsonl; do
+  tail -500 "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
+done
+
+# Delete logs older than 30 days by mtime
+find ~/.local/state/fsmon/ -name '*.jsonl' -mtime +30 -delete
+```
+
+> **Performance note:** Native `fsmon clean` parses JSONL accurately (won't cut in the middle of a line) and handles both time+size rules atomically. Raw Unix tools are simpler but may produce partial/corrupt lines.
 
 ### init
 

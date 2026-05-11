@@ -123,7 +123,7 @@ tail -f ~/.local/state/fsmon/*_log.jsonl | jq 'select(.user == "deploy")'
 fsmon clean --dry-run
 
 # 实际清理
-fsmon clean --keep-days 7
+fsmon clean --time '>7d'
 
 # 或者直接用 Unix 工具操作文件
 # 删除早于 2026-04-01 的事件：
@@ -243,6 +243,16 @@ fsmon query | jq 'select(.event_type == "DELETE")'
 fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 ```
 
+也可直接操作原始日志文件（无需 `fsmon query`）：
+
+```bash
+cat ~/.local/state/fsmon/*_log.jsonl | jq 'select(.cmd == "nginx")'
+grep '"event_type":"MODIFY"' ~/.local/state/fsmon/*_log.jsonl
+tail -f ~/.local/state/fsmon/*_log.jsonl | jq 'select(.user == "deploy")'
+```
+
+> **性能说明：** 原生 `fsmon query` 使用二分查找，大文件时显著更快。直接 Unix 工具线性读取整个文件。
+
 ### clean
 
 清理历史日志文件。默认值来自 `fsmon.toml`：`keep_days=30`，`size=>=1GB`。
@@ -250,12 +260,26 @@ fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 ```bash
 fsmon clean                                使用 config 默认值
 fsmon clean --time '>7d'                 保留最近 7 天
-fsmon clean --size '>500MB'               每个日志文件大小上限
+fsmon clean --size '>=500MB'              每个日志文件大小上限
 fsmon clean --path /tmp                    清理指定路径的日志
 fsmon clean --dry-run                      预览模式，不实际删除
 ```
 
 优先级：CLI 参数 > fsmon.toml > 代码默认值（keep_days=30）
+
+也可以直接操作原始日志文件（无需 `fsmon clean`）：
+
+```bash
+# 每个日志文件只保留最后 500 行
+for f in ~/.local/state/fsmon/*_log.jsonl; do
+  tail -500 "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
+done
+
+# 按 mtime 删除 30 天前的日志
+find ~/.local/state/fsmon/ -name '*.jsonl' -mtime +30 -delete
+```
+
+> **性能说明：** 原生 `fsmon clean` 精确解析 JSONL（不会在行中间截断），且原子化处理时间+大小规则。Unix 工具简单但可能产生不完整行。
 
 ### init
 
