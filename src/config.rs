@@ -233,9 +233,9 @@ dir = "~/.local/state/fsmon"
 #   keep_days: delete entries older than N days
 #   size:  truncate log file when exceeding this size
 # Both can be overridden at runtime:
-#   fsmon clean --keep-days 14 --size '>1GB'
+#   fsmon clean --keep-days 14 --size '>=1GB'
 keep_days = 30
-size = "1GB"
+size = ">=1GB"
 
 [socket]
 # Unix socket path for daemon-CLI live communication.

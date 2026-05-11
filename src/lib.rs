@@ -7,7 +7,7 @@ pub mod query;
 pub mod socket;
 pub mod managed;
 pub mod utils;
-pub use utils::{SizeOp, SizeFilter, parse_size_filter};
+pub use utils::{SizeOp, SizeFilter, TimeFilter, parse_size_filter, parse_size, parse_time_filter};
 
 use crate::config::chown_to_original_user;
 use anyhow::{Result, bail};
@@ -71,7 +71,7 @@ impl Drop for DaemonLock {
 use std::str::FromStr;
 
 pub const DEFAULT_KEEP_DAYS: u32 = 30;
-pub const DEFAULT_MAX_SIZE: &str = "1GB";
+pub const DEFAULT_MAX_SIZE: &str = ">=1GB";
 
 pub const EXIT_CONFIG: i32 = 78;
 
@@ -196,11 +196,23 @@ pub fn parse_log_line_jsonl(line: &str) -> Option<FileEvent> {
     FileEvent::from_jsonl_str(trimmed)
 }
 
-/// Clean a single log file by age and size.
+/// Check if `kept_bytes` exceeds the limit per the filter's operator.
+fn should_trim(kept_bytes: usize, filter: &SizeFilter) -> bool {
+    let max = filter.bytes as usize;
+    match filter.op {
+        SizeOp::Gt => kept_bytes > max,
+        SizeOp::Ge => kept_bytes >= max,
+        SizeOp::Lt => kept_bytes < max,
+        SizeOp::Le => kept_bytes <= max,
+        SizeOp::Eq => kept_bytes == max,
+    }
+}
+
+/// Clean a single log file by time and size.
 async fn clean_single_log(
     log_file: &Path,
-    keep_days: u32,
-    max_size: Option<i64>,
+    time_filter: Option<TimeFilter>,
+    max_size: Option<SizeFilter>,
     dry_run: bool,
 ) -> Result<()> {
     if !log_file.exists() {
@@ -208,7 +220,6 @@ async fn clean_single_log(
         return Ok(());
     }
 
-    let cutoff_time = Utc::now() - chrono::Duration::days(keep_days as i64);
     let original_size = fs::metadata(log_file)?.len();
 
     let temp_file = log_file.with_extension("tmp");
@@ -229,7 +240,16 @@ async fn clean_single_log(
             }
 
             let (should_keep, event) = if let Some(event) = parse_log_line_jsonl(trimmed) {
-                (event.time >= cutoff_time, Some(event))
+                let passes_time = time_filter.as_ref().map_or(true, |f| {
+                    match f.op {
+                        SizeOp::Gt => event.time > f.time,
+                        SizeOp::Ge => event.time >= f.time,
+                        SizeOp::Lt => event.time < f.time,
+                        SizeOp::Le => event.time <= f.time,
+                        SizeOp::Eq => event.time == f.time,
+                    }
+                });
+                (passes_time, Some(event))
             } else {
                 (true, None)
             };
@@ -251,13 +271,17 @@ async fn clean_single_log(
         }
     }
 
-    let max_bytes = max_size.unwrap_or(i64::MAX) as usize;
-    let size_deleted = if kept_bytes > max_bytes {
-        let trim_start = find_tail_offset(&temp_file, max_bytes)?;
-        let dropped = count_lines(&temp_file, trim_start)?;
-        truncate_from_start(&temp_file, trim_start)?;
-        kept_bytes -= trim_start;
-        dropped
+    let size_deleted = if let Some(ref filter) = max_size {
+        if should_trim(kept_bytes, filter) {
+            let max = filter.bytes as usize;
+            let trim_start = find_tail_offset(&temp_file, max)?;
+            let dropped = count_lines(&temp_file, trim_start)?;
+            truncate_from_start(&temp_file, trim_start)?;
+            kept_bytes -= trim_start;
+            dropped
+        } else {
+            0
+        }
     } else {
         0
     };
@@ -276,9 +300,12 @@ async fn clean_single_log(
         fs::rename(&temp_file, log_file)?;
         chown_to_original_user(log_file);
         println!("Cleaning {}...", log_file.display());
+        let time_desc = time_filter.as_ref().map_or("all time".to_string(), |f| {
+            format!("{} {}", f.op, crate::utils::format_datetime(&f.time))
+        });
         println!(
-            "Deleted {} entries (logs older than {} days)",
-            total_deleted, keep_days
+            "Deleted {} entries (time filter: {})",
+            total_deleted, time_desc
         );
         println!(
             "Log file size reduced from {} to {}",
@@ -297,8 +324,8 @@ async fn clean_single_log(
 pub async fn clean_logs(
     log_dir: &Path,
     paths: Option<&[PathBuf]>,
-    keep_days: u32,
-    max_size: Option<i64>,
+    time_filter: Option<TimeFilter>,
+    max_size: Option<SizeFilter>,
     dry_run: bool,
 ) -> Result<()> {
     if !log_dir.exists() {
@@ -309,14 +336,14 @@ pub async fn clean_logs(
     if let Some(paths) = paths {
         for path in paths {
             let log_file = log_dir.join(crate::utils::path_to_log_name(path));
-            clean_single_log(&log_file, keep_days, max_size, dry_run).await?;
+            clean_single_log(&log_file, time_filter, max_size, dry_run).await?;
         }
     } else {
         for entry in fs::read_dir(log_dir)? {
             let entry = entry?;
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "jsonl") {
-                clean_single_log(&path, keep_days, max_size, dry_run).await?;
+                clean_single_log(&path, time_filter, max_size, dry_run).await?;
             }
         }
     }
@@ -512,9 +539,11 @@ mod tests {
             writeln!(f, "{}", new_event.to_jsonl_string()).unwrap();
         }
 
+        let cutoff = Utc::now() - chrono::Duration::days(30);
+        let time_filter = TimeFilter { op: SizeOp::Gt, time: cutoff };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let log_dir = log_path.parent().unwrap();
-        rt.block_on(clean_logs(log_dir, None, 30, None, false))
+        rt.block_on(clean_logs(log_dir, None, Some(time_filter), None, false))
             .unwrap();
 
         let content = fs::read_to_string(&log_path).unwrap();
@@ -550,9 +579,11 @@ mod tests {
 
         let original_content = fs::read_to_string(&log_path).unwrap();
 
+        let cutoff = Utc::now() - chrono::Duration::days(30);
+        let time_filter = TimeFilter { op: SizeOp::Gt, time: cutoff };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let log_dir = log_path.parent().unwrap();
-        rt.block_on(clean_logs(log_dir, None, 30, None, true))
+        rt.block_on(clean_logs(log_dir, None, Some(time_filter), None, true))
             .unwrap();
 
         let after_content = fs::read_to_string(&log_path).unwrap();
@@ -565,8 +596,10 @@ mod tests {
     fn test_clean_logs_nonexistent_file() {
         let path = PathBuf::from("/tmp/fsmon_nonexistent_dir_clean_test");
         let rt = tokio::runtime::Runtime::new().unwrap();
+        let cutoff = Utc::now() - chrono::Duration::days(30);
+        let time_filter = TimeFilter { op: SizeOp::Gt, time: cutoff };
         assert!(
-            rt.block_on(clean_logs(&path, None, 30, None, false))
+            rt.block_on(clean_logs(&path, None, Some(time_filter), None, false))
                 .is_ok()
         );
     }
@@ -598,7 +631,7 @@ mod tests {
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let log_dir = log_path.parent().unwrap();
-        rt.block_on(clean_logs(log_dir, None, 0, Some(500), false))
+        rt.block_on(clean_logs(log_dir, None, None, Some(SizeFilter { op: SizeOp::Gt, bytes: 500 }), false))
             .unwrap();
 
         let new_size = fs::metadata(&log_path).unwrap().len();

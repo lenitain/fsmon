@@ -6,9 +6,11 @@ use fsmon::help::{self, HelpTopic};
 use fsmon::monitor::{Monitor, PathOptions};
 use fsmon::query::Query;
 use fsmon::socket::{self, SocketCmd};
+use fsmon::{TimeFilter, SizeOp, parse_time_filter};
 use fsmon::managed::{PathEntry, Managed};
-use fsmon::utils::{parse_size, parse_size_filter};
+use fsmon::utils::{parse_size_filter, SizeFilter};
 use fsmon::{DEFAULT_KEEP_DAYS, DEFAULT_MAX_SIZE, EventType, clean_logs};
+use chrono::Utc;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -78,7 +80,7 @@ struct AddArgs {
     #[arg(short, long, value_name = "TYPE")]
     types: Vec<String>,
 
-    /// Size filter with comparison operator (e.g. >1MB, >=500KB, <100MB, =0). Default: >=
+    /// Size filter with operator (required: >=, >, <=, <, =). e.g. >1MB, >=500KB, <100MB, =0
     #[arg(short, long, value_name = "SIZE")]
     size: Option<String>,
 
@@ -98,10 +100,9 @@ struct QueryArgs {
     /// Path(s) to query. Repeatable. Default: all.
     #[arg(short, long, value_name = "PATH")]
     path: Vec<PathBuf>,
-    #[arg(short, long)]
-    since: Option<String>,
-    #[arg(short, long)]
-    until: Option<String>,
+    /// Time filter with operator (repeatable: >1h for since, <2026-05-01 for until)
+    #[arg(short, long, value_name = "FILTER")]
+    time: Vec<String>,
 }
 
 #[derive(Parser)]
@@ -109,8 +110,10 @@ struct CleanArgs {
     /// Path(s) to clean. Repeatable. Default: all.
     #[arg(short, long, value_name = "PATH")]
     path: Vec<PathBuf>,
-    #[arg(short, long)]
-    keep_days: Option<u32>,
+    /// Time filter with operator (e.g. >30d — delete entries older than 30 days)
+    #[arg(long, value_name = "FILTER")]
+    time: Option<String>,
+    /// Size limit for log file truncation with operator (e.g. >500MB, >=1GB)
     #[arg(short, long)]
     size: Option<String>,
     #[arg(short, long)]
@@ -464,11 +467,15 @@ async fn cmd_query(args: QueryArgs) -> Result<()> {
         Some(args.path.clone())
     };
 
+    // Parse time filters
+    let time_filters: Vec<TimeFilter> = args.time.iter()
+        .map(|s| parse_time_filter(s))
+        .collect::<Result<Vec<_>>>()?;
+
     let query = Query::new(
         cfg.logging.dir,
         paths,
-        args.since,
-        args.until,
+        time_filters,
     );
 
     query.execute().await?;
@@ -518,22 +525,35 @@ async fn cmd_clean(args: CleanArgs) -> Result<()> {
     } else {
         Some(args.path.clone())
     };
-    let keep_days = args
-        .keep_days
-        .or(cfg.logging.keep_days)
-        .unwrap_or(DEFAULT_KEEP_DAYS);
-    let max_size_bytes = args
+
+    // Time filter: CLI > config > default
+    let time_filter: TimeFilter = if let Some(ref t) = args.time {
+        parse_time_filter(t)?
+    } else if let Some(days) = cfg.logging.keep_days {
+        TimeFilter {
+            op: SizeOp::Gt,
+            time: Utc::now() - chrono::Duration::days(days as i64),
+        }
+    } else {
+        TimeFilter {
+            op: SizeOp::Gt,
+            time: Utc::now() - chrono::Duration::days(DEFAULT_KEEP_DAYS as i64),
+        }
+    };
+
+    let max_size_filter: Option<SizeFilter> = args
         .size
         .clone()
         .or(cfg.logging.size.clone())
         .or_else(|| Some(DEFAULT_MAX_SIZE.to_string()))
-        .map(|s| parse_size(&s))
+        .map(|s| parse_size_filter(&s))
         .transpose()?;
+
     clean_logs(
         &cfg.logging.dir,
         paths.as_deref(),
-        keep_days,
-        max_size_bytes,
+        Some(time_filter),
+        max_size_filter,
         args.dry_run,
     )
     .await?;
@@ -761,8 +781,7 @@ mod tests {
     fn test_query_no_flags() {
         let args = QueryArgs::try_parse_from(&["query"]).unwrap();
         assert!(args.path.is_empty());
-        assert!(args.since.is_none());
-        assert!(args.until.is_none());
+        assert!(args.time.is_empty());
     }
 
     #[test]
@@ -784,33 +803,35 @@ mod tests {
     }
 
     #[test]
-    fn test_query_since_short() {
-        let args = QueryArgs::try_parse_from(&["query", "-s", "1h"]).unwrap();
-        assert_eq!(args.since, Some("1h".into()));
+    fn test_query_time_since() {
+        let args = QueryArgs::try_parse_from(&["query", "-t", ">1h"]).unwrap();
+        assert_eq!(args.time, vec![">1h".to_string()]);
     }
 
     #[test]
-    fn test_query_since_long() {
-        let args = QueryArgs::try_parse_from(&["query", "--since", "7d"]).unwrap();
-        assert_eq!(args.since, Some("7d".into()));
+    fn test_query_time_until() {
+        let args = QueryArgs::try_parse_from(&["query", "--time", "<2026-05-01"]).unwrap();
+        assert_eq!(args.time, vec!["<2026-05-01".to_string()]);
     }
 
     #[test]
-    fn test_query_until_long() {
-        let args = QueryArgs::try_parse_from(&["query", "--until", "2026-05-01"]).unwrap();
-        assert_eq!(args.until, Some("2026-05-01".into()));
-    }
-
-    #[test]
-    fn test_query_all_flags() {
+    fn test_query_time_repeatable() {
         let args = QueryArgs::try_parse_from(&[
             "query",
-            "-p", "/tmp", "--path", "/home",
-            "-s", "1h", "--until", "now",
+            "--time", ">1h", "--time", "<now",
         ]).unwrap();
-        assert_eq!(args.path, vec![PathBuf::from("/tmp"), PathBuf::from("/home")]);
-        assert_eq!(args.since, Some("1h".into()));
-        assert_eq!(args.until, Some("now".into()));
+        assert_eq!(args.time, vec![">1h".to_string(), "<now".to_string()]);
+    }
+
+    #[test]
+    fn test_query_time_with_path() {
+        let args = QueryArgs::try_parse_from(&[
+            "query",
+            "-p", "/tmp",
+            "-t", ">1h",
+        ]).unwrap();
+        assert_eq!(args.path, vec![PathBuf::from("/tmp")]);
+        assert_eq!(args.time, vec![">1h".to_string()]);
     }
 
     // ---- CleanArgs CLI parsing ----
@@ -819,7 +840,7 @@ mod tests {
     fn test_clean_no_flags() {
         let args = CleanArgs::try_parse_from(&["clean"]).unwrap();
         assert!(args.path.is_empty());
-        assert!(args.keep_days.is_none());
+        assert!(args.time.is_none());
         assert!(args.size.is_none());
         assert!(!args.dry_run);
     }
@@ -843,9 +864,9 @@ mod tests {
     }
 
     #[test]
-    fn test_clean_keep_days_long() {
-        let args = CleanArgs::try_parse_from(&["clean", "--keep-days", "7"]).unwrap();
-        assert_eq!(args.keep_days, Some(7));
+    fn test_clean_time() {
+        let args = CleanArgs::try_parse_from(&["clean", "--time", ">30d"]).unwrap();
+        assert_eq!(args.time, Some(">30d".into()));
     }
 
     #[test]
@@ -856,8 +877,8 @@ mod tests {
 
     #[test]
     fn test_clean_size_long() {
-        let args = CleanArgs::try_parse_from(&["clean", "--size", "1GB"]).unwrap();
-        assert_eq!(args.size, Some("1GB".into()));
+        let args = CleanArgs::try_parse_from(&["clean", "--size", ">=1GB"]).unwrap();
+        assert_eq!(args.size, Some(">=1GB".into()));
     }
 
     #[test]
@@ -871,13 +892,13 @@ mod tests {
         let args = CleanArgs::try_parse_from(&[
             "clean",
             "-p", "/tmp", "--path", "/var/log",
-            "--keep-days", "14",
-            "-s", "100MB",
+            "--time", ">30d",
+            "-s", ">=100MB",
             "--dry-run",
         ]).unwrap();
         assert_eq!(args.path, vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")]);
-        assert_eq!(args.keep_days, Some(14));
-        assert_eq!(args.size, Some("100MB".into()));
+        assert_eq!(args.time, Some(">30d".into()));
+        assert_eq!(args.size, Some(">=100MB".into()));
         assert!(args.dry_run);
     }
 

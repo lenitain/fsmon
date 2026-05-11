@@ -107,7 +107,7 @@ Now use standard tools, not fsmon options:
 
 ```bash
 # What did nginx do in the last hour?
-fsmon query --since 1h | jq 'select(.cmd == "nginx")'
+fsmon query -t '>1h' | jq 'select(.cmd == "nginx")'
 
 # What files were deleted?
 fsmon query | jq 'select(.event_type == "DELETE")'
@@ -235,38 +235,38 @@ Query historical events from log files. Output is JSONL — pipe to `jq` for fil
 fsmon query                                Query all log files
 fsmon query --path /tmp                    Query specific path's log
 fsmon query --path /tmp --path /var        Query multiple paths
-fsmon query --since 1h                     Events from last hour
-fsmon query --since "2026-05-01T00:00:00Z" From absolute time
-fsmon query --until 30m                    Events until 30 minutes ago
-fsmon query --since 1h --until now         Time range
+fsmon query -t '>1h'                     Events from last hour
+fsmon query -t '>=2026-05-01'             From absolute time
+fsmon query -t '<30m'                     Events until 30 minutes ago
+fsmon query -t '>1h' -t '<now'            Time range
 ```
 
 Examples with `jq`:
 
 ```bash
-fsmon query --since 1h | jq 'select(.cmd == "nginx")'
+fsmon query -t '>1h' | jq 'select(.cmd == "nginx")'
 fsmon query | jq 'select(.event_type == "DELETE")'
 fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 ```
 
 ### clean
 
-Clean historical log files. Defaults from `fsmon.toml`: `keep_days=30`, `size=1GB`.
+Clean historical log files. Defaults from `fsmon.toml`: `keep_days=30`, `size=>=1GB`.
 
 ```bash
 fsmon clean                                Use config defaults
-fsmon clean --keep-days 7                  Override retention (days)
+fsmon clean --time '>7d'                 Keep last 7 days
 fsmon clean --size '>500MB'               Size limit per log file
 fsmon clean --path /tmp                    Clean specific path's log
 fsmon clean --dry-run                      Preview without deleting
 ```
 
-Priority: CLI arg > fsmon.toml > code default (30)
+Priority: CLI arg > fsmon.toml > code default (keep_days=30)
 
 ### init
 
 Initialize fsmon data directories (chezmoi-style). Creates the log directory,
-managed data directory, and config directory. Does NOT write a config file —
+managed data directory. Does NOT write a config file —
 config is optional, defaults apply without it.
 
 ```
@@ -284,7 +284,7 @@ ls                                         List log files
 
 ## Configuration
 
-Auto-generated on first daemon start. Config file is optional — defaults apply without it.
+Config file is optional — defaults apply without it.
 
 ```toml
 # fsmon configuration file
@@ -300,9 +300,13 @@ file = "~/.local/share/fsmon/managed.jsonl"
 [logging]
 # Directory containing per-path log files (named by path hash).
 dir = "~/.local/state/fsmon"
-# Safety nets: keep at most 30 days, max 1GB per log file.
+# Defaults for 'fsmon clean' (not auto-cleaned by daemon; use cron/timer).
+#   keep_days: delete entries older than N days
+#   size:  truncate log file when exceeding this size
+# Both can be overridden at runtime:
+#   fsmon clean --time '>14d' --size '>=1GB'
 keep_days = 30
-size = "1GB"
+size = ">=1GB"
 
 [socket]
 # Unix socket path for daemon-CLI live communication.

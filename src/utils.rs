@@ -36,7 +36,15 @@ pub struct SizeFilter {
     pub bytes: i64,
 }
 
-/// Parse a size filter string like ">1MB", ">=500KB", "<100MB", "=0", or plain "1GB" (defaults to >=).
+/// A time filter with operator (e.g., >1h, <2026-05-01).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TimeFilter {
+    pub op: SizeOp,
+    pub time: DateTime<Utc>,
+}
+
+/// Parse a size filter string like ">1MB", ">=500KB", "<100MB", "=0".
+/// Operator is required — no default. Returns error if missing.
 pub fn parse_size_filter(s: &str) -> Result<SizeFilter> {
     let s = s.trim();
     let (op, rest) = if s.starts_with(">=") {
@@ -50,7 +58,7 @@ pub fn parse_size_filter(s: &str) -> Result<SizeFilter> {
     } else if s.starts_with('=') {
         (SizeOp::Eq, &s[1..])
     } else {
-        (SizeOp::Ge, s) // default: >=
+        anyhow::bail!("size filter must start with an operator (>=, >, <=, <, =), got: {}", s);
     };
     let bytes = parse_size(rest)?;
     Ok(SizeFilter { op, bytes })
@@ -156,6 +164,27 @@ pub fn parse_time(time_str: &str) -> Result<DateTime<Utc>> {
     }
 
     Err(anyhow!("Failed to parse time format: {}", time_str))
+}
+
+/// Parse a time filter string like ">1h", "<2026-05-01", ">=30d".
+/// Operator is required — no default. Returns error if missing.
+pub fn parse_time_filter(s: &str) -> Result<TimeFilter> {
+    let s = s.trim();
+    let (op, rest) = if s.starts_with(">=") {
+        (SizeOp::Ge, &s[2..])
+    } else if s.starts_with("<=") {
+        (SizeOp::Le, &s[2..])
+    } else if s.starts_with('>') {
+        (SizeOp::Gt, &s[1..])
+    } else if s.starts_with('<') {
+        (SizeOp::Lt, &s[1..])
+    } else if s.starts_with('=') {
+        (SizeOp::Eq, &s[1..])
+    } else {
+        anyhow::bail!("time filter must start with an operator (>=, >, <=, <, =), got: {}", s);
+    };
+    let time = parse_time(rest)?;
+    Ok(TimeFilter { op, time })
 }
 
 /// Format datetime for display
@@ -409,14 +438,12 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_size_filter_default_ge() {
-        // No operator defaults to >=
-        let f = parse_size_filter("500MB").unwrap();
-        assert_eq!(f.op, SizeOp::Ge);
-        assert_eq!(f.bytes, 500 * 1024 * 1024);
-
-        let f = parse_size_filter("1GB").unwrap();
-        assert_eq!(f.op, SizeOp::Ge);
+    fn test_parse_size_filter_no_operator_errors() {
+        // Operator is required
+        assert!(parse_size_filter("500MB").is_err());
+        assert!(parse_size_filter("1GB").is_err());
+        assert!(parse_size_filter("100").is_err());
+        assert!(parse_size_filter("0").is_err());
     }
 
     #[test]
@@ -564,6 +591,64 @@ mod tests {
         assert!(parse_time("invalid").is_err());
         assert!(parse_time("2024-13-01 10:00").is_err());
         assert!(parse_time("abc").is_err());
+    }
+
+    // ---- parse_time_filter tests ----
+
+    #[test]
+    fn test_parse_time_filter_gt() {
+        let f = parse_time_filter(">1h").unwrap();
+        assert_eq!(f.op, SizeOp::Gt);
+        let diff = Utc::now() - f.time;
+        assert!(diff >= chrono::Duration::minutes(59) && diff <= chrono::Duration::minutes(61));
+    }
+
+    #[test]
+    fn test_parse_time_filter_ge() {
+        let f = parse_time_filter(">=7d").unwrap();
+        assert_eq!(f.op, SizeOp::Ge);
+        let diff = Utc::now() - f.time;
+        assert!(diff >= chrono::Duration::days(6) && diff <= chrono::Duration::days(8));
+    }
+
+    #[test]
+    fn test_parse_time_filter_lt() {
+        let f = parse_time_filter("<2026-05-01").unwrap();
+        assert_eq!(f.op, SizeOp::Lt);
+        assert_eq!(f.time.year(), 2026);
+        assert_eq!(f.time.month(), 5);
+        assert_eq!(f.time.day(), 1);
+    }
+
+    #[test]
+    fn test_parse_time_filter_le() {
+        let f = parse_time_filter("<=30m").unwrap();
+        assert_eq!(f.op, SizeOp::Le);
+        let diff = Utc::now() - f.time;
+        assert!(diff >= chrono::Duration::minutes(29) && diff <= chrono::Duration::minutes(31));
+    }
+
+    #[test]
+    fn test_parse_time_filter_eq() {
+        let f = parse_time_filter("=2026-05-01 10:00").unwrap();
+        assert_eq!(f.op, SizeOp::Eq);
+        assert_eq!(f.time.year(), 2026);
+        assert_eq!(f.time.month(), 5);
+        assert_eq!(f.time.day(), 1);
+        assert_eq!(f.time.hour(), 10);
+    }
+
+    #[test]
+    fn test_parse_time_filter_no_operator_errors() {
+        assert!(parse_time_filter("1h").is_err());
+        assert!(parse_time_filter("30d").is_err());
+        assert!(parse_time_filter("2026-05-01").is_err());
+    }
+
+    #[test]
+    fn test_parse_time_filter_invalid() {
+        assert!(parse_time_filter(">abc").is_err());
+        assert!(parse_time_filter(">=").is_err());
     }
 
     #[test]

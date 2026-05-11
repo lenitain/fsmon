@@ -15,7 +15,7 @@ pub const fn about(topic: HelpTopic) -> &'static str {
         HelpTopic::Root => "Lightweight high-performance file change tracking tool",
         HelpTopic::Daemon => "Run the fsmon daemon (requires sudo for fanotify)",
         HelpTopic::Init => "Initialize log and managed data directories",
-        HelpTopic::Cd => "Print the log directory path",
+        HelpTopic::Cd => "Open a subshell in the log directory",
         HelpTopic::Add => "Add a path to the monitoring list",
         HelpTopic::Remove => "Remove a path from the monitoring list",
         HelpTopic::Managed => "List all monitored paths with their configuration",
@@ -39,7 +39,7 @@ Usage:
   fsmon add /path --types all       All 14 event types
   fsmon add /path --exclude-cmd 'rsync'  Exclude by process name
   fsmon managed                       List monitored paths
-  fsmon query --since 1h    Query events
+  fsmon query -t '>1h'    Query events from last hour
 
 Config:           ~/.config/fsmon/fsmon.toml
 Managed:          ~/.local/share/fsmon/managed.jsonl (configurable via [managed].file)
@@ -81,8 +81,8 @@ No sudo needed — store is updated immediately.
 Options:
   -r, --recursive         Watch subdirectories recursively
   -t, --types             Event types to monitor (repeatable; use "all" for all 14 types)
-  -s, --size             Size filter with comparison operator (e.g. >1MB, >=500KB, <100MB)
-                          Note: -s in add means size filter; -s in clean means size limit
+  -s, --size             Size filter with operator (required: >=, >, <=, <, =)
+                          e.g. >1MB, >=500KB, <100MB, =0
   -e, --exclude           Path regex patterns to exclude (repeatable, prefix ! to invert)
   --exclude-cmd           Process name regex patterns to exclude (repeatable, prefix ! to invert)
 
@@ -126,31 +126,33 @@ Output is JSONL (one JSON object per line), pipe to jq for custom filtering.
 
 Options:
   -p, --path        Path(s) to query. Repeatable. Default: all.
-  -s, --since       Start time: relative (1h, 30m, 7d) or absolute
-  -u, --until       End time
+  -t, --time        Time filter with operator (repeatable).
+                    >1h  — events newer than 1 hour ago (since)
+                    <2026-05-01 — events before a date (until)
+                    Combine both for a range: -t '>1h' -t '<now'
 
 Examples:
-  fsmon query --since 1h
-  fsmon query --path /tmp --since 1h
-  fsmon query --since 1h | jq 'select(.cmd == "nginx")'
+  fsmon query -t '>1h'
+  fsmon query --path /tmp -t '>1h'
+  fsmon query -t '>1h' -t '<now' | jq 'select(.cmd == "nginx")'
   fsmon query | jq -s 'sort_by(.file_size)[]'"#
         }
         HelpTopic::Clean => {
             r#"Clean historical log files, retain by time or size.
 
-Defaults: keep_days=30, size=1GB (from fsmon.toml [logging] section or code fallback).
+Defaults: keep_days=30, size=>=1GB (from fsmon.toml [logging] section or code fallback).
 CLI args override config. Daemon does not auto-clean; use cron/systemd timer.
 
 Options:
   --path            Path(s) to clean. Repeatable. Default: all.
-  --keep-days       Keep logs from last N days
-  --size            Size limit for log file truncation (e.g. >500MB, >=1GB) (short: -s)
-                          Note: -m in clean means size limit; -s in add means size filter
+  --time            Time filter with operator (e.g. >30d — keep newer than 30 days)
+  --size            Size limit for log file truncation with operator (e.g. >500MB, >=1GB).
+                          Operator required: >=, >, <=, <, = (short: -s)
   --dry-run         Preview mode, don't actually delete
 
 Examples:
-  fsmon clean                       Use config defaults
-  fsmon clean --keep-days 7         Override retention
+  fsmon clean                       Use config defaults (>=30d)
+  fsmon clean --time '>7d'          Keep last 7 days
   fsmon clean --path /tmp --dry-run Preview without deleting"#
         }
     }
@@ -174,12 +176,12 @@ Management (no sudo needed):
   fsmon managed                     List monitored paths
 
 Query (stdout JSONL, pipe to jq):
-  fsmon query --since 1h            Events from last hour
+  fsmon query -t '>1h'             Events from last hour
   fsmon query | jq 'select(.cmd == "nginx")'  Custom filter
 
-Clean (config defaults: keep_days=30, size=1GB):
-  fsmon clean                       Clean all logs
-  fsmon clean --keep-days 7         Override retention
+Clean (config defaults: keep_days=30, size=>=1GB):
+  fsmon clean                       Clean all logs (keep >30d)
+  fsmon clean --time '>7d'         Keep last 7 days
   fsmon clean --dry-run             Preview without deleting
 
 Config: ~/.config/fsmon/fsmon.toml (optional — defaults without it)

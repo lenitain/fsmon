@@ -104,7 +104,7 @@ cat ~/.local/state/fsmon/*_log.jsonl
 
 ```bash
 # nginx 在过去一小时做了什么？
-fsmon query --since 1h | jq 'select(.cmd == "nginx")'
+fsmon query -t '>1h' | jq 'select(.cmd == "nginx")'
 
 # 哪些文件被删除了？
 fsmon query | jq 'select(.event_type == "DELETE")'
@@ -228,37 +228,37 @@ fsmon managed                              显示所有监控路径
 fsmon query                                查询所有日志文件
 fsmon query --path /tmp                    查询指定路径的日志
 fsmon query --path /tmp --path /var        查询多个路径
-fsmon query --since 1h                     查询最近一小时事件
-fsmon query --since "2026-05-01T00:00:00Z" 从绝对时间开始
-fsmon query --until 30m                    查询直到 30 分钟前
-fsmon query --since 1h --until now         时间范围查询
+fsmon query -t '>1h'                     查询最近一小时事件
+fsmon query -t '>=2026-05-01'             从绝对时间开始
+fsmon query -t '<30m'                     查询直到 30 分钟前
+fsmon query -t '>1h' -t '<now'            时间范围查询
 ```
 
 搭配 `jq` 使用示例：
 
 ```bash
-fsmon query --since 1h | jq 'select(.cmd == "nginx")'
+fsmon query -t '>1h' | jq 'select(.cmd == "nginx")'
 fsmon query | jq 'select(.event_type == "DELETE")'
 fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 ```
 
 ### clean
 
-清理历史日志文件。默认值来自 `fsmon.toml`：`keep_days=30`，`size=1GB`。
+清理历史日志文件。默认值来自 `fsmon.toml`：`keep_days=30`，`size=>=1GB`。
 
 ```bash
 fsmon clean                                使用 config 默认值
-fsmon clean --keep-days 7                  覆盖保留天数
+fsmon clean --time '>7d'                 保留最近 7 天
 fsmon clean --size '>500MB'               每个日志文件大小上限
 fsmon clean --path /tmp                    清理指定路径的日志
 fsmon clean --dry-run                      预览模式，不实际删除
 ```
 
-优先级：CLI 参数 > fsmon.toml > 代码默认值（30 天）
+优先级：CLI 参数 > fsmon.toml > 代码默认值（keep_days=30）
 
 ### init
 
-初始化 fsmon 数据目录（chezmoi 风格）。创建日志目录、managed 数据目录和配置目录。
+初始化 fsmon 数据目录（chezmoi 风格）。创建日志目录和 managed 数据目录。
 **不会**写入配置文件 — 配置文件是可选的，无配置时使用默认值。
 
 ```
@@ -276,7 +276,7 @@ ls                                         查看日志文件
 
 ## 配置
 
-首次启动 daemon 时自动生成。配置文件是可选的 — 无配置时使用默认值。
+配置文件是可选的 — 无配置时使用默认值。
 
 ```toml
 # fsmon 配置文件
@@ -291,9 +291,12 @@ file = "~/.local/share/fsmon/managed.jsonl"
 [logging]
 # 事件日志目录（按路径哈希命名的文件）。
 dir = "~/.local/state/fsmon"
-# 安全网：最多保留 30 天日志，每个日志文件上限 1GB。
+# 'fsmon clean' 的默认值（daemon 不自动清理；使用 cron/timer）。
+#   keep_days: 删除早于 N 天的条目
+#   size: 日志文件超过此大小时截断
+# 运行时均可覆盖：fsmon clean --time '>14d' --size '>=1GB'
 keep_days = 30
-size = "1GB"
+size = ">=1GB"
 
 [socket]
 # daemon 与 CLI 通信的 Unix socket 路径。

@@ -20,15 +20,14 @@ fsmon init
 预期：创建以下目录：
 - `~/.local/state/fsmon/` （事件日志目录）
 - `~/.local/share/fsmon/` （managed 数据目录）
-- `~/.config/fsmon/` （配置目录）
 
-### 1.2 查看日志目录路径
+### 1.2 进入日志目录
 
 ```bash
-cd $(fsmon cd)
+fsmon cd
 ```
 
-预期：当前目录切换到 `~/.local/state/fsmon`
+预期：在日志目录中打开子 shell，exit 返回原目录
 
 ---
 
@@ -344,10 +343,13 @@ fsmon query --path /tmp/fsmon_test
 
 ```bash
 # 查询最近 1 小时的事件
-fsmon query --since "1h"
+fsmon query -t '>1h'
 
 # 查询某个时间点之后的事件
-fsmon query --since "2025-01-01 00:00:00"
+fsmon query -t '>=2025-01-01 00:00:00'
+
+# 时间范围
+fsmon query -t '>1h' -t '<now'
 ```
 
 预期：正确过滤
@@ -372,10 +374,10 @@ fsmon clean --dry-run
 
 预期：显示会删除哪些日志文件，但不实际删除
 
-### 8.2 按天数清理
+### 8.2 按时间清理
 
 ```bash
-fsmon clean --keep-days 30
+fsmon clean --time '>30d'
 ```
 
 预期：删除 30 天前的日志
@@ -383,10 +385,10 @@ fsmon clean --keep-days 30
 ### 8.3 按大小清理
 
 ```bash
-fsmon clean --size '>100M'
+fsmon clean --size '>=100MB'
 ```
 
-预期：删除最旧的日志直到总大小小于 100M
+预期：删除最旧的日志直到总大小小于 100MB
 
 ### 8.4 清理特定路径的日志
 
