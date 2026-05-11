@@ -11,7 +11,7 @@
 | `src/monitor.rs` | `libc::read` (集成测试) | 1 | ✅ 加safety注释 |
 | `src/proc_cache.rs` | Netlink conn: `socket/bind/recv/send/zeroed` | 5+5 | ❌ 无safe替代 |
 | `src/fid_parser.rs` | `BorrowedFd::borrow_raw` | 1→0 | ✅ 死代码，直接删除 |
-| `src/config.rs` | `std::env::set_var/remove_var` (测试) | 8 | ⏳ 待改（低优） |
+| `src/config.rs` | `std::env::set_var/remove_var` (测试) | 8→0 | ✅ `temp-env` crate 替代 |
 
 ## 改造计划（按优先级）
 
@@ -36,11 +36,12 @@
 - **风险**: 无风险 —— 删除后编译通过，所有测试通过
 - **状态**: ✅ 已完成
 
-### P3 — config.rs 测试中环境变量 unsafe
+### ✅ P3 — config.rs 测试中环境变量 unsafe
 
 - **文件**: `src/config.rs`，8 处 `std::env::set_var`/`remove_var`
-- **方案**: 引入 `temp_env` crate，用 `temp_env::with_var` 替代
-- **状态**: ⏳
+- **方案**: 引入 `temp-env` crate，`with_isolated_home` 用 `with_vars`，另两处测试用 `with_var_unset`
+- **风险**: 无。`temp_env` 在闭包退出时自动恢复环境变量（含 panic），比手动 save/restore 更安全
+- **状态**: ✅ 已完成
 
 ### ❌ 无法消除 — proc_cache.rs
 
@@ -60,4 +61,4 @@
 2. ✅ P0 — monitor.rs `safe_dup()` 辅助函数
 3. ✅ P1 — monitor.rs `safe_open_dir()` 辅助函数
 4. ✅ P2 — fid_parser.rs 删除无用 `AsFd` impl
-5. ⏳ P3 — config.rs 测试环境变量
+5. ✅ P3 — config.rs 测试环境变量 `temp-env`

@@ -50,4 +50,5 @@ strip = true
 lto = true
 
 [dev-dependencies]
+temp-env = "0.3.6"
 tempfile = "3.27.0"
