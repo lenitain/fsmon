@@ -12,7 +12,7 @@ use users::os::unix::UserExt;
 /// CLI (running as user) uses the user's own HOME directly.
 ///
 /// This file is manually edited. Only infrastructure paths go here.
-/// Monitored path entries are stored in the separate store file (see `[managed].file`).
+/// Monitored path entries are stored in the separate store file (see `[managed].path`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub managed: ManagedConfig,
@@ -22,12 +22,12 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagedConfig {
-    pub file: PathBuf,
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
-    pub dir: PathBuf,
+    pub path: PathBuf,
     /// Keep log entries for at most this many days (default: 30).
     pub keep_days: Option<u32>,
     /// Maximum size per log file before truncation.
@@ -143,10 +143,10 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             managed: ManagedConfig {
-                file: PathBuf::from("~/.local/share/fsmon/managed.jsonl"),
+                path: PathBuf::from("~/.local/share/fsmon/managed.jsonl"),
             },
             logging: LoggingConfig {
-                dir: PathBuf::from("~/.local/state/fsmon"),
+                path: PathBuf::from("~/.local/state/fsmon"),
                 keep_days: None,
                 size: None,
             },
@@ -196,8 +196,8 @@ impl Config {
         let home = guess_home();
         let uid = resolve_uid();
 
-        self.managed.file = expand_tilde(&self.managed.file, &home);
-        self.logging.dir = expand_tilde(&self.logging.dir, &home);
+        self.managed.path = expand_tilde(&self.managed.path, &home);
+        self.logging.path = expand_tilde(&self.logging.path, &home);
 
         let socket_str = self.socket.path.to_string_lossy().to_string();
         self.socket.path = PathBuf::from(socket_str.replace("<UID>", &uid.to_string()));
@@ -217,23 +217,23 @@ impl Config {
         let content = r#"# fsmon configuration file
 #
 # Infrastructure paths for fsmon. Monitored paths are managed separately
-# via 'fsmon add' / 'fsmon remove' and persisted in [managed].file.
+# via 'fsmon add' / 'fsmon remove' and persisted in [managed].path.
 # All paths support ~ expansion. <UID> is replaced with the numeric UID at runtime.
 #
 # The defaults work out of the box. Change only if you need custom locations.
 
 [managed]
 # Path to the auto-managed monitored paths database.
-file = "~/.local/share/fsmon/managed.jsonl"
+path = "~/.local/share/fsmon/managed.jsonl"
 
 [logging]
-# Directory containing per-path log files (named by path hash).
-dir = "~/.local/state/fsmon"
+# Path to the event log directory (per-path *_log.jsonl files).
+path = "~/.local/state/fsmon"
 # Defaults for 'fsmon clean' (not auto-cleaned by daemon; use cron/timer).
 #   keep_days: delete entries older than N days
 #   size:  truncate log file when exceeding this size
 # Both can be overridden at runtime:
-#   fsmon clean --keep-days 14 --size '>=1GB'
+#   fsmon clean --time '>14d' --size '>=1GB'
 keep_days = 30
 size = ">=1GB"
 
@@ -260,15 +260,15 @@ path = "/tmp/fsmon-<UID>.sock"
         cfg.resolve_paths()?;
         let managed_dir = cfg
             .managed
-            .file
+            .path
             .parent()
             .context("Managed file path has no parent")?
             .to_path_buf();
 
-        fs::create_dir_all(&cfg.logging.dir).with_context(|| {
+        fs::create_dir_all(&cfg.logging.path).with_context(|| {
             format!(
                 "Failed to create log directory: {}",
-                cfg.logging.dir.display()
+                cfg.logging.path.display()
             )
         })?;
         fs::create_dir_all(&managed_dir).with_context(|| {
@@ -279,14 +279,14 @@ path = "/tmp/fsmon-<UID>.sock"
         })?;
 
         // Chown to original user
-        chown_to_original_user(&cfg.logging.dir);
+        chown_to_original_user(&cfg.logging.path);
         chown_to_original_user(&managed_dir);
 
-        eprintln!("Created log directory:  {}", cfg.logging.dir.display());
+        eprintln!("Created log directory:  {}", cfg.logging.path.display());
         eprintln!("Created managed directory: {}", managed_dir.display());
         let config_path = Self::path();
         eprintln!(
-            "(config file is optional \u{2014} directory: {})",
+            "(config file is optional \u{2014} defaults apply without {})",
             config_path.display()
         );
         Ok(())
@@ -311,8 +311,9 @@ mod tests {
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Override HOME for test isolation.
+    /// Uses catch_unwind to prevent mutex poisoning on panic.
     fn with_isolated_home(f: impl FnOnce(&Path)) {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let lock = ENV_LOCK.lock().unwrap();
         let dir = unique_home_dir();
         let _ = fs::remove_dir_all(&dir);
 
@@ -326,7 +327,7 @@ mod tests {
             std::env::remove_var("SUDO_UID");
         }
 
-        f(&dir);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&dir)));
 
         unsafe {
             if let Some(v) = old_home {
@@ -346,6 +347,11 @@ mod tests {
             }
         }
         let _ = fs::remove_dir_all(dir);
+        drop(lock);
+
+        if let Err(e) = result {
+            std::panic::resume_unwind(e);
+        }
     }
 
     #[test]
@@ -353,10 +359,10 @@ mod tests {
         with_isolated_home(|_| {
             let cfg = Config::load().unwrap();
             assert_eq!(
-                cfg.managed.file.to_string_lossy(),
+                cfg.managed.path.to_string_lossy(),
                 "~/.local/share/fsmon/managed.jsonl"
             );
-            assert_eq!(cfg.logging.dir.to_string_lossy(), "~/.local/state/fsmon");
+            assert_eq!(cfg.logging.path.to_string_lossy(), "~/.local/state/fsmon");
             assert_eq!(cfg.socket.path.to_string_lossy(), "/tmp/fsmon-<UID>.sock");
         });
     }
@@ -368,10 +374,10 @@ mod tests {
             let config_path = Config::path();
             fs::create_dir_all(config_path.parent().unwrap()).unwrap();
             let content = r#"[managed]
-file = "/custom/managed.jsonl"
+path = "/custom/managed.jsonl"
 
 [logging]
-dir = "/custom/logs"
+path = "/custom/logs"
 
 [socket]
 path = "/tmp/custom.sock"
@@ -379,8 +385,8 @@ path = "/tmp/custom.sock"
             fs::write(&config_path, content).unwrap();
 
             let cfg = Config::load().unwrap();
-            assert_eq!(cfg.managed.file, PathBuf::from("/custom/managed.jsonl"));
-            assert_eq!(cfg.logging.dir, PathBuf::from("/custom/logs"));
+            assert_eq!(cfg.managed.path, PathBuf::from("/custom/managed.jsonl"));
+            assert_eq!(cfg.logging.path, PathBuf::from("/custom/logs"));
             assert_eq!(cfg.socket.path, PathBuf::from("/tmp/custom.sock"));
         });
     }
@@ -393,14 +399,14 @@ path = "/tmp/custom.sock"
 
             let home_str = home.to_string_lossy();
             assert!(
-                cfg.managed.file.to_string_lossy().starts_with(&*home_str),
-                "managed.file should start with home dir: {} vs {}",
-                cfg.managed.file.display(),
+                cfg.managed.path.to_string_lossy().starts_with(&*home_str),
+                "managed.path should start with home dir: {} vs {}",
+                cfg.managed.path.display(),
                 home_str
             );
             assert!(
-                cfg.logging.dir.to_string_lossy().starts_with(&*home_str),
-                "logging.dir should start with home dir"
+                cfg.logging.path.to_string_lossy().starts_with(&*home_str),
+                "logging.path should start with home dir"
             );
             assert!(
                 cfg.socket.path.to_string_lossy().contains("/tmp/fsmon-"),
@@ -425,10 +431,10 @@ path = "/tmp/custom.sock"
             // Must be parseable
             let cfg = Config::load().unwrap();
             assert_eq!(
-                cfg.managed.file.to_string_lossy(),
+                cfg.managed.path.to_string_lossy(),
                 "~/.local/share/fsmon/managed.jsonl"
             );
-            assert_eq!(cfg.logging.dir.to_string_lossy(), "~/.local/state/fsmon");
+            assert_eq!(cfg.logging.path.to_string_lossy(), "~/.local/state/fsmon");
             assert_eq!(cfg.socket.path.to_string_lossy(), "/tmp/fsmon-<UID>.sock");
         });
     }
@@ -441,7 +447,7 @@ path = "/tmp/custom.sock"
             Config::init_config().unwrap();
             let cfg = Config::load().unwrap();
             assert_eq!(
-                cfg.managed.file.to_string_lossy(),
+                cfg.managed.path.to_string_lossy(),
                 "~/.local/share/fsmon/managed.jsonl"
             );
         });

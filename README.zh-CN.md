@@ -148,7 +148,7 @@ kill %1
 | Unix Socket | `/tmp/fsmon-<UID>.sock` | TOML over stream |
 
 managed 路径和日志目录均在 `~/.config/fsmon/fsmon.toml` 中可配
-（见 `[managed].file` 和 `[logging].dir`）。
+（见 `[managed].path` 和 `[logging].path`）。
 
 daemon 通过 sudo 以 root 运行，但通过 `SUDO_UID` + `getpwuid_r` 解析原始用户的 home 目录，
 所以日志文件会写入 `/home/<你>/...` 而非 `/root/...`。
@@ -281,16 +281,16 @@ ls                                         查看日志文件
 ```toml
 # fsmon 配置文件
 #
-# 基础设施路径。监控路径通过 'fsmon add' / 'fsmon remove' 管理，存储在 [managed].file 中。
+# 基础设施路径。监控路径通过 'fsmon add' / 'fsmon remove' 管理，存储在 [managed].path 中。
 # 所有路径支持 ~ 展开。<UID> 在运行时替换为实际 UID。
 
 [managed]
 # 自动管理的监控路径数据库。
-file = "~/.local/share/fsmon/managed.jsonl"
+path = "~/.local/share/fsmon/managed.jsonl"
 
 [logging]
 # 事件日志目录（按路径哈希命名的文件）。
-dir = "~/.local/state/fsmon"
+path = "~/.local/state/fsmon"
 # 'fsmon clean' 的默认值（daemon 不自动清理；使用 cron/timer）。
 #   keep_days: 删除早于 N 天的条目
 #   size: 日志文件超过此大小时截断

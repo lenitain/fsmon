@@ -153,11 +153,11 @@ async fn cmd_daemon() -> Result<()> {
     cfg.resolve_paths()?;
 
     eprintln!("Config loaded:");
-    eprintln!("  Managed path database:  {}", cfg.managed.file.display());
-    eprintln!("  Event logs:     {}", cfg.logging.dir.display());
+    eprintln!("  Managed path database:  {}", cfg.managed.path.display());
+    eprintln!("  Event logs:     {}", cfg.logging.path.display());
     eprintln!("  Command socket: {}", cfg.socket.path.display());
 
-    let store = Managed::load(&cfg.managed.file)?;
+    let store = Managed::load(&cfg.managed.path)?;
 
     let socket_path = cfg.socket.path.clone();
 
@@ -177,16 +177,16 @@ async fn cmd_daemon() -> Result<()> {
 
     // Chown store parent dir to the original user (daemon runs as root)
     let (uid, gid) = fsmon::config::resolve_uid_gid();
-    if let Some(parent) = cfg.managed.file.parent() {
+    if let Some(parent) = cfg.managed.path.parent() {
         chown_path(parent, uid, gid);
     }
 
     let paths_and_options = parse_path_entries(&store.entries)?;
 
-    let store_path = cfg.managed.file.clone();
+    let store_path = cfg.managed.path.clone();
     let mut monitor = Monitor::new(
         paths_and_options,
-        Some(cfg.logging.dir.clone()),
+        Some(cfg.logging.path.clone()),
         Some(store_path),
         None,
         Some(socket_listener),
@@ -249,18 +249,18 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             cleaned
         }
     };
-    let log_dir_canon = cfg.logging.dir.canonicalize().unwrap_or_else(|_| cfg.logging.dir.clone());
+    let log_dir_canon = cfg.logging.path.canonicalize().unwrap_or_else(|_| cfg.logging.path.clone());
     if log_dir_canon.starts_with(&path) {
         bail!(
             "Cannot monitor '{}': log directory '{}' is inside this path — \
              would cause infinite recursion on every log write.\n\
              Tip: use a different logging.dir or add a more specific path",
             args.path.display(),
-            cfg.logging.dir.display()
+            cfg.logging.path.display()
         );
     }
 
-    let mut store = Managed::load(&cfg.managed.file)?;
+    let mut store = Managed::load(&cfg.managed.path)?;
 
     // 4. Check if already monitored
     if let Some(_existing) = store.get(&path) {
@@ -329,7 +329,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         exclude_cmd: exclude_cmd.clone(),
     });
 
-    store.save(&cfg.managed.file)?;
+    store.save(&cfg.managed.path)?;
 
     // Try live update via socket (non-fatal if fails)
     let socket_path = cfg.socket.path.clone();
@@ -355,9 +355,9 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             let is_permanent = resp.error_kind == Some(fsmon::socket::ErrorKind::Permanent);
             if is_permanent {
                 // Revert store save — the error will persist after restart
-                let mut store = Managed::load(&cfg.managed.file)?;
+                let mut store = Managed::load(&cfg.managed.path)?;
                 store.remove_entry(&path);
-                store.save(&cfg.managed.file)?;
+                store.save(&cfg.managed.path)?;
                 eprintln!("Error: {}", resp.error.unwrap_or_default());
             } else {
                 println!("Path added: {}", path.display());
@@ -384,14 +384,14 @@ fn cmd_remove(raw: PathBuf) -> Result<()> {
     let cleaned = expanded.clean();
     let path = cleaned.canonicalize().unwrap_or(cleaned);
 
-    let mut store = Managed::load(&cfg.managed.file)?;
+    let mut store = Managed::load(&cfg.managed.path)?;
 
     if !store.remove_entry(&path) {
         eprintln!("No monitored path: {}", path.display());
         std::process::exit(1);
     }
 
-    store.save(&cfg.managed.file)?;
+    store.save(&cfg.managed.path)?;
     println!("Path removed: {}", path.display());
 
     // Try live update via socket (non-fatal if fails)
@@ -425,7 +425,7 @@ fn cmd_remove(raw: PathBuf) -> Result<()> {
 fn cmd_managed() -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
-    let entries = Managed::load(&cfg.managed.file)
+    let entries = Managed::load(&cfg.managed.path)
         .map(|s| s.entries)
         .unwrap_or_default();
 
@@ -473,7 +473,7 @@ async fn cmd_query(args: QueryArgs) -> Result<()> {
         .collect::<Result<Vec<_>>>()?;
 
     let query = Query::new(
-        cfg.logging.dir,
+        cfg.logging.path,
         paths,
         time_filters,
     );
@@ -490,7 +490,7 @@ fn cmd_init() -> Result<()> {
 fn cmd_cd() -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
-    let dir = cfg.logging.dir.clone();
+    let dir = cfg.logging.path.clone();
 
     if !dir.exists() {
         eprintln!("Log directory does not exist yet. Run 'fsmon init' first.");
@@ -550,7 +550,7 @@ async fn cmd_clean(args: CleanArgs) -> Result<()> {
         .transpose()?;
 
     clean_logs(
-        &cfg.logging.dir,
+        &cfg.logging.path,
         paths.as_deref(),
         Some(time_filter),
         max_size_filter,
@@ -943,7 +943,7 @@ mod tests {
 fn cmd_list_managed_paths() -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
-    let entries = Managed::load(&cfg.managed.file)
+    let entries = Managed::load(&cfg.managed.path)
         .map(|s| s.entries)
         .unwrap_or_default();
     for entry in &entries {

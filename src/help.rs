@@ -42,8 +42,8 @@ Usage:
   fsmon query -t '>1h'    Query events from last hour
 
 Config:           ~/.config/fsmon/fsmon.toml
-Managed:          ~/.local/share/fsmon/managed.jsonl (configurable via [managed].file)
-Log dir:          ~/.local/state/fsmon/ (configurable via [logging].dir)
+Managed:          ~/.local/share/fsmon/managed.jsonl (configurable via [managed].path)
+Log dir:          ~/.local/state/fsmon/ (configurable via [logging].path)
 Socket:           /tmp/fsmon-<UID>.sock (configurable via [socket].path)"#
         }
         HelpTopic::Init => {
@@ -185,6 +185,6 @@ Clean (config defaults: keep_days=30, size=>=1GB):
   fsmon clean --dry-run             Preview without deleting
 
 Config: ~/.config/fsmon/fsmon.toml (optional — defaults without it)
-Managed: ~/.local/share/fsmon/managed.jsonl (configurable via [managed].file)
-Logs:   ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].dir)"#
+Managed: ~/.local/share/fsmon/managed.jsonl (configurable via [managed].path)
+Logs:   ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].path)"#
 }

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::chown_to_original_user;
 
-/// The monitored paths database, stored in the file configured by `[store].file`.
+/// The monitored paths database, stored in the file configured by `[managed].path`.
 ///
 /// Managed automatically by `fsmon add` and `fsmon remove`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

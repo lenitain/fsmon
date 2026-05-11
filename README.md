@@ -153,7 +153,7 @@ kill %1
 | Unix socket | `/tmp/fsmon-<UID>.sock` | TOML over stream |
 
 Both the store path and log directory are configurable in `~/.config/fsmon/fsmon.toml`
-(see `[managed].file` and `[logging].dir`).
+(see `[managed].path` and `[logging].path`).
 
 The daemon runs as root (via sudo) but resolves your original user's home directory
 via `SUDO_UID` + `getpwuid_r`, so it writes to `/home/<you>/...` not `/root/...`.
@@ -290,16 +290,16 @@ Config file is optional — defaults apply without it.
 # fsmon configuration file
 #
 # Infrastructure paths for fsmon. Monitored paths are managed separately
-# via 'fsmon add' / 'fsmon remove' and persisted in [managed].file.
+# via 'fsmon add' / 'fsmon remove' and persisted in [managed].path.
 # All paths support ~ expansion. <UID> is replaced with the numeric UID at runtime.
 
 [managed]
 # Path to the auto-managed monitored paths database.
-file = "~/.local/share/fsmon/managed.jsonl"
+path = "~/.local/share/fsmon/managed.jsonl"
 
 [logging]
-# Directory containing per-path log files (named by path hash).
-dir = "~/.local/state/fsmon"
+# Path to the event log directory (per-path *_log.jsonl files).
+path = "~/.local/state/fsmon"
 # Defaults for 'fsmon clean' (not auto-cleaned by daemon; use cron/timer).
 #   keep_days: delete entries older than N days
 #   size:  truncate log file when exceeding this size

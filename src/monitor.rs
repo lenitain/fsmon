@@ -311,7 +311,7 @@ impl Monitor {
                     "Cannot monitor '{}': log directory '{}' is inside this path — \
                      would cause infinite recursion on every log write.\n\
                      Tip: fsmon remove {} or exclude the log directory with --exclude \
-                     or use a different logging.dir",
+                     or use a different logging.path",
                     path.display(),
                     log_dir_canonical.as_ref().unwrap().display(),
                     path.display()
@@ -1047,7 +1047,7 @@ impl Monitor {
             bail!(
                 "Cannot monitor '{}': log directory '{}' is inside this path — \
                  every log write would trigger a new event, causing infinite recursion.\n\
-                 Tip: exclude the log directory with --exclude or use a different logging.dir",
+                 Tip: exclude the log directory with --exclude or use a different logging.path",
                 path.display(),
                 log_dir.display()
             );
