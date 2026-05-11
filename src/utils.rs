@@ -325,6 +325,142 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_size_negative() {
+        assert_eq!(parse_size("-100").unwrap(), -100);
+        assert_eq!(parse_size("-1KB").unwrap(), -1024);
+        assert_eq!(parse_size("-2.5MB").unwrap(), -(2.5 * 1024.0 * 1024.0) as i64);
+    }
+
+    #[test]
+    fn test_parse_size_small_decimals() {
+        // Sub-unit decimals
+        assert_eq!(parse_size("0.5KB").unwrap(), 512);
+        assert_eq!(parse_size("0.001MB").unwrap(), (0.001 * 1024.0 * 1024.0) as i64);
+        assert_eq!(parse_size("0.1GB").unwrap(), (0.1 * 1024.0 * 1024.0 * 1024.0) as i64);
+        // Negative small decimal
+        assert_eq!(parse_size("-0.5KB").unwrap(), -512);
+    }
+
+    #[test]
+    fn test_parse_size_weird_units() {
+        // Whitespace between number and unit
+        assert_eq!(parse_size("1 KB").unwrap(), 1024);
+        assert_eq!(parse_size("1  MB").unwrap(), 1024 * 1024);
+        // Lowercase unit separated
+        assert_eq!(parse_size("1 kb").unwrap(), 1024);
+        // Multiple dots (invalid but should still parse the number portion)
+        assert!(parse_size("1.5.3KB").is_err());
+        // Just unit without number
+        assert!(parse_size("KB").is_err());
+        assert!(parse_size("MB").is_err());
+        // Empty
+        assert!(parse_size("").is_err());
+        assert!(parse_size("  ").is_err());
+    }
+
+    #[test]
+    fn test_parse_size_extreme() {
+        // Large value
+        assert!(parse_size("9999GB").is_ok());
+        // Very small decimal that rounds to zero
+        let result = parse_size("0.000000001KB").unwrap();
+        assert_eq!(result, 0);
+    }
+
+    // ---- parse_size_filter tests ----
+
+    #[test]
+    fn test_parse_size_filter_ge() {
+        let f = parse_size_filter(">=1MB").unwrap();
+        assert_eq!(f.op, SizeOp::Ge);
+        assert_eq!(f.bytes, 1024 * 1024);
+    }
+
+    #[test]
+    fn test_parse_size_filter_gt() {
+        let f = parse_size_filter(">100KB").unwrap();
+        assert_eq!(f.op, SizeOp::Gt);
+        assert_eq!(f.bytes, 100 * 1024);
+    }
+
+    #[test]
+    fn test_parse_size_filter_le() {
+        let f = parse_size_filter("<=500MB").unwrap();
+        assert_eq!(f.op, SizeOp::Le);
+        assert_eq!(f.bytes, 500 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_parse_size_filter_lt() {
+        let f = parse_size_filter("<1GB").unwrap();
+        assert_eq!(f.op, SizeOp::Lt);
+        assert_eq!(f.bytes, 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_parse_size_filter_eq() {
+        let f = parse_size_filter("=0").unwrap();
+        assert_eq!(f.op, SizeOp::Eq);
+        assert_eq!(f.bytes, 0);
+
+        let f = parse_size_filter("=1KB").unwrap();
+        assert_eq!(f.op, SizeOp::Eq);
+        assert_eq!(f.bytes, 1024);
+    }
+
+    #[test]
+    fn test_parse_size_filter_default_ge() {
+        // No operator defaults to >=
+        let f = parse_size_filter("500MB").unwrap();
+        assert_eq!(f.op, SizeOp::Ge);
+        assert_eq!(f.bytes, 500 * 1024 * 1024);
+
+        let f = parse_size_filter("1GB").unwrap();
+        assert_eq!(f.op, SizeOp::Ge);
+    }
+
+    #[test]
+    fn test_parse_size_filter_whitespace() {
+        let f = parse_size_filter("  >=  1MB  ").unwrap();
+        assert_eq!(f.op, SizeOp::Ge);
+        assert_eq!(f.bytes, 1024 * 1024);
+
+        let f = parse_size_filter("  < 500KB  ").unwrap();
+        assert_eq!(f.op, SizeOp::Lt);
+        assert_eq!(f.bytes, 500 * 1024);
+    }
+
+    #[test]
+    fn test_parse_size_filter_negative() {
+        let f = parse_size_filter(">-1KB").unwrap();
+        assert_eq!(f.op, SizeOp::Gt);
+        assert_eq!(f.bytes, -1024);
+
+        let f = parse_size_filter("<=0").unwrap();
+        assert_eq!(f.op, SizeOp::Le);
+        assert_eq!(f.bytes, 0);
+    }
+
+    #[test]
+    fn test_parse_size_filter_decimal() {
+        let f = parse_size_filter(">=1.5KB").unwrap();
+        assert_eq!(f.op, SizeOp::Ge);
+        assert_eq!(f.bytes, 1536);
+
+        let f = parse_size_filter("<0.5MB").unwrap();
+        assert_eq!(f.op, SizeOp::Lt);
+        assert_eq!(f.bytes, (0.5 * 1024.0 * 1024.0) as i64);
+    }
+
+    #[test]
+    fn test_parse_size_filter_invalid() {
+        assert!(parse_size_filter(">abc").is_err());
+        assert!(parse_size_filter("<=").is_err());
+        assert!(parse_size_filter("==1KB").is_err());
+    }
+
+
+    #[test]
     fn test_format_size() {
         assert_eq!(format_size(100), "100B");
         assert_eq!(format_size(1024), "1.0KB");

@@ -708,6 +708,36 @@ mod tests {
     }
 
     #[test]
+    fn test_add_size_with_operator() {
+        let args = AddArgs::try_parse_from(&["add", "/tmp", "-s", ">=1MB"]).unwrap();
+        assert_eq!(args.size, Some(">=1MB".into()));
+
+        let args = AddArgs::try_parse_from(&["add", "/tmp", "--size", "<500KB"]).unwrap();
+        assert_eq!(args.size, Some("<500KB".into()));
+
+        let args = AddArgs::try_parse_from(&["add", "/tmp", "-s", "=0"]).unwrap();
+        assert_eq!(args.size, Some("=0".into()));
+    }
+
+    #[test]
+    fn test_add_size_decimal_and_negative() {
+        let args = AddArgs::try_parse_from(&["add", "/tmp", "-s", "1.5KB"]).unwrap();
+        assert_eq!(args.size, Some("1.5KB".into()));
+
+        let args = AddArgs::try_parse_from(&["add", "/tmp", "--size", ">-1KB"]).unwrap();
+        assert_eq!(args.size, Some(">-1KB".into()));
+    }
+
+    #[test]
+    fn test_add_size_case_insensitive_unit() {
+        let args = AddArgs::try_parse_from(&["add", "/tmp", "-s", "1mb"]).unwrap();
+        assert_eq!(args.size, Some("1mb".into()));
+
+        let args = AddArgs::try_parse_from(&["add", "/tmp", "--size", "100Kb"]).unwrap();
+        assert_eq!(args.size, Some("100Kb".into()));
+    }
+
+    #[test]
     fn test_add_all_flags() {
         let args = AddArgs::try_parse_from(&[
             "add", "/tmp",
