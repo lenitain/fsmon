@@ -13,7 +13,7 @@ use fanotify_fid::consts::{
 use crate::filters::PathOptions;
 use crate::EventType;
 use std::fs;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 
 // ---- FanFd wrapper for AsyncFd ----
@@ -28,12 +28,7 @@ impl AsRawFd for FanFd {
     }
 }
 
-impl AsFd for FanFd {
-    fn as_fd(&self) -> BorrowedFd<'_> {
-        // SAFETY: the fd is valid for the lifetime of the Monitor
-        unsafe { BorrowedFd::borrow_raw(self.0) }
-    }
-}
+
 
 // ---- FsGroup: one per unique filesystem ----
 

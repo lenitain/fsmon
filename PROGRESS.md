@@ -10,7 +10,7 @@
 | `src/monitor.rs` | `nix::fcntl::open` + `from_raw_fd` | 2→2 | ✅ `safe_open_dir()` 集中到1处 |
 | `src/monitor.rs` | `libc::read` (集成测试) | 1 | ✅ 加safety注释 |
 | `src/proc_cache.rs` | Netlink conn: `socket/bind/recv/send/zeroed` | 5+5 | ❌ 无safe替代 |
-| `src/fid_parser.rs` | `BorrowedFd::borrow_raw` | 1 | ⏳ 待改 |
+| `src/fid_parser.rs` | `BorrowedFd::borrow_raw` | 1→0 | ✅ 死代码，直接删除 |
 | `src/config.rs` | `std::env::set_var/remove_var` (测试) | 8 | ⏳ 待改（低优） |
 
 ## 改造计划（按优先级）
@@ -29,12 +29,12 @@
 - **效益**: 2 个分散 unsafe → 1 处集中（在 `safe_open_dir` 内）
 - **状态**: ✅ 已完成
 
-### P2 — fid_parser.rs: `BorrowedFd::borrow_raw`
+### ✅ P2 — fid_parser.rs: 删除无用的 `AsFd` impl
 
-- **文件**: `src/fid_parser.rs` L34
-- **方案**: 将 `FanFd` 内部改为 `OwnedFd`，`as_fd()` 直接调用 `self.0.as_fd()`
-- **风险**: `FanFd` 同时用于 `AsyncFd` 包装（`inotify`），需确认兼容性
-- **状态**: ⏳
+- **文件**: `src/fid_parser.rs` L31~L37
+- **方案**: `FanFd` 的唯一使用者是 `AsyncFd::new()`，而 tokio 1.35 只要求 `AsRawFd`（已实现）。`AsFd` 是死代码，直接删除
+- **风险**: 无风险 —— 删除后编译通过，所有测试通过
+- **状态**: ✅ 已完成
 
 ### P3 — config.rs 测试中环境变量 unsafe
 
@@ -59,5 +59,5 @@
 1. ✅ proc_cache.rs + monitor.rs 集成测试 — safety 注释完善
 2. ✅ P0 — monitor.rs `safe_dup()` 辅助函数
 3. ✅ P1 — monitor.rs `safe_open_dir()` 辅助函数
-4. ⏳ P2 — fid_parser.rs `BorrowedFd` → `OwnedFd`
+4. ✅ P2 — fid_parser.rs 删除无用 `AsFd` impl
 5. ⏳ P3 — config.rs 测试环境变量
