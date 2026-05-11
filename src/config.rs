@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -167,8 +167,8 @@ impl Config {
         PathBuf::from(xdg_config).join("fsmon").join("fsmon.toml")
     }
 
-    /// Load config from file. Returns default Config if file doesn't exist
-    /// or if the file is invalid (file is never modified).
+    /// Load config from file. Returns default Config if file doesn't exist.
+    /// Errors if the file exists but is invalid — file is never modified.
     pub fn load() -> Result<Self> {
         let p = Self::path();
         if !p.exists() {
@@ -178,14 +178,11 @@ impl Config {
             .with_context(|| format!("Failed to read config {}", p.display()))?;
         match toml::from_str::<Config>(&content) {
             Ok(cfg) => Ok(cfg),
-            Err(e) => {
-                eprintln!(
-                    "[WARNING] Invalid config file at {}, using defaults.\n  Reason: {}",
-                    p.display(),
-                    e
-                );
-                Ok(Config::default())
-            }
+            Err(e) => bail!(
+                "Invalid config file at {}: {}",
+                p.display(),
+                e
+            ),
         }
     }
 
@@ -356,23 +353,16 @@ path = "/tmp/custom.sock"
     #[test]
     #[test]
     #[test]
-    fn test_load_invalid_config_does_not_overwrite_file() {
+    fn test_load_invalid_config_returns_error() {
         with_isolated_home(|_| {
             let config_path = Config::path();
             fs::create_dir_all(config_path.parent().unwrap()).unwrap();
-            // Write an empty (invalid) config
             fs::write(&config_path, "").unwrap();
 
-            let original_modified = fs::metadata(&config_path).unwrap().modified().unwrap();
-            let cfg = Config::load().unwrap();
-            // Returns defaults but file should be unchanged
-            assert!(cfg.managed.path.to_string_lossy().contains("~"));
-            let after_modified = fs::metadata(&config_path).unwrap().modified().unwrap();
-            assert_eq!(
-                original_modified, after_modified,
-                "load() must NOT modify invalid config files"
-            );
-            // File content should still be empty
+            // Should error, not silently use defaults
+            assert!(Config::load().is_err());
+
+            // File should be untouched
             let content = fs::read_to_string(&config_path).unwrap();
             assert!(content.trim().is_empty(), "file content should be untouched");
         });
