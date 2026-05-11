@@ -129,7 +129,7 @@ impl Monitor {
     /// Duplicate a file descriptor, returning an owned fd.
     /// The returned `OwnedFd` has independent lifetime from the source
     /// and will be closed on drop.
-    fn safe_dup(fd: &impl AsRawFd) -> std::io::Result<OwnedFd> {
+    fn dup_fd(fd: &impl AsRawFd) -> std::io::Result<OwnedFd> {
         let new_raw = nix::unistd::dup(fd.as_raw_fd())
             .map_err(|e| std::io::Error::other(e))?;
         // SAFETY: nix::unistd::dup returned a new valid fd that we
@@ -141,7 +141,7 @@ impl Monitor {
     /// Open a directory and return an owned fd.
     /// The returned `OwnedFd` has the directory open and will be
     /// closed on drop.
-    fn safe_open_dir(path: &Path) -> std::io::Result<OwnedFd> {
+    fn open_dir(path: &Path) -> std::io::Result<OwnedFd> {
         let raw = nix::fcntl::open(
             path,
             nix::fcntl::OFlag::O_DIRECTORY,
@@ -369,7 +369,7 @@ impl Monitor {
             }
 
             // Open directory fd for open_by_handle_at
-            let mount_fd = match Self::safe_open_dir(canonical) {
+            let mount_fd = match Self::open_dir(canonical) {
                 Ok(fd) => fd,
                 Err(e) => {
                     eprintln!(
@@ -465,7 +465,7 @@ impl Monitor {
 
         for gi in 0..self.fs_groups.len() {
             // Duplicate both fds so reader task owns independent copies
-            let owned_fan_fd = match Self::safe_dup(&self.fs_groups[gi].fan_fd) {
+            let owned_fan_fd = match Self::dup_fd(&self.fs_groups[gi].fan_fd) {
                 Ok(fd) => fd,
                 Err(e) => {
                     eprintln!(
@@ -476,7 +476,7 @@ impl Monitor {
                     continue;
                 }
             };
-            let owned_mount_fd = match Self::safe_dup(&self.fs_groups[gi].mount_fd) {
+            let owned_mount_fd = match Self::dup_fd(&self.fs_groups[gi].mount_fd) {
                 Ok(fd) => fd,
                 Err(e) => {
                     eprintln!(
@@ -740,7 +740,7 @@ impl Monitor {
         let group = &self.fs_groups[group_idx];
 
         // Duplicate fds so the reader task owns independent copies
-        let owned_fan_fd = match Self::safe_dup(&group.fan_fd) {
+        let owned_fan_fd = match Self::dup_fd(&group.fan_fd) {
             Ok(fd) => fd,
             Err(e) => {
                 eprintln!(
@@ -751,7 +751,7 @@ impl Monitor {
                 return;
             }
         };
-        let owned_mount_fd = match Self::safe_dup(&group.mount_fd) {
+        let owned_mount_fd = match Self::dup_fd(&group.mount_fd) {
             Ok(fd) => fd,
             Err(e) => {
                 eprintln!(
@@ -955,7 +955,7 @@ impl Monitor {
             };
 
             // Open directory fd for handle resolution
-            let mount_fd = Self::safe_open_dir(&canonical)?;
+            let mount_fd = Self::open_dir(&canonical)?;
 
             let idx = self.fs_groups.len();
             self.fs_groups.push(FsGroup {
