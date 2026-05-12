@@ -17,12 +17,7 @@ pub fn cmd_remove(path: Option<PathBuf>, cmd: Option<String>) -> Result<()> {
         store.remove_entry(p, cmd.as_deref())
     } else if let Some(ref c) = cmd {
         // --cmd openclaw (no path) → only match process-only entries (path == cmd sentinel)
-        let len_before = store.entries.len();
-        let path_str = PathBuf::from(c.as_str());
-        store
-            .entries
-            .retain(|e| !(e.path == path_str && e.cmd.as_deref() == Some(c.as_str())));
-        store.entries.len() < len_before
+        store.remove_entry(&PathBuf::from(c.as_str()), Some(c.as_str()))
     } else {
         false
     };

@@ -45,7 +45,7 @@ pub async fn cmd_daemon() -> Result<()> {
         chown_path(parent, uid, gid);
     }
 
-    let paths_and_options = parse_path_entries(&store.entries)?;
+    let paths_and_options = parse_path_entries(&store.flatten())?;
 
     let store_path = cfg.monitored.path.clone();
     let mut monitor = Monitor::new(
@@ -56,9 +56,9 @@ pub async fn cmd_daemon() -> Result<()> {
         Some(socket_listener),
     )?;
 
-    if !store.entries.is_empty() {
-        eprintln!("Monitored paths ({}):", store.entries.len());
-        for entry in &store.entries {
+    if !store.is_empty() {
+        eprintln!("Monitored paths ({}):", store.entry_count());
+        for entry in &store.flatten() {
             eprintln!("  {}", entry.path.display());
         }
     }

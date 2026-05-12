@@ -5,12 +5,11 @@ use fsmon::monitored::Monitored;
 pub fn cmd_monitored() -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
-    let entries = Monitored::load(&cfg.monitored.path)
-        .map(|s| s.entries)
+    let store = Monitored::load(&cfg.monitored.path)
         .unwrap_or_default();
 
-    for entry in &entries {
-        println!("{}", serde_json::to_string(entry).expect("PathEntry serialization"));
+    for group in &store.groups {
+        println!("{}", serde_json::to_string(group).expect("CmdGroup serialization"));
     }
 
     Ok(())
@@ -20,10 +19,9 @@ pub fn cmd_monitored() -> Result<()> {
 pub fn cmd_list_monitored_paths() -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
-    let entries = Monitored::load(&cfg.monitored.path)
-        .map(|s| s.entries)
+    let store = Monitored::load(&cfg.monitored.path)
         .unwrap_or_default();
-    for entry in &entries {
+    for entry in store.flatten() {
         println!("{}", entry.path.display());
     }
     Ok(())

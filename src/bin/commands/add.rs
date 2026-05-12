@@ -95,7 +95,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         }
 
         // Check for monitoring overlap
-        for entry in &store.entries {
+        for entry in &store.flatten() {
             let e_recursive = entry.recursive.unwrap_or(false);
             if e_recursive && path.starts_with(&entry.path) && *path != entry.path {
                 eprintln!(

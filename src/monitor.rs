@@ -1221,7 +1221,8 @@ impl Monitor {
             .context("No store path configured")?;
         let store = Monitored::load(monitored_path)?;
         // Add new paths that appear in store
-        for entry in &store.entries {
+        let flat_entries = store.flatten();
+        for entry in &flat_entries {
             if !self.path_options.contains_key(&entry.path)
                 && let Err(e) = self.add_path(entry)
             {
@@ -1231,7 +1232,7 @@ impl Monitor {
         // Remove paths no longer in store
         let current_paths: Vec<PathBuf> = self.paths.clone();
         for path in &current_paths {
-            if !store.entries.iter().any(|p| p.path == *path)
+            if !flat_entries.iter().any(|p| p.path == *path)
                 && let Err(e) = self.remove_path(path)
             {
                 eprintln!("Failed to remove path {} on reload: {e}", path.display());
