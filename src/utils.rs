@@ -303,33 +303,6 @@ pub fn cmd_to_log_name(cmd: &str) -> String {
     format!("{}_log.jsonl", cmd)
 }
 
-/// Resolve log filename from a monitored path (FNV-1a hash based).
-/// Superseded by `cmd_to_log_name` — kept for backward compat.
-///
-/// Uses FNV-1a 64-bit hash (stable across runs, no dependencies) to avoid
-/// the 255-byte filename limit that the old escape-based encoding could exceed.
-///
-/// Examples:
-/// - `/tmp/foo`          → `a1b2c3d4e5f6a7b8_log.jsonl`
-/// - `/home/my_docs/a_b` → `c9d0e1f2a3b4c5d6_log.jsonl`
-pub fn path_to_log_name(path: &Path) -> String {
-    let s = path.to_string_lossy();
-    let hash = fnv1a_64(s.as_bytes());
-    format!("{:016x}_log.jsonl", hash)
-}
-
-/// FNV-1a 64-bit hash — deterministic, dependency-free, good for this use case.
-fn fnv1a_64(bytes: &[u8]) -> u64 {
-    const FNV_OFFSET: u64 = 14695981039346656037;
-    const FNV_PRIME: u64 = 1099511628211;
-    let mut hash = FNV_OFFSET;
-    for &b in bytes {
-        hash ^= b as u64;
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    hash
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -692,63 +665,5 @@ mod tests {
                 parsed
             );
         }
-    }
-
-    #[test]
-    fn test_path_to_log_name() {
-        // Hash-based: fixed 16-char hex + _log.jsonl suffix
-        let name = path_to_log_name(Path::new("/tmp/foo"));
-        assert!(name.ends_with("_log.jsonl"));
-        assert_eq!(name.len(), 16 + 10); // 16 hex chars + "_log.jsonl"
-        assert!(name.chars().take(16).all(|c| c.is_ascii_hexdigit()));
-    }
-
-    #[test]
-    fn test_path_to_log_name_deterministic() {
-        // Same path always produces same hash
-        let a = path_to_log_name(Path::new("/tmp/foo"));
-        let b = path_to_log_name(Path::new("/tmp/foo"));
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn test_path_to_log_name_different_paths() {
-        // Different paths produce different hashes (extremely unlikely to collide)
-        let a = path_to_log_name(Path::new("/tmp/foo"));
-        let b = path_to_log_name(Path::new("/tmp/bar"));
-        assert_ne!(a, b);
-    }
-
-    #[test]
-    fn test_path_to_log_name_deep_path() {
-        // Deep/nested paths should produce same-length output (no 255-byte limit issue)
-        let deep = Path::new(
-            "/a/very/deep/nested/path/with/lots/of/components/that/would/have/caused/issues/before/with/the/old/encoding/scheme/because/it/exceeds/255/bytes/easily/with/all/the/underscores/and/slashes/foo_bar_baz_qux_quux_corge_grault_garply_waldo_fred_plugh_xyzzy_thud"
-        );
-        let name = path_to_log_name(deep);
-        assert_eq!(name.len(), 16 + 10); // Still 26 chars
-        assert!(name.ends_with("_log.jsonl"));
-    }
-
-    #[test]
-    fn test_path_to_log_name_special_chars() {
-        // Paths with underscores, exclamation marks, etc. all produce valid short hashes
-        let names = [
-            path_to_log_name(Path::new("/home/my_docs/a_b")),
-            path_to_log_name(Path::new("/tmp/_test")),
-            path_to_log_name(Path::new("/__test__")),
-            path_to_log_name(Path::new("!/tmp")),
-            path_to_log_name(Path::new("/tmp/foo!bar")),
-            path_to_log_name(Path::new("/a!_b/c!!d/e_")),
-        ];
-        for name in &names {
-            assert_eq!(name.len(), 16 + 10);
-            assert!(name.ends_with("_log.jsonl"));
-        }
-        // Ensure they're all different
-        let mut sorted = names.to_vec();
-        sorted.sort();
-        sorted.dedup();
-        assert_eq!(sorted.len(), names.len());
     }
 }
