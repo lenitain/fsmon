@@ -83,9 +83,14 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     // Check for duplicates if path is specified
     if let Some(ref path) = path {
         if store.get(path, process_name.as_deref()).is_some() {
+            let cmd_info = match process_name.as_deref() {
+                Some(cmd) => format!(" with --cmd {}", cmd),
+                None => " (without --cmd)".to_string(),
+            };
             eprintln!(
-                "[Note] '{}' is already monitored — new parameters will replace the existing configuration.",
-                path.display()
+                "[Note] '{}{}' is already monitored — new parameters will replace the existing configuration.",
+                path.display(),
+                cmd_info,
             );
         }
 
