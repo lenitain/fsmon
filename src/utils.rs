@@ -375,4 +375,36 @@ mod tests {
         assert!(formatted.contains("2024"));
     }
 
+    // -- cross-crate integration tests --
+
+    #[test]
+    fn reexported_parse_size_still_works() {
+        // These functions now come from sizefilter crate via re-export
+        assert_eq!(parse_size("1GB").unwrap(), 1073741824);
+        assert_eq!(format_size(1024), "1.0KB");
+        let f = parse_size_filter(">=500MB").unwrap();
+        assert_eq!(f.op, SizeOp::Ge);
+        assert_eq!(f.bytes, 524288000);
+    }
+
+    #[test]
+    fn size_error_converts_to_anyhow() {
+        // SizeError implements std::error::Error → auto-converts to anyhow::Error via ?
+        fn returns_anyhow() -> anyhow::Result<i64> {
+            Ok(parse_size("invalid")?)
+        }
+        let err = returns_anyhow().unwrap_err();
+        assert!(err.to_string().contains("failed to parse number"));
+    }
+
+    #[test]
+    fn time_filter_uses_sizefilter_sizeop() {
+        // fsmon's TimeFilter still uses sizefilter::SizeOp (not timefilter::TimeOp)
+        // This is by design — verify it compiles and matches correctly
+        fn check_op(op: SizeOp) -> bool {
+            matches!(op, SizeOp::Gt | SizeOp::Ge | SizeOp::Lt | SizeOp::Le | SizeOp::Eq)
+        }
+        assert!(check_op(SizeOp::Gt));
+        assert!(check_op(SizeOp::Eq));
+    }
 }
