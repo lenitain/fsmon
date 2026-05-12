@@ -22,22 +22,16 @@ pub struct PathEntry {
     /// Filesystem path to monitor (unique identifier).
     pub path: PathBuf,
     /// Watch subdirectories recursively.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub recursive: Option<bool>,
     /// Only monitor specified event types (e.g. `["MODIFY", "CREATE"]`).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub types: Option<Vec<String>>,
     /// Size filter with comparison operator (e.g. >1MB, >=500KB, <100MB).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
     /// Paths to exclude from monitoring (glob patterns, repeatable).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude: Option<Vec<String>>,
     /// Process names to exclude (glob, repeatable).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude_cmd: Option<Vec<String>>,
     /// Process name for process-tree tracking (--cmd flag).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub cmd: Option<String>,
 }
 

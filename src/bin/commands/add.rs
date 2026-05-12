@@ -163,9 +163,11 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         },
     );
 
+    let entry_json = serde_json::to_string(&entry).expect("PathEntry serialization");
     match result {
         Ok(resp) if resp.ok => {
-            println!("{}", serde_json::to_string(&entry).expect("PathEntry serialization"));
+            println!("Entry added into managed");
+            println!("{}", entry_json);
         }
         Ok(resp) => {
             if resp.error_kind == Some(fsmon::socket::ErrorKind::Permanent) {
@@ -174,12 +176,15 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
                 store.save(&cfg.managed.path)?;
                 eprintln!("Error: {}", resp.error.unwrap_or_default());
             } else {
-                println!("{}", serde_json::to_string(&entry).expect("PathEntry serialization"));
+                println!("Entry added into managed");
+                println!("{}", entry_json);
                 eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
             }
         }
         Err(_) => {
-            println!("{}", serde_json::to_string(&entry).expect("PathEntry serialization"));
+            println!("Entry added into managed");
+            println!("{}", entry_json);
+            eprintln!("Daemon is not running — will be monitored after daemon restart.");
         }
     }
     Ok(())
