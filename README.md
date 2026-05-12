@@ -434,7 +434,7 @@ src/
 │       ├── daemon.rs           cmd_daemon: fanotify init, socket setup, Monitor::run()
 │       ├── add.rs              cmd_add: path normalization, store update, live socket
 │       ├── remove.rs           cmd_remove: store update, live socket
-│       ├── manage.rs           cmd_monitored, cmd_list_monitored_paths
+│       ├── monitored.rs        cmd_monitored, cmd_list_monitored_paths
 │       ├── query.rs            cmd_query: time filter, Query::execute()
 │       ├── clean.rs            cmd_clean: time/size filter delegation
 │       ├── init_cd.rs          cmd_init, cmd_cd

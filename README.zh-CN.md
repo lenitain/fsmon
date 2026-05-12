@@ -423,7 +423,7 @@ src/
 │       ├── daemon.rs           cmd_daemon: fanotify 初始化, socket 设置, Monitor::run()
 │       ├── add.rs              cmd_add: 路径标准化, store 更新, socket 热更新
 │       ├── remove.rs           cmd_remove: store 更新, socket 热更新
-│       ├── manage.rs           cmd_monitored, cmd_list_monitored_paths
+│       ├── monitored.rs        cmd_monitored, cmd_list_monitored_paths
 │       ├── query.rs            cmd_query: 时间过滤, Query::execute()
 │       ├── clean.rs            cmd_clean: 时间/大小过滤委托
 │       ├── init_cd.rs          cmd_init, cmd_cd
