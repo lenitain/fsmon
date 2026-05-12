@@ -38,8 +38,8 @@ restarting the daemon.
 
 Usage:
   sudo fsmon daemon &       Start daemon in background
-  fsmon add /path --types all       All 14 event types
-  fsmon add /path --exclude-cmd 'rsync'  Exclude by process name
+  fsmon add /path           Monitor all events on /path
+  fsmon add openclaw --path /home -r     Track openclaw on /home (recursive)
   fsmon monitored                       List monitored paths
   fsmon query -t '>1h'    Query events from last hour
 
@@ -73,36 +73,35 @@ Examples:
   fsmon cd && ls                 List log files, then exit"#
         }
         HelpTopic::Add => {
-            r#"Add a path to the monitoring list.
+            r#"Add a path or process to the monitoring list.
 
-The path is added immediately if the daemon is running, and persisted
+The entry is added immediately if the daemon is running, and persisted
 in the monitored paths database for automatic monitoring on daemon restart.
 
 No sudo needed — store is updated immediately.
 
+USAGE:
+  fsmon add [CMD] [OPTIONS]
+
+ARGS:
+  <CMD>   Process name to track (process tree + ancestry chain).
+          Enables process tree tracking: fork/exec children are auto-included.
+          When specified, matching events include a `chain` field.
+          Omit to monitor all events on a path (path-only mode).
+
 Options:
+  --path <PATH>           Filesystem path to monitor
   -r, --recursive         Watch subdirectories recursively
   -t, --types             Event types to monitor (repeatable; use "all" for all 14 types)
   -s, --size             Size filter with operator (required: >=, >, <=, <, =)
                           e.g. >1MB, >=500KB, <100MB, =0
-  -e, --exclude           Path regex patterns to exclude (repeatable, prefix ! to invert)
-  --exclude-cmd           Process name regex patterns to exclude (repeatable, prefix ! to invert)
-
-Regex syntax:
-  --exclude '\.tmp$' --exclude '\.log$'   Exclude .tmp and .log files
-  --exclude '!.*\.py$'                      Only track .py files, exclude all others
-  --exclude-cmd 'rsync' --exclude-cmd 'apt'  Exclude rsync and apt processes
-  --exclude-cmd '!nginx|python'              Only track nginx and python processes
-  Standard Rust regex syntax supported.
-  prefix ! to invert (only valid as the first pattern)
-
 Examples:
-  fsmon add /path/to/project -r                 Default: 8 event types
-  fsmon add /path --types MODIFY --types CREATE  Only these 2 types
-  fsmon add /path --types all                   All 14 event types
-  fsmon add /etc --size '>=100KB'
-  fsmon add /var/log --exclude-cmd 'rsync'
-  fsmon add /tmp --exclude-cmd 'nginx'"#
+  fsmon add openclaw --path /home -r           Track openclaw on /home (recursive)
+  fsmon add nginx                              Track nginx globally (process-only)
+  fsmon add --path /home -r                    Monitor /home recursively (path-only)
+  fsmon add --path /home --types MODIFY --types CREATE  Filter by event types
+  fsmon add --path /home --types all                   All 14 event types
+  fsmon add --path /home -s '>=1MB'                    Minimum file size change"#
         }
         HelpTopic::Remove => {
             r#"Remove one or more paths from the monitoring list.
@@ -202,8 +201,8 @@ Daemon (requires sudo):
   kill %1                           Stop daemon (or Ctrl+C)
 
 Management (no sudo needed):
-  fsmon add /path -r                Add path (recursive, default 8 types)
-  fsmon add /path --exclude-cmd 'rsync'  Exclude by process name
+  fsmon add openclaw --path /home -r   Track openclaw on /home (recursive)
+  fsmon add /path -r                Monitor path (recursive, default 8 types)
   fsmon remove /path                Remove path(s), multiple paths OK
   fsmon monitored                     List monitored paths
   fsmon p2l /path1 /path2      Resolve log file path(s)

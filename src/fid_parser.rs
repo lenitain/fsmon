@@ -325,10 +325,6 @@ mod tests {
         PathOptions {
             size_filter: None,
             event_types,
-            exclude_regex: None,
-            exclude_invert: false,
-            exclude_cmd_regex: None,
-            exclude_cmd_invert: false,
             recursive: false,
             cmd: None,
         }

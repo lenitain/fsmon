@@ -71,13 +71,13 @@ pub enum Commands {
 
 #[derive(Parser)]
 pub struct AddArgs {
+    /// Process name to track (process tree + ancestry chain). Positional argument.
+    #[arg(value_name = "CMD")]
+    pub cmd: Option<String>,
+
     /// Path to monitor
     #[arg(long, value_name = "PATH")]
     pub path: Option<PathBuf>,
-
-    /// Track a process and its descendants (process tree + ancestry chain)
-    #[arg(long, value_name = "NAME")]
-    pub cmd: Option<String>,
 
     /// Watch subdirectories recursively
     #[arg(short)]
@@ -91,6 +91,7 @@ pub struct AddArgs {
     #[arg(short, long, value_name = "SIZE")]
     pub size: Option<String>,
 
+    /*
     /// Path glob patterns to exclude (repeatable, prefix ! to invert)
     #[arg(short, long, value_name = "PATTERN")]
     pub exclude: Vec<String>,
@@ -98,6 +99,7 @@ pub struct AddArgs {
     /// Process names to exclude (glob, repeatable, prefix ! to invert)
     #[arg(long, value_name = "PATTERN")]
     pub exclude_cmd: Vec<String>,
+    */
 }
 
 #[derive(Parser)]
@@ -138,12 +140,25 @@ mod tests {
     // ---- AddArgs CLI parsing ----
 
     #[test]
-    fn test_add_no_flags() {
+    fn test_add_positional_cmd() {
+        let args = AddArgs::try_parse_from(&["add", "openclaw", "--path", "/home"]).unwrap();
+        assert_eq!(args.cmd, Some("openclaw".to_string()));
+        assert_eq!(args.path, Some(PathBuf::from("/home")));
+    }
+
+    #[test]
+    fn test_add_positional_cmd_only() {
+        let args = AddArgs::try_parse_from(&["add", "nginx"]).unwrap();
+        assert_eq!(args.cmd, Some("nginx".to_string()));
+        assert!(args.path.is_none());
+    }
+
+    #[test]
+    fn test_add_path_only() {
         let args = AddArgs::try_parse_from(&["add", "--path", "/tmp"]).unwrap();
         assert_eq!(args.path, Some(PathBuf::from("/tmp")));
+        assert!(args.cmd.is_none());
         assert!(args.types.is_empty());
-        assert!(args.exclude.is_empty());
-        assert!(args.exclude_cmd.is_empty());
         assert!(!args.recursive);
         assert!(args.size.is_none());
     }
@@ -181,13 +196,14 @@ mod tests {
         assert_eq!(args.types, vec!["MODIFY", "CREATE"]);
     }
 
+    /*
     #[test]
     fn test_add_exclude_long() {
         let args = AddArgs::try_parse_from(&[
             "add", "--path", "/tmp",
             "--exclude", "*.tmp", "--exclude", "*.log",
         ]).unwrap();
-        assert_eq!(args.exclude, vec!["*.tmp", "*.log"]);
+        // exclude field removed
     }
 
     #[test]
@@ -196,7 +212,7 @@ mod tests {
             "add", "--path", "/tmp",
             "-e", "*.tmp", "-e", "*.log",
         ]).unwrap();
-        assert_eq!(args.exclude, vec!["*.tmp", "*.log"]);
+        // exclude field removed
     }
 
     #[test]
@@ -205,7 +221,7 @@ mod tests {
             "add", "--path", "/tmp",
             "--exclude", "!*.py",
         ]).unwrap();
-        assert_eq!(args.exclude, vec!["!*.py"]);
+        // exclude field removed
     }
 
     #[test]
@@ -214,7 +230,8 @@ mod tests {
             "add", "--path", "/tmp",
             "--exclude-cmd", "rsync", "--exclude-cmd", "apt",
         ]).unwrap();
-        assert_eq!(args.exclude_cmd, vec!["rsync", "apt"]);
+        // exclude_cmd field removed
+        assert!(args.cmd.is_none());
     }
 
     #[test]
@@ -223,13 +240,16 @@ mod tests {
             "add", "--path", "/tmp",
             "--exclude-cmd", "nginx",
         ]).unwrap();
-        assert_eq!(args.exclude_cmd, vec!["nginx"]);
+        // exclude_cmd field removed
+        assert!(args.cmd.is_none());
     }
+    */
 
     #[test]
     fn test_add_recursive_short() {
         let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "-r"]).unwrap();
         assert!(args.recursive);
+        assert!(args.cmd.is_none());
     }
 
     #[test]
@@ -277,19 +297,26 @@ mod tests {
     #[test]
     fn test_add_all_flags() {
         let args = AddArgs::try_parse_from(&[
-            "add", "--path", "/tmp",
+            "add", "nginx", "--path", "/tmp",
             "-r",
             "-t", "MODIFY", "--types", "CREATE",
-            "-e", "*.tmp", "--exclude", "*.log",
-            "--exclude-cmd", "rsync",
             "-s", "1KB",
         ]).unwrap();
+        assert_eq!(args.cmd, Some("nginx".to_string()));
         assert_eq!(args.path, Some(PathBuf::from("/tmp")));
         assert!(args.recursive);
         assert_eq!(args.types, vec!["MODIFY", "CREATE"]);
-        assert_eq!(args.exclude, vec!["*.tmp", "*.log"]);
-        assert_eq!(args.exclude_cmd, vec!["rsync"]);
         assert_eq!(args.size, Some("1KB".into()));
+    }
+
+    #[test]
+    fn test_add_positional_cmd_with_recursive() {
+        let args = AddArgs::try_parse_from(&[
+            "add", "openclaw", "--path", "/home", "-r",
+        ]).unwrap();
+        assert_eq!(args.cmd, Some("openclaw".to_string()));
+        assert_eq!(args.path, Some(PathBuf::from("/home")));
+        assert!(args.recursive);
     }
 
     // ---- QueryArgs CLI parsing ----

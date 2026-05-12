@@ -72,7 +72,8 @@ sudo fsmon daemon &
 # Terminal 1 (or another): add paths to monitor
 # Monitor /var/www/myapp recursively, only MODIFY + CREATE events,
 # exclude editor temp files, only track nginx and vim processes
-fsmon add /var/www/myapp -r --types MODIFY --types CREATE --exclude '\.swp$' --cmd nginx --cmd vim
+fsmon add nginx --path /var/www/myapp -r --types MODIFY --types CREATE --exclude '\.swp$'
+fsmon add vim --path /var/www/myapp -r --types MODIFY --types CREATE --exclude '\.swp$'
 
 # List what's being monitored
 fsmon monitored
@@ -197,29 +198,26 @@ Socket:           `/tmp/fsmon-<UID>.sock`
 
 ### add
 
-Add a path to the monitoring list. No sudo needed.
+Add a path or process to the monitoring list. No sudo needed.
 
 ```
-fsmon add --path /home --cmd openclaw              Track openclaw on /home (most common)
-fsmon add --path /home -r                            Monitor /home recursively (path-only)
-fsmon add --cmd openclaw                             Track openclaw globally (process-only)
+fsmon add openclaw --path /home -r                  Track openclaw on /home (most common)
+fsmon add nginx                                     Track nginx globally (process-only)
+fsmon add --path /home -r                           Monitor /home recursively (path-only)
 fsmon add --path /home --types MODIFY --types CREATE Filter by event types
 fsmon add --path /home --types all                   All 14 event types
-fsmon add --path /home --exclude '\.swp$' --exclude '\.tmp$'  Exclude path patterns
 fsmon add --path /home -s '>=1MB'                    Minimum file size change
-fsmon add --path /home --exclude-cmd rsync           Exclude noise processes (path-only mode)
 
-**`--path` vs `--cmd`:**
+**Modes:**
 
-| Mode | Flags | Behavior |
-|------|-------|----------|
-| **Both** | `--path /home --cmd openclaw` | Only track openclaw (and descendants) on /home. Matched events include `chain`. |
-| **Path only** | `--path /home` | All events on /home pass through. Each event has `ppid`/`tgid`. Optionally filter noise with `--exclude-cmd`. |
-| **Process only** | `--cmd openclaw` | Track openclaw globally across all paths. Matched events include `chain`. |
+| Mode | Example | Behavior |
+|------|---------|----------|
+| **Both** | `fsmon add openclaw --path /home` | Only track openclaw (and descendants) on /home. Matched events include `chain`. |
+| **Path only** | `fsmon add --path /home` | All events on /home pass through. Each event has `ppid`/`tgid`. |
+| **Process only** | `fsmon add openclaw` | Track openclaw globally across all paths. Matched events include `chain`. |
 
-- `--cmd <name>` enables **process tree tracking**: fork/exec children are automatically included. Matching events get a `chain` field (e.g., `"102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root"`).
-- `--exclude-cmd <pattern>` (only in path-only mode) filters by process name **without** process tree — single level only.
-- Multiple `--cmd` can be specified (OR logic).
+- `<CMD>` (positional arg) enables **process tree tracking**: fork/exec children are automatically included. Matching events get a `chain` field (e.g., `"102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root"`).
+- Multiple entries with different `<CMD>` values can be added (OR logic per entry).
 
 All capture filters run inside the daemon process (nanosecond-fast, no fork).
 ```

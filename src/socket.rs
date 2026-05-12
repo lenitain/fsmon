@@ -23,10 +23,14 @@ pub struct SocketCmd {
     pub types: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
+    /*
+    /*
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude_path: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude_cmd: Option<Vec<String>>,
+    */
+    */
     #[serde(skip_serializing_if = "Option::is_none")]
     pub track_cmd: Option<String>,
 }
