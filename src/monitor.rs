@@ -216,7 +216,7 @@ impl Monitor {
                         |v| v.iter().map(|t| t.to_string()).collect()
                     ),
                     size: opts.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes))),
-                    exclude: opts.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()]),
+                    exclude_path: opts.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()]),
                     exclude_cmd: None,
                     cmd: None,
                 }));
@@ -580,7 +580,7 @@ impl Monitor {
                                         |v| v.iter().map(|t| t.to_string()).collect()
                                     )),
                                     size: opts.and_then(|o| o.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes)))),
-                                    exclude: opts.and_then(|o| o.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()])),
+                                    exclude_path: opts.and_then(|o| o.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()])),
                                     exclude_cmd: None,
                                     cmd: None,
                                 };
@@ -904,7 +904,7 @@ impl Monitor {
                 .collect()
         });
         let size_filter = entry.size.as_ref().map(|s| parse_size_filter(s)).transpose()?;
-        let (exclude_regex, exclude_invert) = filters::build_exclude_regex(entry.exclude.as_deref(), "exclude")?;
+        let (exclude_regex, exclude_invert) = filters::build_exclude_regex(entry.exclude_path.as_deref(), "exclude_path")?;
         let (exclude_cmd_regex, exclude_cmd_invert) = filters::build_exclude_regex(entry.exclude_cmd.as_deref(), "--exclude-cmd")?;
         let recursive = entry.recursive.unwrap_or(false);
         let opts = PathOptions {
@@ -1129,7 +1129,7 @@ impl Monitor {
                     recursive: cmd.recursive,
                     types: cmd.types.clone(),
                     size: cmd.size.clone(),
-                    exclude: cmd.exclude.clone(),
+                    exclude_path: cmd.exclude_path.clone(),
                     exclude_cmd: cmd.exclude_cmd.clone(),
                     cmd: cmd.track_cmd.clone(),
                 };
@@ -1185,7 +1185,7 @@ impl Monitor {
                                     .map(|v| v.iter().map(|t| t.to_string()).collect())
                             }),
                             size: opts.and_then(|o| o.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes)))),
-                            exclude: opts.and_then(|o| {
+                            exclude_path: opts.and_then(|o| {
                                 o.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()])
                             }),
                             exclude_cmd: None,
@@ -1675,7 +1675,7 @@ mod tests {
             recursive: Some(true),
             types: None,
             size: None,
-            exclude: None,
+            exclude_path: None,
             exclude_cmd: None,
             cmd: None,
         };

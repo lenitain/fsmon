@@ -41,7 +41,7 @@ pub fn cmd_remove(path: Option<PathBuf>, cmd: Option<String>) -> Result<()> {
             recursive: None,
             types: None,
             size: None,
-            exclude: None,
+            exclude_path: None,
             exclude_cmd: None,
             track_cmd: cmd,
         },

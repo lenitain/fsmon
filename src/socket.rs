@@ -24,7 +24,7 @@ pub struct SocketCmd {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub exclude: Option<Vec<String>>,
+    pub exclude_path: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude_cmd: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]

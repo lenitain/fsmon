@@ -19,20 +19,20 @@ pub struct Managed {
 /// The path itself serves as the unique identifier (like chezmoi).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathEntry {
-    /// Filesystem path to monitor (unique identifier).
+    /// Filesystem path to monitor.
     pub path: PathBuf,
+    /// Process name for process-tree tracking (--cmd flag).
+    pub cmd: Option<String>,
     /// Watch subdirectories recursively.
     pub recursive: Option<bool>,
     /// Only monitor specified event types (e.g. `["MODIFY", "CREATE"]`).
     pub types: Option<Vec<String>>,
     /// Size filter with comparison operator (e.g. >1MB, >=500KB, <100MB).
     pub size: Option<String>,
-    /// Paths to exclude from monitoring (glob patterns, repeatable).
-    pub exclude: Option<Vec<String>>,
+    /// Path glob patterns to exclude.
+    pub exclude_path: Option<Vec<String>>,
     /// Process names to exclude (glob, repeatable).
     pub exclude_cmd: Option<Vec<String>>,
-    /// Process name for process-tree tracking (--cmd flag).
-    pub cmd: Option<String>,
 }
 
 impl Managed {
@@ -174,7 +174,7 @@ mod tests {
             recursive: Some(true),
             types: None,
             size: None,
-            exclude: None,
+            exclude_path: None,
     exclude_cmd: None,
             cmd: None,
         });
@@ -186,7 +186,7 @@ mod tests {
             recursive: Some(false),
             types: Some(vec!["MODIFY".into()]),
             size: None,
-            exclude: None,
+            exclude_path: None,
     exclude_cmd: None,
             cmd: None,
         });
@@ -203,7 +203,7 @@ mod tests {
             recursive: Some(true),
             types: None,
             size: None,
-            exclude: None,
+            exclude_path: None,
     exclude_cmd: None,
             cmd: None,
         });
@@ -215,7 +215,7 @@ mod tests {
             recursive: Some(false),
             types: Some(vec!["MODIFY".into()]),
             size: None,
-            exclude: None,
+            exclude_path: None,
     exclude_cmd: None,
             cmd: None,
         });
@@ -234,7 +234,7 @@ mod tests {
             recursive: None,
             types: None,
             size: None,
-            exclude: None,
+            exclude_path: None,
     exclude_cmd: None,
             cmd: None,
         });
@@ -243,7 +243,7 @@ mod tests {
             recursive: None,
             types: None,
             size: None,
-            exclude: None,
+            exclude_path: None,
     exclude_cmd: None,
             cmd: None,
         });
@@ -266,7 +266,7 @@ mod tests {
             recursive: Some(true),
             types: Some(vec!["CREATE".into(), "DELETE".into()]),
             size: Some("1KB".into()),
-            exclude: Some(vec!["*.tmp".into()]),
+            exclude_path: Some(vec!["*.tmp".into()]),
     exclude_cmd: None,
             cmd: None,
         });
@@ -281,7 +281,7 @@ mod tests {
             &["CREATE", "DELETE"]
         );
         assert_eq!(loaded.entries[0].size.as_ref().unwrap(), "1KB");
-        assert_eq!(loaded.entries[0].exclude.as_ref().unwrap(), &vec!["*.tmp".to_string()]);
+        assert_eq!(loaded.entries[0].exclude_path.as_ref().unwrap(), &vec!["*.tmp".to_string()]);
     }
 
     #[test]
@@ -294,7 +294,7 @@ mod tests {
             recursive: None,
             types: None,
             size: None,
-            exclude: None,
+            exclude_path: None,
     exclude_cmd: None,
             cmd: None,
         });
@@ -321,7 +321,7 @@ mod tests {
                     recursive: Some(true),
                     types: None,
                     size: None,
-                    exclude: None,
+                    exclude_path: None,
     exclude_cmd: None,
             cmd: None,
                 },
@@ -330,7 +330,7 @@ mod tests {
                     recursive: Some(false),
                     types: None,
                     size: None,
-                    exclude: None,
+                    exclude_path: None,
     exclude_cmd: None,
             cmd: None,
                 },
@@ -339,7 +339,7 @@ mod tests {
                     recursive: Some(false),
                     types: Some(vec!["MODIFY".into()]),
                     size: None,
-                    exclude: None,
+                    exclude_path: None,
     exclude_cmd: None,
             cmd: None,
                 },
@@ -362,7 +362,7 @@ mod tests {
                     recursive: None,
                     types: None,
                     size: None,
-                    exclude: None,
+                    exclude_path: None,
     exclude_cmd: None,
             cmd: None,
                 },
@@ -371,7 +371,7 @@ mod tests {
                     recursive: None,
                     types: None,
                     size: None,
-                    exclude: None,
+                    exclude_path: None,
     exclude_cmd: None,
             cmd: None,
                 },
@@ -380,7 +380,7 @@ mod tests {
                     recursive: None,
                     types: None,
                     size: None,
-                    exclude: None,
+                    exclude_path: None,
     exclude_cmd: None,
             cmd: None,
                 },
@@ -399,7 +399,7 @@ mod tests {
                     recursive: None,
                     types: None,
                     size: None,
-                    exclude: None,
+                    exclude_path: None,
     exclude_cmd: None,
             cmd: None,
                 },
@@ -408,7 +408,7 @@ mod tests {
                     recursive: None,
                     types: None,
                     size: None,
-                    exclude: None,
+                    exclude_path: None,
     exclude_cmd: None,
             cmd: None,
                 },

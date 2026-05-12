@@ -77,7 +77,7 @@ pub fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
         })
         .transpose()
         .map_err(|e: String| anyhow::anyhow!(e))?;
-    let (exclude_regex, exclude_invert) = filters::build_exclude_regex(entry.exclude.as_deref(), "exclude")?;
+    let (exclude_regex, exclude_invert) = filters::build_exclude_regex(entry.exclude_path.as_deref(), "exclude_path")?;
     let (exclude_cmd_regex, exclude_cmd_invert) = filters::build_exclude_regex(entry.exclude_cmd.as_deref(), "--exclude-cmd")?;
     Ok(PathOptions {
         size_filter,

@@ -136,12 +136,12 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         path: path.clone().unwrap_or_else(|| {
             PathBuf::from(process_name.as_ref().map(|s| s.as_str()).unwrap_or(""))
         }),
+        cmd: process_name.clone(),
         recursive,
         types: types.clone(),
         size: size_val.clone(),
-        exclude: exclude.clone(),
+        exclude_path: exclude.clone(),
         exclude_cmd: exclude_cmd.clone(),
-        cmd: process_name.clone(),
     };
 
     store.add_entry(entry.clone());
@@ -157,17 +157,15 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             recursive,
             types,
             size: size_val,
-            exclude,
+            exclude_path: exclude,
             exclude_cmd,
             track_cmd: process_name,
         },
     );
 
-    let entry_json = serde_json::to_string(&entry).expect("PathEntry serialization");
     match result {
         Ok(resp) if resp.ok => {
-            println!("Entry added into managed");
-            println!("{}", entry_json);
+            println!("Entry added into managed: ");
         }
         Ok(resp) => {
             if resp.error_kind == Some(fsmon::socket::ErrorKind::Permanent) {
@@ -176,14 +174,12 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
                 store.save(&cfg.managed.path)?;
                 eprintln!("Error: {}", resp.error.unwrap_or_default());
             } else {
-                println!("Entry added into managed");
-                println!("{}", entry_json);
+                println!("Entry added into managed: ");
                 eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
             }
         }
         Err(_) => {
-            println!("Entry added into managed");
-            println!("{}", entry_json);
+            println!("Entry added into managed: ");
             eprintln!("Daemon is not running — will be monitored after daemon restart.");
         }
     }
