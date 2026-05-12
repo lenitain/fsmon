@@ -632,35 +632,33 @@ impl Monitor {
                             continue;
                         }
 
-                        // Check process tree filter before building event
-                        let matched_opts = self.get_matching_path_options(&raw.path);
-                        let cmd_match = if let Some(opts) = matched_opts {
-                            if let Some(ref cmd_name) = opts.cmd {
+                        // Match event against ALL cmd groups for this path
+                        let matching_entries = self.matching_opts_for_event(&raw.path);
+                        for (_monitored_path, opts) in &matching_entries {
+                            // Check process tree filter
+                            let cmd_match = if let Some(ref cmd_name) = opts.cmd {
                                 self.pid_tree.as_ref()
                                     .map(|tree| is_descendant(tree, event_pid, cmd_name))
                                     .unwrap_or(false)
                             } else {
                                 true
-                            }
-                        } else {
-                            true
-                        };
-
-                        if !cmd_match {
-                            continue;
-                        }
-
-                        for event_type in event_types {
-                            let event = self.build_file_event(raw, event_type);
-
-                            if !self.is_path_in_scope(&event.path) {
+                            };
+                            if !cmd_match {
                                 continue;
                             }
 
-                            if self.should_output(&event)
-                                && let Err(e) = self.write_event(&event)
-                            {
-                                eprintln!("[ERROR] Failed to write event: {}", e);
+                            for event_type in &event_types {
+                                let event = self.build_file_event_for_opts(raw, *event_type, opts);
+
+                                if !self.is_path_in_scope_for_opts(&event.path, opts) {
+                                    continue;
+                                }
+
+                                if self.should_output_for_opts(&event, opts)
+                                    && let Err(e) = self.write_event_for_opts(&event, opts)
+                                {
+                                    eprintln!("[ERROR] Failed to write event: {}", e);
+                                }
                             }
                         }
                     }
@@ -819,9 +817,81 @@ impl Monitor {
         }
     }
 
+    /// Like `build_file_event` but uses a specific PathOptions for chain building.
+    fn build_file_event_for_opts(
+        &mut self,
+        raw: &FidEvent,
+        event_type: EventType,
+        opts: &PathOptions,
+    ) -> FileEvent {
+        let pid = raw.pid.unsigned_abs();
+        let info = if let Some(info) = self.pid_cache.get(&pid) {
+            info.clone()
+        } else {
+            let info = get_process_info_by_pid(pid, &raw.path, self.proc_cache.as_ref());
+            if info.cmd != "unknown" || info.user != "unknown" {
+                self.pid_cache.put(pid, info.clone());
+            }
+            info
+        };
+
+        let file_size = match event_type {
+            EventType::Create | EventType::Modify | EventType::CloseWrite => {
+                let size = fs::metadata(&raw.path).map(|m| m.len()).unwrap_or(0);
+                self.file_size_cache.put(raw.path.clone(), size);
+                size
+            }
+            EventType::Delete | EventType::DeleteSelf | EventType::MovedFrom => {
+                self.file_size_cache.pop(&raw.path).unwrap_or(0)
+            }
+            _ => self.file_size_cache.get(&raw.path).map_or(0, |&s| s ),
+        };
+
+        // Chain building based on the specific opts' cmd
+        let chain = opts.cmd.as_ref().and_then(|_| {
+            self.pid_tree.as_ref().and_then(|tree| {
+                self.proc_cache.as_ref().map(|cache| {
+                    build_chain(tree, cache, pid)
+                })
+            })
+        }).unwrap_or_default();
+
+        FileEvent {
+            time: Utc::now(),
+            event_type,
+            path: raw.path.clone(),
+            pid,
+            cmd: info.cmd,
+            user: info.user,
+            file_size,
+            ppid: info.ppid,
+            tgid: info.tgid,
+            chain,
+        }
+    }
+
     /// Find the PathOptions matching a given event path.
     fn get_matching_path_options(&self, path: &Path) -> Option<&PathOptions> {
         filters::get_matching_path_options(&self.paths, &self.path_options, &self.canonical_paths, path)
+    }
+
+    /// Return all PathOptions matching an event path (owned, no borrow conflict).
+    fn matching_opts_for_event(&self, event_path: &Path) -> Vec<(PathBuf, PathOptions)> {
+        let mut result = Vec::new();
+        for (monitored_path, _) in &self.monitored_entries {
+            if let Some(opts) = self.path_options.get(monitored_path) {
+                let matches = if opts.recursive {
+                    event_path.starts_with(monitored_path)
+                } else {
+                    event_path == monitored_path.as_path()
+                        || event_path.parent() == Some(monitored_path.as_path())
+                };
+                if matches {
+                    result.push((monitored_path.clone(), opts.clone()));
+                }
+            }
+        }
+        result
     }
 
     /// Spawn a tokio reader task for `group_idx` in `fs_groups`.
@@ -1350,6 +1420,11 @@ impl Monitor {
         filters::should_output(opts, event)
     }
 
+    /// Check output filters using a specific PathOptions instead of auto-detecting.
+    fn should_output_for_opts(&self, event: &FileEvent, opts: &PathOptions) -> bool {
+        filters::should_output(Some(opts), event)
+    }
+
     /// Find the configured path that matches a given event path.
     /// Checks configured paths (direct or recursive prefix), then canonical paths.
     fn matching_path(&self, path: &Path) -> Option<&PathBuf> {
@@ -1362,9 +1437,23 @@ impl Monitor {
             Some(d) => d,
             None => return Ok(()),
         };
-        // Resolve which cmd group this event belongs to for log file naming
         let opts = self.get_matching_path_options(&event.path);
         let cmd_name = opts.and_then(|o| o.cmd.as_deref()).unwrap_or(crate::monitored::CMD_GLOBAL);
+        self.write_raw_event(event, log_dir, cmd_name)
+    }
+
+    /// Write an event to a specific opts' cmd log (for multi-cmd support).
+    fn write_event_for_opts(&self, event: &FileEvent, opts: &PathOptions) -> std::io::Result<()> {
+        let log_dir = match self.log_dir.as_ref() {
+            Some(d) => d,
+            None => return Ok(()),
+        };
+        let cmd_name = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
+        self.write_raw_event(event, log_dir, cmd_name)
+    }
+
+    /// Low-level: write an event to `{log_dir}/{cmd}_log.jsonl`.
+    fn write_raw_event(&self, event: &FileEvent, log_dir: &Path, cmd_name: &str) -> std::io::Result<()> {
         let log_path = log_dir.join(crate::utils::cmd_to_log_name(cmd_name));
         let is_new = !log_path.exists();
         let mut file = OpenOptions::new()
@@ -1392,6 +1481,28 @@ impl Monitor {
     /// Uses per-path recursive setting from path_options
     fn is_path_in_scope(&self, path: &Path) -> bool {
         filters::is_path_in_scope(&self.paths, &self.path_options, &self.canonical_paths, path)
+    }
+
+    /// Check if event path is within scope of a specific PathOptions.
+    fn is_path_in_scope_for_opts(&self, event_path: &Path, opts: &PathOptions) -> bool {
+        if opts.recursive {
+            self.monitored_entries.iter().any(|(p, _)| {
+                if let Some(wo) = self.path_options.get(p) {
+                    wo.recursive == opts.recursive && wo.cmd == opts.cmd && event_path.starts_with(p)
+                } else {
+                    false
+                }
+            })
+        } else {
+            self.monitored_entries.iter().any(|(p, _)| {
+                if let Some(wo) = self.path_options.get(p) {
+                    wo.recursive == opts.recursive && wo.cmd == opts.cmd
+                        && (event_path == p.as_path() || event_path.parent() == Some(p.as_path()))
+                } else {
+                    false
+                }
+            })
+        }
     }
 }
 
