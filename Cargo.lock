@@ -868,6 +868,8 @@ checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 [[package]]
 name = "sizefilter"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3deca98b619e4c186b0d47a5759102fe57ba016c54b21ea1ad9b7b48cb01e6f"
 
 [[package]]
 name = "slab"
