@@ -48,7 +48,7 @@ pub struct FileEvent {
 
 ### 4. `--cmd '!openclaw'`（inverted）只查一层
 
-等价于当前的 `--exclude-cmd '!openclaw'`。不启用进程树，不构建 chain，只匹配 `event.cmd`。
+等价于当前的 `--exclude-cmd openclaw`（默认排除语义）。不启用进程树，不构建 chain，只匹配 `event.cmd`。
 
 **但** `ppid` 和 `tgid` 仍然记录。
 
@@ -57,9 +57,9 @@ pub struct FileEvent {
 | `--cmd` 参数 | 进程树 | chain | ppid/tgid | 匹配规则 |
 |-------------|--------|-------|-----------|---------|
 | 未指定 | ❌ | ❌ | ✅ | cmd 匹配不做筛选 |
-| `openclaw`（positive） | ✅ | ✅ | ✅ | pid 在 openclaw 子树中 |
-| `'!openclaw'`（inverted） | ❌ | ❌ | ✅ | cmd 不匹配 openclaw（旧行为） |
-| `rsync`（positive，排他） | ✅ | ✅ | ✅ | pid 在 rsync 子树中 |
+| `openclaw`（positive） | ✅ | ✅ | ✅ | pid 在 openclaw 子树中（等价旧 `--exclude-cmd '!openclaw'` + 进程树） |
+| `'!openclaw'`（inverted） | ❌ | ❌ | ✅ | cmd 不匹配 openclaw（等价旧 `--exclude-cmd openclaw`） |
+
 
 ## 文件改动
 
