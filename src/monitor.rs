@@ -1,13 +1,12 @@
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
+use dashmap::DashMap;
+use fanotify_fid::consts::{
+    AT_FDCWD, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_MARK_ADD, FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE,
+    FAN_NONBLOCK, FAN_Q_OVERFLOW, FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
+};
 use fanotify_fid::prelude::*;
 use fanotify_fid::types::FidEvent;
-use fanotify_fid::consts::{
-    AT_FDCWD, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_MARK_ADD,
-    FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE, FAN_NONBLOCK, FAN_Q_OVERFLOW,
-    FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
-};
-use dashmap::DashMap;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -22,15 +21,19 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::signal::unix::{SignalKind, signal};
 
 use crate::dir_cache;
-use crate::proc_cache::{self, ProcCache, ProcInfo, PidTree, build_chain, is_descendant, snapshot_process_tree, new_pid_tree};
-use crate::socket::{SocketCmd, SocketResp};
-use crate::monitored::PathEntry;
-use crate::monitored::Monitored;
-use crate::utils::{format_size, get_process_info_by_pid, parse_size_filter};
+use crate::fid_parser::{
+    FILE_SIZE_CACHE_CAP, FanFd, FsGroup, chown_to_user, mark_directory, mark_recursive,
+    mask_to_event_types, path_mask_from_options, read_fid_events_dashmap,
+};
 use crate::filters::{self, PathOptions};
-use crate::fid_parser::{FanFd, FsGroup, read_fid_events_dashmap, mask_to_event_types,
-    path_mask_from_options, mark_directory, mark_recursive, chown_to_user,
-    FILE_SIZE_CACHE_CAP};
+use crate::monitored::Monitored;
+use crate::monitored::PathEntry;
+use crate::proc_cache::{
+    self, PidTree, ProcCache, ProcInfo, build_chain, is_descendant, new_pid_tree,
+    snapshot_process_tree,
+};
+use crate::socket::{SocketCmd, SocketResp};
+use crate::utils::{format_size, get_process_info_by_pid, parse_size_filter};
 use crate::{EventType, FileEvent};
 
 // ---- Monitor ----
@@ -92,7 +95,9 @@ impl Monitor {
         let mut path_options = HashMap::new();
         let mut seen = std::collections::HashSet::new();
         let mut monitored_entries = Vec::new();
-        let log_dir_canonical = log_dir.as_ref().map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()));
+        let log_dir_canonical = log_dir
+            .as_ref()
+            .map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()));
         for (path, opts) in &paths_and_options {
             // Reject paths that overlap with the log directory.
             // - Exact match (path == log dir) → always reject (it IS the log dir)
@@ -151,10 +156,19 @@ impl Monitor {
             daemon_pid: std::process::id(),
         };
         if debug {
-            eprintln!("[debug] Monitor initialized with {} path entries:", paths_and_options.len());
+            eprintln!(
+                "[debug] Monitor initialized with {} path entries:",
+                paths_and_options.len()
+            );
             for (i, (p, o)) in paths_and_options.iter().enumerate() {
                 let label = o.cmd.as_deref().unwrap_or("global");
-                eprintln!("[debug]   [{}] {} cmd={} recursive={}", i, p.display(), label, o.recursive);
+                eprintln!(
+                    "[debug]   [{}] {} cmd={} recursive={}",
+                    i,
+                    p.display(),
+                    label,
+                    o.recursive
+                );
             }
             eprintln!("[debug] log_dir: {:?}", monitor.log_dir);
             eprintln!("[debug] buffer_size: {}", buffer_size);
@@ -166,8 +180,7 @@ impl Monitor {
     /// The returned `OwnedFd` has independent lifetime from the source
     /// and will be closed on drop.
     fn dup_fd(fd: &impl AsRawFd) -> std::io::Result<OwnedFd> {
-        let new_raw = nix::unistd::dup(fd.as_raw_fd())
-            .map_err(|e| std::io::Error::other(e))?;
+        let new_raw = nix::unistd::dup(fd.as_raw_fd()).map_err(|e| std::io::Error::other(e))?;
         // SAFETY: nix::unistd::dup returned a new valid fd that we
         // exclusively own. The kernel guarantees dup returns the
         // lowest-numbered unused fd, not owned by any other OwnedFd.
@@ -221,7 +234,9 @@ impl Monitor {
         self.pid_tree = Some(pid_tree.clone());
 
         // Compute combined event mask from ALL cmd groups (OR over all entries)
-        let combined_mask = self.monitored_entries.iter()
+        let combined_mask = self
+            .monitored_entries
+            .iter()
             .map(|(_, opts)| path_mask_from_options(opts))
             .fold(0, |a, b| a | b);
         if self.debug {
@@ -233,7 +248,9 @@ impl Monitor {
         let mut keep_paths: Vec<PathBuf> = Vec::new();
         let mut keep_opts = HashMap::new();
         for path in std::mem::take(&mut self.paths) {
-            let opts = self.path_options.remove(&path)
+            let opts = self
+                .path_options
+                .remove(&path)
                 .expect("path in paths but not in path_options");
             if path.exists() {
                 let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
@@ -246,15 +263,21 @@ impl Monitor {
                     path.display()
                 );
                 let entry_path = path.clone();
-                self.pending_paths.push((path, PathEntry {
-                    path: entry_path,
-                    recursive: Some(opts.recursive),
-                    types: opts.event_types.as_ref().map(
-                        |v| v.iter().map(|t| t.to_string()).collect()
-                    ),
-                    size: opts.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes))),
-                    cmd: None,
-                }));
+                self.pending_paths.push((
+                    path,
+                    PathEntry {
+                        path: entry_path,
+                        recursive: Some(opts.recursive),
+                        types: opts
+                            .event_types
+                            .as_ref()
+                            .map(|v| v.iter().map(|t| t.to_string()).collect()),
+                        size: opts
+                            .size_filter
+                            .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
+                        cmd: None,
+                    },
+                ));
             }
         }
         self.paths = keep_paths;
@@ -304,7 +327,7 @@ impl Monitor {
                         );
                     } else {
                         eprintln!(
-                            "[INFO] Monitoring {} (inode mark) on existing fd {}",
+                            "[INFO] Added {} (inode mark) on existing fd {}",
                             canonical.display(),
                             fan_fd.as_raw_fd()
                         );
@@ -346,7 +369,7 @@ impl Monitor {
             ) {
                 Ok(()) => {
                     eprintln!(
-                        "[INFO] Monitoring {} (filesystem mark) on fd {}",
+                        "[INFO] Added {} (filesystem mark) on fd {}",
                         canonical.display(),
                         new_fd.as_raw_fd()
                     );
@@ -356,7 +379,7 @@ impl Monitor {
                     match mark_directory(&new_fd, path_mask, canonical) {
                         Ok(()) => {
                             eprintln!(
-                                "[INFO] Monitoring {} (inode mark) on fd {}",
+                                "[INFO] Added {} (inode mark) on fd {}",
                                 canonical.display(),
                                 new_fd.as_raw_fd()
                             );
@@ -432,7 +455,9 @@ impl Monitor {
                 }
             }
         } else if self.pending_paths.is_empty() {
-            eprintln!("No entries configured. Waiting for socket commands (use 'fsmon add <cmd> --path <path>').");
+            eprintln!(
+                "No entries configured. Waiting for socket commands (use 'fsmon add <cmd> --path <path>')."
+            );
         }
 
         // Ensure log directory exists and is owned by the original user
@@ -443,10 +468,17 @@ impl Monitor {
             match chown_to_user(dir) {
                 Ok(true) => {}
                 Ok(false) => {
-                    eprintln!("[WARNING] Log directory '{}' is on a filesystem that does not support\n         ownership changes (e.g. vfat/exfat/NFS). Log files will remain owned by root.\n         Run 'sudo fsmon clean' if you cannot clean logs as a normal user.", dir.display());
+                    eprintln!(
+                        "[WARNING] Log directory '{}' is on a filesystem that does not support\n         ownership changes (e.g. vfat/exfat/NFS). Log files will remain owned by root.\n         Run 'sudo fsmon clean' if you cannot clean logs as a normal user.",
+                        dir.display()
+                    );
                 }
                 Err(e) => {
-                    eprintln!("[WARNING] Could not chown log directory '{}': {}.\n         Log files may remain owned by root.", dir.display(), e);
+                    eprintln!(
+                        "[WARNING] Could not chown log directory '{}': {}.\n         Log files may remain owned by root.",
+                        dir.display(),
+                        e
+                    );
                 }
             }
         }
@@ -463,23 +495,45 @@ impl Monitor {
             }
         }
         if self.debug {
-            eprintln!("[debug] path_options ({} entries, dedup'd by path):", self.path_options.len());
+            eprintln!(
+                "[debug] path_options ({} entries, dedup'd by path):",
+                self.path_options.len()
+            );
             for (p, o) in &self.path_options {
                 let label = o.cmd.as_deref().unwrap_or("global");
-                eprintln!("[debug]   {} cmd={} recursive={}", p.display(), label, o.recursive);
+                eprintln!(
+                    "[debug]   {} cmd={} recursive={}",
+                    p.display(),
+                    label,
+                    o.recursive
+                );
             }
-            eprintln!("[debug] monitored_entries ({} entries, full list):", self.monitored_entries.len());
+            eprintln!(
+                "[debug] monitored_entries ({} entries, full list):",
+                self.monitored_entries.len()
+            );
             for (i, (p, o)) in self.monitored_entries.iter().enumerate() {
                 let label = o.cmd.as_deref().unwrap_or("global");
-                eprintln!("[debug]   [{}] {} cmd={} recursive={}", i, p.display(), label, o.recursive);
+                eprintln!(
+                    "[debug]   [{}] {} cmd={} recursive={}",
+                    i,
+                    p.display(),
+                    label,
+                    o.recursive
+                );
             }
         }
         if !self.pending_paths.is_empty() {
             println!("Pending paths (waiting for directory creation):");
-            let mut by_cmd: std::collections::BTreeMap<Option<String>, Vec<&PathBuf>> = std::collections::BTreeMap::new();
+            let mut by_cmd: std::collections::BTreeMap<Option<String>, Vec<&PathBuf>> =
+                std::collections::BTreeMap::new();
             for (path, entry) in &self.pending_paths {
                 let cmd = entry.cmd.as_deref().and_then(|c| {
-                    if c == crate::monitored::CMD_GLOBAL { None } else { Some(c.to_string()) }
+                    if c == crate::monitored::CMD_GLOBAL {
+                        None
+                    } else {
+                        Some(c.to_string())
+                    }
                 });
                 by_cmd.entry(cmd).or_default().push(path);
             }
@@ -496,8 +550,7 @@ impl Monitor {
 
         // Spawn one reader task per FsGroup (one per filesystem).
         // Events are sent through an unbounded mpsc channel to the main loop.
-        let (event_tx, mut event_rx) =
-            tokio::sync::mpsc::unbounded_channel::<Vec<FidEvent>>();
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<FidEvent>>();
         let dir_cache = Arc::new(std::mem::take(&mut self.dir_cache));
         let buf_size = self.buffer_size;
 
@@ -810,11 +863,7 @@ impl Monitor {
     }
 
     #[allow(dead_code)]
-    fn build_file_event(
-        &mut self,
-        raw: &FidEvent,
-        event_type: EventType,
-    ) -> FileEvent {
+    fn build_file_event(&mut self, raw: &FidEvent, event_type: EventType) -> FileEvent {
         let pid = raw.pid.unsigned_abs();
         let info = if let Some(info) = self.pid_cache.get(&pid) {
             info.clone()
@@ -838,16 +887,17 @@ impl Monitor {
                 self.file_size_cache.pop(&raw.path).unwrap_or(0)
             }
             // For other events (OPEN, ACCESS, ATTRIB, etc.): use cached size if available
-            _ => self.file_size_cache.get(&raw.path).map_or(0, |&s| s ),
+            _ => self.file_size_cache.get(&raw.path).map_or(0, |&s| s),
         };
 
-        let chain = self.get_matching_path_options(&raw.path)
+        let chain = self
+            .get_matching_path_options(&raw.path)
             .and_then(|opts| opts.cmd.as_ref().map(|_| ()))
             .and_then(|_| {
                 self.pid_tree.as_ref().and_then(|tree| {
-                    self.proc_cache.as_ref().map(|cache| {
-                        build_chain(tree, cache, pid)
-                    })
+                    self.proc_cache
+                        .as_ref()
+                        .map(|cache| build_chain(tree, cache, pid))
                 })
             })
             .unwrap_or_default();
@@ -893,17 +943,21 @@ impl Monitor {
             EventType::Delete | EventType::DeleteSelf | EventType::MovedFrom => {
                 self.file_size_cache.pop(&raw.path).unwrap_or(0)
             }
-            _ => self.file_size_cache.get(&raw.path).map_or(0, |&s| s ),
+            _ => self.file_size_cache.get(&raw.path).map_or(0, |&s| s),
         };
 
         // Chain building based on the specific opts' cmd
-        let chain = opts.cmd.as_ref().and_then(|_| {
-            self.pid_tree.as_ref().and_then(|tree| {
-                self.proc_cache.as_ref().map(|cache| {
-                    build_chain(tree, cache, pid)
+        let chain = opts
+            .cmd
+            .as_ref()
+            .and_then(|_| {
+                self.pid_tree.as_ref().and_then(|tree| {
+                    self.proc_cache
+                        .as_ref()
+                        .map(|cache| build_chain(tree, cache, pid))
                 })
             })
-        }).unwrap_or_default();
+            .unwrap_or_default();
 
         FileEvent {
             time: Utc::now(),
@@ -922,7 +976,12 @@ impl Monitor {
     /// Find the PathOptions matching a given event path.
     #[allow(dead_code)]
     fn get_matching_path_options(&self, path: &Path) -> Option<&PathOptions> {
-        filters::get_matching_path_options(&self.paths, &self.path_options, &self.canonical_paths, path)
+        filters::get_matching_path_options(
+            &self.paths,
+            &self.path_options,
+            &self.canonical_paths,
+            path,
+        )
     }
 
     /// Return all PathOptions matching an event path (owned, no borrow conflict).
@@ -942,9 +1001,13 @@ impl Monitor {
             };
             if self.debug {
                 let label = opts.cmd.as_deref().unwrap_or("global");
-                eprintln!("[debug]   check {} (cmd={}, recursive={}): {}",
-                    monitored_path.display(), label, opts.recursive,
-                    if matches { "MATCH" } else { "no" });
+                eprintln!(
+                    "[debug]   check {} (cmd={}, recursive={}): {}",
+                    monitored_path.display(),
+                    label,
+                    opts.recursive,
+                    if matches { "MATCH" } else { "no" }
+                );
             }
             if matches {
                 result.push((monitored_path.clone(), opts.clone()));
@@ -1022,8 +1085,7 @@ impl Monitor {
                         break;
                     }
                 };
-                let events =
-                    read_fid_events_dashmap(afd.get_ref(), &mfds, dc.as_ref(), &mut buf);
+                let events = read_fid_events_dashmap(afd.get_ref(), &mfds, dc.as_ref(), &mut buf);
                 if !events.is_empty() && tx.send(events).is_err() {
                     break;
                 }
@@ -1035,22 +1097,39 @@ impl Monitor {
     pub fn add_path(&mut self, entry: &PathEntry) -> Result<()> {
         if self.debug {
             let cmd = entry.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
-            eprintln!("[debug] add_path: path={} cmd={}", entry.path.display(), cmd);
+            eprintln!(
+                "[debug] add_path: path={} cmd={}",
+                entry.path.display(),
+                cmd
+            );
         }
         let path = filters::resolve_recursion_check(&entry.path);
 
         let is_new_path = !self.path_options.contains_key(&path);
         if !is_new_path {
             if self.debug {
-                eprintln!("[debug]   path already monitored — adding cmd and updating fanotify mask");
+                eprintln!(
+                    "[debug]   path already monitored — adding cmd and updating fanotify mask"
+                );
             }
             let cmd = entry.cmd.as_deref().and_then(|c| {
-                if c == crate::monitored::CMD_GLOBAL { None } else { Some(c.to_string()) }
+                if c == crate::monitored::CMD_GLOBAL {
+                    None
+                } else {
+                    Some(c.to_string())
+                }
             });
             let event_types = entry.types.as_ref().map(|types| {
-                types.iter().filter_map(|s| s.parse::<EventType>().ok()).collect()
+                types
+                    .iter()
+                    .filter_map(|s| s.parse::<EventType>().ok())
+                    .collect()
             });
-            let size_filter = entry.size.as_ref().map(|s| parse_size_filter(s)).transpose()?;
+            let size_filter = entry
+                .size
+                .as_ref()
+                .map(|s| parse_size_filter(s))
+                .transpose()?;
             let recursive = entry.recursive.unwrap_or(false);
             let opts = PathOptions {
                 size_filter,
@@ -1062,13 +1141,18 @@ impl Monitor {
             self.path_options.insert(path.clone(), opts.clone());
 
             // Update fanotify mask: OR all entries for this path
-            let new_mask = self.monitored_entries.iter()
+            let new_mask = self
+                .monitored_entries
+                .iter()
                 .filter(|(p, _)| p == &path)
                 .map(|(_, o)| path_mask_from_options(o))
                 .fold(0, |a, b| a | b);
             if let Some(&gi) = self.path_to_group.get(&path) {
                 let fan_fd = &self.fs_groups[gi].fan_fd;
-                let canonical = self.paths.iter().position(|p| p == &path)
+                let canonical = self
+                    .paths
+                    .iter()
+                    .position(|p| p == &path)
                     .and_then(|i| self.canonical_paths.get(i).cloned())
                     .unwrap_or_else(|| path.clone());
                 if self.fs_groups[gi].is_fs_mark {
@@ -1082,7 +1166,7 @@ impl Monitor {
                 } else {
                     let _ = mark_directory(fan_fd, new_mask, &canonical);
                 }
-                    if self.debug {
+                if self.debug {
                     eprintln!("[debug]   updated fanotify mask to {:#x}", new_mask);
                 }
             }
@@ -1098,7 +1182,8 @@ impl Monitor {
         if let Some(ref log_dir) = self.log_dir {
             let log_canonical = log_dir.canonicalize().unwrap_or_else(|_| log_dir.clone());
             let is_exact = log_canonical == path;
-            let is_parent_recursive = entry.recursive.unwrap_or(false) && log_canonical.starts_with(&path);
+            let is_parent_recursive =
+                entry.recursive.unwrap_or(false) && log_canonical.starts_with(&path);
             if is_exact || is_parent_recursive {
                 bail!(
                     "Cannot monitor '{}': {} — \
@@ -1131,11 +1216,19 @@ impl Monitor {
                 .filter_map(|s| s.parse::<EventType>().ok())
                 .collect()
         });
-        let size_filter = entry.size.as_ref().map(|s| parse_size_filter(s)).transpose()?;
+        let size_filter = entry
+            .size
+            .as_ref()
+            .map(|s| parse_size_filter(s))
+            .transpose()?;
         let recursive = entry.recursive.unwrap_or(false);
         // `_global` in PathEntry means no process tracking → convert to None
         let cmd = entry.cmd.as_deref().and_then(|c| {
-            if c == crate::monitored::CMD_GLOBAL { None } else { Some(c.to_string()) }
+            if c == crate::monitored::CMD_GLOBAL {
+                None
+            } else {
+                Some(c.to_string())
+            }
         });
         let opts = PathOptions {
             size_filter,
@@ -1149,7 +1242,9 @@ impl Monitor {
         let cmd_label = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
         println!(
             "Monitoring entry: [{}] {} (recursive={})",
-            cmd_label, path.display(), recursive,
+            cmd_label,
+            path.display(),
+            recursive,
         );
 
         // Determine filesystem device ID for dedup lookup
@@ -1297,11 +1392,13 @@ impl Monitor {
         // Remove matching entries from monitored_entries
         let before = self.monitored_entries.len();
         self.monitored_entries.retain(|(p, o)| {
-            if p != path { return true; }
+            if p != path {
+                return true;
+            }
             if let Some(c) = cmd {
-                o.cmd.as_deref() != Some(c)  // keep if cmd doesn't match
+                o.cmd.as_deref() != Some(c) // keep if cmd doesn't match
             } else {
-                false  // remove all entries for this path
+                false // remove all entries for this path
             }
         });
         let removed = before - self.monitored_entries.len();
@@ -1327,12 +1424,16 @@ impl Monitor {
                             AT_FDCWD,
                             canonical,
                         );
-                        let _ = fanotify_mark(fan_fd, FAN_MARK_REMOVE, path_mask, AT_FDCWD, canonical);
-                        self.fs_groups[gi].ref_count = self.fs_groups[gi].ref_count.saturating_sub(1);
+                        let _ =
+                            fanotify_mark(fan_fd, FAN_MARK_REMOVE, path_mask, AT_FDCWD, canonical);
+                        self.fs_groups[gi].ref_count =
+                            self.fs_groups[gi].ref_count.saturating_sub(1);
                         if self.fs_groups[gi].ref_count == 0 {
                             self.fs_groups.remove(gi);
                             self.path_to_group.iter_mut().for_each(|(_, idx)| {
-                                if *idx > gi { *idx -= 1; }
+                                if *idx > gi {
+                                    *idx -= 1;
+                                }
                             });
                         }
                     }
@@ -1345,13 +1446,18 @@ impl Monitor {
             println!("Removed entry: {}", path.display());
         } else {
             // Other cmd groups still exist — update fanotify mask
-            let new_mask = self.monitored_entries.iter()
+            let new_mask = self
+                .monitored_entries
+                .iter()
                 .filter(|(p, _)| p == path)
                 .map(|(_, o)| path_mask_from_options(o))
                 .fold(0, |a, b| a | b);
             if let Some(&gi) = self.path_to_group.get(path) {
                 let fan_fd = &self.fs_groups[gi].fan_fd;
-                let canonical = self.paths.iter().position(|p| p == &path)
+                let canonical = self
+                    .paths
+                    .iter()
+                    .position(|p| p == &path)
                     .and_then(|i| self.canonical_paths.get(i).cloned())
                     .unwrap_or_else(|| path.to_path_buf());
                 if self.fs_groups[gi].is_fs_mark {
@@ -1367,14 +1473,19 @@ impl Monitor {
                 }
             }
             // Update path_options to reflect current mask
-            if let Some(any_opts) = self.monitored_entries.iter()
+            if let Some(any_opts) = self
+                .monitored_entries
+                .iter()
                 .find(|(p, _)| p == path)
                 .map(|(_, o)| o.clone())
             {
                 self.path_options.insert(path.to_path_buf(), any_opts);
             }
             if self.debug {
-                eprintln!("[debug]   updated fanotify mask to {:#x} (other cmd groups remain)", new_mask);
+                eprintln!(
+                    "[debug]   updated fanotify mask to {:#x} (other cmd groups remain)",
+                    new_mask
+                );
             }
             let label = cmd.unwrap_or("?");
             println!("Removed entry: [{}] {}", label, path.display());
@@ -1384,8 +1495,10 @@ impl Monitor {
 
     fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> SocketResp {
         if self.debug {
-            eprintln!("[debug] socket command: {} path={:?} track_cmd={:?}",
-                cmd.cmd, cmd.path, cmd.track_cmd);
+            eprintln!(
+                "[debug] socket command: {} path={:?} track_cmd={:?}",
+                cmd.cmd, cmd.path, cmd.track_cmd
+            );
         }
         match cmd.cmd.as_str() {
             "add" => {
@@ -1396,12 +1509,16 @@ impl Monitor {
                     }
                 };
                 let path = raw;
-                let track_cmd = cmd.track_cmd.as_deref()
-                    .and_then(|c| if c == crate::monitored::CMD_GLOBAL { None } else { Some(c.to_string()) });
-                // Remove only this (path, cmd) pair, not other cmd groups for same path
-                self.monitored_entries.retain(|(p, o)| {
-                    !(p == &path && o.cmd == track_cmd)
+                let track_cmd = cmd.track_cmd.as_deref().and_then(|c| {
+                    if c == crate::monitored::CMD_GLOBAL {
+                        None
+                    } else {
+                        Some(c.to_string())
+                    }
                 });
+                // Remove only this (path, cmd) pair, not other cmd groups for same path
+                self.monitored_entries
+                    .retain(|(p, o)| !(p == &path && o.cmd == track_cmd));
                 let has_other_cmds = self.monitored_entries.iter().any(|(p, _)| p == &path);
                 if !has_other_cmds {
                     // No other cmd groups for this path — full teardown + setup
@@ -1416,9 +1533,7 @@ impl Monitor {
                     cmd: cmd.track_cmd.clone(),
                 };
                 match self.add_path(&entry) {
-                    Ok(()) => {
-                        SocketResp::ok()
-                    }
+                    Ok(()) => SocketResp::ok(),
                     Err(e) => {
                         // Classify: recursion/conflict errors are permanent (will fail after restart)
                         let msg = e.to_string();
@@ -1427,7 +1542,7 @@ impl Monitor {
                         } else {
                             SocketResp::err(msg)
                         }
-                    },
+                    }
                 }
             }
             "remove" => {
@@ -1438,9 +1553,7 @@ impl Monitor {
                     }
                 };
                 match self.remove_path(&path, cmd.track_cmd.as_deref()) {
-                    Ok(()) => {
-                        SocketResp::ok()
-                    }
+                    Ok(()) => SocketResp::ok(),
                     Err(e) => {
                         // Classify: recursion/conflict errors are permanent (will fail after restart)
                         let msg = e.to_string();
@@ -1449,7 +1562,7 @@ impl Monitor {
                         } else {
                             SocketResp::err(msg)
                         }
-                    },
+                    }
                 }
             }
             "list" => {
@@ -1468,7 +1581,10 @@ impl Monitor {
                                     .as_ref()
                                     .map(|v| v.iter().map(|t| t.to_string()).collect())
                             }),
-                            size: opts.and_then(|o| o.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes)))),
+                            size: opts.and_then(|o| {
+                                o.size_filter
+                                    .map(|f| format!("{}{}", f.op, format_size(f.bytes)))
+                            }),
                             cmd: cmd.or(Some(crate::monitored::CMD_GLOBAL.to_string())),
                         }
                     })
@@ -1544,10 +1660,9 @@ impl Monitor {
 
         for (path, _) in &self.pending_paths {
             if let Some(parent) = Self::nearest_existing_ancestor(path)
-                && let Ok(wd) = inotify.watches().add(
-                    &parent,
-                    WatchMask::CREATE | WatchMask::MOVED_TO,
-                )
+                && let Ok(wd) = inotify
+                    .watches()
+                    .add(&parent, WatchMask::CREATE | WatchMask::MOVED_TO)
             {
                 self._inotify_watches.push(wd);
             }
@@ -1558,7 +1673,10 @@ impl Monitor {
     /// Called when inotify detects directory creation under a watched parent.
     fn check_pending(&mut self) {
         if self.debug && !self.pending_paths.is_empty() {
-            eprintln!("[debug] check_pending: {} pending path(s)", self.pending_paths.len());
+            eprintln!(
+                "[debug] check_pending: {} pending path(s)",
+                self.pending_paths.len()
+            );
         }
         let mut i = 0;
         while i < self.pending_paths.len() {
@@ -1614,7 +1732,9 @@ impl Monitor {
             None => return Ok(()),
         };
         let opts = self.get_matching_path_options(&event.path);
-        let cmd_name = opts.and_then(|o| o.cmd.as_deref()).unwrap_or(crate::monitored::CMD_GLOBAL);
+        let cmd_name = opts
+            .and_then(|o| o.cmd.as_deref())
+            .unwrap_or(crate::monitored::CMD_GLOBAL);
         self.write_raw_event(event, log_dir, cmd_name)
     }
 
@@ -1629,11 +1749,21 @@ impl Monitor {
     }
 
     /// Low-level: write an event to `{log_dir}/{cmd}_log.jsonl`.
-    fn write_raw_event(&self, event: &FileEvent, log_dir: &Path, cmd_name: &str) -> std::io::Result<()> {
+    fn write_raw_event(
+        &self,
+        event: &FileEvent,
+        log_dir: &Path,
+        cmd_name: &str,
+    ) -> std::io::Result<()> {
         let log_path = log_dir.join(crate::utils::cmd_to_log_name(cmd_name));
         if self.debug {
-            eprintln!("[debug] write_event: path={} event={:?} type={:?} -> {}",
-                event.path.display(), event.event_type, event.cmd, log_path.file_name().unwrap_or_default().to_string_lossy());
+            eprintln!(
+                "[debug] write_event: path={} event={:?} type={:?} -> {}",
+                event.path.display(),
+                event.event_type,
+                event.cmd,
+                log_path.file_name().unwrap_or_default().to_string_lossy()
+            );
         }
         let is_new = !log_path.exists();
         let mut file = OpenOptions::new()
@@ -1648,8 +1778,11 @@ impl Monitor {
                     // one-time warning already emitted in run() for the log directory
                 }
                 Err(e) => {
-                    eprintln!("[WARNING] Could not chown log file '{}': {}",
-                        log_path.display(), e);
+                    eprintln!(
+                        "[WARNING] Could not chown log file '{}': {}",
+                        log_path.display(),
+                        e
+                    );
                 }
             }
         }
@@ -1683,9 +1816,9 @@ impl Monitor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use fanotify_fid::consts::{FAN_CREATE, FAN_DELETE, FAN_EVENT_ON_CHILD, FAN_MODIFY, FAN_ONDIR};
     use crate::utils::{SizeFilter, SizeOp};
+    use fanotify_fid::consts::{FAN_CREATE, FAN_DELETE, FAN_EVENT_ON_CHILD, FAN_MODIFY, FAN_ONDIR};
+    use std::sync::Arc;
 
     // ---- mask_to_event_types ----
 
@@ -1715,13 +1848,23 @@ mod tests {
     #[test]
     fn test_mask_to_event_types_all() {
         use fanotify_fid::consts::{
-            FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE,
-            FAN_DELETE_SELF, FAN_FS_ERROR, FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO,
-            FAN_OPEN, FAN_OPEN_EXEC,
+            FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE, FAN_DELETE_SELF,
+            FAN_FS_ERROR, FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO, FAN_OPEN, FAN_OPEN_EXEC,
         };
-        let mask = FAN_ACCESS | FAN_MODIFY | FAN_CLOSE_WRITE | FAN_CLOSE_NOWRITE
-            | FAN_OPEN | FAN_OPEN_EXEC | FAN_ATTRIB | FAN_CREATE | FAN_DELETE
-            | FAN_DELETE_SELF | FAN_FS_ERROR | FAN_MOVED_FROM | FAN_MOVED_TO | FAN_MOVE_SELF;
+        let mask = FAN_ACCESS
+            | FAN_MODIFY
+            | FAN_CLOSE_WRITE
+            | FAN_CLOSE_NOWRITE
+            | FAN_OPEN
+            | FAN_OPEN_EXEC
+            | FAN_ATTRIB
+            | FAN_CREATE
+            | FAN_DELETE
+            | FAN_DELETE_SELF
+            | FAN_FS_ERROR
+            | FAN_MOVED_FROM
+            | FAN_MOVED_TO
+            | FAN_MOVE_SELF;
         let types = mask_to_event_types(mask);
         assert_eq!(types.len(), 14);
     }
@@ -1803,13 +1946,21 @@ mod tests {
 
     #[test]
     fn test_should_output_size_filter() {
-        let m = make_monitor(vec!["/tmp"], Some(SizeFilter { op: SizeOp::Ge, bytes: 1000 }), None, false);
+        let m = make_monitor(
+            vec!["/tmp"],
+            Some(SizeFilter {
+                op: SizeOp::Ge,
+                bytes: 1000,
+            }),
+            None,
+            false,
+        );
         assert!(m.should_output(&make_event("/tmp/a", EventType::Create, 1, 2000)));
         assert!(!m.should_output(&make_event("/tmp/a", EventType::Create, 1, 500)));
     }
 
     #[test]
-#[cfg(never)]
+    #[cfg(never)]
     fn test_should_output_exclude_pattern() {
         let m = make_monitor(vec!["/tmp"], None, None, Some(".*\\.tmp$"), false);
         assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
@@ -1817,7 +1968,7 @@ mod tests {
     }
 
     #[test]
-#[cfg(never)]
+    #[cfg(never)]
     fn test_should_output_exclude_exact_pattern() {
         let m = make_monitor(vec!["/tmp"], None, None, Some("test\\.tmp$"), false);
         assert!(m.should_output(&make_event("/tmp/test.txt", EventType::Create, 1, 0)));
@@ -1830,7 +1981,10 @@ mod tests {
     fn test_should_output_combined_filters() {
         let m = make_monitor(
             vec!["/tmp"],
-            Some(SizeFilter { op: SizeOp::Ge, bytes: 100 }),
+            Some(SizeFilter {
+                op: SizeOp::Ge,
+                bytes: 100,
+            }),
             Some(vec![EventType::Create]),
             false,
         );
@@ -1867,7 +2021,7 @@ mod tests {
     }
 
     #[test]
-#[cfg(never)]
+    #[cfg(never)]
     fn test_should_output_exclude_pipe_multiple() {
         // --exclude '.*\.tmp$|.*\.log$' → excludes both .tmp and .log
         let m = make_monitor_exclude(Some(".*\\.tmp$|.*\\.log$"), None, false, false);
@@ -1877,7 +2031,7 @@ mod tests {
     }
 
     #[test]
-#[cfg(never)]
+    #[cfg(never)]
     fn test_should_output_exclude_invert() {
         // --exclude "!.*\.py$" → only .py files pass
         let m = make_monitor_exclude(Some("!.*\\.py$"), None, false, false);
@@ -1887,7 +2041,7 @@ mod tests {
     }
 
     #[test]
-#[cfg(never)]
+    #[cfg(never)]
     fn test_should_output_exclude_cmd_basic() {
         // --exclude-cmd "rsync" → excludes rsync
         let m = make_monitor_exclude(None, Some("rsync"), false, false);
@@ -1896,7 +2050,7 @@ mod tests {
     }
 
     #[test]
-#[cfg(never)]
+    #[cfg(never)]
     fn test_should_output_exclude_cmd_pipe() {
         // --exclude-cmd "rsync|apt" → excludes both
         let m = make_monitor_exclude(None, Some("rsync|apt"), false, false);
@@ -1906,7 +2060,7 @@ mod tests {
     }
 
     #[test]
-#[cfg(never)]
+    #[cfg(never)]
     fn test_should_output_exclude_cmd_invert() {
         // --exclude-cmd "!nginx" → only nginx passes
         let m = make_monitor_exclude(None, Some("!nginx"), false, false);
@@ -1916,7 +2070,7 @@ mod tests {
     }
 
     #[test]
-#[cfg(never)]
+    #[cfg(never)]
     fn test_should_output_exclude_cmd_invert_multi() {
         // --exclude-cmd "!nginx|python" → only nginx and python pass
         let m = make_monitor_exclude(None, Some("!nginx|python"), false, false);
@@ -1926,13 +2080,31 @@ mod tests {
     }
 
     #[test]
-#[cfg(never)]
+    #[cfg(never)]
     fn test_should_output_exclude_and_exclude_cmd() {
         // --exclude '.*\.tmp$' --exclude-cmd "rsync" → both filters
         let m = make_monitor_exclude(Some(".*\\.tmp$"), Some("rsync"), false, false);
-        assert!(!m.should_output(&make_event_cmd("/tmp/a.tmp", EventType::Create, 1, 0, "vim")));
-        assert!(!m.should_output(&make_event_cmd("/tmp/a.txt", EventType::Create, 1, 0, "rsync")));
-        assert!(m.should_output(&make_event_cmd("/tmp/a.txt", EventType::Create, 2, 0, "vim")));
+        assert!(!m.should_output(&make_event_cmd(
+            "/tmp/a.tmp",
+            EventType::Create,
+            1,
+            0,
+            "vim"
+        )));
+        assert!(!m.should_output(&make_event_cmd(
+            "/tmp/a.txt",
+            EventType::Create,
+            1,
+            0,
+            "rsync"
+        )));
+        assert!(m.should_output(&make_event_cmd(
+            "/tmp/a.txt",
+            EventType::Create,
+            2,
+            0,
+            "vim"
+        )));
     }
 
     #[test]
@@ -2011,7 +2183,11 @@ mod tests {
         // add_path on non-existent path → goes to pending_paths
         let result = m.add_path(&entry);
         assert!(result.is_ok());
-        assert!(m.pending_paths.iter().any(|(p, _)| p == Path::new("/tmp/test_add")));
+        assert!(
+            m.pending_paths
+                .iter()
+                .any(|(p, _)| p == Path::new("/tmp/test_add"))
+        );
         assert!(!m.path_options.contains_key(Path::new("/tmp/test_add")));
 
         // remove_path on non-existent path (not in options)
@@ -2047,7 +2223,13 @@ mod tests {
         }
     }
 
-    fn make_event_cmd(path: &str, event_type: EventType, pid: u32, size: u64, cmd: &str) -> FileEvent {
+    fn make_event_cmd(
+        path: &str,
+        event_type: EventType,
+        pid: u32,
+        size: u64,
+        cmd: &str,
+    ) -> FileEvent {
         FileEvent {
             time: Utc::now(),
             event_type,
@@ -2184,9 +2366,7 @@ mod tests {
             let mut buf = vec![0u8; 4096];
             let start = std::time::Instant::now();
             while start.elapsed() < std::time::Duration::from_millis(200) {
-                if let Ok(events) = fanotify_fid::read::read_fid_events(
-                    &fd, &[], &mut buf, None,
-                ) {
+                if let Ok(events) = fanotify_fid::read::read_fid_events(&fd, &[], &mut buf, None) {
                     if !events.is_empty() {
                         counter_clone.fetch_add(events.len(), Ordering::SeqCst);
                     }
@@ -2220,7 +2400,7 @@ mod tests {
     // ---- build_exclude_regex ----
 
     #[test]
-#[cfg(never)]
+    #[cfg(never)]
     fn test_build_exclude_regex_none() {
         let (re, inv) = filters::build_exclude_regex(None, "exclude").unwrap();
         assert!(re.is_none());
@@ -2228,7 +2408,7 @@ mod tests {
     }
 
     #[test]
-#[cfg(never)]
+    #[cfg(never)]
     fn test_build_exclude_regex_empty() {
         let (re, inv) = filters::build_exclude_regex(Some(&[]), "exclude").unwrap();
         assert!(re.is_none());
@@ -2236,7 +2416,7 @@ mod tests {
     }
 
     #[test]
-#[cfg(never)]
+    #[cfg(never)]
     fn test_build_exclude_regex_single_pattern() {
         let patterns = vec![".*\\.tmp$".to_string()];
         let (re, inv) = filters::build_exclude_regex(Some(&patterns), "exclude").unwrap();
@@ -2247,7 +2427,7 @@ mod tests {
     }
 
     #[test]
-#[cfg(never)]
+    #[cfg(never)]
     fn test_build_exclude_regex_multiple_patterns() {
         let patterns = vec![".*\\.tmp$".to_string(), ".*\\.log$".to_string()];
         let (re, inv) = filters::build_exclude_regex(Some(&patterns), "exclude").unwrap();
@@ -2259,7 +2439,7 @@ mod tests {
     }
 
     #[test]
-#[cfg(never)]
+    #[cfg(never)]
     fn test_build_exclude_regex_invert() {
         let patterns = vec!["!.*\\.py$".to_string()];
         let (re, inv) = filters::build_exclude_regex(Some(&patterns), "exclude").unwrap();
@@ -2270,7 +2450,7 @@ mod tests {
     }
 
     #[test]
-#[cfg(never)]
+    #[cfg(never)]
     fn test_build_exclude_regex_cmd() {
         let patterns = vec!["rsync".to_string(), "apt".to_string()];
         let (re, inv) = filters::build_exclude_regex(Some(&patterns), "--exclude-cmd").unwrap();
@@ -2282,7 +2462,7 @@ mod tests {
     }
 
     #[test]
-#[cfg(never)]
+    #[cfg(never)]
     fn test_build_exclude_regex_cmd_wildcard() {
         let patterns = vec!["nginx.*".to_string()];
         let (re, _inv) = filters::build_exclude_regex(Some(&patterns), "--exclude-cmd").unwrap();
