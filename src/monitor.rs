@@ -432,7 +432,7 @@ impl Monitor {
                 }
             }
         } else if self.pending_paths.is_empty() {
-            eprintln!("No paths configured. Waiting for socket commands (use 'fsmon add <path>').");
+            eprintln!("No entries configured. Waiting for socket commands (use 'fsmon add <cmd> --path <path>').");
         }
 
         // Ensure log directory exists and is owned by the original user
@@ -1082,10 +1082,12 @@ impl Monitor {
                 } else {
                     let _ = mark_directory(fan_fd, new_mask, &canonical);
                 }
-                if self.debug {
+                    if self.debug {
                     eprintln!("[debug]   updated fanotify mask to {:#x}", new_mask);
                 }
             }
+            let cmd_label = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
+            println!("Added entry: [{}] {}", cmd_label, path.display());
             return Ok(());
         }
 
@@ -1146,7 +1148,7 @@ impl Monitor {
 
         let cmd_label = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
         println!(
-            "Added path: [{}] {} (recursive={})",
+            "Added entry: [{}] {} (recursive={})",
             cmd_label, path.display(), recursive,
         );
 
@@ -1340,7 +1342,7 @@ impl Monitor {
                 self.path_options.remove(path);
                 self.path_to_group.remove(path);
             }
-            println!("Removed path: {}", path.display());
+            println!("Removed entry: {}", path.display());
         } else {
             // Other cmd groups still exist — update fanotify mask
             let new_mask = self.monitored_entries.iter()
@@ -1375,7 +1377,7 @@ impl Monitor {
                 eprintln!("[debug]   updated fanotify mask to {:#x} (other cmd groups remain)", new_mask);
             }
             let label = cmd.unwrap_or("?");
-            println!("Removed [{}] from {}", label, path.display());
+            println!("Removed entry: [{}] {}", label, path.display());
         }
         Ok(())
     }
