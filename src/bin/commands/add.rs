@@ -13,9 +13,9 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
 
     let process_name = args.cmd.clone();
 
-    // Require at least --path or --cmd
+    // Require at least --path or a process name
     if args.path.is_none() && process_name.is_none() {
-        bail!("At least one of --path or --cmd is required");
+        bail!("At least one of --path or a process name is required");
     }
 
     // Reject tracking the fsmon daemon itself — its events are excluded
@@ -24,7 +24,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         bail!(
             "Cannot monitor 'fsmon' process: fsmon daemon's own events are excluded \
                  from monitoring.\n\
-                 Tip: use a different process name, or omit --cmd to capture all events."
+                 Tip: use a different process name, or omit the process name to capture all events."
         );
     }
 
@@ -84,8 +84,8 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     if let Some(ref path) = path {
         if store.get(path, process_name.as_deref()).is_some() {
             let cmd_info = match process_name.as_deref() {
-                Some(cmd) => format!(" with --cmd {}", cmd),
-                None => " (without --cmd)".to_string(),
+                Some(cmd) => format!(" with cmd {}", cmd),
+                None => " (without cmd)".to_string(),
             };
             eprintln!(
                 "[Note] '{}{}' is already monitored — new parameters will replace the existing configuration.",

@@ -192,30 +192,31 @@ Socket：          `/tmp/fsmon-<UID>.sock`
 
 ### add
 
-添加监控路径。无需 sudo。
+添加路径或进程到监控列表。无需 sudo。
 
 ```
-fsmon add --path /home --cmd openclaw               追踪 /home 上 openclaw 的活动（最常用）
+fsmon add openclaw --path /home -r                   追踪 /home 上 openclaw 的活动（最常用）
+fsmon add nginx                                       全局追踪 nginx（进程模式）
 fsmon add --path /home -r                             递归监控 /home（路径模式）
-fsmon add --cmd openclaw                              全局追踪 openclaw（进程模式）
 fsmon add --path /home --types MODIFY --types CREATE  按事件类型过滤
 fsmon add --path /home --types all                    全部 14 种事件
-fsmon add --path /home --exclude '\.swp$'             排除路径模式
+fsmon add --path /home --exclude '*.tmp'              排除路径模式
 fsmon add --path /home -s '>=1MB'                     最小文件变更大小
 fsmon add --path /home --exclude-cmd rsync            排除噪声进程（仅路径模式）
 ```
 
-**`--path` vs `--cmd`：**
+**模式说明：**
 
-| 模式 | 参数 | 行为 |
+| 模式 | 示例 | 行为 |
 |------|------|------|
-| **同时** | `--path /home --cmd openclaw` | 只追踪 /home 上 openclaw（及子进程），匹配事件含 `chain` |
-| **仅路径** | `--path /home` | /home 上所有事件通过，每条含 `ppid`/`tgid`，可选 `--exclude-cmd` 过滤 |
-| **仅进程** | `--cmd openclaw` | 全局追踪 openclaw（不受路径限制），匹配事件含 `chain` |
+| **同时** | `fsmon add openclaw --path /home` | 只追踪 /home 上 openclaw（及子进程），匹配事件含 `chain` |
+| **仅路径** | `fsmon add --path /home` | /home 上所有事件通过，每条含 `ppid`/`tgid`，可选 `--exclude-cmd` 过滤 |
+| **仅进程** | `fsmon add openclaw` | 全局追踪 openclaw（不受路径限制），匹配事件含 `chain` |
 
-- `--cmd <name>` 启用**进程树追踪**：fork/exec 子进程自动包含，匹配事件附带 `chain` 字段
+- `<CMD>`（位置参数）启用**进程树追踪**：fork/exec 子进程自动包含，匹配事件附带 `chain` 字段
 - `--exclude-cmd <pattern>`（仅路径模式）按进程名过滤，**不启用**进程树，只匹配 cmd 单层
-- 可指定多个 `--cmd`（OR 逻辑）
+- `--exclude-cmd` 不等同于位置参数 `<CMD>`（后者启用进程树），两者用途不同
+- 可添加多个不同 `<CMD>` 的条目（每个条目 OR 逻辑）
 
 所有捕获过滤在 daemon 进程内完成（纳秒级，无 fork），不匹配的事件不会写盘。
 

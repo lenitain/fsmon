@@ -4,6 +4,25 @@
 
 最小改动，实现进程树感知。
 
+## 已完成
+
+### CLI: `add` 子命令 `cmd` 改为位置参数
+
+`cmd` 从 `--cmd NAME` 选项改为第一个位置参数。
+
+```bash
+# 旧语法
+fsmon add --path /home --cmd openclaw
+fsmon add --cmd openclaw
+
+# 新语法
+fsmon add openclaw --path /home     # cmd 是位置参数
+fsmon add openclaw                   # 进程模式：位置参数即可
+fsmon add --path /home               # 路径模式：无变化
+```
+
+改动文件：`src/bin/fsmon.rs`、`src/bin/commands/add.rs`、`src/help.rs`、`README.md`、`README.zh-CN.md`
+
 ## 改动清单
 
 ### 1. `--exclude-cmd` 重命名为 `--cmd`
