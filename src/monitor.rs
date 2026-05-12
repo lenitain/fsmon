@@ -275,7 +275,7 @@ impl Monitor {
                         size: opts
                             .size_filter
                             .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
-                        cmd: None,
+                        cmd: opts.cmd.clone(),
                     },
                 ));
             }
