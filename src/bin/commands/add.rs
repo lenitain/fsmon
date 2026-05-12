@@ -106,6 +106,12 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     let recursive = if args.recursive { Some(true) } else { Some(false) };
     let human_path = path.as_ref().map(|p| p.display().to_string())
         .unwrap_or_else(|| process_name.as_ref().cloned().unwrap_or_default());
+    let human_desc = match (&path, &process_name) {
+        (Some(p), Some(c)) => format!("{} [cmd={}]", p.display(), c),
+        (Some(p), None) => p.display().to_string(),
+        (None, Some(c)) => format!("[cmd={}]", c),
+        (None, None) => String::new(),
+    };
 
     store.add_entry(PathEntry {
         path: path.clone().unwrap_or_else(|| PathBuf::from(&human_path)),
@@ -137,7 +143,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
 
     match result {
         Ok(resp) if resp.ok => {
-            println!("Added: {}", human_path);
+            println!("Added: {}", human_desc);
             println!("Daemon updated live");
         }
         Ok(resp) => {
@@ -148,13 +154,13 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
                 store.save(&cfg.managed.path)?;
                 eprintln!("Error: {}", resp.error.unwrap_or_default());
             } else {
-                println!("Added: {}", human_path);
+                println!("Added: {}", human_desc);
                 eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
                 eprintln!("Will be monitored after daemon restart");
             }
         }
         Err(_) => {
-            println!("Added: {}", human_path);
+            println!("Added: {}", human_desc);
             eprintln!("Daemon not running — will be monitored after daemon restart.");
         }
     }
