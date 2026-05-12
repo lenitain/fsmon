@@ -27,6 +27,8 @@ use crate::utils::uid_to_username;
 pub struct ProcInfo {
     pub cmd: String,
     pub user: String,
+    pub ppid: u32,
+    pub tgid: u32,
 }
 
 /// Shared PID -> ProcInfo cache (thread-safe).
@@ -76,9 +78,10 @@ pub fn handle_proc_events(cache: &ProcCache, data: &[u8], n: usize) -> bool {
                     .map(|s| s.trim().to_string())
                     .unwrap_or_else(|| "unknown".to_string());
 
-                let user = read_proc_uid(pid).unwrap_or_else(|| "unknown".to_string());
+                let (user, ppid, tgid) = read_proc_info(pid)
+                    .unwrap_or_else(|| ("unknown".to_string(), 0, 0));
 
-                cache.insert(pid, ProcInfo { cmd, user });
+                cache.insert(pid, ProcInfo { cmd, user, ppid, tgid });
                 processed = true;
             }
             Ok(Some(_)) => {
@@ -102,16 +105,23 @@ pub fn handle_proc_events(cache: &ProcCache, data: &[u8], n: usize) -> bool {
     processed
 }
 
-fn read_proc_uid(pid: u32) -> Option<String> {
+/// Read user, ppid, tgid from /proc/{pid}/status.
+pub fn read_proc_info(pid: u32) -> Option<(String, u32, u32)> {
     let status = std::fs::read_to_string(format!("/proc/{}/status", pid)).ok()?;
-    let uid: u32 = status
-        .lines()
-        .find(|l| l.starts_with("Uid:"))?
-        .split_whitespace()
-        .nth(1)?
-        .parse()
-        .ok()?;
-    uid_to_username(uid)
+    let mut user = String::new();
+    let mut ppid = 0u32;
+    let mut tgid = 0u32;
+    for line in status.lines() {
+        if let Some(val) = line.strip_prefix("Uid:") {
+            let uid: u32 = val.split_whitespace().nth(0)?.parse().ok()?;
+            user = uid_to_username(uid).unwrap_or_else(|| "unknown".to_string());
+        } else if let Some(val) = line.strip_prefix("PPid:") {
+            ppid = val.trim().parse().ok()?;
+        } else if let Some(val) = line.strip_prefix("Tgid:") {
+            tgid = val.trim().parse().ok()?;
+        }
+    }
+    Some((user, ppid, tgid))
 }
 
 #[cfg(test)]
@@ -126,6 +136,8 @@ mod tests {
             ProcInfo {
                 cmd: "test_process".to_string(),
                 user: "testuser".to_string(),
+                ppid: 1,
+                tgid: 12345,
             },
         );
 
@@ -149,6 +161,8 @@ mod tests {
             1,
             ProcInfo {
                 cmd: "old".into(),
+                ppid: 0,
+                tgid: 1,
                 user: "a".into(),
             },
         );
@@ -156,6 +170,8 @@ mod tests {
             1,
             ProcInfo {
                 cmd: "new".into(),
+                ppid: 0,
+                tgid: 1,
                 user: "b".into(),
             },
         );
@@ -181,6 +197,8 @@ mod tests {
                         pid,
                         ProcInfo {
                             cmd: format!("proc_{}", pid),
+                        ppid: 1,
+                        tgid: pid,
                             user: "test".into(),
                         },
                     );
@@ -213,6 +231,8 @@ mod tests {
             42,
             ProcInfo {
                 cmd: "test".into(),
+                ppid: 1,
+                tgid: 42,
                 user: "root".into(),
             },
         );

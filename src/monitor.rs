@@ -705,22 +705,14 @@ impl Monitor {
         event_type: EventType,
     ) -> FileEvent {
         let pid = raw.pid.unsigned_abs();
-        let (cmd, user) = if let Some(info) = self.pid_cache.get(&pid) {
-            (info.cmd.clone(), info.user.clone())
+        let info = if let Some(info) = self.pid_cache.get(&pid) {
+            info.clone()
         } else {
-            let (cmd, user) =
-                get_process_info_by_pid(pid, &raw.path, self.proc_cache.as_ref());
-            // Cache successfully resolved info for reuse
-            if cmd != "unknown" || user != "unknown" {
-                self.pid_cache.put(
-                    pid,
-                    ProcInfo {
-                        cmd: cmd.clone(),
-                        user: user.clone(),
-                    },
-                );
+            let info = get_process_info_by_pid(pid, &raw.path, self.proc_cache.as_ref());
+            if info.cmd != "unknown" || info.user != "unknown" {
+                self.pid_cache.put(pid, info.clone());
             }
-            (cmd, user)
+            info
         };
 
         let file_size = match event_type {
@@ -743,9 +735,12 @@ impl Monitor {
             event_type,
             path: raw.path.clone(),
             pid,
-            cmd,
-            user,
+            cmd: info.cmd,
+            user: info.user,
             file_size,
+            ppid: info.ppid,
+            tgid: info.tgid,
+            chain: String::new(),
         }
     }
 
@@ -1704,6 +1699,9 @@ mod tests {
             cmd: "test".to_string(),
             user: "root".to_string(),
             file_size: size,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
         }
     }
 
@@ -1716,6 +1714,9 @@ mod tests {
             cmd: cmd.to_string(),
             user: "root".to_string(),
             file_size: size,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
         }
     }
 

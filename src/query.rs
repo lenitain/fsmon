@@ -282,6 +282,9 @@ mod tests {
                 path: PathBuf::from("/tmp/test"),
                 pid: 100, cmd: "touch".into(), user: "root".into(),
                 file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
             },
             FileEvent {
                 time: Utc::now(),
@@ -289,6 +292,9 @@ mod tests {
                 path: PathBuf::from("/tmp/test"),
                 pid: 200, cmd: "vim".into(), user: "root".into(),
                 file_size: 100,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
             },
         ];
         let log_path = create_log_file(&dir, &events);
@@ -322,6 +328,9 @@ mod tests {
                 time: Utc::now(), event_type: EventType::Create,
                 path: PathBuf::from("/a"), pid: 1, cmd: "a".into(), user: "r".into(),
                 file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
             },
         ];
         let _path = create_log_file(&dir, &events);
@@ -347,12 +356,18 @@ mod tests {
                 path: PathBuf::from("/tmp/old"), pid: 100,
                 cmd: "test".into(), user: "root".into(),
                 file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
             },
             FileEvent {
                 time: recent_time, event_type: EventType::Modify,
                 path: PathBuf::from("/tmp/recent"), pid: 200,
                 cmd: "test".into(), user: "root".into(),
                 file_size: 50,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
             },
         ];
         let log_path = create_log_file(&dir, &events);
@@ -378,12 +393,18 @@ mod tests {
                 path: PathBuf::from("/tmp/old"), pid: 100,
                 cmd: "test".into(), user: "root".into(),
                 file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
             },
             FileEvent {
                 time: recent_time, event_type: EventType::Modify,
                 path: PathBuf::from("/tmp/recent"), pid: 200,
                 cmd: "test".into(), user: "root".into(),
                 file_size: 50,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
             },
         ];
         let log_path = create_log_file(&dir, &events);
@@ -410,18 +431,27 @@ mod tests {
                 path: PathBuf::from("/a"), pid: 1,
                 cmd: "t".into(), user: "r".into(),
                 file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
             },
             FileEvent {
                 time: t2, event_type: EventType::Modify,
                 path: PathBuf::from("/b"), pid: 2,
                 cmd: "t".into(), user: "r".into(),
                 file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
             },
             FileEvent {
                 time: t3, event_type: EventType::Delete,
                 path: PathBuf::from("/c"), pid: 3,
                 cmd: "t".into(), user: "r".into(),
                 file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
             },
         ];
         let log_path = create_log_file(&dir, &events);

@@ -254,6 +254,9 @@ mod tests {
             cmd: "test".to_string(),
             user: "root".to_string(),
             file_size: size,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
         }
     }
 
@@ -266,6 +269,9 @@ mod tests {
             cmd: cmd.to_string(),
             user: "root".to_string(),
             file_size: size,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
         }
     }
 

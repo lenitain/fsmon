@@ -5,7 +5,7 @@ use std::fmt;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use crate::proc_cache::ProcCache;
+use crate::proc_cache::{ProcCache, ProcInfo};
 
 /// Size comparison operator.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -202,22 +202,24 @@ pub fn get_process_info_by_pid(
     pid: u32,
     file_path: &Path,
     proc_cache: Option<&ProcCache>,
-) -> (String, String) {
+) -> ProcInfo {
     // Check proc connector cache first (only source for short-lived processes)
     if let Some(cache) = proc_cache
         && let Some(info) = cache.get(&pid)
     {
-        return (info.cmd.clone(), info.user.clone());
+        return info.clone();
     }
 
     // Fallback to reading /proc directly (for long-lived processes)
     // If the process just exited, /proc/{pid} might still exist briefly
     // as a zombie before the parent reaps it. Retry with short sleep.
     let cmd = retry(|| read_proc_comm(pid)).unwrap_or_else(|| "unknown".to_string());
-    let user = retry(|| read_proc_user(pid))
-        .or_else(|| read_file_owner(file_path))
-        .unwrap_or_else(|| "unknown".to_string());
-    (cmd, user)
+    let (user, ppid, tgid) = retry(|| read_proc_status_fields(pid))
+        .unwrap_or_else(|| {
+            let fallback_user = read_file_owner(file_path).unwrap_or_else(|| "unknown".to_string());
+            (fallback_user, 0u32, 0u32)
+        });
+    ProcInfo { cmd, user, ppid, tgid }
 }
 
 /// Retry a fallible operation up to 3 times with 500µs sleep between attempts.
@@ -243,16 +245,23 @@ fn read_proc_comm(pid: u32) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
-fn read_proc_user(pid: u32) -> Option<String> {
+/// Read user, ppid, tgid from /proc/{pid}/status in one pass.
+fn read_proc_status_fields(pid: u32) -> Option<(String, u32, u32)> {
     let status = std::fs::read_to_string(format!("/proc/{}/status", pid)).ok()?;
-    let uid: u32 = status
-        .lines()
-        .find(|l| l.starts_with("Uid:"))?
-        .split_whitespace()
-        .nth(1)?
-        .parse()
-        .ok()?;
-    uid_to_username(uid)
+    let mut user = String::new();
+    let mut ppid = 0u32;
+    let mut tgid = 0u32;
+    for line in status.lines() {
+        if let Some(val) = line.strip_prefix("Uid:") {
+            let uid: u32 = val.split_whitespace().nth(0)?.parse().ok()?;
+            user = uid_to_username(uid).unwrap_or_else(|| "unknown".to_string());
+        } else if let Some(val) = line.strip_prefix("PPid:") {
+            ppid = val.trim().parse().ok()?;
+        } else if let Some(val) = line.strip_prefix("Tgid:") {
+            tgid = val.trim().parse().ok()?;
+        }
+    }
+    Some((user, ppid, tgid))
 }
 
 /// Fallback: read file owner UID from filesystem metadata
