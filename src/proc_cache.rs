@@ -205,7 +205,7 @@ pub fn handle_proc_events(
                 tree.insert(child_pid, PidNode { ppid: parent_pid, cmd: String::new() });
                 processed = true;
             }
-            Ok(Some(ProcEvent::Exit { pid, .. })) => {
+            Ok(Some(ProcEvent::Exit { .. })) => {
                 // Keep the node — it's still valid for historical chain lookups
                 // of events that happened before this process exited.
                 processed = true;
