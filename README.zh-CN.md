@@ -274,14 +274,13 @@ tail -f ~/.local/state/fsmon/*_log.jsonl | jq 'select(.user == "deploy")'
 
 ### clean
 
-清理历史日志文件。默认值来自 `fsmon.toml`：`keep_days=30`，`size=>=1GB`。
+清理指定 cmd 组的日志文件。默认值来自 `fsmon.toml`：`keep_days=30`，`size=>=1GB`。
 
 ```bash
-fsmon clean                                使用 config 默认值
-fsmon clean --time '>7d'                 保留最近 7 天
-fsmon clean --size '>=500MB'              每个日志文件大小上限
-fsmon clean --path /tmp                    清理指定路径的日志
-fsmon clean --dry-run                      预览模式，不实际删除
+fsmon clean _global                      清理全局日志（默认值）
+fsmon clean openclaw --time '>7d'       保留 openclaw 最近7天事件
+fsmon clean nginx --size '>=500MB'       nginx 日志大小上限
+fsmon clean _global --dry-run             预览模式，不实际删除
 ```
 
 优先级：CLI 参数 > fsmon.toml > 代码默认值（keep_days=30）

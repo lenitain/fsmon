@@ -110,15 +110,16 @@ pub struct QueryArgs {
 
 #[derive(Parser)]
 pub struct CleanArgs {
-    /// Path(s) to clean. Repeatable. Default: all.
-    #[arg(short, long, value_name = "PATH")]
-    pub path: Vec<PathBuf>,
+    /// Cmd group to clean (positional). Use '_global' for the global log.
+    #[arg(value_name = "CMD")]
+    pub cmd: Option<String>,
     /// Time filter with operator (e.g. >30d — delete entries older than 30 days)
-    #[arg(long, value_name = "FILTER")]
+    #[arg(short, long, value_name = "FILTER")]
     pub time: Option<String>,
     /// Size limit for log file truncation with operator (e.g. >500MB, >=1GB)
     #[arg(short, long)]
     pub size: Option<String>,
+    /// Dry run — preview without modifying
     #[arg(short, long)]
     pub dry_run: bool,
 }
@@ -377,66 +378,44 @@ mod tests {
     // ---- CleanArgs CLI parsing ----
 
     #[test]
-    fn test_clean_no_flags() {
-        let args = CleanArgs::try_parse_from(&["clean"]).unwrap();
-        assert!(args.path.is_empty());
+    fn test_clean_basic_cmd() {
+        let args = CleanArgs::try_parse_from(&["clean", "_global"]).unwrap();
+        assert_eq!(args.cmd, Some("_global".into()));
         assert!(args.time.is_none());
         assert!(args.size.is_none());
         assert!(!args.dry_run);
     }
 
     #[test]
-    fn test_clean_path_long() {
-        let args = CleanArgs::try_parse_from(&[
-            "clean",
-            "--path", "/tmp", "--path", "/var/log",
-        ]).unwrap();
-        assert_eq!(args.path, vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")]);
-    }
-
-    #[test]
-    fn test_clean_path_short() {
-        let args = CleanArgs::try_parse_from(&[
-            "clean",
-            "-p", "/tmp", "-p", "/var/log",
-        ]).unwrap();
-        assert_eq!(args.path, vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")]);
-    }
-
-    #[test]
-    fn test_clean_time() {
-        let args = CleanArgs::try_parse_from(&["clean", "--time", ">30d"]).unwrap();
+    fn test_clean_cmd_with_time() {
+        let args = CleanArgs::try_parse_from(&["clean", "openclaw", "--time", ">30d"]).unwrap();
+        assert_eq!(args.cmd, Some("openclaw".into()));
         assert_eq!(args.time, Some(">30d".into()));
     }
 
     #[test]
-    fn test_clean_size_short() {
-        let args = CleanArgs::try_parse_from(&["clean", "-s", "500MB"]).unwrap();
+    fn test_clean_cmd_with_size() {
+        let args = CleanArgs::try_parse_from(&["clean", "nginx", "-s", "500MB"]).unwrap();
+        assert_eq!(args.cmd, Some("nginx".into()));
         assert_eq!(args.size, Some("500MB".into()));
     }
 
     #[test]
-    fn test_clean_size_long() {
-        let args = CleanArgs::try_parse_from(&["clean", "--size", ">=1GB"]).unwrap();
-        assert_eq!(args.size, Some(">=1GB".into()));
-    }
-
-    #[test]
-    fn test_clean_dry_run_long() {
-        let args = CleanArgs::try_parse_from(&["clean", "--dry-run"]).unwrap();
+    fn test_clean_cmd_with_dry_run() {
+        let args = CleanArgs::try_parse_from(&["clean", "_global", "--dry-run"]).unwrap();
+        assert_eq!(args.cmd, Some("_global".into()));
         assert!(args.dry_run);
     }
 
     #[test]
     fn test_clean_all_flags() {
         let args = CleanArgs::try_parse_from(&[
-            "clean",
-            "-p", "/tmp", "--path", "/var/log",
+            "clean", "openclaw",
             "--time", ">30d",
             "-s", ">=100MB",
             "--dry-run",
         ]).unwrap();
-        assert_eq!(args.path, vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")]);
+        assert_eq!(args.cmd, Some("openclaw".into()));
         assert_eq!(args.time, Some(">30d".into()));
         assert_eq!(args.size, Some(">=100MB".into()));
         assert!(args.dry_run);

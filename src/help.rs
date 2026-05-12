@@ -166,16 +166,21 @@ Examples:
   fsmon query -t '>1h'               Events from last hour"#
         }
         HelpTopic::Clean => {
-            r#"Clean historical log files, retain by time or size.
+            r#"Clean a log file for a specific cmd group, retain by time or size.
 
 Defaults: keep_days=30, size=>=1GB (from fsmon.toml [logging] section or code fallback).
 CLI args override config. Daemon does not auto-clean; use cron/systemd timer.
 
+USAGE:
+  fsmon clean <CMD> [OPTIONS]
+
+ARGS:
+  <CMD>   Cmd group to clean (positional). Use '_global' for the global log.
+
 Options:
-  --path            Path(s) to clean. Repeatable. Default: all.
-  --time            Time filter with operator (e.g. >30d — keep newer than 30 days)
-  --size            Size limit for log file truncation with operator (e.g. >500MB, >=1GB).
-                          Operator required: >=, >, <=, <, = (short: -s)
+  -t, --time        Time filter with operator (e.g. >30d — keep newer than 30 days)
+  -s, --size        Size limit for log file truncation with operator (e.g. >500MB, >=1GB).
+                          Operator required: >=, >, <=, <, =
   --dry-run         Preview mode, don't actually delete
 
 Alternatively, clean the log files directly with standard Unix tools:
@@ -185,9 +190,9 @@ Alternatively, clean the log files directly with standard Unix tools:
 (Note: native fsmon clean uses accurate JSONL parsing and is safer for large files)
 
 Examples:
-  fsmon clean                       Use config defaults (>=30d)
-  fsmon clean --time '>7d'          Keep last 7 days
-  fsmon clean --path /tmp --dry-run Preview without deleting"#
+  fsmon clean _global                Clean global log with defaults (>=30d)
+  fsmon clean openclaw -t '>7d'     Keep last 7 days of openclaw events
+  fsmon clean nginx --dry-run        Preview nginx log cleaning"#
         }
 
     }
@@ -217,9 +222,9 @@ Query (stdout JSONL, pipe to jq):
   cat ~/.local/state/fsmon/*_log.jsonl | jq ...  Or direct pipe (slower)
 
 Clean (config defaults: keep_days=30, size=>=1GB):
-  fsmon clean                       Clean all logs (keep >30d)
-  fsmon clean --time '>7d'         Keep last 7 days
-  fsmon clean --dry-run             Preview without deleting
+  fsmon clean _global               Clean global log (keep >30d)
+  fsmon clean openclaw -t '>7d'    Keep last 7 days of openclaw
+  fsmon clean nginx --dry-run       Preview nginx log cleaning
   tail -500 ...                     Or direct Unix tools (slower)
 
 Config: ~/.config/fsmon/fsmon.toml (optional — defaults without it)

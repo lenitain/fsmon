@@ -280,14 +280,13 @@ fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 
 ### clean
 
-Clean historical log files. Defaults from `fsmon.toml`: `keep_days=30`, `size=>=1GB`.
+Clean a log file for a specific cmd group. Defaults from `fsmon.toml`: `keep_days=30`, `size=>=1GB`.
 
 ```bash
-fsmon clean                                Use config defaults
-fsmon clean --time '>7d'                 Keep last 7 days
-fsmon clean --size '>=500MB'              Size limit per log file
-fsmon clean --path /tmp                    Clean specific path's log
-fsmon clean --dry-run                      Preview without deleting
+fsmon clean _global                      Clean global log (defaults)
+fsmon clean openclaw --time '>7d'       Keep last 7 days of openclaw events
+fsmon clean nginx --size '>=500MB'       Size limit for nginx log
+fsmon clean _global --dry-run             Preview without deleting
 ```
 
 Priority: CLI arg > fsmon.toml > code default (keep_days=30)
