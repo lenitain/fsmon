@@ -173,7 +173,6 @@ pub struct FileEvent {
     pub ppid: u32,
     #[serde(default)]
     pub tgid: u32,
-    #[serde(skip_serializing_if = "String::is_empty", default)]
     pub chain: String,
 }
 
