@@ -106,11 +106,24 @@ Examples:
         HelpTopic::Remove => {
             r#"Remove one or more paths from the monitoring list.
 
-Paths are removed immediately if the daemon is running.
+Without --path, removes the entire cmd group (including the null group).
+With --path, removes only the specified paths. Multiple paths are atomic:
+all must exist, or nothing is removed.
+
+USAGE:
+  fsmon remove [CMD] [--path <PATH>...]
+
+ARGS:
+  <CMD>   Cmd group to remove (positional). Omit for null cmd group.
+
+Options:
+  --path <PATH>    Path(s) to remove from the cmd group (repeatable)
 
 Examples:
-  fsmon remove /path/to/watch
-  fsmon remove /path/a /path/b /path/c"#
+  fsmon remove                       Remove all paths from null cmd group
+  fsmon remove openclaw              Remove the entire openclaw cmd group
+  fsmon remove openclaw --path /a    Remove /a from openclaw group
+  fsmon remove --path /a --path /b   Remove /a, /b from null cmd group (atomic)"#
         }
         HelpTopic::Monitored => {
             r#"List all monitored paths with their configuration.

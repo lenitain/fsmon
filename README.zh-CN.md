@@ -147,7 +147,7 @@ kill %1
 | 用途 | 路径 | 格式 |
 |---|---|---|
 | 基础设施配置 | `~/.config/fsmon/fsmon.toml` | TOML（可选 — 无配置文件时使用默认值） |
-| Monitored 路径数据库 | `~/.local/share/fsmon/monitored.jsonl` | JSONL（每行一条目） |
+| Monitored 路径数据库 | `~/.local/share/fsmon/monitored.jsonl` | JSONL（按cmd分组，路径为map key） |
 | 事件日志 | `~/.local/state/fsmon/*_log.jsonl` | JSONL（每行一事件） |
 | Unix Socket | `/tmp/fsmon-<UID>.sock` | TOML over stream |
 
@@ -220,9 +220,16 @@ fsmon add --path /home -s '>=1MB'                     最小文件变更大小
 
 移除一个或多个监控路径。无需 sudo。
 
+不带 `--path` 时移除**整个 cmd 组**（包括 null 组）。
+带 `--path` 时只从 cmd 组中移除指定路径。
+多个 `--path` 参数是**原子操作**——所有路径必须都存在，否则什么都不删。
+
 ```
-fsmon remove <path>                        移除一个监控路径
-fsmon remove <path1> <path2> <path3>       一次移除多个路径
+fsmon remove                              移除整个 null cmd 组
+fsmon remove openclaw                      移除整个 openclaw cmd 组
+fsmon remove openclaw --path /home         从 openclaw 组移除 /home
+fsmon remove --path /home                  从 null 组移除 /home
+fsmon remove --path /a --path /b           从 null 组移除 /a 和 /b（原子操作）
 ```
 
 ### monitored

@@ -517,4 +517,247 @@ mod tests {
             _ => panic!("expected Remove"),
         };
     }
+
+    // ---- Integration tests (no sudo needed) ----
+
+    use fsmon::monitored::Monitored;
+    use fsmon::config::Config;
+    use std::fs;
+    use std::path::Path;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Global mutex for tests that modify HOME env var.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Generate a unique temp directory path for test isolation.
+    fn unique_temp_home() -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "fsmon_integration_test_{}_{}",
+            std::process::id(),
+            n
+        ))
+    }
+
+    /// Run a test with an isolated HOME directory.
+    /// Creates `{home}/monitored` as a monitored path (exists, not parent of log dir).
+    fn with_isolated_home(f: impl FnOnce(&Path, &Path)) {
+        // Recover from poisoned mutex (previous test panic)
+        let _lock = match ENV_LOCK.lock() {
+            Ok(l) => l,
+            Err(e) => e.into_inner(),
+        };
+        let dir = unique_temp_home();
+        let _ = fs::remove_dir_all(&dir);
+        let home_str = dir.to_string_lossy().to_string();
+
+        // Create a monitored dir inside the temp home (not parent of log dir)
+        let monitored_path = dir.join("monitored");
+        fs::create_dir_all(&monitored_path).unwrap();
+
+        temp_env::with_vars(
+            &[
+                ("HOME", Some(home_str.as_str())),
+                ("XDG_CONFIG_HOME", None::<&str>),
+                ("SUDO_UID", None::<&str>),
+            ],
+            || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    f(&dir, &monitored_path)
+                }));
+                let _ = fs::remove_dir_all(&dir);
+                if let Err(e) = result {
+                    std::panic::resume_unwind(e);
+                }
+            },
+        );
+    }
+
+    /// Load the monitored store from the default path under the isolated home.
+    fn load_store(_home: &Path) -> Monitored {
+        let mut cfg = Config::load().unwrap();
+        cfg.resolve_paths().unwrap();
+        Monitored::load(&cfg.monitored.path).unwrap()
+    }
+
+    #[test]
+    fn test_integration_add_path_only() {
+        with_isolated_home(|home, mp| {
+            let p = mp.to_string_lossy();
+            let args = AddArgs::try_parse_from(&["add", "--path", p.as_ref()]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+
+            let store = load_store(home);
+            assert_eq!(store.entry_count(), 1);
+            assert!(store.get(mp, None).is_some());
+        });
+    }
+
+    #[test]
+    fn test_integration_add_with_cmd() {
+        with_isolated_home(|home, mp| {
+            let p = mp.to_string_lossy();
+            let args = AddArgs::try_parse_from(&[
+                "add", "openclaw", "--path", p.as_ref(),
+            ]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+
+            let store = load_store(home);
+            assert_eq!(store.entry_count(), 1);
+            assert!(store.get(mp, Some("openclaw")).is_some());
+        });
+    }
+
+    #[test]
+    fn test_integration_add_with_types() {
+        with_isolated_home(|home, mp| {
+            let p = mp.to_string_lossy();
+            let args = AddArgs::try_parse_from(&[
+                "add", "--path", p.as_ref(),
+                "--types", "MODIFY",
+                "--types", "CREATE",
+            ]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+
+            let store = load_store(home);
+            let entry = store.get(mp, None).unwrap();
+            let types = entry.types.unwrap();
+            assert!(types.contains(&"MODIFY".to_string()));
+            assert!(types.contains(&"CREATE".to_string()));
+        });
+    }
+
+    #[test]
+    fn test_integration_add_recursive() {
+        with_isolated_home(|home, mp| {
+            let p = mp.to_string_lossy();
+            let args = AddArgs::try_parse_from(&[
+                "add", "--path", p.as_ref(), "-r",
+            ]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+
+            let store = load_store(home);
+            let entry = store.get(mp, None).unwrap();
+            assert_eq!(entry.recursive, Some(true));
+        });
+    }
+
+    #[test]
+    fn test_integration_add_and_remove_path() {
+        with_isolated_home(|home, mp| {
+            let p = mp.to_string_lossy();
+            let args = AddArgs::try_parse_from(&["add", "--path", p.as_ref()]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+
+            super::commands::cmd_remove(None, vec![mp.to_path_buf()]).unwrap();
+
+            let store = load_store(home);
+            assert_eq!(store.entry_count(), 0);
+        });
+    }
+
+    #[test]
+    fn test_integration_remove_entire_null_group() {
+        with_isolated_home(|home, mp| {
+            let p = mp.to_string_lossy();
+            let args = AddArgs::try_parse_from(&["add", "--path", p.as_ref()]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+
+            assert_eq!(load_store(home).entry_count(), 1);
+
+            super::commands::cmd_remove(None, vec![]).unwrap();
+            assert_eq!(load_store(home).entry_count(), 0);
+        });
+    }
+
+    #[test]
+    fn test_integration_remove_entire_cmd_group() {
+        with_isolated_home(|home, mp| {
+            let p = mp.to_string_lossy();
+            let args = AddArgs::try_parse_from(&[
+                "add", "myapp", "--path", p.as_ref(),
+            ]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+            assert_eq!(load_store(home).entry_count(), 1);
+
+            super::commands::cmd_remove(Some("myapp".into()), vec![]).unwrap();
+            assert_eq!(load_store(home).entry_count(), 0);
+        });
+    }
+
+    #[test]
+    fn test_integration_remove_path_from_cmd_group() {
+        with_isolated_home(|home, mp| {
+            let p = mp.to_string_lossy();
+            // Same path in both myapp and null group
+            let args = AddArgs::try_parse_from(&[
+                "add", "myapp", "--path", p.as_ref(),
+            ]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+            let args = AddArgs::try_parse_from(&["add", "--path", p.as_ref()]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+            assert_eq!(load_store(home).entry_count(), 2);
+
+            // Remove path only from myapp group
+            super::commands::cmd_remove(
+                Some("myapp".into()),
+                vec![mp.to_path_buf()],
+            ).unwrap();
+
+            let store = load_store(home);
+            assert_eq!(store.entry_count(), 1);
+            assert!(store.get(mp, None).is_some());
+            assert!(store.get(mp, Some("myapp")).is_none());
+        });
+    }
+
+    #[test]
+    fn test_integration_remove_multi_path_atomic_failure() {
+        with_isolated_home(|_home, mp| {
+            let p = mp.to_string_lossy();
+            let args = AddArgs::try_parse_from(&["add", "--path", p.as_ref()]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+
+            // One path exists, one doesn't → should fail atomically
+            let result = super::commands::cmd_remove(
+                None,
+                vec![mp.to_path_buf(), PathBuf::from("/nonexistent")],
+            );
+            assert!(result.is_err(), "should fail atomically");
+            let err = result.unwrap_err().to_string();
+            assert!(
+                err.contains("not being monitored"),
+                "error should mention path not found, got: {}",
+                err,
+            );
+        });
+    }
+
+    #[test]
+    fn test_integration_remove_nonexistent_cmd_group() {
+        with_isolated_home(|_home, _mp| {
+            let result = super::commands::cmd_remove(Some("nonexistent".into()), vec![]);
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_integration_add_to_both_null_and_cmd() {
+        with_isolated_home(|home, mp| {
+            let p = mp.to_string_lossy();
+            let args = AddArgs::try_parse_from(&["add", "--path", p.as_ref()]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+            let args = AddArgs::try_parse_from(&[
+                "add", "myapp", "--path", p.as_ref(),
+            ]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+
+            let store = load_store(home);
+            assert_eq!(store.entry_count(), 2);
+            assert_eq!(store.groups.len(), 2);
+        });
+    }
+
 }

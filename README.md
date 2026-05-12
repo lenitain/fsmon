@@ -152,7 +152,7 @@ kill %1
 | Purpose | Path | Format |
 |---|---|---|
 | Infrastructure config | `~/.config/fsmon/fsmon.toml` | TOML (optional — defaults without it) |
-| Path database | `~/.local/share/fsmon/monitored.jsonl` | JSONL (one entry per line) |
+| Path database | `~/.local/share/fsmon/monitored.jsonl` | JSONL (grouped by cmd, paths as map keys) |
 | Event logs | `~/.local/state/fsmon/*_log.jsonl` | JSONL (one event per line) |
 | Unix socket | `/tmp/fsmon-<UID>.sock` | TOML over stream |
 
@@ -229,9 +229,16 @@ Events that don't match never touch disk.
 
 Remove one or more paths from the monitoring list. No sudo needed.
 
+Without `--path`, removes the **entire cmd group** (including the null group).
+With `--path`, removes only the specified paths from the cmd group.
+Multiple `--path` args are **atomic** — all must exist, or nothing is removed.
+
 ```
-fsmon remove <path>                        Remove a monitored path
-fsmon remove <path1> <path2> <path3>       Remove multiple paths at once
+fsmon remove                              Remove entire null cmd group
+fsmon remove openclaw                      Remove entire openclaw cmd group
+fsmon remove openclaw --path /home         Remove /home from openclaw group
+fsmon remove --path /home                  Remove /home from null cmd group
+fsmon remove --path /a --path /b           Remove /a and /b from null group (atomic)
 ```
 
 ### monitored
