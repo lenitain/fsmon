@@ -87,20 +87,27 @@ impl Monitor {
         let mut path_options = HashMap::new();
         let log_dir_canonical = log_dir.as_ref().map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()));
         for (path, opts) in &paths_and_options {
-            // Reject paths that would cause infinite recursion
+            // Reject paths that overlap with the log directory.
+            // - Exact match (path == log dir) → always reject (it IS the log dir)
+            // - Parent + recursive → reject (would capture log file writes)
+            // - Parent + non-recursive → allow (only direct children, log files deeper)
             // Resolve tilde + symlinks to catch symlink-based conflicts
             let resolved = filters::resolve_recursion_check(path);
-            if let Some(ref log_dir) = log_dir_canonical
-                && log_dir.starts_with(&resolved)
-                && log_dir.as_path() != resolved
-            {
-                bail!(
-                    "Cannot monitor '{}': log directory '{}' is inside this path — \
-                     every log write would trigger a new event.\n\
-                     Tip: use a more specific path or a different logging.path",
-                    path.display(),
-                    log_dir_canonical.as_ref().unwrap().display(),
-                );
+            if let Some(ref log_dir) = log_dir_canonical {
+                let is_exact = log_dir.as_path() == resolved;
+                let is_parent_recursive = opts.recursive && log_dir.starts_with(&resolved);
+                if is_exact || is_parent_recursive {
+                    bail!(
+                        "Cannot monitor '{}': {} — \
+                         Tip: use a path outside the log directory, or use a different logging.path",
+                        path.display(),
+                        if is_exact {
+                            format!("this path is the log directory itself")
+                        } else {
+                            format!("log directory '{}' is inside this path", log_dir.display())
+                        },
+                    );
+                }
             }
             path_options.insert(resolved.clone(), opts.clone());
             paths.push(resolved.clone());
@@ -882,17 +889,24 @@ impl Monitor {
             bail!("Path already being monitored: {}", path.display());
         }
 
-        // Reject paths that would cause infinite recursion (log dir inside monitored path).
-        // Allow exact match on log dir: PID filter prevents self-triggering.
+        // Reject paths that overlap with the log directory.
+        // - Exact match (path == log dir) → always reject (it IS the log dir)
+        // - Parent + recursive → reject (would capture log file writes)
+        // - Parent + non-recursive → allow (only direct children, log files deeper)
         if let Some(ref log_dir) = self.log_dir {
             let log_canonical = log_dir.canonicalize().unwrap_or_else(|_| log_dir.clone());
-            if log_canonical.starts_with(&path) && log_canonical != path {
+            let is_exact = log_canonical == path;
+            let is_parent_recursive = entry.recursive.unwrap_or(false) && log_canonical.starts_with(&path);
+            if is_exact || is_parent_recursive {
                 bail!(
-                    "Cannot monitor '{}': log directory '{}' is inside this path — \
-                     every log write would trigger a new event.\n\
-                     Tip: use a more specific path or a different logging.path",
+                    "Cannot monitor '{}': {} — \
+                     Tip: use a path outside the log directory, or use a different logging.path",
                     path.display(),
-                    log_dir.display()
+                    if is_exact {
+                        format!("this path is the log directory itself")
+                    } else {
+                        format!("log directory '{}' is inside this path", log_dir.display())
+                    },
                 );
             }
         }

@@ -18,6 +18,18 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         bail!("At least one of --path or --cmd is required");
     }
 
+    // Reject tracking the fsmon daemon itself — its events are excluded
+    // by PID filter, so --cmd fsmon would never match anything.
+    if let Some(ref cmd) = process_name {
+        if cmd == "fsmon" {
+            bail!(
+                "Cannot track 'fsmon' process: fsmon daemon's own events are excluded \
+                 from monitoring to prevent self-triggering feedback.\n\
+                 Tip: use a different process name, or omit --cmd to capture all events."
+            );
+        }
+    }
+
     // Resolve path if provided
     let path = if let Some(ref raw_path) = args.path {
         let path_str = raw_path.to_string_lossy();
@@ -48,13 +60,16 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             .path
             .canonicalize()
             .unwrap_or_else(|_| cfg.logging.path.clone());
-        if log_dir_canon.starts_with(&resolved) {
+        if args.recursive && log_dir_canon.starts_with(&resolved) || log_dir_canon == resolved {
             bail!(
-                "Cannot monitor '{}': log directory '{}' is inside this path — \
-                 would cause infinite recursion on every log write.\n\
-                 Tip: use a different logging.dir or add a more specific path",
+                "Cannot monitor '{}': {} — \
+                 Tip: use a path outside the log directory, or use a different logging.path",
                 raw_path.display(),
-                cfg.logging.path.display()
+                if log_dir_canon == resolved {
+                    format!("this path is the log directory itself")
+                } else {
+                    format!("log directory '{}' is inside this path", cfg.logging.path.display())
+                },
             );
         }
 
