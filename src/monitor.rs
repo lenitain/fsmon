@@ -1036,8 +1036,29 @@ impl Monitor {
         }
         let path = filters::resolve_recursion_check(&entry.path);
 
-        if self.path_options.contains_key(&path) {
-            bail!("Path already being monitored: {}", path.display());
+        let is_new_path = !self.path_options.contains_key(&path);
+        if !is_new_path {
+            if self.debug {
+                eprintln!("[debug]   path already monitored (different cmd) — updating only monitored_entries");
+            }
+            // Other cmd group already set up fanotify — just add entry tracking
+            let cmd = entry.cmd.as_deref().and_then(|c| {
+                if c == crate::monitored::CMD_GLOBAL { None } else { Some(c.to_string()) }
+            });
+            let event_types = entry.types.as_ref().map(|types| {
+                types.iter().filter_map(|s| s.parse::<EventType>().ok()).collect()
+            });
+            let size_filter = entry.size.as_ref().map(|s| parse_size_filter(s)).transpose()?;
+            let recursive = entry.recursive.unwrap_or(false);
+            let opts = PathOptions {
+                size_filter,
+                event_types,
+                recursive,
+                cmd,
+            };
+            self.monitored_entries.push((path.clone(), opts.clone()));
+            self.path_options.insert(path.clone(), opts);
+            return Ok(());
         }
 
         // Reject paths that overlap with the log directory.
@@ -1310,10 +1331,18 @@ impl Monitor {
                     }
                 };
                 let path = raw;
-                // Always remove first (no-op if not monitored), then add.
-                // This keeps the state machine simple: add_path always creates
-                // fresh fanotify marks and caches regardless of prior state.
-                let _ = self.remove_path(&path);
+                let track_cmd = cmd.track_cmd.as_deref()
+                    .and_then(|c| if c == crate::monitored::CMD_GLOBAL { None } else { Some(c.to_string()) });
+                // Remove only this (path, cmd) pair, not other cmd groups for same path
+                self.monitored_entries.retain(|(p, o)| {
+                    !(p == &path && o.cmd == track_cmd)
+                });
+                let has_other_cmds = self.monitored_entries.iter().any(|(p, _)| p == &path);
+                if !has_other_cmds {
+                    // No other cmd groups for this path — full teardown + setup
+                    let _ = self.remove_path(&path);
+                }
+                // Rebuild fanotify mask: last seen mask stays via path_options
                 let entry = PathEntry {
                     path,
                     recursive: cmd.recursive,
