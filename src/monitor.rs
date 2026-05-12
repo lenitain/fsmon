@@ -262,6 +262,9 @@ impl Monitor {
                     "[INFO] Path '{}' does not exist yet — will start monitoring when created.",
                     path.display()
                 );
+                // Remove stale entries from monitored_entries so add_path later
+                // doesn't create a duplicate when check_pending fires.
+                self.monitored_entries.retain(|(p, _)| p != &path);
                 let entry_path = path.clone();
                 self.pending_paths.push((
                     path,
