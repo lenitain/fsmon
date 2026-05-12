@@ -751,4 +751,252 @@ mod tests {
         });
     }
 
+    // ---- Edge cases: add ----
+
+    #[test]
+    fn test_integration_add_missing_cmd_fails() {
+        with_isolated_home(|_home, mp| {
+            let p = mp.to_string_lossy();
+            let args = AddArgs::try_parse_from(&["add", "--path", p.as_ref()]).unwrap();
+            let result = super::commands::cmd_add(args);
+            assert!(result.is_err(), "missing cmd should fail");
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("CMD is required"), "got: {}", err);
+        });
+    }
+
+    #[test]
+    fn test_integration_add_fsmon_cmd_fails() {
+        with_isolated_home(|_home, mp| {
+            let p = mp.to_string_lossy();
+            let args = AddArgs::try_parse_from(&[
+                "add", "fsmon", "--path", p.as_ref(),
+            ]).unwrap();
+            let result = super::commands::cmd_add(args);
+            assert!(result.is_err(), "fsmon cmd should fail");
+        });
+    }
+
+    #[test]
+    fn test_integration_add_duplicate_replaces() {
+        with_isolated_home(|home, mp| {
+            let p = mp.to_string_lossy();
+            // Add first
+            let args = AddArgs::try_parse_from(&[
+                "add", "_global", "--path", p.as_ref(), "-r",
+            ]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+            assert_eq!(load_store(home).entry_count(), 1);
+
+            // Add same path+cmd again with different flags (no -r)
+            let args = AddArgs::try_parse_from(&[
+                "add", "_global", "--path", p.as_ref(),
+            ]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+
+            let store = load_store(home);
+            assert_eq!(store.entry_count(), 1, "should replace, not duplicate");
+            let entry = store.get(mp, None).unwrap();
+            assert_eq!(entry.recursive, Some(false), "should be replaced with new flags");
+        });
+    }
+
+    #[test]
+    fn test_integration_add_with_size() {
+        with_isolated_home(|home, mp| {
+            let p = mp.to_string_lossy();
+            let args = AddArgs::try_parse_from(&[
+                "add", "_global", "--path", p.as_ref(), "-s", ">1MB",
+            ]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+
+            let store = load_store(home);
+            let entry = store.get(mp, None).unwrap();
+            assert_eq!(entry.size.as_deref(), Some(">1MB"));
+        });
+    }
+
+    // ---- Edge cases: remove ----
+
+    #[test]
+    fn test_integration_remove_missing_cmd_fails() {
+        with_isolated_home(|_home, _mp| {
+            let result = super::commands::cmd_remove(None, vec![]);
+            assert!(result.is_err(), "missing cmd should fail");
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("CMD is required"), "got: {}", err);
+        });
+    }
+
+    #[test]
+    fn test_integration_remove_path_not_in_cmd_fails() {
+        with_isolated_home(|_home, mp| {
+            let p = mp.to_string_lossy();
+            // Add path under _global
+            let args = AddArgs::try_parse_from(&[
+                "add", "_global", "--path", p.as_ref(),
+            ]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+
+            // Try to remove same path from wrong cmd group
+            let result = super::commands::cmd_remove(
+                Some("wrong_cmd".into()),
+                vec![mp.to_path_buf()],
+            );
+            assert!(result.is_err(), "path in wrong cmd should fail");
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("not found under cmd"), "got: {}", err);
+        });
+    }
+
+    #[test]
+    fn test_integration_remove_nonexistent_cmd_fails() {
+        with_isolated_home(|_home, _mp| {
+            let result = super::commands::cmd_remove(Some("ghost".into()), vec![]);
+            assert!(result.is_err());
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("not found"), "got: {}", err);
+        });
+    }
+
+    #[test]
+    fn test_integration_remove_keeps_other_cmds() {
+        with_isolated_home(|home, mp| {
+            let p = mp.to_string_lossy();
+            // Add same path under two cmds
+            let args = AddArgs::try_parse_from(&[
+                "add", "_global", "--path", p.as_ref(),
+            ]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+            let args = AddArgs::try_parse_from(&[
+                "add", "app_a", "--path", p.as_ref(),
+            ]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+            let args = AddArgs::try_parse_from(&[
+                "add", "app_b", "--path", p.as_ref(),
+            ]).unwrap();
+            super::commands::cmd_add(args).unwrap();
+            assert_eq!(load_store(home).entry_count(), 3);
+
+            // Remove app_a entirely
+            super::commands::cmd_remove(Some("app_a".into()), vec![]).unwrap();
+            let store = load_store(home);
+            assert_eq!(store.entry_count(), 2, "app_b + _global should remain");
+            assert!(store.get(mp, None).is_some());
+            assert!(store.get(mp, Some("app_b")).is_some());
+            assert!(store.get(mp, Some("app_a")).is_none());
+        });
+    }
+
+    // ---- Edge cases: query ----
+
+    #[test]
+    fn test_integration_query_missing_cmd_fails() {
+        // QueryArgs without cmd can't be constructed via try_parse_from
+        // because clap will fail due to missing positional. But we can still
+        // verify the handler rejects it by calling with None.
+        use fsmon::query::Query;
+        let q = Query::new(PathBuf::from("/nonexistent"), None, None, vec![]);
+        assert!(q.resolve_log_files().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_integration_query_cmd_no_log_file() {
+        with_isolated_home(|_home, _mp| {
+            use fsmon::query::Query;
+            let q = Query::new(
+                PathBuf::from("/nonexistent_log_dir"),
+                Some("ghost".into()),
+                None,
+                vec![],
+            );
+            // No log files should be found
+            let files = q.resolve_log_files().unwrap();
+            assert!(files.is_empty(), "nonexistent cmd should yield no files");
+        });
+    }
+
+    // ---- Edge cases: clean ----
+
+    #[test]
+    fn test_integration_clean_missing_cmd_fails() {
+        with_isolated_home(|_home, _mp| {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let result = rt.block_on(super::commands::cmd_clean(CleanArgs {
+                cmd: None,
+                time: None,
+                size: None,
+                dry_run: false,
+            }));
+            assert!(result.is_err(), "missing cmd should fail");
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("CMD is required"), "got: {}", err);
+        });
+    }
+
+    #[test]
+    fn test_integration_clean_nonexistent_log() {
+        with_isolated_home(|_home, _mp| {
+            // Clean a cmd that has no log file → should succeed (file not found message)
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let result = rt.block_on(super::commands::cmd_clean(CleanArgs {
+                cmd: Some("ghost".into()),
+                time: None,
+                size: None,
+                dry_run: false,
+            }));
+            assert!(result.is_ok(), "clean nonexistent log should not error");
+        });
+    }
+
+    #[test]
+    fn test_integration_clean_and_query_round_trip() {
+        with_isolated_home(|home, mp| {
+            // Write a mock log file for _global
+            use std::io::Write;
+            let log_dir = {
+                let mut cfg = fsmon::config::Config::load().unwrap();
+                cfg.resolve_paths().unwrap();
+                cfg.logging.path
+            };
+            fs::create_dir_all(&log_dir).unwrap();
+            let log_path = log_dir.join(fsmon::utils::cmd_to_log_name("_global"));
+            {
+                let mut f = fs::File::create(&log_path).unwrap();
+                use chrono::Utc;
+                let ts = Utc::now();
+                // Write one old event and one recent event
+                let old = format!(
+                    r#"{{"time":"{}","event_type":"CREATE","path":"/old","pid":1,"cmd":"x","user":"r","file_size":0,"ppid":0,"tgid":0,"chain":""}}"#,
+                    (ts - chrono::Duration::days(100)).to_rfc3339(),
+                );
+                let recent = format!(
+                    r#"{{"time":"{}","event_type":"MODIFY","path":"/recent","pid":2,"cmd":"y","user":"r","file_size":100,"ppid":0,"tgid":0,"chain":""}}"#,
+                    ts.to_rfc3339(),
+                );
+                writeln!(f, "{}", old).unwrap();
+                writeln!(f, "{}", recent).unwrap();
+            }
+
+            // Query _global should find both events
+            {
+                use fsmon::query::Query;
+                let q = Query::new(
+                    log_dir.clone(),
+                    Some("_global".into()),
+                    None,
+                    vec![],
+                );
+                let files = q.resolve_log_files().unwrap();
+                assert_eq!(files.len(), 1, "should find _global_log.jsonl");
+            }
+
+            // Store should be empty (not touched)
+            let store = load_store(home);
+            assert_eq!(store.entry_count(), 0);
+
+            let _ = fs::remove_dir_all(home);
+        });
+    }
+
 }

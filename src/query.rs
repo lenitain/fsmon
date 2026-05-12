@@ -237,7 +237,7 @@ impl Query {
     }
 
     /// Resolve which log files to read based on cmd_filter.
-    fn resolve_log_files(&self) -> Result<Vec<PathBuf>> {
+    pub fn resolve_log_files(&self) -> Result<Vec<PathBuf>> {
         let log_dir = &self.log_dir;
 
         if !log_dir.exists() {
