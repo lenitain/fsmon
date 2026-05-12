@@ -68,7 +68,12 @@ pub enum Commands {
 #[derive(Parser)]
 pub struct AddArgs {
     /// Path to monitor
-    pub path: PathBuf,
+    #[arg(long, value_name = "PATH")]
+    pub path: Option<PathBuf>,
+
+    /// Track a process and its descendants (process tree + ancestry chain)
+    #[arg(long, value_name = "NAME")]
+    pub cmd: Option<String>,
 
     /// Watch subdirectories recursively
     #[arg(short)]
@@ -89,10 +94,6 @@ pub struct AddArgs {
     /// Process names to exclude (glob, repeatable, prefix ! to invert)
     #[arg(long, value_name = "PATTERN")]
     pub exclude_cmd: Vec<String>,
-
-    /// Track a process and its descendants (process tree + ancestry chain)
-    #[arg(long, value_name = "NAME")]
-    pub cmd: Option<String>,
 }
 
 #[derive(Parser)]
@@ -134,8 +135,8 @@ mod tests {
 
     #[test]
     fn test_add_no_flags() {
-        let args = AddArgs::try_parse_from(&["add", "/tmp"]).unwrap();
-        assert_eq!(args.path, PathBuf::from("/tmp"));
+        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp"]).unwrap();
+        assert_eq!(args.path, Some(PathBuf::from("/tmp")));
         assert!(args.types.is_empty());
         assert!(args.exclude.is_empty());
         assert!(args.exclude_cmd.is_empty());
@@ -146,7 +147,7 @@ mod tests {
     #[test]
     fn test_add_types_long() {
         let args = AddArgs::try_parse_from(&[
-            "add", "/tmp",
+            "add", "--path", "/tmp",
             "--types", "MODIFY", "--types", "CREATE",
         ]).unwrap();
         assert_eq!(args.types, vec!["MODIFY", "CREATE"]);
@@ -155,7 +156,7 @@ mod tests {
     #[test]
     fn test_add_types_short() {
         let args = AddArgs::try_parse_from(&[
-            "add", "/tmp",
+            "add", "--path", "/tmp",
             "-t", "MODIFY", "-t", "CREATE",
         ]).unwrap();
         assert_eq!(args.types, vec!["MODIFY", "CREATE"]);
@@ -163,14 +164,14 @@ mod tests {
 
     #[test]
     fn test_add_types_all_long() {
-        let args = AddArgs::try_parse_from(&["add", "/tmp", "--types", "all"]).unwrap();
+        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "--types", "all"]).unwrap();
         assert_eq!(args.types, vec!["all"]);
     }
 
     #[test]
     fn test_add_types_mixed() {
         let args = AddArgs::try_parse_from(&[
-            "add", "/tmp",
+            "add", "--path", "/tmp",
             "-t", "MODIFY", "--types", "CREATE",
         ]).unwrap();
         assert_eq!(args.types, vec!["MODIFY", "CREATE"]);
@@ -179,7 +180,7 @@ mod tests {
     #[test]
     fn test_add_exclude_long() {
         let args = AddArgs::try_parse_from(&[
-            "add", "/tmp",
+            "add", "--path", "/tmp",
             "--exclude", "*.tmp", "--exclude", "*.log",
         ]).unwrap();
         assert_eq!(args.exclude, vec!["*.tmp", "*.log"]);
@@ -188,7 +189,7 @@ mod tests {
     #[test]
     fn test_add_exclude_short() {
         let args = AddArgs::try_parse_from(&[
-            "add", "/tmp",
+            "add", "--path", "/tmp",
             "-e", "*.tmp", "-e", "*.log",
         ]).unwrap();
         assert_eq!(args.exclude, vec!["*.tmp", "*.log"]);
@@ -197,7 +198,7 @@ mod tests {
     #[test]
     fn test_add_exclude_invert() {
         let args = AddArgs::try_parse_from(&[
-            "add", "/tmp",
+            "add", "--path", "/tmp",
             "--exclude", "!*.py",
         ]).unwrap();
         assert_eq!(args.exclude, vec!["!*.py"]);
@@ -206,7 +207,7 @@ mod tests {
     #[test]
     fn test_add_exclude_cmd_long() {
         let args = AddArgs::try_parse_from(&[
-            "add", "/tmp",
+            "add", "--path", "/tmp",
             "--exclude-cmd", "rsync", "--exclude-cmd", "apt",
         ]).unwrap();
         assert_eq!(args.exclude_cmd, vec!["rsync", "apt"]);
@@ -215,7 +216,7 @@ mod tests {
     #[test]
     fn test_add_exclude_cmd_short_not_applicable() {
         let args = AddArgs::try_parse_from(&[
-            "add", "/tmp",
+            "add", "--path", "/tmp",
             "--exclude-cmd", "nginx",
         ]).unwrap();
         assert_eq!(args.exclude_cmd, vec!["nginx"]);
@@ -223,63 +224,63 @@ mod tests {
 
     #[test]
     fn test_add_recursive_short() {
-        let args = AddArgs::try_parse_from(&["add", "/tmp", "-r"]).unwrap();
+        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "-r"]).unwrap();
         assert!(args.recursive);
     }
 
     #[test]
     fn test_add_size_short() {
-        let args = AddArgs::try_parse_from(&["add", "/tmp", "-s", "1GB"]).unwrap();
+        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "-s", "1GB"]).unwrap();
         assert_eq!(args.size, Some("1GB".into()));
     }
 
     #[test]
     fn test_add_size_long() {
-        let args = AddArgs::try_parse_from(&["add", "/tmp", "--size", "100MB"]).unwrap();
+        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "--size", "100MB"]).unwrap();
         assert_eq!(args.size, Some("100MB".into()));
     }
 
     #[test]
     fn test_add_size_with_operator() {
-        let args = AddArgs::try_parse_from(&["add", "/tmp", "-s", ">=1MB"]).unwrap();
+        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "-s", ">=1MB"]).unwrap();
         assert_eq!(args.size, Some(">=1MB".into()));
 
-        let args = AddArgs::try_parse_from(&["add", "/tmp", "--size", "<500KB"]).unwrap();
+        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "--size", "<500KB"]).unwrap();
         assert_eq!(args.size, Some("<500KB".into()));
 
-        let args = AddArgs::try_parse_from(&["add", "/tmp", "-s", "=0"]).unwrap();
+        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "-s", "=0"]).unwrap();
         assert_eq!(args.size, Some("=0".into()));
     }
 
     #[test]
     fn test_add_size_decimal_and_negative() {
-        let args = AddArgs::try_parse_from(&["add", "/tmp", "-s", "1.5KB"]).unwrap();
+        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "-s", "1.5KB"]).unwrap();
         assert_eq!(args.size, Some("1.5KB".into()));
 
-        let args = AddArgs::try_parse_from(&["add", "/tmp", "--size", ">-1KB"]).unwrap();
+        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "--size", ">-1KB"]).unwrap();
         assert_eq!(args.size, Some(">-1KB".into()));
     }
 
     #[test]
     fn test_add_size_case_insensitive_unit() {
-        let args = AddArgs::try_parse_from(&["add", "/tmp", "-s", "1mb"]).unwrap();
+        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "-s", "1mb"]).unwrap();
         assert_eq!(args.size, Some("1mb".into()));
 
-        let args = AddArgs::try_parse_from(&["add", "/tmp", "--size", "100Kb"]).unwrap();
+        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "--size", "100Kb"]).unwrap();
         assert_eq!(args.size, Some("100Kb".into()));
     }
 
     #[test]
     fn test_add_all_flags() {
         let args = AddArgs::try_parse_from(&[
-            "add", "/tmp",
+            "add", "--path", "/tmp",
             "-r",
             "-t", "MODIFY", "--types", "CREATE",
             "-e", "*.tmp", "--exclude", "*.log",
             "--exclude-cmd", "rsync",
             "-s", "1KB",
         ]).unwrap();
-        assert_eq!(args.path, PathBuf::from("/tmp"));
+        assert_eq!(args.path, Some(PathBuf::from("/tmp")));
         assert!(args.recursive);
         assert_eq!(args.types, vec!["MODIFY", "CREATE"]);
         assert_eq!(args.exclude, vec!["*.tmp", "*.log"]);
