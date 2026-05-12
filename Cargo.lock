@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "fsmon"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "chrono",
@@ -651,9 +651,9 @@ dependencies = [
 
 [[package]]
 name = "proc-connector"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ef729231771a49ee141c24d37c7fc10c3f8b384a767bd3cfe4d329763d4aae5"
+checksum = "9b3a9ca600b2105c96db26dd278813e94f7fdd25b9366eda7e84b318b48e282b"
 dependencies = [
  "libc",
 ]
