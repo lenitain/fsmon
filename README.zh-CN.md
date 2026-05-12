@@ -10,7 +10,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/fsmon)](https://crates.io/crates/fsmon)
 
-**fsmon** 是一款基于 Linux fanotify 的实时文件系统变更监控工具。它监视文件和目录，捕获每一次创建、修改、删除、移动、属性变更等事件，并追溯每个变更的来源进程 — 包括 PID、命令名和用户。
+**fsmon** 是一款基于 Linux fanotify 的实时文件系统变更监控工具。它监视文件和目录，捕获每一次创建、修改、删除、移动、属性变更等事件，并追溯每个变更的来源进程 — 包括 PID、命令名、用户、父进程 PID、线程组 ID，和可选的完整进程祖先链。
 
 <div align="center">
 <img width="1200" alt="fsmon demo" src="./images/fsmon.png" />
@@ -19,13 +19,13 @@
 ## 特性
 
 - **实时监控**: 默认捕获 8 种核心 fanotify 事件，`--types all` 开启全部 14 种
-- **进程追溯**: 追踪每个文件变更的 PID、命令名、用户、父进程 PID（PPID）、线程组 ID（TGID）— 包括 `touch`、`rm`、`mv` 等短命进程
-- **进程树追踪**（`--cmd`）：指定一个进程名（如 `openclaw`），fsmon 自动追踪它及其所有子进程（fork/exec 后代），每条事件附带完整的进程祖先链
-- **递归监控**: 监控整个目录树，追踪新建的子目录
-- **完整删除捕获**: 通过持久化目录句柄缓存，完整捕获 `rm -rf` 递归删除中的每个文件
+- **进程追溯**: 追踪每个文件变更的 PID、命令名、用户、PPID、TGID — 包括 `touch`、`rm`、`mv` 等短命进程
+- **进程树追踪**（`<CMD>` 位置参数）：指定进程名（如 `openclaw`），自动追踪它及其所有子进程，每条事件附带完整的进程祖先链
+- **递归监控**: 监控整个目录树，自动追踪新建子目录
+- **完整删除捕获**: 通过持久化目录句柄缓存，完整捕获 `rm -rf` 中的每个文件
 - **高性能**: Rust + Tokio，内存占用 <5MB，零拷贝 FID 解析，二分查找日志查询
-- **灵活的捕获过滤**: 按事件类型、大小、路径模式、进程名过滤 — 全部在 daemon 进程内完成，无 fork 开销
-- **热更新**: 守护进程运行时添加/移除路径，无需重启
+- **捕获时过滤**: 按事件类型、文件大小过滤 — daemon 进程内完成，无 fork 开销
+- **热更新**: 运行时添加/移除路径，无需重启
 
 ## 快速开始
 
@@ -56,391 +56,259 @@ cargo install --path .
 cargo install fsmon
 ```
 
-**fanotify 需要 root 权限运行 daemon：**
+**fanotify 需要 root 权限运行 daemon:**
 ```bash
 sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 ```
 
-### 完整流程
+### 完整操作演示
 
-监控一个 Web 项目目录，看看日志里有什么，然后用标准 Unix 工具过滤和清理。
+监控一个 Web 项目目录，查看捕获的日志，然后用标准 Unix 工具过滤和分析。
 
 ```bash
-# 终端 1：启动 daemon（sudo 给 fanotify）
+# 终端 1：启动守护进程（需 sudo）
 sudo fsmon daemon &
 
-# 添加监控路径：递归监控 /var/www/myapp，只捕获 MODIFY/CREATE，
-# 排除编辑器临时文件，只追踪 nginx 和 vim 进程
-fsmon add --path /var/www/myapp -r --types MODIFY --types CREATE --exclude '\.swp$' --cmd nginx --cmd vim
+# 添加监控路径
+# 递归监控 /var/www/myapp，只捕获 MODIFY 和 CREATE 事件，追踪 nginx 和 vim 进程
+fsmon add nginx --path /var/www/myapp -r --types MODIFY --types CREATE
+fsmon add vim --path /var/www/myapp -r --types MODIFY --types CREATE
 
-# 查看当前监控配置
+# 查看已监控的路径
 fsmon monitored
-# → /var/www/myapp
-# {"path":"/var/www/myapp","recursive":true,"types":["MODIFY","CREATE"],"exclude":["\\.swp$"],"cmd":"nginx"}
+# {"cmd":"nginx","paths":{"/var/www/myapp":{"recursive":true,"types":["MODIFY","CREATE"]}}}
+# {"cmd":"vim","paths":{"/var/www/myapp":{"recursive":true,"types":["MODIFY","CREATE"]}}}
 ```
 
-模拟真实操作：
+模拟文件变更：
 
 ```bash
-# 终端 2
-echo "<h1>Hello</h1>" > /var/www/myapp/index.html      # nginx 写文件
+echo "<h1>Hello</h1>" > /var/www/myapp/index.html    # nginx 写文件
 sleep 2
-rm /var/www/myapp/index.html                              # 文件被删除
-sleep 2
-vim /var/www/myapp/config.json                            # vim 创建交换文件
+rm /var/www/myapp/index.html                          # 文件被删除
 ```
 
-查看 fsmon 捕获了什么：
+查看日志：
 
 ```bash
-# 原始日志 — 每行一个 JSONL 事件
 cat ~/.local/state/fsmon/*_log.jsonl
-# → {"time":"2026-05-07T10:00:01+00:00","event_type":"MODIFY","path":"/var/www/myapp/index.html","pid":1234,"cmd":"nginx","user":"www-data","file_size":21,"ppid":1,"tgid":1234}
+# → {"time":"2026-05-07T10:00:01+00:00","event_type":"CREATE","path":"/var/www/myapp/index.html","pid":1234,"cmd":"nginx","user":"www-data","file_size":0,"ppid":1,"tgid":1234}
+# → {"time":"2026-05-07T10:00:01+00:00","event_type":"CLOSE_WRITE","path":"/var/www/myapp/index.html","pid":1234,"cmd":"nginx","user":"www-data","file_size":21,"ppid":1,"tgid":1234}
 # → {"time":"2026-05-07T10:00:03+00:00","event_type":"DELETE","path":"/var/www/myapp/index.html","pid":5678,"cmd":"rm","user":"deploy","file_size":0,"ppid":1234,"tgid":5678}
-# → {"time":"2026-05-07T10:00:05+00:00","event_type":"CREATE","path":"/var/www/myapp/.config.json.swp","pid":9012,"cmd":"vim","user":"dev","file_size":4096,"ppid":5678,"tgid":9012,"chain":"9012|vim|dev;5678|sh|deploy;1234|openclaw|root;1|systemd|root"}
 ```
 
-注意：vim 的 `.swp` 虽然被 fanotify 捕获，但 **不会落盘**——`--exclude '\.swp$'` 在写磁盘前就拦截了。
+每条事件都包含 PPID 和 TGID。指定 `<CMD>` 时，匹配的事件还有 `chain` 字段。
 
-每条事件都包含 `ppid`（父进程 PID）和 `tgid`（线程组 ID）。使用 `--cmd` 时，匹配的事件还包含 `chain`——紧凑的进程祖先链，追溯到 PID 1。
-
-#### 用管道过滤查询
+#### 用管道查询
 
 ```bash
-# nginx 在过去一小时做了什么？
+# 过去一小时内 nginx 做了什么？
 fsmon query -t '>1h' | jq 'select(.cmd == "nginx")'
 
 # 哪些文件被删除了？
 fsmon query | jq 'select(.event_type == "DELETE")'
 
-# 谁改了最大的文件？
+# 谁改的文件最大？
 fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 
-# 实时跟踪 deploy 用户的操作
+# 实时追踪
 tail -f ~/.local/state/fsmon/*_log.jsonl | jq 'select(.user == "deploy")'
 ```
 
 #### 安全清理
 
 ```bash
-# 预览将要删除的内容（默认保留 30 天）
+# 预览要删除的内容（默认保留 30 天）
 fsmon clean --dry-run
 
-# 实际清理
-fsmon clean --time '>7d'
+# 自定义保留时间
+fsmon clean _global --time '>7d'
 
-# 或者直接用 Unix 工具操作文件
-# 删除早于 2026-04-01 的事件：
-cat ~/.local/state/fsmon/*_log.jsonl | jq 'select(.time < "2026-04-01T00:00:00Z")' > /dev/null
-
-# 每个日志文件只保留最后 500 行
+# 直接使用 Unix 工具
 for f in ~/.local/state/fsmon/*_log.jsonl; do
   tail -500 "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
 done
-
-# 关闭 daemon
-kill %1
 ```
 
 ### 文件位置
 
 | 用途 | 路径 | 格式 |
-|---|---|---|
+|------|------|------|
 | 基础设施配置 | `~/.config/fsmon/fsmon.toml` | TOML（可选 — 无配置文件时使用默认值） |
-| Monitored 路径数据库 | `~/.local/share/fsmon/monitored.jsonl` | JSONL（按cmd分组，路径为map key） |
-| 事件日志 | `~/.local/state/fsmon/*_log.jsonl` | JSONL（每行一事件） |
-| Unix Socket | `/tmp/fsmon-<UID>.sock` | TOML over stream |
+| 监控路径数据库 | `~/.local/share/fsmon/monitored.jsonl` | JSONL（按 cmd 分组） |
+| 事件日志 | `~/.local/state/fsmon/*_log.jsonl` | JSONL（每行一个事件） |
+| Unix 套接字 | `/tmp/fsmon-<UID>.sock` | TOML 协议 |
 
-monitored 路径和日志目录均在 `~/.config/fsmon/fsmon.toml` 中可配
-（见 `[monitored].path` 和 `[logging].path`）。
+daemon 以 root 运行（通过 sudo），但通过 `SUDO_UID` + `getpwuid_r` 解析原始用户的 home 目录，日志写到 `/home/<你>/...` 而非 `/root/...`。
 
-daemon 通过 sudo 以 root 运行，但通过 `SUDO_UID` + `getpwuid_r` 解析原始用户的 home 目录，
-所以日志文件会写入 `/home/<你>/...` 而非 `/root/...`。
-
-> **vfat/exfat/NFS 用户注意：** daemon 会尝试把日志文件 chown 回你的用户。
-> 不支持标准 Unix 所有权的文件系统（vfat、exfat、NFS no_root_squash off）无法执行 chown，
-> 日志文件保持 root 所有。如果普通用户执行 `fsmon clean` 失败，请用 `sudo fsmon clean` 或直接操作 `.jsonl` 文件。
-
-### 开机自启动（可选）
-
-fsmon 不安装 systemd 服务。daemon 需要 sudo (root) 权限使用 fanotify。
-如需登录时自动启动，请使用 root 的 crontab 并确保 sudo 免密码：
-
-```bash
-sudo crontab -e
-@reboot /usr/local/bin/fsmon daemon &
-```
-
-> **注意：** 使用 `sudo crontab -e`（root 的 crontab）— daemon 需要 root 权限。
-> 如果使用用户 crontab，需将 fsmon 命令添加到 sudoers NOPASSWD 列表中。
+> **vfat/exfat/NFS 用户注意：** daemon 会尝试 chown 日志文件到你的用户。
+> 不支持标准 Unix 所有权的文件系统（vfat、exfat、NFS no_root_squash 关闭）会在日志目录创建时给出警告。日志归 root 所有。
 
 ## 完整命令
 
 ### daemon
 
-启动 fsmon 守护进程 — 需要 `sudo` 获取 fanotify 权限。
+启动守护进程（需要 sudo）：
 
 ```
-sudo fsmon daemon          启动守护进程（前台）
-sudo fsmon daemon &        后台启动守护进程
+sudo fsmon daemon          前台运行
+sudo fsmon daemon &        后台运行
 ```
-
-配置：            `~/.config/fsmon/fsmon.toml`（可选 — 无配置文件时使用默认值）
-监控路径数据库：  `~/.local/share/fsmon/monitored.jsonl`
-日志目录：        `~/.local/state/fsmon/`
-Socket：          `/tmp/fsmon-<UID>.sock`
 
 ### add
 
-添加路径或进程到监控列表。无需 sudo。
+添加监控路径（可选指定进程追踪）。不需要 sudo。
 
 ```
-fsmon add openclaw --path /home -r                   追踪 /home 上 openclaw 的活动（最常用）
-fsmon add nginx                                       全局追踪 nginx（进程模式）
-fsmon add --path /home -r                             递归监控 /home（路径模式）
-fsmon add --path /home --types MODIFY --types CREATE  按事件类型过滤
-fsmon add --path /home --types all                    全部 14 种事件
-fsmon add --path /home -s '>=1MB'                     最小文件变更大小
+fsmon add nginx --path /var/www/myapp -r          追踪 nginx 在 /myapp（递归）
+fsmon add nginx --path /var/www/myapp             追踪 nginx 在 /myapp（非递归）
+fsmon add --path /home -r                         监控 /home 所有事件（全局）
+fsmon add --path /home --types MODIFY --types CREATE   只监控 MODIFY 和 CREATE
+fsmon add --path /home --types all                全部 14 种事件
+fsmon add --path /home --size '>=1MB'             只记录 >=1MB 的文件变更
 ```
 
-**模式说明：**
+**模式：**
 
 | 模式 | 示例 | 行为 |
 |------|------|------|
-| **同时** | `fsmon add openclaw --path /home` | 只追踪 /home 上 openclaw（及子进程），匹配事件含 `chain` |
-| **仅路径** | `fsmon add --path /home` | /home 上所有事件通过，每条含 `ppid`/`tgid` |
-| **仅进程** | `fsmon add openclaw` | 全局追踪 openclaw（不受路径限制），匹配事件含 `chain` |
-
-- `<CMD>`（位置参数）启用**进程树追踪**：fork/exec 子进程自动包含，匹配事件附带 `chain` 字段
-- 可添加多个不同 `<CMD>` 的条目（每个条目 OR 逻辑）
-
-所有捕获过滤在 daemon 进程内完成（纳秒级，无 fork），不匹配的事件不会写盘。
+| CMD + --path | `fsmon add openclaw --path /home` | 只追踪 openclaw（及子进程）在 /home 上的操作。匹配事件含 `chain`。 |
+| --path only | `fsmon add --path /home` | 捕获 /home 上所有事件，均有 PPID/TGID。 |
 
 ### remove
 
-移除一个或多个监控路径。无需 sudo。
-
-不带 `--path` 时移除**整个 cmd 组**（包括 null 组）。
-带 `--path` 时只从 cmd 组中移除指定路径。
-多个 `--path` 参数是**原子操作**——所有路径必须都存在，否则什么都不删。
+移除监控路径。不需要 sudo。
 
 ```
-fsmon remove                              移除整个 null cmd 组
-fsmon remove openclaw                      移除整个 openclaw cmd 组
-fsmon remove openclaw --path /home         从 openclaw 组移除 /home
-fsmon remove --path /home                  从 null 组移除 /home
-fsmon remove --path /a --path /b           从 null 组移除 /a 和 /b（原子操作）
+fsmon remove                   移除整个全局组
+fsmon remove nginx             移除整个 nginx 组
+fsmon remove nginx --path /home  从 nginx 组移除 /home
+fsmon remove --path /home      从全局组移除 /home
 ```
 
 ### monitored
 
-列出所有监控路径及其过滤配置。
+列出所有监控路径及其过滤配置（JSONL 格式）。
 
 ```
-fsmon monitored                              显示所有监控路径
+fsmon monitored
 ```
 
 ### query
 
-查询历史事件日志。输出为 JSONL 格式 — 可管道到 `jq` 进行自定义过滤。
+查询历史事件。输出 JSONL — 配合 `jq` 解析。
 
 ```
-fsmon query                                查询所有日志文件
-fsmon query --path /tmp                    查询指定路径的日志
-fsmon query --path /tmp --path /var        查询多个路径
-fsmon query -t '>1h'                     查询最近一小时事件
-fsmon query -t '>=2026-05-01'             从绝对时间开始
-fsmon query -t '<30m'                     查询直到 30 分钟前
-fsmon query -t '>1h' -t '<now'            时间范围查询
+fsmon query                    查询所有日志
+fsmon query nginx              只查 nginx 日志
+fsmon query -t '>1h'          过去 1 小时内
+fsmon query -t '>=2026-05-01'  从指定日期
+fsmon query -t '<30m'          30 分钟前至今
+fsmon query -t '>1h' -t '<now'  时间范围
 ```
-
-搭配 `jq` 使用示例：
-
-```bash
-fsmon query -t '>1h' | jq 'select(.cmd == "nginx")'
-fsmon query | jq 'select(.event_type == "DELETE")'
-fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
-```
-
-也可直接操作原始日志文件（无需 `fsmon query`）：
-
-```bash
-cat ~/.local/state/fsmon/*_log.jsonl | jq 'select(.cmd == "nginx")'
-grep '"event_type":"MODIFY"' ~/.local/state/fsmon/*_log.jsonl
-tail -f ~/.local/state/fsmon/*_log.jsonl | jq 'select(.user == "deploy")'
-```
-
-> **性能说明：** 原生 `fsmon query` 使用二分查找，大文件时显著更快。直接 Unix 工具线性读取整个文件。
 
 ### clean
 
-清理指定 cmd 组的日志文件。默认值来自 `fsmon.toml`：`keep_days=30`，`size=>=1GB`。
+清理日志文件。默认值来自 `fsmon.toml`：`keep_days=30`, `size=>=1GB`。
 
 ```bash
-fsmon clean _global                      清理全局日志（默认值）
-fsmon clean openclaw --time '>7d'       保留 openclaw 最近7天事件
-fsmon clean nginx --size '>=500MB'       nginx 日志大小上限
-fsmon clean _global --dry-run             预览模式，不实际删除
+fsmon clean _global              清理全局日志（默认值）
+fsmon clean nginx --time '>7d'   保留最近 7 天
+fsmon clean nginx --size '>=500MB'  大小限制
+fsmon clean --dry-run            预览模式
 ```
-
-优先级：CLI 参数 > fsmon.toml > 代码默认值（keep_days=30）
-
-也可以直接操作原始日志文件（无需 `fsmon clean`）：
-
-```bash
-# 每个日志文件只保留最后 500 行
-for f in ~/.local/state/fsmon/*_log.jsonl; do
-  tail -500 "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
-done
-
-# 按 mtime 删除 30 天前的日志
-find ~/.local/state/fsmon/ -name '*.jsonl' -mtime +30 -delete
-```
-
-> **性能说明：** 原生 `fsmon clean` 精确解析 JSONL（不会在行中间截断），且原子化处理时间+大小规则。Unix 工具简单但可能产生不完整行。
 
 ### init
 
-初始化 fsmon 数据目录（chezmoi 风格）。创建日志目录和 monitored 数据目录。
-**不会**写入配置文件 — 配置文件是可选的，无配置时使用默认值。
+初始化 fsmon 数据目录。创建日志目录和监控数据目录。
+不写配置文件 — 配置是可选的。
 
 ```
-fsmon init                                 创建日志 & monitored 目录
+fsmon init
 ```
-
-
 
 ### cd
 
-在日志目录中打开子 shell。输入 `exit` 返回原目录：
+在日志目录中打开子 shell：
 
 ```
-fsmon cd                                   进入日志目录子 shell
-ls                                         查看日志文件
+fsmon cd
+ls
 ```
 
 ## 配置
 
-配置文件是可选的 — 无配置时使用默认值。
+配置文件是可选的 — 无文件时使用默认值。
 
 ```toml
-# fsmon 配置文件
-#
-# 基础设施路径。监控路径通过 'fsmon add' / 'fsmon remove' 管理，存储在 [monitored].path 中。
-# 所有路径支持 ~ 展开。<UID> 在运行时替换为实际 UID。
-
 [monitored]
-# 自动管理的监控路径数据库。
 path = "~/.local/share/fsmon/monitored.jsonl"
 
 [logging]
-# 事件日志目录（按路径哈希命名的文件）。
 path = "~/.local/state/fsmon"
-# 'fsmon clean' 的默认值（daemon 不自动清理；使用 cron/timer）。
-#   keep_days: 删除早于 N 天的条目
-#   size: 日志文件超过此大小时截断
-# 运行时均可覆盖：fsmon clean --time '>14d' --size '>=1GB'
 keep_days = 30
 size = ">=1GB"
 
 [socket]
-# daemon 与 CLI 通信的 Unix socket 路径。
 path = "/tmp/fsmon-<UID>.sock"
 ```
 
 ## 事件类型
 
-默认捕获 8 种核心事件，`--types all` 开启全部 14 种。
+默认 8 种核心事件。`--types all` 开启全部 14 种。
 
-**默认（8 种）：** CLOSE_WRITE、ATTRIB、CREATE、DELETE、DELETE_SELF、MOVED_FROM、MOVED_TO、MOVE_SELF
+**默认（8 种）：** CLOSE_WRITE, ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF
 
-**全部 14 种（通过 --types all）：** + ACCESS、MODIFY、OPEN、OPEN_EXEC、CLOSE_NOWRITE、FS_ERROR
+**全部 14 种：** + ACCESS, MODIFY, OPEN, OPEN_EXEC, CLOSE_NOWRITE, FS_ERROR
 
 ## 日志格式
 
-每条事件为一行 JSON。`ppid` 和 `tgid` 始终存在。`chain` 仅在使用 `--cmd` 且事件匹配时出现。
+每条事件是一行 JSON。所有字段始终存在。
 
 ```json
-// 默认模式
 {
   "time": "2026-05-07T10:00:01+00:00",
-  "event_type": "MODIFY",
+  "event_type": "CREATE",
   "path": "/var/www/myapp/index.html",
   "pid": 1234,
   "cmd": "nginx",
   "user": "www-data",
-  "file_size": 21,
+  "file_size": 0,
   "ppid": 1,
   "tgid": 1234
 }
+```
 
-// 进程优先模式（--cmd openclaw）—— 额外 chain
+指定 `<CMD>` 且事件匹配时，额外包含 `chain`：
+
+```json
 {
-  ...,
   "ppid": 101,
   "tgid": 102,
   "chain": "102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root"
 }
 ```
 
-`chain` 格式为紧凑的竖线/分号格式：每个节点 `pid|cmd|user`，`;` 分隔，从 root 到事件进程。
-
-旧日志不含 `ppid`/`tgid`/`chain` 的完全兼容——缺失字段默认为 `0` 或 `""`。
+旧日志无 `ppid`/`tgid`/`chain` 字段时完全向后兼容 — 缺失字段默认为 `0` 或 `""`。
 
 ## 架构
 
 ```
-Linux Kernel (fanotify)
-    → FID 事件推入队列
-    → tokio 异步读取
-    → fid_parser 解析路径（两阶段 + 目录缓存）
-    → filters 过滤（事件类型、大小、路径模式）
-    → (如果 --cmd 激活) 进程树：当前 PID 属于被追踪的子树？
-      → 否：直接丢弃（零 /proc 读）
-      → 是：构建祖先链 → 加入事件
-    → JSONL → 按路径分文件日志 (*_log.jsonl)
+Linux 内核 (fanotify FID 模式)
+  → FID 事件入队列
+  → tokio 异步读取
+  → fid_parser 解析路径（两遍 + 目录句柄缓存）
+  → 过滤器：事件类型、大小、递归范围
+  → 进程树检查（若指定了 <CMD>）：
+    → 不在追踪树中 → 丢弃
+    → 在追踪树中 → 构建祖先链 → 追加到事件
+  → JSONL 写入 per-cmd 日志文件
 
 进程树（proc connector）：
-    Fork/Exec/Exit 事件 → DashMap pid → {cmd, ppid, user}
-    启动快照：/proc/*/stat → 补齐已有进程
-    is_descendant(pid, "openclaw") → O(depth) DashMap 查找
+  Fork/Exec/Exit 事件 → DashMap pid → {cmd, ppid, user}
 
-用户管道:
-    cat/ tail *.jsonl → jq → 你的自定义逻辑
-
-清理:
-    fsmon clean → clean 引擎解析 JSONL，按时间/大小截断
-```
-
-### 源码结构
-
-```
-src/
-├── bin/
-│   ├── fsmon.rs               CLI 入口: main(), CLI 结构体, 参数解析测试
-│   └── commands/
-│       ├── mod.rs              分发: run() → 各命令处理函数
-│       ├── daemon.rs           cmd_daemon: fanotify 初始化, socket 设置, Monitor::run()
-│       ├── add.rs              cmd_add: 路径标准化, store 更新, socket 热更新
-│       ├── remove.rs           cmd_remove: store 更新, socket 热更新
-│       ├── monitored.rs        cmd_monitored, cmd_list_monitored_paths
-│       ├── query.rs            cmd_query: 时间过滤, Query::execute()
-│       ├── clean.rs            cmd_clean: 时间/大小过滤委托
-│       ├── init_cd.rs          cmd_init, cmd_cd
-
-├── lib.rs             FileEvent, EventType, DaemonLock (flock 进程单例)
-├── clean.rs           日志清理引擎: 时间/大小截断, 尾部偏移, 预览模式
-├── config.rs          基础设施配置, SUDO_UID 用户解析
-├── monitored.rs         Monitored 路径数据库（JSONL 格式）
-├── monitor.rs         Fanotify 循环, socket 处理, add/remove/事件处理
-├── fid_parser.rs      FID 事件底层解析, 两阶段路径恢复
-├── filters.rs         PathOptions, 事件/大小/路径/进程过滤, 路径匹配
-├── dir_cache.rs       目录句柄缓存（rm -rf 路径恢复）
-├── proc_cache.rs      Netlink proc 连接器（短命进程归因）
-├── query.rs           二分查找日志查询, JSONL 输出
-├── socket.rs          Unix socket 协议（TOML）, 错误分类
-├── utils.rs           大小/时间解析, uid 查询, 路径→日志名哈希
-└── help.rs            所有命令的帮助文本
+用户使用：
+  tail -f *.jsonl | jq 'select(...)'
 ```
 
 ## 许可证
