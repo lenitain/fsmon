@@ -19,7 +19,9 @@ pub fn cmd_remove(path: Option<PathBuf>, cmd: Option<String>) -> Result<()> {
         // --cmd openclaw (no path) → only match process-only entries (path == cmd sentinel)
         let len_before = store.entries.len();
         let path_str = PathBuf::from(c.as_str());
-        store.entries.retain(|e| !(e.path == path_str && e.cmd.as_deref() == Some(c.as_str())));
+        store
+            .entries
+            .retain(|e| !(e.path == path_str && e.cmd.as_deref() == Some(c.as_str())));
         store.entries.len() < len_before
     } else {
         false
@@ -30,6 +32,7 @@ pub fn cmd_remove(path: Option<PathBuf>, cmd: Option<String>) -> Result<()> {
         return Ok(());
     }
     store.save(&cfg.monitored.path)?;
+    eprintln!("Entry removed");
 
     // Try live update via socket (non-fatal if fails)
     let socket_path = cfg.socket.path.clone();
