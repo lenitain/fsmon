@@ -286,6 +286,28 @@ impl Monitored {
         self.groups.is_empty() || self.groups.iter().all(|g| g.paths.is_empty())
     }
 
+    /// Remove an entire cmd group by cmd name.
+    /// Returns `true` if the group was found and removed.
+    pub fn remove_cmd_group(&mut self, cmd: &str) -> bool {
+        let len_before = self.groups.len();
+        self.groups.retain(|g| g.cmd.as_deref() != Some(cmd));
+        self.groups.len() < len_before
+    }
+
+    /// Check if a specific (path, cmd) entry exists.
+    /// If cmd is None, checks across ALL groups.
+    /// If cmd is Some, checks only the matching cmd group.
+    pub fn has_entry(&self, path: &Path, cmd: Option<&str>) -> bool {
+        self.groups.iter().any(|g| {
+            if let Some(cmd_str) = cmd {
+                if g.cmd.as_deref() != Some(cmd_str) {
+                    return false;
+                }
+            }
+            g.paths.contains_key(path)
+        })
+    }
+
     /// Total number of path entries across all groups.
     pub fn entry_count(&self) -> usize {
         self.groups.iter().map(|g| g.paths.len()).sum()
