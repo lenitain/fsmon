@@ -39,8 +39,8 @@ pub struct Monitor {
     paths: Vec<PathBuf>,
     canonical_paths: Vec<PathBuf>,
     path_options: HashMap<PathBuf, PathOptions>,
-    /// Full list of (path, cmd) pairs for display (preserves duplicates across cmd groups).
-    monitored_entries: Vec<(PathBuf, Option<String>)>,
+    /// Full list of (path, PathOptions) preserving duplicates across cmd groups.
+    monitored_entries: Vec<(PathBuf, PathOptions)>,
     log_dir: Option<PathBuf>,
     monitored_path: Option<PathBuf>,
     proc_cache: Option<ProcCache>,
@@ -118,8 +118,8 @@ impl Monitor {
                 paths.push(resolved.clone());
             }
             path_options.insert(resolved.clone(), opts.clone());
-            // Full list preserves duplicates for display
-            monitored_entries.push((resolved.clone(), opts.cmd.clone()));
+            // Full list preserves duplicates for matching
+            monitored_entries.push((resolved.clone(), opts.clone()));
         }
 
         Ok(Self {
@@ -437,26 +437,12 @@ impl Monitor {
         println!("Starting file trace monitor...");
         if !self.canonical_paths.is_empty() {
             println!("Active paths ({} fd(s)):", fan_group_count);
-            let mut by_cmd: std::collections::BTreeMap<Option<String>, Vec<&PathBuf>> = std::collections::BTreeMap::new();
-            for (path, cmd) in &self.monitored_entries {
-                by_cmd.entry(cmd.clone()).or_default().push(path);
-            }
-            for (cmd, paths) in &by_cmd {
-                let label = match cmd {
-                    Some(name) => format!("[{}]", name),
+            for (path, opts) in &self.monitored_entries {
+                let label = match opts.cmd {
+                    Some(ref name) => format!("[{}]", name),
                     None => "[global]".to_string(),
                 };
-                for path in paths {
-                    println!("  {} {}", label, path.display());
-                }
-            }
-            eprintln!("[DEBUG] Monitor initialized with {} monitored_entries", self.monitored_entries.len());
-            for (i, (p, c)) in self.monitored_entries.iter().enumerate() {
-                eprintln!("[DEBUG]   entry[{}]: path={} cmd={:?}", i, p.display(), c);
-            }
-            eprintln!("[DEBUG] path_options has {} entries (may be fewer due to HashMap dedup)", self.path_options.len());
-            for (p, o) in &self.path_options {
-                eprintln!("[DEBUG]   path_opt: path={} cmd={:?} recursive={}", p.display(), o.cmd, o.recursive);
+                println!("  {} {}", label, path.display());
             }
         }
         if !self.pending_paths.is_empty() {
@@ -903,32 +889,21 @@ impl Monitor {
     }
 
     /// Return all PathOptions matching an event path (owned, no borrow conflict).
+    /// Uses `monitored_entries` directly (not `path_options`), so (path, cmd) pairs
+    /// are preserved even when the same path exists under multiple cmd groups.
     fn matching_opts_for_event(&self, event_path: &Path) -> Vec<(PathBuf, PathOptions)> {
-        eprintln!("[DEBUG] matching_opts_for_event: path={}", event_path.display());
-        eprintln!("[DEBUG]   monitored_entries ({} total):", self.monitored_entries.len());
-        for (i, (mp, cmd)) in self.monitored_entries.iter().enumerate() {
-            eprintln!("[DEBUG]     [{}] path={} cmd={:?}", i, mp.display(), cmd);
-        }
         let mut result = Vec::new();
-        for (monitored_path, _) in &self.monitored_entries {
-            if let Some(opts) = self.path_options.get(monitored_path) {
-                let matches = if opts.recursive {
-                    event_path.starts_with(monitored_path)
-                } else {
-                    event_path == monitored_path.as_path()
-                        || event_path.parent() == Some(monitored_path.as_path())
-                };
-                eprintln!("[DEBUG]     checking monitored_path={}: recursive={}, matches={}",
-                    monitored_path.display(), opts.recursive, matches);
-                if matches {
-                    result.push((monitored_path.clone(), opts.clone()));
-                }
+        for (monitored_path, opts) in &self.monitored_entries {
+            let matches = if opts.recursive {
+                event_path.starts_with(monitored_path)
             } else {
-                eprintln!("[DEBUG]     monitored_path={}: NOT FOUND in path_options!",
-                    monitored_path.display());
+                event_path == monitored_path.as_path()
+                    || event_path.parent() == Some(monitored_path.as_path())
+            };
+            if matches {
+                result.push((monitored_path.clone(), opts.clone()));
             }
         }
-        eprintln!("[DEBUG]   matching_opts result: {} entries", result.len());
         result
     }
 
@@ -1198,7 +1173,7 @@ impl Monitor {
         self.paths.push(path.clone());
         self.canonical_paths.push(canonical.clone());
         self.path_options.insert(path.clone(), opts.clone());
-        self.monitored_entries.push((path.clone(), opts.cmd.clone()));
+        self.monitored_entries.push((path.clone(), opts.clone()));
 
         // Pre-cache directory handles in the shared cache
         if canonical.is_dir()
@@ -1525,25 +1500,18 @@ impl Monitor {
     }
 
     /// Check if event path is within scope of a specific PathOptions.
+    /// Uses `monitored_entries` directly (not `path_options`).
     fn is_path_in_scope_for_opts(&self, event_path: &Path, opts: &PathOptions) -> bool {
-        if opts.recursive {
-            self.monitored_entries.iter().any(|(p, _)| {
-                if let Some(wo) = self.path_options.get(p) {
-                    wo.recursive == opts.recursive && wo.cmd == opts.cmd && event_path.starts_with(p)
-                } else {
-                    false
-                }
-            })
-        } else {
-            self.monitored_entries.iter().any(|(p, _)| {
-                if let Some(wo) = self.path_options.get(p) {
-                    wo.recursive == opts.recursive && wo.cmd == opts.cmd
-                        && (event_path == p.as_path() || event_path.parent() == Some(p.as_path()))
-                } else {
-                    false
-                }
-            })
-        }
+        self.monitored_entries.iter().any(|(mp, stored_opts)| {
+            if stored_opts.cmd != opts.cmd || stored_opts.recursive != opts.recursive {
+                return false;
+            }
+            if opts.recursive {
+                event_path.starts_with(mp)
+            } else {
+                event_path == mp.as_path() || event_path.parent() == Some(mp.as_path())
+            }
+        })
     }
 }
 
