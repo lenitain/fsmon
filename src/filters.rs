@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::utils::{SizeFilter, SizeOp};
@@ -25,12 +24,12 @@ pub fn resolve_recursion_check(path: &Path) -> PathBuf {
 /// Find the PathOptions matching a given event path.
 pub fn get_matching_path_options<'a>(
     paths: &[PathBuf],
-    path_options: &'a HashMap<PathBuf, PathOptions>,
+    entries: &'a [(PathBuf, PathOptions)],
     canonical_paths: &[PathBuf],
     path: &Path,
 ) -> Option<&'a PathOptions> {
     for watched in paths {
-        if let Some(opts) = path_options.get(watched) {
+        if let Some((_, opts)) = entries.iter().find(|(p, _)| p == watched) {
             if opts.recursive {
                 if path.starts_with(watched) {
                     return Some(opts);
@@ -43,7 +42,7 @@ pub fn get_matching_path_options<'a>(
     // Fallback: match against canonical paths (handles symlinks/bind-mounts)
     for (i, canonical) in canonical_paths.iter().enumerate() {
         if let Some(orig) = paths.get(i)
-            && let Some(opts) = path_options.get(orig)
+            && let Some((_, opts)) = entries.iter().find(|(p, _)| p == orig)
         {
             if opts.recursive {
                 if path.starts_with(canonical) {
@@ -91,18 +90,17 @@ pub fn should_output(
 /// Find the configured path that matches a given event path.
 pub fn matching_path<'a>(
     paths: &'a [PathBuf],
-    path_options: &'a HashMap<PathBuf, PathOptions>,
     canonical_paths: &[PathBuf],
     path: &Path,
 ) -> Option<&'a PathBuf> {
     // Direct match first: find the configured PathBuf that matches this path
     for watched in paths {
-        if watched == path && path_options.contains_key(watched) {
+        if watched == path {
             return Some(watched);
         }
     }
     // Recursive match: find watched path that is a prefix of event path
-    for watched in path_options.keys() {
+    for watched in paths {
         if path.starts_with(watched) {
             return Some(watched);
         }
@@ -121,15 +119,15 @@ pub fn matching_path<'a>(
 /// Check if path is within monitoring scope.
 pub fn is_path_in_scope(
     paths: &[PathBuf],
-    path_options: &HashMap<PathBuf, PathOptions>,
+    entries: &[(PathBuf, PathOptions)],
     _canonical_paths: &[PathBuf],
     path: &Path,
 ) -> bool {
-    for (i, watched) in paths.iter().enumerate() {
-        let recursive = paths
-            .get(i)
-            .and_then(|p| path_options.get(p))
-            .map(|o| o.recursive)
+    for watched in paths {
+        let recursive = entries
+            .iter()
+            .find(|(p, _)| p == watched)
+            .map(|(_, o)| o.recursive)
             .unwrap_or(false);
         if recursive {
             if path.starts_with(watched) {
@@ -239,71 +237,66 @@ mod tests {
 
     // ---- matching_path ----
 
-    fn make_path_options() -> HashMap<PathBuf, PathOptions> {
-        let mut map = HashMap::new();
-        map.insert(
-            PathBuf::from("/home/user/project"),
-            PathOptions {
-                size_filter: None,
-                event_types: None,
-                recursive: true,
-                cmd: None,
-            },
-        );
-        map.insert(
-            PathBuf::from("/var/log"),
-            PathOptions {
-                size_filter: None,
-                event_types: None,
-                recursive: false,
-                cmd: None,
-            },
-        );
-        map
+    fn make_entries() -> Vec<(PathBuf, PathOptions)> {
+        vec![
+            (
+                PathBuf::from("/home/user/project"),
+                PathOptions {
+                    size_filter: None,
+                    event_types: None,
+                    recursive: true,
+                    cmd: None,
+                },
+            ),
+            (
+                PathBuf::from("/var/log"),
+                PathOptions {
+                    size_filter: None,
+                    event_types: None,
+                    recursive: false,
+                    cmd: None,
+                },
+            ),
+        ]
     }
 
     #[test]
     fn test_matching_path_direct_match() {
         let paths = vec![PathBuf::from("/home/user/project"), PathBuf::from("/var/log")];
-        let opts = make_path_options();
         let canonical = paths.clone();
-        let result = matching_path(&paths, &opts, &canonical, Path::new("/home/user/project"));
+        let result = matching_path(&paths, &canonical, Path::new("/home/user/project"));
         assert_eq!(result, Some(&PathBuf::from("/home/user/project")));
     }
 
     #[test]
     fn test_matching_path_recursive_prefix() {
         let paths = vec![PathBuf::from("/home/user/project"), PathBuf::from("/var/log")];
-        let opts = make_path_options();
         let canonical = paths.clone();
-        let result = matching_path(&paths, &opts, &canonical, Path::new("/home/user/project/src/main.rs"));
+        let result = matching_path(&paths, &canonical, Path::new("/home/user/project/src/main.rs"));
         assert_eq!(result, Some(&PathBuf::from("/home/user/project")));
     }
 
     #[test]
     fn test_matching_path_canonical_fallback() {
         let paths = vec![PathBuf::from("/home/user/project")];
-        let opts = make_path_options();
         let canonical = vec![PathBuf::from("/real/project")];
-        let result = matching_path(&paths, &opts, &canonical, Path::new("/real/project/src/main.rs"));
+        let result = matching_path(&paths, &canonical, Path::new("/real/project/src/main.rs"));
         assert_eq!(result, Some(&PathBuf::from("/home/user/project")));
     }
 
     #[test]
     fn test_matching_path_no_match() {
         let paths = vec![PathBuf::from("/home/user/project")];
-        let opts = make_path_options();
         let canonical = paths.clone();
-        let result = matching_path(&paths, &opts, &canonical, Path::new("/etc/passwd"));
+        let result = matching_path(&paths, &canonical, Path::new("/etc/passwd"));
         assert!(result.is_none());
     }
 
     #[test]
     fn test_matching_path_non_recursive_child_allowed() {
         let paths = vec![PathBuf::from("/var/log")];
-        let opts = make_path_options();
         let canonical = paths.clone();
-        let result = matching_path(&paths, &opts, &canonical, Path::new("/var/log/syslog"));
+        let result = matching_path(&paths, &canonical, Path::new("/var/log/syslog"));
         assert_eq!(result, Some(&PathBuf::from("/var/log")));
     }
 
@@ -312,50 +305,53 @@ mod tests {
     #[test]
     fn test_is_path_in_scope_recursive() {
         let paths = vec![PathBuf::from("/tmp")];
-        let mut opts = HashMap::new();
-        opts.insert(PathBuf::from("/tmp"), PathOptions {
-            size_filter: None, event_types: None,
-            recursive: true, cmd: None,
-        });
+        let entries = vec![
+            (PathBuf::from("/tmp"), PathOptions {
+                size_filter: None, event_types: None,
+                recursive: true, cmd: None,
+            }),
+        ];
         let canonical = paths.clone();
-        assert!(is_path_in_scope(&paths, &opts, &canonical, Path::new("/tmp")));
-        assert!(is_path_in_scope(&paths, &opts, &canonical, Path::new("/tmp/sub")));
-        assert!(is_path_in_scope(&paths, &opts, &canonical, Path::new("/tmp/sub/deep/file.txt")));
-        assert!(!is_path_in_scope(&paths, &opts, &canonical, Path::new("/var/log")));
-        assert!(!is_path_in_scope(&paths, &opts, &canonical, Path::new("/tmpfile")));
+        assert!(is_path_in_scope(&paths, &entries, &canonical, Path::new("/tmp")));
+        assert!(is_path_in_scope(&paths, &entries, &canonical, Path::new("/tmp/sub")));
+        assert!(is_path_in_scope(&paths, &entries, &canonical, Path::new("/tmp/sub/deep/file.txt")));
+        assert!(!is_path_in_scope(&paths, &entries, &canonical, Path::new("/var/log")));
+        assert!(!is_path_in_scope(&paths, &entries, &canonical, Path::new("/tmpfile")));
     }
 
     #[test]
     fn test_is_path_in_scope_non_recursive() {
         let paths = vec![PathBuf::from("/tmp")];
-        let mut opts = HashMap::new();
-        opts.insert(PathBuf::from("/tmp"), PathOptions {
-            size_filter: None, event_types: None,
-            recursive: false, cmd: None,
-        });
+        let entries = vec![
+            (PathBuf::from("/tmp"), PathOptions {
+                size_filter: None, event_types: None,
+                recursive: false, cmd: None,
+            }),
+        ];
         let canonical = paths.clone();
-        assert!(is_path_in_scope(&paths, &opts, &canonical, Path::new("/tmp")));
-        assert!(is_path_in_scope(&paths, &opts, &canonical, Path::new("/tmp/file.txt")));
-        assert!(!is_path_in_scope(&paths, &opts, &canonical, Path::new("/tmp/sub/file.txt")));
-        assert!(!is_path_in_scope(&paths, &opts, &canonical, Path::new("/var/log")));
+        assert!(is_path_in_scope(&paths, &entries, &canonical, Path::new("/tmp")));
+        assert!(is_path_in_scope(&paths, &entries, &canonical, Path::new("/tmp/file.txt")));
+        assert!(!is_path_in_scope(&paths, &entries, &canonical, Path::new("/tmp/sub/file.txt")));
+        assert!(!is_path_in_scope(&paths, &entries, &canonical, Path::new("/var/log")));
     }
 
     #[test]
     fn test_is_path_in_scope_multiple_paths() {
         let paths = vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")];
-        let mut opts = HashMap::new();
-        opts.insert(PathBuf::from("/tmp"), PathOptions {
-            size_filter: None, event_types: None,
-            recursive: true, cmd: None,
-        });
-        opts.insert(PathBuf::from("/var/log"), PathOptions {
-            size_filter: None, event_types: None,
-            recursive: true, cmd: None,
-        });
+        let entries = vec![
+            (PathBuf::from("/tmp"), PathOptions {
+                size_filter: None, event_types: None,
+                recursive: true, cmd: None,
+            }),
+            (PathBuf::from("/var/log"), PathOptions {
+                size_filter: None, event_types: None,
+                recursive: true, cmd: None,
+            }),
+        ];
         let canonical = paths.clone();
-        assert!(is_path_in_scope(&paths, &opts, &canonical, Path::new("/tmp/file")));
-        assert!(is_path_in_scope(&paths, &opts, &canonical, Path::new("/var/log/syslog")));
-        assert!(!is_path_in_scope(&paths, &opts, &canonical, Path::new("/etc/passwd")));
+        assert!(is_path_in_scope(&paths, &entries, &canonical, Path::new("/tmp/file")));
+        assert!(is_path_in_scope(&paths, &entries, &canonical, Path::new("/var/log/syslog")));
+        assert!(!is_path_in_scope(&paths, &entries, &canonical, Path::new("/etc/passwd")));
     }
 
     // ---- get_matching_path_options ----
@@ -363,61 +359,65 @@ mod tests {
     #[test]
     fn test_get_matching_path_options_recursive() {
         let paths = vec![PathBuf::from("/home")];
-        let mut opts = HashMap::new();
-        opts.insert(PathBuf::from("/home"), PathOptions {
-            size_filter: None, event_types: None,
-            recursive: true, cmd: None,
-        });
+        let entries = vec![
+            (PathBuf::from("/home"), PathOptions {
+                size_filter: None, event_types: None,
+                recursive: true, cmd: None,
+            }),
+        ];
         let canonical = paths.clone();
-        let result = get_matching_path_options(&paths, &opts, &canonical, Path::new("/home/user/file.txt"));
+        let result = get_matching_path_options(&paths, &entries, &canonical, Path::new("/home/user/file.txt"));
         assert!(result.is_some());
     }
 
     #[test]
     fn test_get_matching_path_options_non_recursive_child() {
         let paths = vec![PathBuf::from("/var/log")];
-        let mut opts = HashMap::new();
-        opts.insert(PathBuf::from("/var/log"), PathOptions {
-            size_filter: None, event_types: None,
-            recursive: false, cmd: None,
-        });
+        let entries = vec![
+            (PathBuf::from("/var/log"), PathOptions {
+                size_filter: None, event_types: None,
+                recursive: false, cmd: None,
+            }),
+        ];
         let canonical = paths.clone();
-        let result = get_matching_path_options(&paths, &opts, &canonical, Path::new("/var/log/messages"));
+        let result = get_matching_path_options(&paths, &entries, &canonical, Path::new("/var/log/messages"));
         assert!(result.is_some());
     }
 
     #[test]
     fn test_get_matching_path_options_non_recursive_grandchild() {
         let paths = vec![PathBuf::from("/var/log")];
-        let mut opts = HashMap::new();
-        opts.insert(PathBuf::from("/var/log"), PathOptions {
-            size_filter: None, event_types: None,
-            recursive: false, cmd: None,
-        });
+        let entries = vec![
+            (PathBuf::from("/var/log"), PathOptions {
+                size_filter: None, event_types: None,
+                recursive: false, cmd: None,
+            }),
+        ];
         let canonical = paths.clone();
-        let result = get_matching_path_options(&paths, &opts, &canonical, Path::new("/var/log/sub/messages"));
+        let result = get_matching_path_options(&paths, &entries, &canonical, Path::new("/var/log/sub/messages"));
         assert!(result.is_none());
     }
 
     #[test]
     fn test_get_matching_path_options_canonical_fallback() {
         let paths = vec![PathBuf::from("/symlink_target")];
-        let mut opts = HashMap::new();
-        opts.insert(PathBuf::from("/symlink_target"), PathOptions {
-            size_filter: None, event_types: None,
-            recursive: true, cmd: None,
-        });
+        let entries = vec![
+            (PathBuf::from("/symlink_target"), PathOptions {
+                size_filter: None, event_types: None,
+                recursive: true, cmd: None,
+            }),
+        ];
         let canonical = vec![PathBuf::from("/real/path")];
-        let result = get_matching_path_options(&paths, &opts, &canonical, Path::new("/real/path/sub"));
+        let result = get_matching_path_options(&paths, &entries, &canonical, Path::new("/real/path/sub"));
         assert!(result.is_some());
     }
 
     #[test]
     fn test_get_matching_path_options_no_match() {
         let paths = vec![PathBuf::from("/home")];
-        let opts = HashMap::new();
+        let entries: Vec<(PathBuf, PathOptions)> = vec![];
         let canonical = vec![];
-        let result = get_matching_path_options(&paths, &opts, &canonical, Path::new("/etc"));
+        let result = get_matching_path_options(&paths, &entries, &canonical, Path::new("/etc"));
         assert!(result.is_none());
     }
 

@@ -1,13 +1,13 @@
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use dashmap::DashMap;
+use std::collections::HashMap;
 use fanotify_fid::consts::{
     AT_FDCWD, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_MARK_ADD, FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE,
     FAN_NONBLOCK, FAN_Q_OVERFLOW, FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
 };
 use fanotify_fid::prelude::*;
 use fanotify_fid::types::FidEvent;
-use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::num::NonZeroUsize;
@@ -41,8 +41,8 @@ use crate::{EventType, FileEvent};
 pub struct Monitor {
     paths: Vec<PathBuf>,
     canonical_paths: Vec<PathBuf>,
-    path_options: HashMap<PathBuf, PathOptions>,
     /// Full list of (path, PathOptions) preserving duplicates across cmd groups.
+    /// This is the single source of truth for path options.
     monitored_entries: Vec<(PathBuf, PathOptions)>,
     log_dir: Option<PathBuf>,
     monitored_path: Option<PathBuf>,
@@ -92,7 +92,6 @@ impl Monitor {
         }
 
         let mut paths = Vec::new();
-        let mut path_options = HashMap::new();
         let mut seen = std::collections::HashSet::new();
         let mut monitored_entries = Vec::new();
         let log_dir_canonical = log_dir
@@ -125,15 +124,13 @@ impl Monitor {
             if seen.insert(resolved.clone()) {
                 paths.push(resolved.clone());
             }
-            path_options.insert(resolved.clone(), opts.clone());
-            // Full list preserves duplicates for matching
+            // Full list preserves duplicates for matching (single source of truth)
             monitored_entries.push((resolved.clone(), opts.clone()));
         }
 
         let monitor = Self {
             paths,
             canonical_paths: Vec::new(),
-            path_options,
             monitored_entries,
             log_dir,
             monitored_path,
@@ -202,6 +199,23 @@ impl Monitor {
         Ok(unsafe { OwnedFd::from_raw_fd(raw) })
     }
 
+    /// Get all PathOptions for a path from monitored_entries (single source of truth).
+    fn opts_for_path(&self, path: &Path) -> Vec<&PathOptions> {
+        self.monitored_entries
+            .iter()
+            .filter(|(p, _)| p == path)
+            .map(|(_, o)| o)
+            .collect()
+    }
+
+    /// Get the first PathOptions entry for a path (for mask calculation, recursive flag, etc.).
+    fn first_opt_for_path(&self, path: &Path) -> Option<&PathOptions> {
+        self.monitored_entries
+            .iter()
+            .find(|(p, _)| p == path)
+            .map(|(_, o)| o)
+    }
+
     pub async fn run(&mut self) -> Result<()> {
         if nix::unistd::geteuid().as_raw() != 0 {
             let hint = if let Ok(exe) = std::env::current_exe() {
@@ -244,47 +258,49 @@ impl Monitor {
         }
 
         // Collect canonical paths — non-existent paths go to pending_paths
-        // and are removed from paths/path_options so add_path can work on retry
+        // and removed from monitored_entries so add_path can work cleanly on retry.
         let mut keep_paths: Vec<PathBuf> = Vec::new();
-        let mut keep_opts = HashMap::new();
         for path in std::mem::take(&mut self.paths) {
-            let opts = self
-                .path_options
-                .remove(&path)
-                .expect("path in paths but not in path_options");
             if path.exists() {
                 let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
                 self.canonical_paths.push(canonical);
-                keep_paths.push(path.clone());
-                keep_opts.insert(path, opts);
+                keep_paths.push(path);
             } else {
                 eprintln!(
                     "[INFO] Path '{}' does not exist yet — will start monitoring when created.",
                     path.display()
                 );
+                // Collect all opts for this path before removing, to build pending entry
+                let pending_opts: Vec<PathOptions> = self
+                    .monitored_entries
+                    .iter()
+                    .filter(|(p, _)| p == &path)
+                    .map(|(_, o)| o.clone())
+                    .collect();
                 // Remove stale entries from monitored_entries so add_path later
                 // doesn't create a duplicate when check_pending fires.
                 self.monitored_entries.retain(|(p, _)| p != &path);
-                let entry_path = path.clone();
-                self.pending_paths.push((
-                    path,
-                    PathEntry {
-                        path: entry_path,
-                        recursive: Some(opts.recursive),
-                        types: opts
-                            .event_types
-                            .as_ref()
-                            .map(|v| v.iter().map(|t| t.to_string()).collect()),
-                        size: opts
-                            .size_filter
-                            .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
-                        cmd: opts.cmd.clone(),
-                    },
-                ));
+                // Create one pending entry per cmd group
+                for opts in pending_opts {
+                    self.pending_paths.push((
+                        path.clone(),
+                        PathEntry {
+                            path: path.clone(),
+                            recursive: Some(opts.recursive),
+                            types: opts
+                                .event_types
+                                .as_ref()
+                                .map(|v| v.iter().map(|t| t.to_string()).collect()),
+                            size: opts
+                                .size_filter
+                                .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
+                            cmd: opts.cmd,
+                        },
+                    ));
+                }
             }
         }
         self.paths = keep_paths;
-        self.path_options = keep_opts;
         // Initialize inotify for watching parent dirs of pending paths
         self.inotify = Some(inotify::Inotify::init().context("inotify_init")?);
         self.setup_inotify_watches();
@@ -335,7 +351,7 @@ impl Monitor {
                             fan_fd.as_raw_fd()
                         );
                         // mark subdirectories recursively
-                        let opts = self.paths.get(i).and_then(|p| self.path_options.get(p));
+                        let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
                         if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
                             mark_recursive(fan_fd, path_mask, canonical);
                         }
@@ -386,7 +402,7 @@ impl Monitor {
                                 canonical.display(),
                                 new_fd.as_raw_fd()
                             );
-                            let opts = self.paths.get(i).and_then(|p| self.path_options.get(p));
+                            let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
                             if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
                                 mark_recursive(&new_fd, path_mask, canonical);
                             }
@@ -448,7 +464,7 @@ impl Monitor {
             // Pre-cache directory handles (shared across fds)
             for (i, canonical) in self.canonical_paths.iter().enumerate() {
                 if canonical.is_dir() {
-                    let opts = self.paths.get(i).and_then(|p| self.path_options.get(p));
+                    let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
                     let recursive = opts.is_some_and(|o| o.recursive);
                     if recursive {
                         dir_cache::cache_recursive(&self.dir_cache, canonical);
@@ -498,19 +514,6 @@ impl Monitor {
             }
         }
         if self.debug {
-            eprintln!(
-                "[debug] path_options ({} entries, dedup'd by path):",
-                self.path_options.len()
-            );
-            for (p, o) in &self.path_options {
-                let label = o.cmd.as_deref().unwrap_or("global");
-                eprintln!(
-                    "[debug]   {} cmd={} recursive={}",
-                    p.display(),
-                    label,
-                    o.recursive
-                );
-            }
             eprintln!(
                 "[debug] monitored_entries ({} entries, full list):",
                 self.monitored_entries.len()
@@ -685,21 +688,25 @@ impl Monitor {
                                 eprintln!("[debug] monitored directory deleted: {}", raw.path.display());
                             }
                             if let Some(ref path) = matched_path {
-                                // Preserve options before removing
-                                let opts = self.path_options.get(path);
-                                let pending_entry = PathEntry {
-                                    path: path.clone(),
-                                    recursive: opts.map(|o| o.recursive),
-                                    types: opts.and_then(|o| o.event_types.as_ref().map(
-                                        |v| v.iter().map(|t| t.to_string()).collect()
-                                    )),
-                                    size: opts.and_then(|o| o.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes)))),
-                                    cmd: None,
-                                };
+                                // Preserve ALL cmd groups before removing
+                                let all_opts: Vec<PathOptions> = self.opts_for_path(path).into_iter().cloned().collect();
                                 if let Err(e) = self.remove_path(path, None) {
                                     eprintln!("[WARNING] Failed to remove deleted path '{}': {e}", path.display());
                                 }
-                                self.pending_paths.push((path.clone(), pending_entry));
+                                for opts in all_opts {
+                                    self.pending_paths.push((
+                                        path.clone(),
+                                        PathEntry {
+                                            path: path.clone(),
+                                            recursive: Some(opts.recursive),
+                                            types: opts.event_types.as_ref().map(
+                                                |v| v.iter().map(|t| t.to_string()).collect()
+                                            ),
+                                            size: opts.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes))),
+                                            cmd: opts.cmd,
+                                        },
+                                    ));
+                                }
                                 self.setup_inotify_watches();
                             }
                             continue;
@@ -981,7 +988,7 @@ impl Monitor {
     fn get_matching_path_options(&self, path: &Path) -> Option<&PathOptions> {
         filters::get_matching_path_options(
             &self.paths,
-            &self.path_options,
+            &self.monitored_entries,
             &self.canonical_paths,
             path,
         )
@@ -1108,7 +1115,7 @@ impl Monitor {
         }
         let path = filters::resolve_recursion_check(&entry.path);
 
-        let is_new_path = !self.path_options.contains_key(&path);
+        let is_new_path = !self.paths.contains(&path);
         if !is_new_path {
             if self.debug {
                 eprintln!(
@@ -1141,7 +1148,6 @@ impl Monitor {
                 cmd,
             };
             self.monitored_entries.push((path.clone(), opts.clone()));
-            self.path_options.insert(path.clone(), opts.clone());
 
             // Update fanotify mask: OR all entries for this path
             let new_mask = self
@@ -1202,12 +1208,18 @@ impl Monitor {
         }
 
         if !path.exists() {
-            eprintln!(
-                "[INFO] Path '{}' does not exist yet — will start monitoring when created.",
-                path.display()
-            );
-            self.pending_paths.push((path.clone(), entry.clone()));
-            self.setup_inotify_watches();
+            // Avoid duplicate pending entries for the same (path, cmd)
+            let already_pending = self.pending_paths.iter().any(|(p, e)| {
+                p == &path && e.cmd == entry.cmd
+            });
+            if !already_pending {
+                eprintln!(
+                    "[INFO] Path '{}' does not exist yet — will start monitoring when created.",
+                    path.display()
+                );
+                self.pending_paths.push((path.clone(), entry.clone()));
+                self.setup_inotify_watches();
+            }
             return Ok(());
         }
 
@@ -1369,7 +1381,6 @@ impl Monitor {
         self.path_to_group.insert(path.clone(), group_idx);
         self.paths.push(path.clone());
         self.canonical_paths.push(canonical.clone());
-        self.path_options.insert(path.clone(), opts.clone());
         self.monitored_entries.push((path.clone(), opts.clone()));
 
         // Pre-cache directory handles in the shared cache
@@ -1416,7 +1427,7 @@ impl Monitor {
             // No more entries for this path — tear down fanotify
             if let Some(pos) = self.paths.iter().position(|p| p == path) {
                 let canonical = &self.canonical_paths[pos];
-                if let Some(opts) = self.path_options.get(path) {
+                if let Some(opts) = self.first_opt_for_path(path) {
                     let path_mask = path_mask_from_options(opts);
                     if let Some(&gi) = self.path_to_group.get(path) {
                         let fan_fd = &self.fs_groups[gi].fan_fd;
@@ -1443,7 +1454,6 @@ impl Monitor {
                 }
                 self.paths.remove(pos);
                 self.canonical_paths.remove(pos);
-                self.path_options.remove(path);
                 self.path_to_group.remove(path);
             }
             println!("Removed entry: {}", path.display());
@@ -1474,15 +1484,6 @@ impl Monitor {
                 } else {
                     let _ = mark_directory(fan_fd, new_mask, &canonical);
                 }
-            }
-            // Update path_options to reflect current mask
-            if let Some(any_opts) = self
-                .monitored_entries
-                .iter()
-                .find(|(p, _)| p == path)
-                .map(|(_, o)| o.clone())
-            {
-                self.path_options.insert(path.to_path_buf(), any_opts);
             }
             if self.debug {
                 eprintln!(
@@ -1570,25 +1571,16 @@ impl Monitor {
             }
             "list" => {
                 let paths: Vec<PathEntry> = self
-                    .paths
+                    .monitored_entries
                     .iter()
-                    .map(|p| {
-                        let opts = self.path_options.get(p);
-                        // Map internal None cmd back to "_global" for external reporting
-                        let cmd = opts.and_then(|o| o.cmd.clone());
+                    .map(|(p, opts)| {
+                        let cmd = opts.cmd.clone().or(Some(crate::monitored::CMD_GLOBAL.to_string()));
                         PathEntry {
                             path: p.clone(),
-                            recursive: opts.map(|o| o.recursive),
-                            types: opts.and_then(|o| {
-                                o.event_types
-                                    .as_ref()
-                                    .map(|v| v.iter().map(|t| t.to_string()).collect())
-                            }),
-                            size: opts.and_then(|o| {
-                                o.size_filter
-                                    .map(|f| format!("{}{}", f.op, format_size(f.bytes)))
-                            }),
-                            cmd: cmd.or(Some(crate::monitored::CMD_GLOBAL.to_string())),
+                            recursive: Some(opts.recursive),
+                            types: opts.event_types.as_ref().map(|v| v.iter().map(|t| t.to_string()).collect()),
+                            size: opts.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes))),
+                            cmd,
                         }
                     })
                     .collect();
@@ -1615,7 +1607,7 @@ impl Monitor {
         // Add new paths that appear in store
         let flat_entries = store.flatten();
         for entry in &flat_entries {
-            if !self.path_options.contains_key(&entry.path)
+            if !self.paths.contains(&entry.path)
                 && let Err(e) = self.add_path(entry)
             {
                 eprintln!("Failed to add path {} on reload: {e}", entry.path.display());
@@ -1724,7 +1716,7 @@ impl Monitor {
     /// Find the configured path that matches a given event path.
     /// Checks configured paths (direct or recursive prefix), then canonical paths.
     fn matching_path(&self, path: &Path) -> Option<&PathBuf> {
-        filters::matching_path(&self.paths, &self.path_options, &self.canonical_paths, path)
+        filters::matching_path(&self.paths, &self.canonical_paths, path)
     }
 
     /// Write an event to its path-based log file.
@@ -1797,7 +1789,7 @@ impl Monitor {
     /// Uses per-path recursive setting from path_options
     #[allow(dead_code)]
     fn is_path_in_scope(&self, path: &Path) -> bool {
-        filters::is_path_in_scope(&self.paths, &self.path_options, &self.canonical_paths, path)
+        filters::is_path_in_scope(&self.paths, &self.monitored_entries, &self.canonical_paths, path)
     }
 
     /// Check if event path is within scope of a specific PathOptions.
@@ -2191,7 +2183,7 @@ mod tests {
                 .iter()
                 .any(|(p, _)| p == Path::new("/tmp/test_add"))
         );
-        assert!(!m.path_options.contains_key(Path::new("/tmp/test_add")));
+        assert!(!m.paths.contains(&PathBuf::from("/tmp/test_add")));
 
         // remove_path on non-existent path (not in options)
         let result = m.remove_path(Path::new("/nonexistent"), None);
