@@ -1,91 +1,101 @@
-# fsmon 重构
+# PROGRESS.md — fsmon full review & fix plan
 
-## 总目标
+## Done
+- ✅ Full code review (bugs, performance, improvement)
+- ✅ Task 5: Include FSID in HandleKey to prevent cross-filesystem collisions (3.1)
+- ✅ Task 6: Add RAII wrappers for fanotify fd and mount fds (3.2)
+- ✅ Task 7: Fix `clean_logs` leaves `.tmp` file on crash (3.3)
 
-最小改动，实现进程树感知。
+## Todo
 
-## 改动清单
+### 1. Bug Fixes
 
-### 1. `--exclude-cmd` 重命名为 `--cmd`
+#### 1.1 Glob-to-regex `.` not escaped in exclude patterns
+- **File**: `main.rs:102`
+- **Problem**: `--exclude "*.log"` -> regex `.*.log` (`.` matches any char)
+- **Severity**: High (user-facing wrong behavior)
+- **Fix**: Write `glob_to_regex()` helper that converts `*` -> `.*` and escapes all other regex special chars (`.` -> `\\.` etc.), or use `regex::escape` + manual wildcard handling
 
+#### 1.2 `size_change` always 0 for DELETE/MOVED_FROM events
+- **File**: `monitor.rs:343`
+- **Problem**: `fs::metadata` fails after file is deleted, returns 0
+- **Severity**: Medium (inaccurate data)
+- **Fix**: During `read_fid_events` parsing, when `open_by_handle_at` succeeds, read file size via `fstat(fd)`. Add `optional_size: Option<i64>` to `FidEvent`. In `build_file_event`, prefer this value, fallback to `fs::metadata`.
+
+#### 1.3 Concurrent `clean_logs` temp file collision
+- **File**: `main.rs:446`
+- **Problem**: All clean ops share the same `history.tmp`
+- **Severity**: Medium (concurrent scenario)
+- **Fix**: Use `log_file.with_extension(format!("tmp.{}", std::process::id()))` or `tempfile` crate
+
+#### 1.4 Clippy `sort_by_key` warnings
+- **File**: `query.rs:153,156,159`
+- **Problem**: Can simplify `sort_by` into `sort_by_key`; use `sort_by_key(|b| Reverse(b.size_change.abs()))` for size
+- **Severity**: Low (code style)
+
+### 2. Performance Optimization
+
+#### 2.1 `resolve_file_handle` no mount fd caching
+- **File**: `monitor.rs:703-729`
+- **Problem**: Traverses all mount_fds for every handle resolution
+- **Severity**: Medium (multi-mount scenarios)
+- **Fix**: Add `HashMap<fsid, i32>` cache mapping filesystem id to the first successful mount_fd; extract fsid from info record
+
+#### 2.2 Query loads all matching events into memory
+- **File**: `query.rs:77-148`
+- **Problem**: `read_events` returns `Vec<FileEvent>` before output
+- **Severity**: Low (large result sets)
+- **Fix**: Change `read_events` to accept a callback `&mut dyn FnMut(&FileEvent) -> Result<()>`, stream output instead of collecting
+
+#### 2.3 `find_tail_offset` large heap allocation
+- **File**: `main.rs:525-526`
+- **Problem**: `vec![0u8; file_len - read_start]` reads entire tail into memory
+- **Severity**: Low (log clean is not hot path)
+- **Fix**: Use `BufReader` + byte-by-byte/chunk scan for first `\n`
+
+### 3. Architecture / Maintainability
+
+#### 3.1 ~~HandleKey does not include FSID — cross-filesystem collision risk~~ ✅
+- **File**: `monitor.rs:656,697,808`
+- **Problem**: Key only uses file_handle bytes, omits fsid
+- **Severity**: **High** (correctness risk)
+- **Fix**: Include fsid (8 bytes) in `HandleKey`. Updated all three `HandleKey::from_slice` calls — `extract_dfid_name` and `extract_fid` now start slice at `fsid_off`; `path_to_handle_key` prepends fsid from `statfs`.
+
+#### 3.2 ~~fanotify fd / mount fds lack RAII wrappers~~ ✅
+- **File**: `monitor.rs:150-253, 326-333`
+- **Problem**: Manual close; panic or early return leaks fds
+- **Severity**: Medium (resource leak)
+- **Fix**: Create `FanFdGuard(i32)` and `MountFdsGuard(Vec<i32>)` RAII types (follow `SockGuard` pattern in `proc_cache.rs:199`), auto-close in `Drop`. Remove manual close code.
+
+#### 3.3 `clean_logs` leaves `.tmp` file on crash
+- **File**: `main.rs:445-506`
+- **Problem**: If process is killed mid-clean, `.tmp` file is left behind
+- **Severity**: Medium (graceful degradation)
+- **Fix**: Register cleanup at function entry via `DropGuard` or similar to ensure temp file removal. Or append `.{pid}` to path for uniqueness.
+
+#### 3.4 systemd binary path hardcoded
+- **File**: `systemd.rs:13`
+- **Problem**: `ExecStart=/usr/local/bin/fsmon` hardcoded
+- **Severity**: Medium (cargo install users)
+- **Fix**: In `install()`, auto-detect binary path via `std::env::current_exe()` and use real path in service template
+
+#### 3.5 proc connector thread cannot exit gracefully
+- **File**: `proc_cache.rs:42-51`
+- **Problem**: Thread is detached; keeps running after Monitor exits
+- **Severity**: Low (harmless but inelegant)
+- **Fix**: `start_proc_listener()` accepts `Arc<AtomicBool>` shutdown signal; `run_listener` checks it in loop and `break`s
+
+### 4. Fix Order
+
+Phase 1: Bug fixes (1.1 -> 1.2 -> 1.3 -> 1.4)
+Phase 2: Architecture (3.1 -> 3.2 -> 3.3 -> 3.4)
+Phase 3: Performance (2.1 -> 2.2 -> 2.3 -> 3.5)
+
+### 5. Verification
+
+After each fix:
 ```bash
-# 旧语法（废弃）
-fsmon add /home --exclude-cmd '!openclaw'
-fsmon add /home --exclude-cmd rsync
-
-# 新语法（只有两种）
-fsmon add /home                     # 默认：所有事件，只记 ppid/tgid
-fsmon add /home --cmd openclaw      # 包含 openclaw 及其子树，带 chain
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --verbose
+cargo build --release
 ```
-
-### 2. FileEvent 加 ppid, tgid（始终记录）
-
-```rust
-pub struct FileEvent {
-    // ... 已有字段
-    pub ppid: u32,    // 新增，来自 /proc/{pid}/status
-    pub tgid: u32,    // 新增，来自 /proc/{pid}/status
-}
-```
-
-来源：`/proc/{pid}/status` 的 `PPid:` 和 `Tgid:` 行（已打开的文件，多解析两行）。
-
-旧日志反序列化时 ppid=0, tgid=0，向后兼容。
-
-### 3. `--cmd openclaw` 启用进程树
-
-```rust
-// 只有在 --cmd 为 positive 匹配时才做的事：
-//
-// a) proc connector 订阅 Fork/Exec/Exit → 维护 pid → {cmd, ppid, user} 树
-// b) 事件到来时先查进程树：pid 是否属于 openclaw 的子树？
-//    → 否 → 直接丢弃
-//    → 是 → 构建 chain，写入日志
-//
-// chain 格式: "102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root"
-```
-
-**没有排除模式**。`--cmd` 只有包含语义，不设 `!` 排除语法。
-排除噪音请用 `--exclude`（文件路径）或 `--cmd` 自然排除（不指定 = 不追踪）。
-
-## 判定逻辑汇总
-
-| `--cmd` 参数 | 进程树 | chain | ppid/tgid | 匹配规则 |
-|-------------|--------|-------|-----------|---------|
-| 未指定 | ❌ | ❌ | ✅ | 所有事件通过，只记 ppid/tgid |
-| `openclaw` | ✅ | ✅ | ✅ | pid 在 openclaw 子树中 |
-
-
-## 文件改动
-
-| 文件 | 改动 |
-|------|------|
-| `src/lib.rs` | FileEvent +ppid, +tgid |
-| `src/proc_cache.rs` | 处理 Fork/Exec/Exit，提供 `is_descendant(pid, cmd)` + `build_chain(pid)` |
-| `src/monitor.rs` | 集成 proc connector Fork/Exit；build_file_event 中查进程树 |
-| `src/filters.rs` | PathOptions 增加 `cmd: Option<String>`，`should_output` 查进程树 |
-| `src/monitored.rs` | PathEntry 增加 `cmd_positive` 字段 |
-| `src/socket.rs` | SocketCmd 调整 |
-| `src/bin/fsmon.rs` | `--exclude-cmd` → `--cmd` |
-| `src/bin/commands/` | 传递新参数 |
-
-## 实施顺序
-
-1. FileEvent +ppid +tgid（lib.rs + proc_cache 读取逻辑）
-2. `--exclude-cmd` → `--cmd` 重命名（CLI + 配置 + 测试）
-3. 进程树缓存（proc connector Fork/Exec/Exit + 启动快照）
-4. `build_chain` + `is_descendant` 接口
-5. 事件处理路径集成（`--cmd` 开启动用进程树，无 `--cmd` 保持默认）
-
-## 非目标
-
-❌ 不创建 ProcessEntry / ProcessStore 新类型
-❌ 不改监控路径的数据模型
-❌ 不破坏现有配置格式
-
-## 额外：fsmon 进程自排除
-
-fsmon daemon 自身写入日志时会触发 fanotify 事件，导致自我递归循环。
-新增 `daemon_pid` 字段记录 daemon PID，在事件处理循环中跳过自身 PID。
-
-所有 tokio worker 线程共享 TGID = 主 PID，一次 PID 比较覆盖所有场景。
