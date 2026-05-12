@@ -10,7 +10,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/fsmon)](https://crates.io/crates/fsmon)
 
-**fsmon** is a real-time Linux filesystem change monitor powered by fanotify. It watches files and directories, captures every event (create, modify, delete, move, attribute change, etc.), and attributes each change back to the process that caused it — including the PID, command name, and user. 
+**fsmon** is a real-time Linux filesystem change monitor powered by fanotify. It watches files and directories, captures every event (create, modify, delete, move, attribute change, etc.), and attributes each change back to the process that caused it — including the PID, command name, user, parent PID, thread group ID, and optional full process ancestry chain.
 
 <div align="center">
 <img width="1200" alt="fsmon demo" src="./images/fsmon.png" />
@@ -19,7 +19,8 @@
 ## Features
 
 - **Real-time Monitoring**: Captures 14 fanotify events (default: 8 core events, `--types all` for all 14)
-- **Process Attribution**: Tracks PID, command name, and user for every file change — even short-lived processes like `touch`, `rm`, `mv`
+- **Process Attribution**: Tracks PID, command name, user, PPID, and TGID for every file change — even short-lived processes like `touch`, `rm`, `mv`
+- **Process Tree Tracking** (`--cmd`): Pinpoint a specific process (e.g., `openclaw`) and fsmon will track it plus all its descendants (fork/exec children), building a complete ancestry chain per event.
 - **Recursive Monitoring**: Watch entire directory trees with automatic tracking of newly created subdirectories
 - **Complete Deletion Capture**: Captures every file deleted during `rm -rf` via persistent directory handle cache
 - **High Performance**: Rust + Tokio, <5MB memory footprint, zero-copy FID event parsing, binary-search log querying
@@ -70,12 +71,12 @@ sudo fsmon daemon &
 
 # Terminal 1 (or another): add paths to monitor
 # Monitor /var/www/myapp recursively, only MODIFY + CREATE events,
-# exclude editor temp files, only capture nginx and vim processes
-fsmon add /var/www/myapp -r --types MODIFY --types CREATE --exclude '\.swp$' --exclude-cmd '!nginx|vim'
+# exclude editor temp files, only track nginx and vim processes
+fsmon add /var/www/myapp -r --types MODIFY --types CREATE --exclude '\.swp$' --cmd nginx --cmd vim
 
 # List what's being monitored
 fsmon managed
-# → /var/www/myapp | types=MODIFY,CREATE | recursive | size=- | exclude-path=\.swp | exclude-cmd=!nginx|vim
+# → /var/www/myapp | types=MODIFY,CREATE | recursive | exclude-path=\.swp | cmd=nginx,vim
 ```
 
 Now trigger some real file changes:
@@ -94,12 +95,14 @@ Look at what fsmon captured:
 ```bash
 # The raw log — one JSONL line per event
 cat ~/.local/state/fsmon/*_log.jsonl
-# → {"time":"2026-05-07T10:00:01+00:00","event_type":"MODIFY","path":"/var/www/myapp/index.html","pid":1234,"cmd":"nginx","user":"www-data","file_size":21}
-# → {"time":"2026-05-07T10:00:03+00:00","event_type":"DELETE","path":"/var/www/myapp/index.html","pid":5678,"cmd":"rm","user":"deploy","file_size":0}
-# → {"time":"2026-05-07T10:00:05+00:00","event_type":"CREATE","path":"/var/www/myapp/.config.json.swp","pid":9012,"cmd":"vim","user":"dev","file_size":4096}
+# → {"time":"2026-05-07T10:00:01+00:00","event_type":"MODIFY","path":"/var/www/myapp/index.html","pid":1234,"cmd":"nginx","user":"www-data","file_size":21,"ppid":1,"tgid":1234}
+# → {"time":"2026-05-07T10:00:03+00:00","event_type":"DELETE","path":"/var/www/myapp/index.html","pid":5678,"cmd":"rm","user":"deploy","file_size":0,"ppid":1234,"tgid":5678}
+# → {"time":"2026-05-07T10:00:05+00:00","event_type":"CREATE","path":"/var/www/myapp/.config.json.swp","pid":9012,"cmd":"vim","user":"dev","file_size":4096,"ppid":5678,"tgid":9012,"chain":"9012|vim|dev;5678|sh|deploy;1234|openclaw|root;1|systemd|root"}
 ```
 
 Notice: vim's `.swp` was captured but won't be logged — the `--exclude '\.swp$'` filter drops it before writing. That means **it never touches disk**.
+
+Every event now includes `ppid` (parent PID) and `tgid` (thread group ID). When `--cmd` is specified, matching events also include `chain` — a compact process ancestry string tracing back to PID 1.
 
 #### Query with pipe
 
@@ -197,16 +200,23 @@ Socket:           `/tmp/fsmon-<UID>.sock`
 Add a path to the monitoring list. No sudo needed.
 
 ```
-fsmon add <path>                           Monitor a path
+fsmon add <path>                           Monitor a path (all events)
 fsmon add <path> -r                        Monitor recursively
 fsmon add <path> --types MODIFY --types CREATE     Filter by event types
 fsmon add <path> --types all               All 14 event types
 fsmon add <path> --exclude '\.swp$' --exclude '\.tmp$'   Exclude path patterns
-fsmon add <path> --exclude '!.*\.py$'     Only track .py files
 fsmon add <path> -s '>=1MB'                Minimum file size change
-fsmon add <path> --exclude-cmd 'rsync'     Exclude by process name
-fsmon add <path> --exclude-cmd '!nginx'    Only track nginx process
+fsmon add <path> --cmd nginx               Track nginx process and its descendants
+fsmon add <path> --cmd openclaw            Track openclaw and its fork/exec children
 ```
+
+**How `--cmd` works:**
+
+- **Without `--cmd`**: All events are captured. Each event includes `ppid` and `tgid` (4 bytes each, from `/proc/{pid}/status`, zero extra overhead).
+- **With `--cmd <name>`**: Only events from `<name>` or its descendant processes (fork/exec children) are logged. Matching events also include `chain` — a compact process ancestry string (e.g., `"102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root"`). Events not matching any `--cmd` process tree are silently dropped.
+
+`--cmd` is purely opt-in. It does not support exclusion (use `--exclude` for that).
+Multiple `--cmd` can be specified (OR logic).
 
 All capture filters run inside the daemon process (nanosecond-fast, no fork).
 Events that don't match never touch disk.
@@ -245,6 +255,13 @@ fsmon query -t '>1h' -t '<now'            Time range
 Examples with `jq`:
 
 ```bash
+# Search by process (ppid/tgid always present)
+fsmon query | jq 'select(.ppid == 100)'
+
+# Search by ancestry chain (only when --cmd was used)
+fsmon query | jq 'select(.chain != "") | .chain'
+
+# Traditional cmd/user filtering still works
 fsmon query -t '>1h' | jq 'select(.cmd == "nginx")'
 fsmon query | jq 'select(.event_type == "DELETE")'
 fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
@@ -347,6 +364,39 @@ Default captures 8 core events. Use `--types all` for all 14.
 
 **All 14 (via --types all):** + ACCESS, MODIFY, OPEN, OPEN_EXEC, CLOSE_NOWRITE, FS_ERROR
 
+## Log Format
+
+Every event is a single JSON line. All fields are always present unless noted.
+
+```json
+{
+  "time": "2026-05-07T10:00:01+00:00",
+  "event_type": "MODIFY",
+  "path": "/var/www/myapp/index.html",
+  "pid": 1234,
+  "cmd": "nginx",
+  "user": "www-data",
+  "file_size": 21,
+  "ppid": 1,
+  "tgid": 1234
+}
+```
+
+When `--cmd` is active and the event matches: `chain` is also included.
+
+```json
+{
+  ...
+  "ppid": 101,
+  "tgid": 102,
+  "chain": "102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root"
+}
+```
+
+The `chain` field uses compact pipe/semicolon format: each entry is `pid|cmd|user`, separated by `;` from root (PID 1) down to the event process.
+
+Old logs without `ppid`/`tgid`/`chain` are fully backward compatible — missing fields default to `0` or `""`.
+
 ## Architecture
 
 ```
@@ -355,7 +405,15 @@ Linux Kernel (fanotify)
     → tokio reads events asynchronously
     → fid_parser resolves paths (two-pass + dir cache)
     → filters: event type, size, path pattern, process name
+    → (if --cmd active) process tree: is this PID in a tracked subtree?
+      → no: drop immediately (zero /proc reads)
+      → yes: build ancestry chain → add to event
     → JSONL → per-path log files (*_log.jsonl)
+
+Process tree (proc connector):
+    Fork/Exec/Exit events → DashMap pid → {cmd, ppid, user}
+    Snapshot on daemon start: /proc/*/stat → seed existing processes
+    is_descendant(pid, "openclaw") → O(depth) DashMap lookups
 
 User pipe:
     cat/ tail *.jsonl → jq → your custom logic
@@ -388,7 +446,7 @@ src/
 ├── fid_parser.rs      Low-level FID event parsing, two-pass path recovery
 ├── filters.rs         PathOptions, event/size/path/process filters, path matching
 ├── dir_cache.rs       Directory handle cache for rm -rf recovery
-├── proc_cache.rs      Netlink proc connector (short-lived process attribution)
+├── proc_cache.rs      Netlink proc connector (process tree: Fork/Exec/Exit + build_chain + is_descendant)
 ├── query.rs           Binary-search log query, JSONL output
 ├── socket.rs          Unix socket protocol (TOML), error classification
 ├── utils.rs           Size/time parsing, uid lookup, path→log name hash
