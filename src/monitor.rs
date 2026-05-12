@@ -39,6 +39,8 @@ pub struct Monitor {
     paths: Vec<PathBuf>,
     canonical_paths: Vec<PathBuf>,
     path_options: HashMap<PathBuf, PathOptions>,
+    /// Full list of (path, cmd) pairs for display (preserves duplicates across cmd groups).
+    monitored_entries: Vec<(PathBuf, Option<String>)>,
     log_dir: Option<PathBuf>,
     monitored_path: Option<PathBuf>,
     proc_cache: Option<ProcCache>,
@@ -86,6 +88,7 @@ impl Monitor {
         let mut paths = Vec::new();
         let mut path_options = HashMap::new();
         let mut seen = std::collections::HashSet::new();
+        let mut monitored_entries = Vec::new();
         let log_dir_canonical = log_dir.as_ref().map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()));
         for (path, opts) in &paths_and_options {
             // Reject paths that overlap with the log directory.
@@ -110,17 +113,20 @@ impl Monitor {
                     );
                 }
             }
-            // Same path under multiple cmd groups → last one wins
+            // Same path under multiple cmd groups → fanotify dedup by path only
             if seen.insert(resolved.clone()) {
                 paths.push(resolved.clone());
             }
             path_options.insert(resolved.clone(), opts.clone());
+            // Full list preserves duplicates for display
+            monitored_entries.push((resolved.clone(), opts.cmd.clone()));
         }
 
         Ok(Self {
             paths,
             canonical_paths: Vec::new(),
             path_options,
+            monitored_entries,
             log_dir,
             monitored_path,
             proc_cache: None,
@@ -431,13 +437,9 @@ impl Monitor {
         println!("Starting file trace monitor...");
         if !self.canonical_paths.is_empty() {
             println!("Active paths ({} fd(s)):", fan_group_count);
-            // Group by cmd for display
             let mut by_cmd: std::collections::BTreeMap<Option<String>, Vec<&PathBuf>> = std::collections::BTreeMap::new();
-            for (i, path) in self.paths.iter().enumerate() {
-                let cmd = self.paths.get(i)
-                    .and_then(|p| self.path_options.get(p))
-                    .and_then(|o| o.cmd.clone());
-                by_cmd.entry(cmd).or_default().push(path);
+            for (path, cmd) in &self.monitored_entries {
+                by_cmd.entry(cmd.clone()).or_default().push(path);
             }
             for (cmd, paths) in &by_cmd {
                 let label = match cmd {
@@ -1087,7 +1089,8 @@ impl Monitor {
         self.path_to_group.insert(path.clone(), group_idx);
         self.paths.push(path.clone());
         self.canonical_paths.push(canonical.clone());
-        self.path_options.insert(path.clone(), opts);
+        self.path_options.insert(path.clone(), opts.clone());
+        self.monitored_entries.push((path.clone(), opts.cmd.clone()));
 
         // Pre-cache directory handles in the shared cache
         if canonical.is_dir()
@@ -1147,6 +1150,7 @@ impl Monitor {
         self.canonical_paths.remove(pos);
         self.path_options.remove(path);
         self.path_to_group.remove(path);
+        self.monitored_entries.retain(|(p, _)| p != path);
 
         println!("Removed path: {}", path.display());
         Ok(())
