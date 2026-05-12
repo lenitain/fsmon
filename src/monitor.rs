@@ -1095,10 +1095,10 @@ impl Monitor {
 
         let path_mask = path_mask_from_options(&opts);
 
+        let cmd_label = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
         println!(
-            "Added path: {} (recursive={})",
-            path.display(),
-            recursive,
+            "Added path: [{}] {} (recursive={})",
+            cmd_label, path.display(), recursive,
         );
 
         // Determine filesystem device ID for dedup lookup
@@ -1286,7 +1286,13 @@ impl Monitor {
         self.path_to_group.remove(path);
         self.monitored_entries.retain(|(p, _)| p != path);
 
-        println!("Removed path: {}", path.display());
+        // Find which cmd groups this path belonged to
+        let cmds: Vec<&str> = self.monitored_entries.iter()
+            .filter(|(p, _)| p == path)
+            .map(|(_, o)| o.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL))
+            .collect();
+        let cmd_str = if cmds.is_empty() { "?" } else { cmds[0] };
+        println!("Removed path: [{}] {}", cmd_str, path.display());
         Ok(())
     }
 
