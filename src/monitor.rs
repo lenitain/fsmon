@@ -761,6 +761,7 @@ impl Monitor {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn build_file_event(
         &mut self,
         raw: &FidEvent,
@@ -871,6 +872,7 @@ impl Monitor {
     }
 
     /// Find the PathOptions matching a given event path.
+    #[allow(dead_code)]
     fn get_matching_path_options(&self, path: &Path) -> Option<&PathOptions> {
         filters::get_matching_path_options(&self.paths, &self.path_options, &self.canonical_paths, path)
     }
@@ -1415,6 +1417,7 @@ impl Monitor {
         self.setup_inotify_watches();
     }
 
+    #[allow(dead_code)]
     fn should_output(&self, event: &FileEvent) -> bool {
         let opts = self.get_matching_path_options(&event.path);
         filters::should_output(opts, event)
@@ -1432,6 +1435,7 @@ impl Monitor {
     }
 
     /// Write an event to its path-based log file.
+    #[allow(dead_code)]
     fn write_event(&self, event: &FileEvent) -> std::io::Result<()> {
         let log_dir = match self.log_dir.as_ref() {
             Some(d) => d,
@@ -1479,6 +1483,7 @@ impl Monitor {
 
     /// Check if path is within monitoring scope
     /// Uses per-path recursive setting from path_options
+    #[allow(dead_code)]
     fn is_path_in_scope(&self, path: &Path) -> bool {
         filters::is_path_in_scope(&self.paths, &self.path_options, &self.canonical_paths, path)
     }
