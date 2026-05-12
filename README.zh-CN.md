@@ -71,7 +71,7 @@ sudo fsmon daemon &
 
 # 添加监控路径：递归监控 /var/www/myapp，只捕获 MODIFY/CREATE，
 # 排除编辑器临时文件，只追踪 nginx 和 vim 进程
-fsmon add /var/www/myapp -r --types MODIFY --types CREATE --exclude '\.swp$' --cmd nginx --cmd vim
+fsmon add --path /var/www/myapp -r --types MODIFY --types CREATE --exclude '\.swp$' --cmd nginx --cmd vim
 
 # 查看当前监控配置
 fsmon managed
@@ -194,23 +194,27 @@ Socket：          `/tmp/fsmon-<UID>.sock`
 添加监控路径。无需 sudo。
 
 ```
-fsmon add <path>                           监控一个路径
-fsmon add <path> -r                        递归监控子目录
-fsmon add <path> --types MODIFY --types CREATE     按事件类型过滤
-fsmon add <path> --types all               全部 14 种事件
-fsmon add <path> --exclude '\.swp$' --exclude '\.tmp$'   排除路径模式
-fsmon add <path> --exclude '!.*\.py$'     只跟踪 .py 文件
-fsmon add <path> -s '>=1MB'                最小文件变更大小
-fsmon add <path> --cmd nginx              追踪 nginx 及其子进程
-fsmon add <path> --cmd openclaw           追踪 openclaw 及其 fork/exec 后代
+fsmon add --path /home --cmd openclaw               追踪 /home 上 openclaw 的活动（最常用）
+fsmon add --path /home -r                             递归监控 /home（路径模式）
+fsmon add --cmd openclaw                              全局追踪 openclaw（进程模式）
+fsmon add --path /home --types MODIFY --types CREATE  按事件类型过滤
+fsmon add --path /home --types all                    全部 14 种事件
+fsmon add --path /home --exclude '\.swp$'             排除路径模式
+fsmon add --path /home -s '>=1MB'                     最小文件变更大小
+fsmon add --path /home --exclude-cmd rsync            排除噪声进程（仅路径模式）
 ```
 
-**`--cmd` 工作原理：**
+**`--path` vs `--cmd`：**
 
-- **不使用 `--cmd`**：捕获所有事件，每条日志包含 `ppid` 和 `tgid`（4 字节，来自 `/proc/{pid}/status`，零额外开销）。
-- **使用 `--cmd <name>`**：只记录 `<name>` 或其子进程（fork/exec 后代）的事件。匹配事件附带 `chain` 字段（如 `"102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root"`）。不匹配 `--cmd` 进程树的事件被直接丢弃。
+| 模式 | 参数 | 行为 |
+|------|------|------|
+| **同时** | `--path /home --cmd openclaw` | 只追踪 /home 上 openclaw（及子进程），匹配事件含 `chain` |
+| **仅路径** | `--path /home` | /home 上所有事件通过，每条含 `ppid`/`tgid`，可选 `--exclude-cmd` 过滤 |
+| **仅进程** | `--cmd openclaw` | 全局追踪 openclaw（不受路径限制），匹配事件含 `chain` |
 
-`--cmd` 是纯包含语义，不支持排除（排除请用 `--exclude`）。可指定多个 `--cmd`（OR 逻辑）。
+- `--cmd <name>` 启用**进程树追踪**：fork/exec 子进程自动包含，匹配事件附带 `chain` 字段
+- `--exclude-cmd <pattern>`（仅路径模式）按进程名过滤，**不启用**进程树，只匹配 cmd 单层
+- 可指定多个 `--cmd`（OR 逻辑）
 
 所有捕获过滤在 daemon 进程内完成（纳秒级，无 fork），不匹配的事件不会写盘。
 

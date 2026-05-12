@@ -200,25 +200,31 @@ Socket:           `/tmp/fsmon-<UID>.sock`
 Add a path to the monitoring list. No sudo needed.
 
 ```
-fsmon add <path>                           Monitor a path (all events)
-fsmon add <path> -r                        Monitor recursively
-fsmon add <path> --types MODIFY --types CREATE     Filter by event types
-fsmon add <path> --types all               All 14 event types
-fsmon add <path> --exclude '\.swp$' --exclude '\.tmp$'   Exclude path patterns
-fsmon add <path> -s '>=1MB'                Minimum file size change
-fsmon add <path> --cmd nginx               Track nginx process and its descendants
-fsmon add <path> --cmd openclaw            Track openclaw and its fork/exec children
-```
+fsmon add --path /home --cmd openclaw              Track openclaw on /home (most common)
+fsmon add --path /home -r                            Monitor /home recursively (path-only)
+fsmon add --cmd openclaw                             Track openclaw globally (process-only)
+fsmon add --path /home --types MODIFY --types CREATE Filter by event types
+fsmon add --path /home --types all                   All 14 event types
+fsmon add --path /home --exclude '\.swp$' --exclude '\.tmp$'  Exclude path patterns
+fsmon add --path /home -s '>=1MB'                    Minimum file size change
+fsmon add --path /home --exclude-cmd rsync           Exclude noise processes (path-only mode)
 
-**How `--cmd` works:**
+**`--path` vs `--cmd`:**
 
-- **Without `--cmd`**: All events are captured. Each event includes `ppid` and `tgid` (4 bytes each, from `/proc/{pid}/status`, zero extra overhead).
-- **With `--cmd <name>`**: Only events from `<name>` or its descendant processes (fork/exec children) are logged. Matching events also include `chain` — a compact process ancestry string (e.g., `"102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root"`). Events not matching any `--cmd` process tree are silently dropped.
+| Mode | Flags | Behavior |
+|------|-------|----------|
+| **Both** | `--path /home --cmd openclaw` | Only track openclaw (and descendants) on /home. Matched events include `chain`. |
+| **Path only** | `--path /home` | All events on /home pass through. Each event has `ppid`/`tgid`. Optionally filter noise with `--exclude-cmd`. |
+| **Process only** | `--cmd openclaw` | Track openclaw globally across all paths. Matched events include `chain`. |
 
-`--cmd` is purely opt-in. It does not support exclusion (use `--exclude` for that).
-Multiple `--cmd` can be specified (OR logic).
+- `--cmd <name>` enables **process tree tracking**: fork/exec children are automatically included. Matching events get a `chain` field (e.g., `"102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root"`).
+- `--exclude-cmd <pattern>` (only in path-only mode) filters by process name **without** process tree — single level only.
+- Multiple `--cmd` can be specified (OR logic).
 
 All capture filters run inside the daemon process (nanosecond-fast, no fork).
+```
+
+
 Events that don't match never touch disk.
 
 ### remove
