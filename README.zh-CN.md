@@ -76,11 +76,7 @@ fsmon add --path /var/www/myapp -r --types MODIFY --types CREATE --exclude '\.sw
 # 查看当前监控配置
 fsmon managed
 # → /var/www/myapp
-#   recursive:     yes
-#   types:         MODIFY, CREATE
-#   exclude:       \.swp$
-#   cmd:           nginx (process tree tracking)
-#   cmd:           vim (process tree tracking)
+# {"path":"/var/www/myapp","recursive":true,"types":["MODIFY","CREATE"],"exclude":["\\.swp$"],"cmd":"nginx"}
 ```
 
 模拟真实操作：

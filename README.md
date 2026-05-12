@@ -76,7 +76,7 @@ fsmon add /var/www/myapp -r --types MODIFY --types CREATE --exclude '\.swp$' --c
 
 # List what's being monitored
 fsmon managed
-# → /var/www/myapp | types=MODIFY,CREATE | recursive | exclude-path=\.swp | cmd=nginx,vim
+# {"path":"/var/www/myapp","recursive":true,"types":["MODIFY","CREATE"],"exclude":["\\.swp$"],"cmd":"nginx"}
 ```
 
 Now trigger some real file changes:
