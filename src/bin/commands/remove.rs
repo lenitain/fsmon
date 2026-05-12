@@ -1,54 +1,70 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use fsmon::config::Config;
-use fsmon::managed::Managed;
+use fsmon::monitored::{CMD_GLOBAL, Monitored};
 use fsmon::socket::{self, SocketCmd};
-use path_clean::PathClean;
 use std::path::PathBuf;
 
-pub fn cmd_remove(raw: PathBuf) -> Result<()> {
+pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
 
-    // Normalize path: expand tilde, clean (., ..), resolve symlinks.
-    // Must match the normalization done by cmd_add, so store.remove_entry finds the entry.
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let expanded = fsmon::config::expand_tilde(&raw, &home);
-    let cleaned = expanded.clean();
-    let path = cleaned.canonicalize().unwrap_or(cleaned);
+    let mut store = Monitored::load(&cfg.monitored.path)?;
 
-    let mut store = Managed::load(&cfg.managed.path)?;
+    // CMD is required. Use '_global' for global monitoring.
+    let cmd_str = cmd.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "CMD is required. Use '{}' for global monitoring.",
+            CMD_GLOBAL
+        )
+    })?;
 
-    if !store.remove_entry(&path) {
-        eprintln!("No monitored path: {}", path.display());
-        std::process::exit(1);
+    match paths.as_slice() {
+        // fsmon remove bash (no --path) → remove entire cmd group
+        &[] => {
+            if !store.remove_cmd_group(Some(cmd_str)) {
+                bail!("Cmd group '{}' not found", cmd_str);
+            }
+        }
+        // fsmon remove bash --path /a --path /b → remove from that cmd group
+        ps => {
+            // Atomic: check all paths exist first
+            for p in ps {
+                if !store.has_entry(p, Some(cmd_str)) {
+                    bail!("Path '{}' not found under cmd '{}'", p.display(), cmd_str);
+                }
+            }
+            let mut removed_any = false;
+            for p in ps {
+                if store.remove_entry(p, Some(cmd_str)) {
+                    removed_any = true;
+                }
+            }
+            if !removed_any {
+                bail!("No entries removed (cmd group '{}')", cmd_str);
+            }
+        }
     }
 
-    store.save(&cfg.managed.path)?;
-    println!("Path removed: {}", path.display());
+    store.save(&cfg.monitored.path)?;
+    eprintln!("Entry removed");
 
     // Try live update via socket (non-fatal if fails)
     let socket_path = cfg.socket.path.clone();
-    match socket::send_cmd(
-        &socket_path,
-        &SocketCmd {
-            cmd: "remove".to_string(),
-            path: Some(path),
-            recursive: None,
-            types: None,
-            size: None,
-            exclude: None,
-            exclude_cmd: None,
-        },
-    ) {
-        Ok(resp) if resp.ok => {
-            println!("Daemon updated live");
-        }
-        Ok(resp) => {
-            eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
-            eprintln!("Change will apply after daemon restart");
-        }
-        Err(_) => {
-            // daemon not running — store already saved, change applies on restart
+    for p in &paths {
+        if socket::send_cmd(
+            &socket_path,
+            &SocketCmd {
+                cmd: "remove".to_string(),
+                path: Some(p.clone()),
+                recursive: None,
+                types: None,
+                size: None,
+                track_cmd: Some(cmd_str.to_string()),
+            },
+        )
+        .is_err()
+        {
+            break;
         }
     }
     Ok(())

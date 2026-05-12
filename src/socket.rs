@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
 use tokio::net::UnixListener;
 
-use crate::managed::PathEntry;
+use crate::monitored::PathEntry;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SocketCmd {
@@ -24,9 +24,7 @@ pub struct SocketCmd {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub exclude: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exclude_cmd: Option<Vec<String>>,
+    pub track_cmd: Option<String>,
 }
 
 /// Classifies whether an error is permanent (will persist after daemon restart)

@@ -12,16 +12,17 @@ use users::os::unix::UserExt;
 /// CLI (running as user) uses the user's own HOME directly.
 ///
 /// This file is manually edited. Only infrastructure paths go here.
-/// Monitored path entries are stored in the separate store file (see `[managed].path`).
+/// Monitored path entries are stored in the separate store file (see `[monitored].path`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub managed: ManagedConfig,
+    pub monitored: MonitoredConfig,
     pub logging: LoggingConfig,
     pub socket: SocketConfig,
+    pub cache: Option<CacheConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ManagedConfig {
+pub struct MonitoredConfig {
     pub path: PathBuf,
 }
 
@@ -38,6 +39,82 @@ pub struct LoggingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SocketConfig {
     pub path: PathBuf,
+}
+
+/// Cache configuration (optional — missing fields use code defaults).
+///
+/// Priority: CLI args > fsmon.toml > code defaults.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheConfig {
+    /// Directory handle cache capacity (default: 100,000).
+    /// Each entry ≈ 150-200 bytes. Lower this on memory-constrained systems,
+    /// raise it when monitoring large directory trees (>100k dirs).
+    pub dir_capacity: Option<u64>,
+    /// Directory handle cache TTL in seconds (default: 3600).
+    /// Shorter TTL frees memory faster for volatile directory structures,
+    /// longer TTL reduces handle re-resolution for stable directories.
+    pub dir_ttl_secs: Option<u64>,
+    /// File size cache capacity (default: 10,000).
+    /// Each entry ≈ 80-120 bytes. Raise for high-file-volume workloads.
+    pub file_size_capacity: Option<usize>,
+    /// Process cache TTL in seconds (default: 600).
+    /// Applies to both proc_cache and pid_tree. Shorter TTL cleans up
+    /// zombie process entries faster; longer TTL reduces /proc reads.
+    pub proc_ttl_secs: Option<u64>,
+}
+
+/// Resolved cache configuration with all defaults filled in.
+#[derive(Debug, Clone)]
+pub struct ResolvedCacheConfig {
+    pub dir_capacity: u64,
+    pub dir_ttl_secs: u64,
+    pub file_size_capacity: usize,
+    pub proc_ttl_secs: u64,
+    pub buffer_size: usize,
+}
+
+impl Default for ResolvedCacheConfig {
+    fn default() -> Self {
+        Self {
+            dir_capacity: crate::fid_parser::DIR_CACHE_CAP,
+            dir_ttl_secs: crate::fid_parser::DIR_CACHE_TTL_SECS,
+            file_size_capacity: crate::fid_parser::FILE_SIZE_CACHE_CAP,
+            proc_ttl_secs: crate::proc_cache::PROC_CACHE_TTL_SECS,
+            buffer_size: 4096 * 8, // 32KB — default from Monitor::new()
+        }
+    }
+}
+
+impl CacheConfig {
+    /// Merge: explicit values from this config override defaults,
+    /// then CLI overrides override config values.
+    pub fn resolve_with_cli(
+        &self,
+        cli: &CliCacheOverride,
+    ) -> ResolvedCacheConfig {
+        let mut r = ResolvedCacheConfig::default();
+        if let Some(v) = self.dir_capacity { r.dir_capacity = v; }
+        if let Some(v) = self.dir_ttl_secs { r.dir_ttl_secs = v; }
+        if let Some(v) = self.file_size_capacity { r.file_size_capacity = v; }
+        if let Some(v) = self.proc_ttl_secs { r.proc_ttl_secs = v; }
+        // Apply CLI overrides (highest priority)
+        if let Some(v) = cli.dir_capacity { r.dir_capacity = v; }
+        if let Some(v) = cli.dir_ttl_secs { r.dir_ttl_secs = v; }
+        if let Some(v) = cli.file_size_capacity { r.file_size_capacity = v; }
+        if let Some(v) = cli.proc_ttl_secs { r.proc_ttl_secs = v; }
+        if let Some(v) = cli.buffer_size { r.buffer_size = v; }
+        r
+    }
+}
+
+/// CLI-level cache overrides (highest priority in the merge chain).
+#[derive(Debug, Clone, Default)]
+pub struct CliCacheOverride {
+    pub dir_capacity: Option<u64>,
+    pub dir_ttl_secs: Option<u64>,
+    pub file_size_capacity: Option<usize>,
+    pub proc_ttl_secs: Option<u64>,
+    pub buffer_size: Option<usize>,
 }
 
 // ---- Helpers ----
@@ -142,8 +219,8 @@ pub fn expand_tilde(path: &Path, home: &str) -> PathBuf {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            managed: ManagedConfig {
-                path: PathBuf::from("~/.local/share/fsmon/managed.jsonl"),
+            monitored: MonitoredConfig {
+                path: PathBuf::from("~/.local/share/fsmon/monitored.jsonl"),
             },
             logging: LoggingConfig {
                 path: PathBuf::from("~/.local/state/fsmon"),
@@ -153,6 +230,7 @@ impl Default for Config {
             socket: SocketConfig {
                 path: PathBuf::from("/tmp/fsmon-<UID>.sock"),
             },
+            cache: None,
         }
     }
 }
@@ -178,11 +256,7 @@ impl Config {
             .with_context(|| format!("Failed to read config {}", p.display()))?;
         match toml::from_str::<Config>(&content) {
             Ok(cfg) => Ok(cfg),
-            Err(e) => bail!(
-                "Invalid config file at {}: {}",
-                p.display(),
-                e
-            ),
+            Err(e) => bail!("Invalid config file at {}: {}", p.display(), e),
         }
     }
 
@@ -192,7 +266,7 @@ impl Config {
         let home = guess_home();
         let uid = resolve_uid();
 
-        self.managed.path = expand_tilde(&self.managed.path, &home);
+        self.monitored.path = expand_tilde(&self.monitored.path, &home);
         self.logging.path = expand_tilde(&self.logging.path, &home);
 
         let socket_str = self.socket.path.to_string_lossy().to_string();
@@ -204,7 +278,7 @@ impl Config {
     }
 
     /// Create the default data directories (chezmoi-style init).
-    /// Creates log dir and managed data dir. Config file is optional.
+    /// Creates log dir and monitored data dir. Config file is optional.
     pub fn init_dirs() -> Result<()> {
         let config_path = Self::path();
         let using_defaults = !config_path.exists();
@@ -216,11 +290,11 @@ impl Config {
         };
         cfg.resolve_paths()?;
 
-        let managed_dir = cfg
-            .managed
+        let monitored_dir = cfg
+            .monitored
             .path
             .parent()
-            .context("Managed file path has no parent")?
+            .context("Monitored file path has no parent")?
             .to_path_buf();
 
         fs::create_dir_all(&cfg.logging.path).with_context(|| {
@@ -229,19 +303,19 @@ impl Config {
                 cfg.logging.path.display()
             )
         })?;
-        fs::create_dir_all(&managed_dir).with_context(|| {
+        fs::create_dir_all(&monitored_dir).with_context(|| {
             format!(
-                "Failed to create managed directory: {}",
-                managed_dir.display()
+                "Failed to create monitored directory: {}",
+                monitored_dir.display()
             )
         })?;
 
         // Chown to original user
         chown_to_original_user(&cfg.logging.path);
-        chown_to_original_user(&managed_dir);
+        chown_to_original_user(&monitored_dir);
 
         eprintln!("Created log directory:  {}", cfg.logging.path.display());
-        eprintln!("Created managed directory: {}", managed_dir.display());
+        eprintln!("Created monitored directory: {}", monitored_dir.display());
         if using_defaults {
             eprintln!(
                 "(config file is optional \u{2014} defaults apply without {})",
@@ -301,8 +375,8 @@ mod tests {
         with_isolated_home(|_| {
             let cfg = Config::load().unwrap();
             assert_eq!(
-                cfg.managed.path.to_string_lossy(),
-                "~/.local/share/fsmon/managed.jsonl"
+                cfg.monitored.path.to_string_lossy(),
+                "~/.local/share/fsmon/monitored.jsonl"
             );
             assert_eq!(cfg.logging.path.to_string_lossy(), "~/.local/state/fsmon");
             assert_eq!(cfg.socket.path.to_string_lossy(), "/tmp/fsmon-<UID>.sock");
@@ -315,8 +389,8 @@ mod tests {
             // Write a config file
             let config_path = Config::path();
             fs::create_dir_all(config_path.parent().unwrap()).unwrap();
-            let content = r#"[managed]
-path = "/custom/managed.jsonl"
+            let content = r#"[monitored]
+path = "/custom/monitored.jsonl"
 
 [logging]
 path = "/custom/logs"
@@ -327,7 +401,7 @@ path = "/tmp/custom.sock"
             fs::write(&config_path, content).unwrap();
 
             let cfg = Config::load().unwrap();
-            assert_eq!(cfg.managed.path, PathBuf::from("/custom/managed.jsonl"));
+            assert_eq!(cfg.monitored.path, PathBuf::from("/custom/monitored.jsonl"));
             assert_eq!(cfg.logging.path, PathBuf::from("/custom/logs"));
             assert_eq!(cfg.socket.path, PathBuf::from("/tmp/custom.sock"));
         });
@@ -345,7 +419,10 @@ path = "/tmp/custom.sock"
 
             // File should be untouched
             let content = fs::read_to_string(&config_path).unwrap();
-            assert!(content.trim().is_empty(), "file content should be untouched");
+            assert!(
+                content.trim().is_empty(),
+                "file content should be untouched"
+            );
         });
     }
 
@@ -357,9 +434,9 @@ path = "/tmp/custom.sock"
 
             let home_str = home.to_string_lossy();
             assert!(
-                cfg.managed.path.to_string_lossy().starts_with(&*home_str),
-                "managed.path should start with home dir: {} vs {}",
-                cfg.managed.path.display(),
+                cfg.monitored.path.to_string_lossy().starts_with(&*home_str),
+                "monitored.path should start with home dir: {} vs {}",
+                cfg.monitored.path.display(),
                 home_str
             );
             assert!(
@@ -410,11 +487,11 @@ path = "/tmp/custom.sock"
             Config::init_dirs().unwrap();
 
             let log_dir = home.join(".local/state/fsmon");
-            let managed_dir = home.join(".local/share/fsmon");
+            let monitored_dir = home.join(".local/share/fsmon");
             let config_dir = home.join(".config/fsmon");
 
             assert!(log_dir.exists(), "log dir should exist");
-            assert!(managed_dir.exists(), "managed dir should exist");
+            assert!(monitored_dir.exists(), "monitored dir should exist");
             assert!(
                 !config_dir.exists(),
                 "config dir should NOT be created by init"
@@ -428,22 +505,26 @@ path = "/tmp/custom.sock"
             let config_path = Config::path();
             fs::create_dir_all(config_path.parent().unwrap()).unwrap();
             // Write config with default paths
-            fs::write(&config_path, r#"[managed]
-path = "~/.local/share/fsmon/managed.jsonl"
+            fs::write(
+                &config_path,
+                r#"[monitored]
+path = "~/.local/share/fsmon/monitored.jsonl"
 
 [logging]
 path = "~/.local/state/fsmon"
 
 [socket]
 path = "/tmp/fsmon-<UID>.sock"
-"#).unwrap();
+"#,
+            )
+            .unwrap();
 
             Config::init_dirs().unwrap();
 
             let log_dir = home.join(".local/state/fsmon");
-            let managed_dir = home.join(".local/share/fsmon");
+            let monitored_dir = home.join(".local/share/fsmon");
             assert!(log_dir.exists(), "log dir should exist");
-            assert!(managed_dir.exists(), "managed dir should exist");
+            assert!(monitored_dir.exists(), "monitored dir should exist");
         });
     }
 
@@ -453,10 +534,10 @@ path = "/tmp/fsmon-<UID>.sock"
             let config_path = Config::path();
             fs::create_dir_all(config_path.parent().unwrap()).unwrap();
             let custom_log = home.join("my_logs");
-            let custom_managed_dir = home.join("my_data");
-            let _custom_managed_file = custom_managed_dir.join("paths.jsonl");
+            let custom_monitored_dir = home.join("my_data");
+            let _custom_monitored_file = custom_monitored_dir.join("paths.jsonl");
             let content = format!(
-                r#"[managed]
+                r#"[monitored]
 path = "{}/my_data/paths.jsonl"
 
 [logging]
@@ -473,7 +554,10 @@ path = "/tmp/test.sock"
             Config::init_dirs().unwrap();
 
             assert!(custom_log.exists(), "custom log dir should exist");
-            assert!(custom_managed_dir.exists(), "custom managed dir should exist");
+            assert!(
+                custom_monitored_dir.exists(),
+                "custom monitored dir should exist"
+            );
         });
     }
 
@@ -501,5 +585,106 @@ path = "/tmp/test.sock"
             expand_tilde(Path::new("/absolute/path"), "/home/user"),
             PathBuf::from("/absolute/path")
         );
+    }
+
+    #[test]
+    fn test_cache_config_defaults() {
+        let r = ResolvedCacheConfig::default();
+        assert_eq!(r.dir_capacity, crate::fid_parser::DIR_CACHE_CAP);
+        assert_eq!(r.dir_ttl_secs, crate::fid_parser::DIR_CACHE_TTL_SECS);
+        assert_eq!(r.file_size_capacity, crate::fid_parser::FILE_SIZE_CACHE_CAP);
+        assert_eq!(r.proc_ttl_secs, crate::proc_cache::PROC_CACHE_TTL_SECS);
+        assert_eq!(r.buffer_size, 4096 * 8);
+    }
+
+    #[test]
+    fn test_cache_config_resolve_with_cli_override() {
+        // Config empty, CLI overrides → CLI values win
+        let cfg = CacheConfig {
+            dir_capacity: None,
+            dir_ttl_secs: None,
+            file_size_capacity: None,
+            proc_ttl_secs: None,
+        };
+        let cli = CliCacheOverride {
+            dir_capacity: Some(50000),
+            dir_ttl_secs: Some(7200),
+            file_size_capacity: Some(5000),
+            proc_ttl_secs: Some(300),
+            buffer_size: Some(65536),
+        };
+        let r = cfg.resolve_with_cli(&cli);
+        assert_eq!(r.dir_capacity, 50000);
+        assert_eq!(r.dir_ttl_secs, 7200);
+        assert_eq!(r.file_size_capacity, 5000);
+        assert_eq!(r.proc_ttl_secs, 300);
+        assert_eq!(r.buffer_size, 65536);
+    }
+
+    #[test]
+    fn test_cache_config_resolve_config_over_default() {
+        // Config has values, CLI empty → config values win
+        let cfg = CacheConfig {
+            dir_capacity: Some(200000),
+            dir_ttl_secs: None,
+            file_size_capacity: Some(20000),
+            proc_ttl_secs: None,
+        };
+        let cli = CliCacheOverride::default();
+        let r = cfg.resolve_with_cli(&cli);
+        assert_eq!(r.dir_capacity, 200000);
+        assert_eq!(r.dir_ttl_secs, crate::fid_parser::DIR_CACHE_TTL_SECS);
+        assert_eq!(r.file_size_capacity, 20000);
+        assert_eq!(r.proc_ttl_secs, crate::proc_cache::PROC_CACHE_TTL_SECS);
+    }
+
+    #[test]
+    fn test_cache_config_cli_highest_priority() {
+        // Both config and CLI have values → CLI wins
+        let cfg = CacheConfig {
+            dir_capacity: Some(50000),
+            dir_ttl_secs: Some(100),
+            file_size_capacity: Some(500),
+            proc_ttl_secs: Some(50),
+        };
+        let cli = CliCacheOverride {
+            dir_capacity: Some(99999),
+            dir_ttl_secs: None,
+            file_size_capacity: Some(999),
+            proc_ttl_secs: None,
+            buffer_size: None,
+        };
+        let r = cfg.resolve_with_cli(&cli);
+        assert_eq!(r.dir_capacity, 99999);    // CLI wins
+        assert_eq!(r.dir_ttl_secs, 100);       // Config (CLI didn't set)
+        assert_eq!(r.file_size_capacity, 999); // CLI wins
+        assert_eq!(r.proc_ttl_secs, 50);       // Config (CLI didn't set)
+    }
+
+    #[test]
+    fn test_cache_config_toml_parsing() {
+        // Verify that the TOML config can be parsed with [cache] section
+        let toml_str = r#"
+[monitored]
+path = "/tmp/test.jsonl"
+
+[logging]
+path = "/tmp/logs"
+
+[socket]
+path = "/tmp/sock"
+
+[cache]
+dir_capacity = 123456
+dir_ttl_secs = 7200
+file_size_capacity = 5000
+proc_ttl_secs = 300
+"#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        let cache = cfg.cache.expect("cache section should be parsed");
+        assert_eq!(cache.dir_capacity, Some(123456));
+        assert_eq!(cache.dir_ttl_secs, Some(7200));
+        assert_eq!(cache.file_size_capacity, Some(5000));
+        assert_eq!(cache.proc_ttl_secs, Some(300));
     }
 }

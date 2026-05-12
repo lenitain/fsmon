@@ -1,8 +1,9 @@
 use anyhow::{Result, bail};
 use fsmon::config::Config;
-use fsmon::managed::{Managed, PathEntry};
+use fsmon::monitored::{CMD_GLOBAL, Monitored, PathEntry};
 use fsmon::socket::{self, SocketCmd};
 use path_clean::PathClean;
+use std::path::PathBuf;
 
 use crate::AddArgs;
 
@@ -10,70 +11,113 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
 
-    // 1. Reject null bytes (would crash C FFI)
-    let path_str = args.path.to_string_lossy();
-    if path_str.contains('\0') {
-        bail!("Invalid path: contains null byte");
+    // CMD is required. Use '_global' for global monitoring.
+    let process_name = args.cmd.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "CMD is required. Use '{}' for global monitoring.",
+            CMD_GLOBAL
+        )
+    })?;
+    let process_name = Some(process_name.to_string());
+
+    // Require at least --path
+    if args.path.is_none() {
+        bail!("At least one of --path or a process name is required");
     }
 
-    // 2. Expand tilde, then clean/normalize (resolve ., .. without touching fs)
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let expanded = fsmon::config::expand_tilde(&args.path, &home);
-    let cleaned = expanded.clean();
+    // Reject tracking the fsmon daemon itself — its events are excluded
+    // by PID filter, so --cmd fsmon would never match anything.
+    if process_name.as_deref() == Some("fsmon") {
+        bail!(
+            "Cannot monitor 'fsmon' process: fsmon daemon's own events are excluded \
+                 from monitoring.\n\
+                 Tip: use a different process name, or omit the process name to capture all events."
+        );
+    }
 
-    // 3. Canonicalize for existing paths (resolves symlinks); use cleaned for non-existing
-    let path = match cleaned.canonicalize() {
-        Ok(c) => c,
-        Err(_) => {
-            if cleaned.components().count() == 0 {
-                bail!("Invalid path (empty after normalization): {}", args.path.display());
-            }
-            eprintln!("[Note] path does not exist yet — will start monitoring when created.");
-            cleaned
+    // Resolve path if provided
+    let path = if let Some(ref raw_path) = args.path {
+        let path_str = raw_path.to_string_lossy();
+        if path_str.contains('\0') {
+            bail!("Invalid path: contains null byte");
         }
+
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        let expanded = fsmon::config::expand_tilde(raw_path, &home);
+        let cleaned = expanded.clean();
+
+        let resolved = match cleaned.canonicalize() {
+            Ok(c) => c,
+            Err(_) => {
+                if cleaned.components().count() == 0 {
+                    bail!(
+                        "Invalid path (empty after normalization): {}",
+                        raw_path.display()
+                    );
+                }
+                eprintln!("[Note] path does not exist yet — will start monitoring when created.");
+                cleaned
+            }
+        };
+
+        let log_dir_canon = cfg
+            .logging
+            .path
+            .canonicalize()
+            .unwrap_or_else(|_| cfg.logging.path.clone());
+        if args.recursive && log_dir_canon.starts_with(&resolved) || log_dir_canon == resolved {
+            bail!(
+                "Cannot monitor '{}': {}\n\
+                 Tip: use a path outside the log directory, or use a different logging.path",
+                raw_path.display(),
+                if log_dir_canon == resolved {
+                    "this path is the log directory itself".to_string()
+                } else {
+                    format!(
+                        "log directory '{}' is inside this path",
+                        cfg.logging.path.display()
+                    )
+                }
+            );
+        }
+        Some(resolved)
+    } else {
+        None
     };
 
-    let log_dir_canon = cfg.logging.path.canonicalize().unwrap_or_else(|_| cfg.logging.path.clone());
-    if log_dir_canon.starts_with(&path) {
-        bail!(
-            "Cannot monitor '{}': log directory '{}' is inside this path — \
-             would cause infinite recursion on every log write.\n\
-             Tip: use a different logging.dir or add a more specific path",
-            args.path.display(),
-            cfg.logging.path.display()
-        );
-    }
+    let mut store = Monitored::load(&cfg.monitored.path)?;
 
-    let mut store = Managed::load(&cfg.managed.path)?;
-
-    // 4. Check if already monitored
-    if store.get(&path).is_some() {
-        eprintln!(
-            "[Note] '{}' is already monitored — new parameters will replace the existing configuration.",
-            path.display()
-        );
-    }
-
-    // 5. Check for monitoring overlap with existing entries
-    let new_recursive = args.recursive;
-    for entry in &store.entries {
-        let ep = &entry.path;
-        let e_recursive = entry.recursive.unwrap_or(false);
-        // New path is a subdirectory of an existing recursive path
-        if e_recursive && path.starts_with(ep) && path != *ep {
+    // Check for duplicates if path is specified
+    if let Some(ref path) = path {
+        if store.get(path, process_name.as_deref()).is_some() {
+            let cmd_info = match process_name.as_deref() {
+                Some(cmd) => format!(" with cmd {}", cmd),
+                None => " (without cmd)".to_string(),
+            };
             eprintln!(
-                "[Note] '{}' is under recursively monitored path '{}' — events already covered.",
+                "[Note] '{}{}' is already monitored — new parameters will replace the existing configuration.",
                 path.display(),
-                ep.display()
+                cmd_info,
             );
         }
-        // New path is recursive and covers an existing monitored path
-        if new_recursive && ep.starts_with(&path) && *ep != path {
-            eprintln!(
-                "[Note] already monitored path '{}' is under new recursive path '{}' — events already covered.",
-                ep.display(),
-                path.display()
-            );
+
+        // Check for monitoring overlap
+        for entry in &store.flatten() {
+            let e_recursive = entry.recursive.unwrap_or(false);
+            if e_recursive && path.starts_with(&entry.path) && *path != entry.path {
+                eprintln!(
+                    "[Note] '{}' is under recursively monitored path '{}' — events already covered.",
+                    path.display(),
+                    entry.path.display()
+                );
+            }
+            if args.recursive && entry.path.starts_with(path) && entry.path != *path {
+                eprintln!(
+                    "[Note] already monitored path '{}' is under new recursive path '{}' — events already covered.",
+                    entry.path.display(),
+                    path.display()
+                );
+            }
         }
     }
 
@@ -100,20 +144,23 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         Some(args.types.clone())
     };
     let size_val = args.size.clone();
-    let exclude = if args.exclude.is_empty() { None } else { Some(args.exclude.clone()) };
-    let exclude_cmd = if args.exclude_cmd.is_empty() { None } else { Some(args.exclude_cmd.clone()) };
-    let recursive = if args.recursive { Some(true) } else { None };
-
-    store.add_entry(PathEntry {
-        path: path.clone(),
+    let recursive = if args.recursive {
+        Some(true)
+    } else {
+        Some(false)
+    };
+    let entry = PathEntry {
+        path: path
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(process_name.as_deref().unwrap_or(""))),
+        cmd: process_name.clone(),
         recursive,
         types: types.clone(),
         size: size_val.clone(),
-        exclude: exclude.clone(),
-        exclude_cmd: exclude_cmd.clone(),
-    });
+    };
 
-    store.save(&cfg.managed.path)?;
+    store.add_entry(entry.clone());
+    store.save(&cfg.monitored.path)?;
 
     // Try live update via socket (non-fatal if fails)
     let socket_path = cfg.socket.path.clone();
@@ -121,37 +168,32 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         &socket_path,
         &SocketCmd {
             cmd: "add".to_string(),
-            path: Some(path.clone()),
+            path,
             recursive,
             types,
             size: size_val,
-            exclude,
-            exclude_cmd,
+            track_cmd: process_name,
         },
     );
 
     match result {
         Ok(resp) if resp.ok => {
-            println!("Path added: {}", path.display());
-            println!("Daemon updated live");
+            println!("Entry added into monitored");
         }
         Ok(resp) => {
-            let is_permanent = resp.error_kind == Some(fsmon::socket::ErrorKind::Permanent);
-            if is_permanent {
-                // Revert store save — the error will persist after restart
-                let mut store = Managed::load(&cfg.managed.path)?;
-                store.remove_entry(&path);
-                store.save(&cfg.managed.path)?;
+            if resp.error_kind == Some(fsmon::socket::ErrorKind::Permanent) {
+                let mut store = Monitored::load(&cfg.monitored.path)?;
+                store.remove_entry(&entry.path, entry.cmd.as_deref());
+                store.save(&cfg.monitored.path)?;
                 eprintln!("Error: {}", resp.error.unwrap_or_default());
             } else {
-                println!("Path added: {}", path.display());
+                println!("Entry added into monitored");
                 eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
-                eprintln!("Path will be monitored after daemon restart");
             }
         }
         Err(_) => {
-            println!("Path added: {}", path.display());
-            eprintln!("Daemon not running — path will be monitored after daemon restart.");
+            println!("Entry added into monitored");
+            eprintln!("Daemon is not running — will be monitored after daemon restart.");
         }
     }
     Ok(())

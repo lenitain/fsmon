@@ -1,17 +1,16 @@
+use crate::EventType;
+use crate::filters::PathOptions;
 use anyhow::{Context, Result};
-use std::ffi::CString;
-use dashmap::DashMap;
+use moka::sync::Cache;
+use fanotify_fid::consts::{
+    AT_FDCWD, FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE,
+    FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_FS_ERROR, FAN_MARK_ADD, FAN_MODIFY, FAN_MOVE_SELF,
+    FAN_MOVED_FROM, FAN_MOVED_TO, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC,
+};
+use fanotify_fid::handle::resolve_file_handle;
 use fanotify_fid::prelude::*;
 use fanotify_fid::types::{FidEvent, HandleKey};
-use fanotify_fid::handle::resolve_file_handle;
-use fanotify_fid::consts::{
-    AT_FDCWD, FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE, FAN_CREATE,
-    FAN_DELETE, FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_FS_ERROR, FAN_MARK_ADD,
-    FAN_MODIFY, FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO, FAN_ONDIR,
-    FAN_OPEN, FAN_OPEN_EXEC,
-};
-use crate::filters::PathOptions;
-use crate::EventType;
+use std::ffi::CString;
 use std::fs;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
@@ -27,8 +26,6 @@ impl AsRawFd for FanFd {
         self.0
     }
 }
-
-
 
 // ---- FsGroup: one per unique filesystem ----
 
@@ -66,8 +63,9 @@ pub fn event_type_to_kernel_flag(t: &EventType) -> u64 {
 pub fn path_mask_from_options(opts: &PathOptions) -> u64 {
     match &opts.event_types {
         Some(types) if !types.is_empty() => {
-            types.iter()
-                .fold(FAN_EVENT_ON_CHILD | FAN_ONDIR, |m, t| m | event_type_to_kernel_flag(t))
+            types.iter().fold(FAN_EVENT_ON_CHILD | FAN_ONDIR, |m, t| {
+                m | event_type_to_kernel_flag(t)
+            })
         }
         _ => DEFAULT_EVENT_MASK,
     }
@@ -91,14 +89,17 @@ pub fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
         (FAN_MOVE_SELF, EventType::MoveSelf),
         (FAN_FS_ERROR, EventType::FsError),
     ];
-    BITS.iter().filter(|(bit, _)| mask & bit != 0).map(|(_, t)| *t).collect()
+    BITS.iter()
+        .filter(|(bit, _)| mask & bit != 0)
+        .map(|(_, t)| *t)
+        .collect()
 }
 
-/// Read and parse FID events, using a `DashMap`-based cache for path recovery.
-pub fn read_fid_events_dashmap(
+/// Read and parse FID events, using a moka cache for path recovery.
+pub fn read_fid_events_cached(
     fan_fd: &OwnedFd,
     mount_fds: &[OwnedFd],
-    dir_cache: &DashMap<HandleKey, PathBuf>,
+    dir_cache: &Cache<HandleKey, PathBuf>,
     buf: &mut Vec<u8>,
 ) -> Vec<FidEvent> {
     // Delegate raw read + parse to fanotify-fid (no cache = first pass only)
@@ -107,15 +108,17 @@ pub fn read_fid_events_dashmap(
         Err(_) => return vec![],
     };
 
-    // Second-pass: DashMap-based cache recovery (multiple passes for nested deletions).
+    // Second-pass: moka cache recovery (multiple passes for nested deletions).
     // Inlined instead of using fanotify_fid::resolve_with_cache because that
-    // takes &HashMap — copying the entire DashMap on every event is too expensive.
+    // takes &HashMap — copying the entire cache on every event is too expensive.
     for _ in 0..10 {
         // Update cache from successfully-resolved events
         for ev in events.iter() {
-            if ev.path.as_os_str().is_empty() { continue; }
+            if ev.path.as_os_str().is_empty() {
+                continue;
+            }
             if let Some(ref key) = ev.self_handle {
-                dir_cache.entry(key.clone()).or_insert_with(|| ev.path.clone());
+                dir_cache.get_with(key.clone(), || ev.path.clone());
             }
             if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
                 let dir_path = if !filename.is_empty() {
@@ -124,18 +127,20 @@ pub fn read_fid_events_dashmap(
                     Some(ev.path.clone())
                 };
                 if let Some(dp) = dir_path {
-                    dir_cache.entry(key.clone()).or_insert(dp);
+                    dir_cache.get_with(key.clone(), || dp);
                 }
             }
         }
 
-        // Try to recover empty paths from cache (direct DashMap lookup, no copy)
+        // Try to recover empty paths from cache (direct moka lookup, no copy)
         let mut made_progress = false;
         for ev in events.iter_mut() {
-            if !ev.path.as_os_str().is_empty() { continue; }
+            if !ev.path.as_os_str().is_empty() {
+                continue;
+            }
 
             if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
-                let dir_path = dir_cache.get(key).map(|p| p.clone()).or_else(|| {
+                let dir_path = dir_cache.get(key).or_else(|| {
                     // Cache miss: try direct handle resolution for first CREATE event
                     resolve_file_handle(mount_fds, key.as_slice())
                 });
@@ -154,20 +159,31 @@ pub fn read_fid_events_dashmap(
                 && let Some(ref key) = ev.self_handle
                 && let Some(cached_path) = dir_cache.get(key)
             {
-                ev.path = cached_path.clone();
+                ev.path = cached_path;
                 made_progress = true;
             }
         }
 
-        if !made_progress { break; }
+        if !made_progress {
+            break;
+        }
     }
     events
 }
 
 // ---- Constants ----
 
+/// Capacity for the moka directory handle cache (path→handle key reverse lookup).
+/// 100k covers ~10s of thousands of directories with room to spare.
+/// moka uses W-TinyLFU eviction when this limit is reached.
+pub const DIR_CACHE_CAP: u64 = 100_000;
+
+/// TTL for directory handle cache entries.
+/// After 1 hour of no access, entries are automatically evicted.
+/// This prevents stale entries when directories are deleted/renamed.
+pub const DIR_CACHE_TTL_SECS: u64 = 3600;
+
 pub const FILE_SIZE_CACHE_CAP: usize = 10_000;
-pub const PROC_CONNECTOR_TIMEOUT_SECS: u64 = 2;
 
 /// Default mask: 8 core events (FS_ERROR excluded — only works with FS marks).
 /// Use --types all to get all 14 (FS_ERROR included, but only effective on FS marks).
@@ -198,7 +214,9 @@ pub fn chown_to_user(path: &Path) -> std::io::Result<bool> {
         Some(nix::unistd::Gid::from_raw(gid)),
     ) {
         Ok(()) => Ok(true),
-        Err(nix::errno::Errno::EPERM) | Err(nix::errno::Errno::EOPNOTSUPP) | Err(nix::errno::Errno::ENOSYS) => {
+        Err(nix::errno::Errno::EPERM)
+        | Err(nix::errno::Errno::EOPNOTSUPP)
+        | Err(nix::errno::Errno::ENOSYS) => {
             // FS doesn't support ownership (vfat/exfat/NFS no_root_squash)
             Ok(false)
         }
@@ -237,9 +255,9 @@ mod tests {
     use super::*;
     use crate::EventType;
     use fanotify_fid::consts::{
-        FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE, FAN_CREATE,
-        FAN_DELETE, FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_FS_ERROR, FAN_MODIFY,
-        FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC,
+        FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE,
+        FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_FS_ERROR, FAN_MODIFY, FAN_MOVE_SELF,
+        FAN_MOVED_FROM, FAN_MOVED_TO, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC,
     };
 
     // ---- event_type_to_kernel_flag ----
@@ -263,8 +281,12 @@ mod tests {
             (EventType::FsError, FAN_FS_ERROR),
         ];
         for (event_type, expected_flag) in &cases {
-            assert_eq!(event_type_to_kernel_flag(event_type), *expected_flag,
-                "mismatch for {:?}", event_type);
+            assert_eq!(
+                event_type_to_kernel_flag(event_type),
+                *expected_flag,
+                "mismatch for {:?}",
+                event_type
+            );
         }
     }
 
@@ -305,9 +327,20 @@ mod tests {
 
     #[test]
     fn test_mask_to_event_types_all() {
-        let mask = FAN_ACCESS | FAN_MODIFY | FAN_CLOSE_WRITE | FAN_CLOSE_NOWRITE
-            | FAN_OPEN | FAN_OPEN_EXEC | FAN_ATTRIB | FAN_CREATE | FAN_DELETE
-            | FAN_DELETE_SELF | FAN_FS_ERROR | FAN_MOVED_FROM | FAN_MOVED_TO | FAN_MOVE_SELF;
+        let mask = FAN_ACCESS
+            | FAN_MODIFY
+            | FAN_CLOSE_WRITE
+            | FAN_CLOSE_NOWRITE
+            | FAN_OPEN
+            | FAN_OPEN_EXEC
+            | FAN_ATTRIB
+            | FAN_CREATE
+            | FAN_DELETE
+            | FAN_DELETE_SELF
+            | FAN_FS_ERROR
+            | FAN_MOVED_FROM
+            | FAN_MOVED_TO
+            | FAN_MOVE_SELF;
         let types = mask_to_event_types(mask);
         assert_eq!(types.len(), 14);
     }
@@ -326,11 +359,8 @@ mod tests {
         PathOptions {
             size_filter: None,
             event_types,
-            exclude_regex: None,
-            exclude_invert: false,
-            exclude_cmd_regex: None,
-            exclude_cmd_invert: false,
             recursive: false,
+            cmd: None,
         }
     }
 
@@ -347,7 +377,10 @@ mod tests {
         assert!(mask & FAN_MODIFY != 0, "should include FAN_MODIFY");
         assert!(mask & FAN_OPEN == 0, "should NOT include FAN_OPEN");
         // Always-present flags
-        assert!(mask & FAN_EVENT_ON_CHILD != 0, "should include FAN_EVENT_ON_CHILD");
+        assert!(
+            mask & FAN_EVENT_ON_CHILD != 0,
+            "should include FAN_EVENT_ON_CHILD"
+        );
         assert!(mask & FAN_ONDIR != 0, "should include FAN_ONDIR");
     }
 
@@ -358,8 +391,14 @@ mod tests {
         assert_eq!(mask, DEFAULT_EVENT_MASK, "should equal DEFAULT_EVENT_MASK");
         assert!(mask & FAN_CLOSE_WRITE != 0);
         assert!(mask & FAN_CREATE != 0);
-        assert!(mask & FAN_ACCESS == 0, "default should NOT include FAN_ACCESS");
-        assert!(mask & FAN_FS_ERROR == 0, "default should NOT include FAN_FS_ERROR");
+        assert!(
+            mask & FAN_ACCESS == 0,
+            "default should NOT include FAN_ACCESS"
+        );
+        assert!(
+            mask & FAN_FS_ERROR == 0,
+            "default should NOT include FAN_FS_ERROR"
+        );
     }
 
     #[test]
@@ -395,7 +434,6 @@ mod tests {
     #[test]
     fn test_constants_are_positive() {
         assert!(FILE_SIZE_CACHE_CAP > 0, "FILE_SIZE_CACHE_CAP should be > 0");
-        assert!(PROC_CONNECTOR_TIMEOUT_SECS > 0, "PROC_CONNECTOR_TIMEOUT_SECS should be > 0");
         assert!(DEFAULT_EVENT_MASK > 0, "DEFAULT_EVENT_MASK should be > 0");
     }
 }

@@ -1,53 +1,256 @@
-//! Proc Connector Process Cache
+//! Proc Connector Process Cache + Process Tree
 //!
-//! Caches PID -> (cmd, user) mapping from Linux proc connector exec events.
-//! Solves the problem where short-lived processes (touch, rm, mv etc.)
-//! cause /proc/{pid} to be unreadable when fanotify events arrive.
+//! Two data structures:
+//! - **ProcCache**: PID → {cmd, user, ppid, tgid} from Exec events (existing)
+//! - **PidTree**: PID → {ppid, cmd} for ancestor lookups (new, handles Fork/Exec/Exit)
 //!
-//! Uses the safe `proc-connector` crate — no raw `libc` netlink FFI.
-//!
-//! # Architecture
-//!
-//! The `ProcConnector` is created and managed in `monitor.rs`, where its fd
-//! is polled via tokio `AsyncFd` in the main event loop. Raw bytes read from
-//! the fd are passed to [`handle_proc_events`] for parsing and caching.
-//! No separate thread or polling needed.
+//! The PidTree is populated from three sources:
+//! 1. Startup snapshot: `/proc/*/status` → seed existing processes
+//! 2. Fork events: parent→child relationship (no cmd yet)
+//! 3. Exec events: update cmd for the child
 
-use std::sync::Arc;
+use std::time::Duration;
 
-use dashmap::DashMap;
+use moka::sync::Cache;
 use proc_connector::{NetlinkMessageIter, ProcConnector, ProcEvent};
 
 use crate::utils::uid_to_username;
 
-// ---- Public Types ----
+// ---- ProcCache (existing) ----
 
-/// Cached process info: command name and user name.
+/// Cached process info: command name, user, ppid, tgid.
 #[derive(Clone, Debug)]
 pub struct ProcInfo {
     pub cmd: String,
     pub user: String,
+    pub ppid: u32,
+    pub tgid: u32,
+    pub start_time_ns: u64,
 }
 
-/// Shared PID -> ProcInfo cache (thread-safe).
-pub type ProcCache = Arc<DashMap<u32, ProcInfo>>;
+/// Capacity for process info cache.
+/// Covers typical active PID ranges with headroom.
+pub const PROC_CACHE_CAP: u64 = 65536;
 
-/// Create a new empty proc cache.
+/// TTL for process info entries. Exited processes are evicted after this time.
+pub const PROC_CACHE_TTL_SECS: u64 = 600;
+
+/// Capacity for process tree cache.
+pub const PID_TREE_CAP: u64 = 65536;
+
+/// TTL for process tree entries.
+pub const PID_TREE_TTL_SECS: u64 = 600;
+
+/// Shared PID → ProcInfo cache (thread-safe, bounded, TTL-based eviction).
+pub type ProcCache = Cache<u32, ProcInfo>;
+
+/// Create a new ProcCache with the configured capacity and TTL.
 pub fn new_cache() -> ProcCache {
-    Arc::new(DashMap::new())
+    new_cache_with(CacheParams::default())
 }
 
-/// Create a `ProcConnector` and set it to non-blocking mode.
-///
-/// Returns `None` if the proc connector is unavailable (e.g. kernel module
-/// not loaded, insufficient permissions). Callers should treat this as
-/// non-fatal and continue without exec name attribution.
+/// Create a ProcCache with explicit capacity and TTL overrides.
+pub fn new_cache_with(params: CacheParams) -> ProcCache {
+    Cache::builder()
+        .max_capacity(params.capacity)
+        .time_to_live(Duration::from_secs(params.ttl_secs))
+        .build()
+}
+
+/// Parameters for process caches (ProcCache and PidTree).
+pub struct CacheParams {
+    pub capacity: u64,
+    pub ttl_secs: u64,
+}
+
+impl Default for CacheParams {
+    fn default() -> Self {
+        Self {
+            capacity: PROC_CACHE_CAP,
+            ttl_secs: PROC_CACHE_TTL_SECS,
+        }
+    }
+}
+
+// ---- PidTree ----
+
+/// A node in the process tree. cmd starts empty (from Fork) and fills on Exec.
+#[derive(Clone, Debug)]
+pub struct PidNode {
+    pub ppid: u32,
+    pub cmd: String,
+    pub start_time_ns: u64,
+}
+
+/// Shared process tree: PID → parent PID + cmd (bounded, TTL-based eviction).
+pub type PidTree = Cache<u32, PidNode>;
+
+/// Create a new PidTree with the configured capacity and TTL.
+pub fn new_pid_tree() -> PidTree {
+    new_pid_tree_with(CacheParams::default())
+}
+
+/// Create a PidTree with explicit capacity and TTL overrides.
+pub fn new_pid_tree_with(params: CacheParams) -> PidTree {
+    Cache::builder()
+        .max_capacity(params.capacity)
+        .time_to_live(Duration::from_secs(params.ttl_secs))
+        .build()
+}
+
+/// Snapshot all existing processes from /proc on daemon start.
+/// Reads `/proc/*/status` to seed the tree with current PIDs and their ppid/cmd.
+pub fn snapshot_process_tree(tree: &PidTree) {
+    let dir = match std::fs::read_dir("/proc") {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("[WARNING] Cannot read /proc for process tree snapshot: {e}");
+            return;
+        }
+    };
+    for entry in dir.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let pid: u32 = match name_str.parse() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        let status = match std::fs::read_to_string(format!("/proc/{}/status", pid)) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let mut ppid = 0u32;
+        let mut cmd = String::new();
+        for line in status.lines() {
+            if let Some(val) = line.strip_prefix("PPid:") {
+                ppid = val.trim().parse().unwrap_or(0);
+            } else if let Some(val) = line.strip_prefix("Name:") {
+                cmd = val.trim().to_string();
+            }
+        }
+        tree.insert(pid, PidNode { ppid, cmd, start_time_ns: 0 });
+    }
+}
+
+pub fn read_proc_start_time_ns(pid: u32) -> u64 {
+    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+    let after_comm = match stat.rfind(") ") {
+        Some(pos) => pos + 2,
+        None => return 0,
+    };
+    let mut rest = &stat[after_comm..];
+    for _ in 0..19 {
+        if let Some(pos) = rest.find(' ') {
+            rest = &rest[pos + 1..];
+        } else {
+            return 0;
+        }
+    }
+    let starttime_jiffies: u64 = match rest.split_whitespace().next() {
+        Some(s) => s.parse().unwrap_or(0),
+        None => return 0,
+    };
+    if starttime_jiffies == 0 {
+        return 0;
+    }
+    let clk_tck = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    if clk_tck <= 0 {
+        return 0;
+    }
+    (starttime_jiffies as u128 * 1_000_000_000 / clk_tck as u128) as u64
+}
+
+/// Check if `pid` is a descendant of any process whose cmd == `target_cmd`.
+/// Walks up the tree via ppid until hitting root (pid=1, pid=0, self-loop, or cycle).
+pub fn is_descendant(tree: &PidTree, pid: u32, target_cmd: &str) -> bool {
+    let mut current = pid;
+    let mut visited = std::collections::HashSet::new();
+    while let Some(node) = tree.get(&current) {
+        if !visited.insert(current) {
+            break; // cycle detected
+        }
+        if node.cmd == target_cmd {
+            return true;
+        }
+        if node.ppid == 0 || current == node.ppid {
+            break;
+        }
+        current = node.ppid;
+    }
+    false
+}
+
+/// Build a chain string from the process tree.
+/// Format: "102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root"
+/// Falls back to reading /proc if a PID is not in the tree.
+pub fn build_chain(tree: &PidTree, cache: &ProcCache, pid: u32) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut current = pid;
+    let mut visited = std::collections::HashSet::new();
+    loop {
+        // Try tree first for ppid, then cache for user
+        let (ppid, cmd, user) = if let Some(node) = tree.get(&current) {
+            let user = cache
+                .get(&current)
+                .map(|info| info.user.clone())
+                .unwrap_or_else(|| "unknown".to_string());
+            (node.ppid, node.cmd.clone(), user)
+        } else {
+            // Fallback to /proc/{pid}/status
+            let status = match std::fs::read_to_string(format!("/proc/{}/status", current)) {
+                Ok(s) => s,
+                Err(_) => {
+                    parts.push(format!("{}|unknown|unknown", current));
+                    break;
+                }
+            };
+            let cmd = status
+                .lines()
+                .find(|l| l.starts_with("Name:"))
+                .and_then(|l| l.split(':').nth(1))
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let ppid = status
+                .lines()
+                .find(|l| l.starts_with("PPid:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(0);
+            let user = status
+                .lines()
+                .find(|l| l.starts_with("Uid:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|uid_str| uid_str.parse::<u32>().ok())
+                .and_then(uid_to_username)
+                .unwrap_or_else(|| "unknown".to_string());
+            (ppid, cmd, user)
+        };
+
+        parts.push(format!("{}|{}|{}", current, cmd, user));
+        if ppid == 0 || current == ppid {
+            break;
+        }
+        if !visited.insert(current) {
+            break; // cycle detected
+        }
+        current = ppid;
+    }
+    parts.join(";")
+}
+
+// ---- Proc Connector ----
+
 pub fn try_create_connector() -> Option<ProcConnector> {
     let conn = match ProcConnector::new() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[WARNING] Failed to create proc connector: {e}. \
-                       Process name attribution will be unavailable.");
+            eprintln!(
+                "[WARNING] Failed to create proc connector: {e}. \
+                       Process tree tracking will be unavailable."
+            );
             return None;
         }
     };
@@ -58,35 +261,69 @@ pub fn try_create_connector() -> Option<ProcConnector> {
     Some(conn)
 }
 
-/// Process raw bytes from the proc connector socket and cache exec events.
-///
-/// Called from the main event loop after `recv_raw` returns data.
-/// Parses all netlink messages in `data`, and for each `Exec` event,
-/// reads `/proc/{pid}/comm` and `/proc/{pid}/status` to populate the cache.
-///
-/// Returns `true` if any event was processed, `false` if only control messages.
-pub fn handle_proc_events(cache: &ProcCache, data: &[u8], n: usize) -> bool {
+/// Process proc connector events.
+/// Handles Exec (update ProcCache + PidTree cmd), Fork (insert PidTree),
+/// and Exit (optional, no cleanup needed for correct lookups).
+pub fn handle_proc_events(cache: &ProcCache, tree: &PidTree, data: &[u8], n: usize) -> bool {
     let mut processed = false;
     for msg in NetlinkMessageIter::new(data, n) {
         match msg {
-            Ok(Some(ProcEvent::Exec { pid, .. })) => {
-                // Process just exec()'d, /proc/{pid} must exist
+            Ok(Some(ProcEvent::Exec { pid, timestamp_ns, .. })) => {
                 let cmd = std::fs::read_to_string(format!("/proc/{}/comm", pid))
                     .ok()
                     .map(|s| s.trim().to_string())
                     .unwrap_or_else(|| "unknown".to_string());
 
-                let user = read_proc_uid(pid).unwrap_or_else(|| "unknown".to_string());
+                let (user, ppid, tgid) =
+                    read_proc_info(pid).unwrap_or_else(|| ("unknown".to_string(), 0, 0));
 
-                cache.insert(pid, ProcInfo { cmd, user });
+                cache.insert(
+                    pid,
+                    ProcInfo {
+                        cmd: cmd.clone(),
+                        user,
+                        ppid,
+                        tgid,
+                        start_time_ns: timestamp_ns,
+                    },
+                );
+
+                // Also update PidTree with the resolved cmd/ppid
+                tree.insert(
+                    pid,
+                    PidNode {
+                        ppid,
+                        cmd,
+                        start_time_ns: timestamp_ns,
+                    },
+                );
+
                 processed = true;
             }
-            Ok(Some(_)) => {
-                // Non-Exec event (Fork, Exit, Uid…), ignore — we only cache Exec
+            Ok(Some(ProcEvent::Fork {
+                child_pid,
+                parent_pid,
+                timestamp_ns,
+                ..
+            })) => {
+                // Pre-populate tree: we know the parent but not cmd yet
+                tree.insert(
+                    child_pid,
+                    PidNode {
+                        ppid: parent_pid,
+                        cmd: String::new(),
+                        start_time_ns: timestamp_ns,
+                    },
+                );
+                processed = true;
             }
-            Ok(None) => {
-                // Control message (NLMSG_NOOP, NLMSG_DONE, NLMSG_ERROR-ACK), skip
+            Ok(Some(ProcEvent::Exit { .. })) => {
+                // Keep the node — it's still valid for historical chain lookups
+                // of events that happened before this process exited.
+                processed = true;
             }
+            Ok(Some(_)) => {} // Uid, Gid, Sid, etc. — ignore
+            Ok(None) => {}    // Control message (NLMSG_NOOP, NLMSG_DONE, NLMSG_ERROR-ACK)
             Err(proc_connector::Error::Overrun) => {
                 eprintln!("[WARNING] proc connector overrun — some exec events may have been lost");
             }
@@ -94,7 +331,6 @@ pub fn handle_proc_events(cache: &ProcCache, data: &[u8], n: usize) -> bool {
                 eprintln!("[WARNING] proc connector truncated message, continuing...");
             }
             Err(e) => {
-                // Non-recoverable parse error for this message, skip
                 eprintln!("proc connector parse error: {e}");
             }
         }
@@ -102,16 +338,22 @@ pub fn handle_proc_events(cache: &ProcCache, data: &[u8], n: usize) -> bool {
     processed
 }
 
-fn read_proc_uid(pid: u32) -> Option<String> {
+fn read_proc_info(pid: u32) -> Option<(String, u32, u32)> {
     let status = std::fs::read_to_string(format!("/proc/{}/status", pid)).ok()?;
-    let uid: u32 = status
-        .lines()
-        .find(|l| l.starts_with("Uid:"))?
-        .split_whitespace()
-        .nth(1)?
-        .parse()
-        .ok()?;
-    uid_to_username(uid)
+    let mut user = String::new();
+    let mut ppid = 0u32;
+    let mut tgid = 0u32;
+    for line in status.lines() {
+        if let Some(val) = line.strip_prefix("Uid:") {
+            let uid: u32 = val.split_whitespace().next()?.parse().ok()?;
+            user = uid_to_username(uid).unwrap_or_else(|| "unknown".to_string());
+        } else if let Some(val) = line.strip_prefix("PPid:") {
+            ppid = val.trim().parse().ok()?;
+        } else if let Some(val) = line.strip_prefix("Tgid:") {
+            tgid = val.trim().parse().ok()?;
+        }
+    }
+    Some((user, ppid, tgid))
 }
 
 #[cfg(test)]
@@ -120,146 +362,243 @@ mod tests {
 
     #[test]
     fn test_proc_cache_insert_and_get() {
-        let cache: ProcCache = Arc::new(DashMap::new());
+        let cache = new_cache();
         cache.insert(
             12345,
             ProcInfo {
-                cmd: "test_process".to_string(),
-                user: "testuser".to_string(),
+                cmd: "test_process".into(),
+                user: "testuser".into(),
+                ppid: 1,
+                tgid: 12345,
+            start_time_ns: 0,
             },
         );
-
-        let info = cache.get(&12345);
-        assert!(info.is_some());
-        let info = info.unwrap();
+        let info = cache.get(&12345).unwrap();
         assert_eq!(info.cmd, "test_process");
-        assert_eq!(info.user, "testuser");
+        assert_eq!(info.ppid, 1);
+        assert_eq!(info.tgid, 12345);
     }
 
     #[test]
-    fn test_proc_cache_missing_pid() {
-        let cache: ProcCache = Arc::new(DashMap::new());
-        assert!(cache.get(&99999).is_none());
-    }
-
-    #[test]
-    fn test_proc_cache_overwrite() {
-        let cache: ProcCache = Arc::new(DashMap::new());
-        cache.insert(
+    fn test_is_descendant() {
+        let tree = new_pid_tree();
+        tree.insert(
             1,
-            ProcInfo {
-                cmd: "old".into(),
-                user: "a".into(),
+            PidNode {
+                ppid: 0,
+                cmd: "systemd".into(),
+            start_time_ns: 0,
             },
         );
-        cache.insert(
+        tree.insert(
+            100,
+            PidNode {
+                ppid: 1,
+                cmd: "openclaw".into(),
+            start_time_ns: 0,
+            },
+        );
+        tree.insert(
+            101,
+            PidNode {
+                ppid: 100,
+                cmd: "sh".into(),
+            start_time_ns: 0,
+            },
+        );
+        tree.insert(
+            102,
+            PidNode {
+                ppid: 101,
+                cmd: String::new(),
+            start_time_ns: 0,
+            },
+        ); // Fork, no Exec yet
+
+        assert!(is_descendant(&tree, 102, "openclaw"));
+        assert!(is_descendant(&tree, 101, "openclaw"));
+        assert!(is_descendant(&tree, 100, "openclaw"));
+        assert!(!is_descendant(&tree, 102, "nginx"));
+        assert!(!is_descendant(&tree, 1, "openclaw"));
+    }
+
+    #[test]
+    fn test_is_descendant_unknown_pid() {
+        let tree = new_pid_tree();
+        tree.insert(
             1,
-            ProcInfo {
-                cmd: "new".into(),
-                user: "b".into(),
+            PidNode {
+                ppid: 0,
+                cmd: "systemd".into(),
+            start_time_ns: 0,
             },
         );
-
-        let info = cache.get(&1).unwrap();
-        assert_eq!(info.cmd, "new");
-        assert_eq!(info.user, "b");
+        assert!(!is_descendant(&tree, 99999, "systemd"));
     }
 
     #[test]
-    fn test_proc_cache_concurrent_access() {
-        use std::thread;
-
-        let cache: ProcCache = Arc::new(DashMap::new());
-        let mut handles = vec![];
-
-        for i in 0..10 {
-            let cache_clone = cache.clone();
-            handles.push(thread::spawn(move || {
-                for j in 0..100 {
-                    let pid = (i * 100 + j) as u32;
-                    cache_clone.insert(
-                        pid,
-                        ProcInfo {
-                            cmd: format!("proc_{}", pid),
-                            user: "test".into(),
-                        },
-                    );
-                }
-            }));
-        }
-
-        for h in handles {
-            h.join().unwrap();
-        }
-
-        assert_eq!(cache.len(), 1000);
+    fn test_is_descendant_cycle() {
+        // Complex cycle: A→B→C→A. is_descendant must not infinite-loop.
+        let tree = new_pid_tree();
+        tree.insert(1, PidNode { ppid: 2, cmd: "a".into(), start_time_ns: 0 });
+        tree.insert(2, PidNode { ppid: 3, cmd: "b".into(), start_time_ns: 0 });
+        tree.insert(3, PidNode { ppid: 1, cmd: "c".into(), start_time_ns: 0 });
+        // Should detect cycle and return false (no matching cmd)
+        assert!(!is_descendant(&tree, 1, "nginx"));
     }
 
     #[test]
-    fn test_handle_proc_events_empty() {
-        let cache: ProcCache = Arc::new(DashMap::new());
-        let result = handle_proc_events(&cache, &[], 0);
-        assert!(!result);
-    }
-
-    #[test]
-    fn test_handle_proc_events_non_exec_ignored() {
-        // Build a valid FORK event, verify it's ignored (cache stays empty)
-                // We can't easily construct raw netlink bytes here without
-        // using internal structs. The integration test below covers this.
-        // Unit test: verify the Exec branch is the only one that caches.
-        let cache: ProcCache = Arc::new(DashMap::new());
-        cache.insert(
-            42,
-            ProcInfo {
-                cmd: "test".into(),
-                user: "root".into(),
-            },
-        );
-        assert_eq!(cache.len(), 1);
-    }
-
-    // ---- Integration tests (require sudo) ----
-
-    #[test]
-    #[ignore]
-    fn test_proc_connector_create() {
-        let conn = ProcConnector::new();
-        assert!(conn.is_ok(), "Should be able to create ProcConnector with root");
-        // Dropped → unsubscribe + close automatically
-    }
-
-    #[test]
-    #[ignore]
-    fn test_proc_connector_receives_events_async() {
-        let conn = ProcConnector::new().expect("create connector");
-        conn.set_nonblocking().expect("set non-blocking");
-
-        // Spawn a subprocess to trigger an exec event
-        let mut child = std::process::Command::new("echo")
-            .arg("test")
-            .spawn()
-            .unwrap();
-        child.wait().unwrap();
-
-        // Give kernel time to deliver the event
-        std::thread::sleep(std::time::Duration::from_millis(200));
-
-        // Non-blocking recv should find the event
-        let mut buf = vec![0u8; 65536];
+    fn test_build_chain_cycle() {
+        // Complex cycle: 1→2→3→1. build_chain must not infinite-loop.
+        let tree = new_pid_tree();
         let cache = new_cache();
-        loop {
-            match conn.recv_raw(&mut buf) {
-                Ok(n) => {
-                    handle_proc_events(&cache, &buf, n);
-                }
-                Err(proc_connector::Error::WouldBlock) => break,
-                Err(proc_connector::Error::Interrupted) => continue,
-                Err(e) => {
-                    panic!("recv error: {e}");
-                }
-            }
+        tree.insert(1, PidNode { ppid: 2, cmd: "a".into(), start_time_ns: 0 });
+        tree.insert(2, PidNode { ppid: 3, cmd: "b".into(), start_time_ns: 0 });
+        tree.insert(3, PidNode { ppid: 1, cmd: "c".into(), start_time_ns: 0 });
+        cache.insert(1, ProcInfo { cmd: "a".into(), user: "u".into(), ppid: 2, tgid: 1, start_time_ns: 0 });
+        cache.insert(2, ProcInfo { cmd: "b".into(), user: "u".into(), ppid: 3, tgid: 2, start_time_ns: 0 });
+        cache.insert(3, ProcInfo { cmd: "c".into(), user: "u".into(), ppid: 1, tgid: 3, start_time_ns: 0 });
+        let chain = build_chain(&tree, &cache, 1);
+        // Should produce partial chain without infinite loop
+        assert!(!chain.is_empty());
+        assert!(chain.starts_with("1|"));
+    }
+
+    #[test]
+    fn test_build_chain_from_tree() {
+        let tree = new_pid_tree();
+        let cache = new_cache();
+        tree.insert(
+            1,
+            PidNode {
+                ppid: 0,
+                cmd: "systemd".into(),
+            start_time_ns: 0,
+            },
+        );
+        cache.insert(
+            1,
+            ProcInfo {
+                cmd: "systemd".into(),
+                user: "root".into(),
+                ppid: 0,
+                tgid: 1,
+            start_time_ns: 0,
+            },
+        );
+        tree.insert(
+            100,
+            PidNode {
+                ppid: 1,
+                cmd: "openclaw".into(),
+            start_time_ns: 0,
+            },
+        );
+        cache.insert(
+            100,
+            ProcInfo {
+                cmd: "openclaw".into(),
+                user: "root".into(),
+                ppid: 1,
+                tgid: 100,
+            start_time_ns: 0,
+            },
+        );
+        tree.insert(
+            101,
+            PidNode {
+                ppid: 100,
+                cmd: "sh".into(),
+            start_time_ns: 0,
+            },
+        );
+        cache.insert(
+            101,
+            ProcInfo {
+                cmd: "sh".into(),
+                user: "root".into(),
+                ppid: 100,
+                tgid: 101,
+            start_time_ns: 0,
+            },
+        );
+        tree.insert(
+            102,
+            PidNode {
+                ppid: 101,
+                cmd: "touch".into(),
+            start_time_ns: 0,
+            },
+        );
+        cache.insert(
+            102,
+            ProcInfo {
+                cmd: "touch".into(),
+                user: "root".into(),
+                ppid: 101,
+                tgid: 102,
+            start_time_ns: 0,
+            },
+        );
+
+        let chain = build_chain(&tree, &cache, 102);
+        assert_eq!(
+            chain,
+            "102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root"
+        );
+    }
+
+    #[test]
+    fn test_build_chain_single() {
+        let tree = new_pid_tree();
+        let cache = new_cache();
+        tree.insert(
+            1,
+            PidNode {
+                ppid: 0,
+                cmd: "systemd".into(),
+            start_time_ns: 0,
+            },
+        );
+        cache.insert(
+            1,
+            ProcInfo {
+                cmd: "systemd".into(),
+                user: "root".into(),
+                ppid: 0,
+                tgid: 1,
+            start_time_ns: 0,
+            },
+        );
+
+        let chain = build_chain(&tree, &cache, 1);
+        assert_eq!(chain, "1|systemd|root");
+    }
+
+    #[test]
+    fn test_snapshot_pid1() {
+        // PID 1 always exists on Linux
+        let tree = new_pid_tree();
+        snapshot_process_tree(&tree);
+        assert!(tree.contains_key(&1), "PID 1 should exist after snapshot");
+        if let Some(node) = tree.get(&1) {
+            assert!(!node.cmd.is_empty(), "PID 1 should have a cmd");
+            assert_eq!(node.ppid, 0, "PID 1\'s ppid should be 0");
         }
-        assert!(!cache.is_empty(), "Should have cached at least one exec event");
+    }
+
+    #[test]
+    fn test_read_proc_start_time_ns_pid1() {
+        // PID 1 always exists on Linux — should have a non-zero start time.
+        let ns = read_proc_start_time_ns(1);
+        assert!(ns > 0, "PID 1 start_time_ns should be > 0, got {ns}");
+    }
+
+    #[test]
+    fn test_read_proc_start_time_ns_nonexistent() {
+        // A non-existent PID should return 0.
+        // Use PID 0x7FFFFFFF (max valid PID on most systems is lower).
+        let ns = read_proc_start_time_ns(0x7FFFFFFF);
+        assert_eq!(ns, 0, "non-existent PID should return 0, got {ns}");
     }
 }

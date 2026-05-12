@@ -1,5 +1,6 @@
 use anyhow::Result;
 use fsmon::config::Config;
+use fsmon::monitored::CMD_GLOBAL;
 use fsmon::query::Query;
 use fsmon::{TimeFilter, parse_time_filter};
 
@@ -9,20 +10,28 @@ pub async fn cmd_query(args: QueryArgs) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
 
-    let paths = if args.path.is_empty() {
+    // CMD is required. Use '_global' to query all global events.
+    let cmd = args.cmd.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("CMD is required. Use '{}' for global events.", CMD_GLOBAL)
+    })?;
+
+    let path_filters = if args.path.is_empty() {
         None
     } else {
         Some(args.path.clone())
     };
 
     // Parse time filters
-    let time_filters: Vec<TimeFilter> = args.time.iter()
-        .map(|s| parse_time_filter(s))
+    let time_filters: Vec<TimeFilter> = args
+        .time
+        .iter()
+        .map(|s| parse_time_filter(s).map_err(anyhow::Error::from))
         .collect::<Result<Vec<_>>>()?;
 
     let query = Query::new(
         cfg.logging.path,
-        paths,
+        Some(cmd.to_string()),
+        path_filters,
         time_filters,
     );
 
