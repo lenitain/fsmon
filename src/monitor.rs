@@ -1171,7 +1171,7 @@ impl Monitor {
                 }
             }
             let cmd_label = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
-            println!("Monitoring entry: [{}] {}", cmd_label, path.display());
+            println!("Monitoring entry: [{}] {} (recursive={})", cmd_label, path.display(), recursive);
             return Ok(());
         }
 
