@@ -10,28 +10,24 @@ pub fn cmd_managed() -> Result<()> {
         .unwrap_or_default();
 
     for entry in &entries {
-        let types_str = entry
-            .types
-            .as_ref()
-            .map(|v| v.join(","))
-            .unwrap_or_else(|| "-".to_string());
-        let recursive_str = if entry.recursive.unwrap_or(false) {
-            "recursive"
-        } else {
-            "non-recursive"
-        };
-        let size_str = entry.size.as_deref().unwrap_or("-");
-        let exclude_str = entry.exclude.as_ref().map(|v| v.join(",")).as_deref().unwrap_or("-").to_string();
-        let exclude_cmd_str = entry.exclude_cmd.as_ref().map(|v| v.join(",")).as_deref().unwrap_or("-").to_string();
-        println!(
-            "{} | types={} | {} | size={} | exclude-path={} | exclude-cmd={}",
-            entry.path.display(),
-            types_str,
-            recursive_str,
-            size_str,
-            exclude_str,
-            exclude_cmd_str,
-        );
+        println!("{}", entry.path.display());
+        println!("  recursive:     {}", if entry.recursive.unwrap_or(false) { "yes" } else { "no" });
+        if let Some(ref types) = entry.types {
+            println!("  types:         {}", types.join(", "));
+        }
+        if let Some(ref size) = entry.size {
+            println!("  size:          {}", size);
+        }
+        if let Some(ref exclude) = entry.exclude {
+            println!("  exclude:       {}", exclude.join(", "));
+        }
+        if let Some(ref exclude_cmd) = entry.exclude_cmd {
+            println!("  exclude-cmd:   {}", exclude_cmd.join(", "));
+        }
+        if let Some(ref cmd) = entry.cmd {
+            println!("  cmd:           {} (process tree tracking)", cmd);
+        }
+        println!();
     }
 
     Ok(())
