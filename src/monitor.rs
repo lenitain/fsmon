@@ -22,7 +22,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::signal::unix::{SignalKind, signal};
 
 use crate::dir_cache;
-use crate::proc_cache::{self, ProcCache, ProcInfo};
+use crate::proc_cache::{self, ProcCache, ProcInfo, PidTree, build_chain, is_descendant, snapshot_process_tree, new_pid_tree};
 use crate::socket::{SocketCmd, SocketResp};
 use crate::managed::PathEntry;
 use crate::managed::Managed;
@@ -42,6 +42,7 @@ pub struct Monitor {
     log_dir: Option<PathBuf>,
     managed_path: Option<PathBuf>,
     proc_cache: Option<ProcCache>,
+    pid_tree: Option<PidTree>,
     file_size_cache: LruCache<PathBuf, u64>,
     pid_cache: LruCache<u32, ProcInfo>,
     buffer_size: usize,
@@ -110,6 +111,7 @@ impl Monitor {
             log_dir,
             managed_path,
             proc_cache: None,
+            pid_tree: None,
             file_size_cache: LruCache::new(NonZeroUsize::new(FILE_SIZE_CACHE_CAP).unwrap()),
             pid_cache: LruCache::new(NonZeroUsize::new(4096).unwrap()),
             buffer_size,
@@ -180,6 +182,9 @@ impl Monitor {
         let proc_conn = proc_cache::try_create_connector();
         let proc_cache = proc_cache::new_cache();
         self.proc_cache = Some(proc_cache.clone());
+        let pid_tree = new_pid_tree();
+        snapshot_process_tree(&pid_tree);
+        self.pid_tree = Some(pid_tree.clone());
 
         // Compute combined event mask (OR of all per-path masks)
         let combined_mask = self.path_options.values()
@@ -539,7 +544,7 @@ impl Monitor {
                         loop {
                             match conn.recv_raw(&mut proc_buf) {
                                 Ok(n) => {
-                                    proc_cache::handle_proc_events(&proc_cache, &proc_buf, n);
+                                    proc_cache::handle_proc_events(&proc_cache, &pid_tree, &proc_buf, n);
                                 }
                                 Err(proc_connector::Error::WouldBlock) => break,
                                 Err(proc_connector::Error::Interrupted) => continue,
@@ -588,6 +593,26 @@ impl Monitor {
                             continue;
                         }
 
+                        let event_pid = raw.pid.unsigned_abs();
+
+                        // Check process tree filter before building event
+                        let matched_opts = self.get_matching_path_options(&raw.path);
+                        let cmd_match = if let Some(opts) = matched_opts {
+                            if let Some(ref cmd_name) = opts.cmd {
+                                self.pid_tree.as_ref()
+                                    .map(|tree| is_descendant(tree, event_pid, cmd_name))
+                                    .unwrap_or(false)
+                            } else {
+                                true
+                            }
+                        } else {
+                            true
+                        };
+
+                        if !cmd_match {
+                            continue;
+                        }
+
                         for event_type in event_types {
                             let event = self.build_file_event(raw, event_type);
 
@@ -624,7 +649,7 @@ impl Monitor {
                         loop {
                             match guard.get_inner().recv_raw(&mut proc_buf) {
                                 Ok(n) => {
-                                    proc_cache::handle_proc_events(&proc_cache, &proc_buf, n);
+                                    proc_cache::handle_proc_events(&proc_cache, &pid_tree, &proc_buf, n);
                                 }
                                 Err(proc_connector::Error::WouldBlock) => break,
                                 Err(proc_connector::Error::Interrupted) => continue,
@@ -732,6 +757,17 @@ impl Monitor {
             _ => self.file_size_cache.get(&raw.path).map_or(0, |&s| s ),
         };
 
+        let chain = self.get_matching_path_options(&raw.path)
+            .and_then(|opts| opts.cmd.as_ref().map(|_| ()))
+            .and_then(|_| {
+                self.pid_tree.as_ref().and_then(|tree| {
+                    self.proc_cache.as_ref().map(|cache| {
+                        build_chain(tree, cache, pid)
+                    })
+                })
+            })
+            .unwrap_or_default();
+
         FileEvent {
             time: Utc::now(),
             event_type,
@@ -742,7 +778,7 @@ impl Monitor {
             file_size,
             ppid: info.ppid,
             tgid: info.tgid,
-            chain: String::new(),
+            chain,
         }
     }
 
