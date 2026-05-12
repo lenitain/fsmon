@@ -142,18 +142,6 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         Some(args.types.clone())
     };
     let size_val = args.size.clone();
-    /*
-    let exclude = if args.exclude.is_empty() {
-        None
-    } else {
-        Some(args.exclude.clone())
-    };
-    let exclude_cmd = if args.exclude_cmd.is_empty() {
-        None
-    } else {
-        Some(args.exclude_cmd.clone())
-    };
-    */
     let recursive = if args.recursive {
         Some(true)
     } else {
@@ -167,8 +155,6 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         recursive,
         types: types.clone(),
         size: size_val.clone(),
-        /* exclude_path: exclude.clone(),
-        exclude_cmd: exclude_cmd.clone(), */
     };
 
     store.add_entry(entry.clone());
@@ -184,8 +170,6 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             recursive,
             types,
             size: size_val,
-            /* exclude_path: exclude,
-            exclude_cmd, */
             track_cmd: process_name,
         },
     );

@@ -872,60 +872,6 @@ impl Monitor {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    fn build_file_event(&mut self, raw: &FidEvent, event_type: EventType) -> FileEvent {
-        let pid = raw.pid.unsigned_abs();
-        let info = if let Some(info) = self.pid_cache.get(&pid) {
-            info.clone()
-        } else {
-            let info = get_process_info_by_pid(pid, &raw.path, self.proc_cache.as_ref());
-            if info.cmd != "unknown" || info.user != "unknown" {
-                self.pid_cache.put(pid, info.clone());
-            }
-            info
-        };
-
-        let file_size = match event_type {
-            // For CREATE/MODIFY/CLOSE_WRITE: get actual size and cache it
-            EventType::Create | EventType::Modify | EventType::CloseWrite => {
-                let size = fs::metadata(&raw.path).map(|m| m.len()).unwrap_or(0);
-                self.file_size_cache.put(raw.path.clone(), size);
-                size
-            }
-            // For DELETE/DELETE_SELF/MOVED_FROM: use cached size (file already gone)
-            EventType::Delete | EventType::DeleteSelf | EventType::MovedFrom => {
-                self.file_size_cache.pop(&raw.path).unwrap_or(0)
-            }
-            // For other events (OPEN, ACCESS, ATTRIB, etc.): use cached size if available
-            _ => self.file_size_cache.get(&raw.path).map_or(0, |&s| s),
-        };
-
-        let chain = self
-            .get_matching_path_options(&raw.path)
-            .and_then(|opts| opts.cmd.as_ref().map(|_| ()))
-            .and_then(|_| {
-                self.pid_tree.as_ref().and_then(|tree| {
-                    self.proc_cache
-                        .as_ref()
-                        .map(|cache| build_chain(tree, cache, pid))
-                })
-            })
-            .unwrap_or_default();
-
-        FileEvent {
-            time: Utc::now(),
-            event_type,
-            path: raw.path.clone(),
-            pid,
-            cmd: info.cmd,
-            user: info.user,
-            file_size,
-            ppid: info.ppid,
-            tgid: info.tgid,
-            chain,
-        }
-    }
-
     /// Like `build_file_event` but uses a specific PathOptions for chain building.
     fn build_file_event_for_opts(
         &mut self,
@@ -984,7 +930,7 @@ impl Monitor {
     }
 
     /// Find the PathOptions matching a given event path.
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn get_matching_path_options(&self, path: &Path) -> Option<&PathOptions> {
         filters::get_matching_path_options(
             &self.paths,
@@ -1702,7 +1648,7 @@ impl Monitor {
         self.setup_inotify_watches();
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn should_output(&self, event: &FileEvent) -> bool {
         let opts = self.get_matching_path_options(&event.path);
         filters::should_output(opts, event)
@@ -1717,20 +1663,6 @@ impl Monitor {
     /// Checks configured paths (direct or recursive prefix), then canonical paths.
     fn matching_path(&self, path: &Path) -> Option<&PathBuf> {
         filters::matching_path(&self.paths, &self.canonical_paths, path)
-    }
-
-    /// Write an event to its path-based log file.
-    #[allow(dead_code)]
-    fn write_event(&self, event: &FileEvent) -> std::io::Result<()> {
-        let log_dir = match self.log_dir.as_ref() {
-            Some(d) => d,
-            None => return Ok(()),
-        };
-        let opts = self.get_matching_path_options(&event.path);
-        let cmd_name = opts
-            .and_then(|o| o.cmd.as_deref())
-            .unwrap_or(crate::monitored::CMD_GLOBAL);
-        self.write_raw_event(event, log_dir, cmd_name)
     }
 
     /// Write an event to a specific opts' cmd log (for multi-cmd support).
@@ -1785,9 +1717,7 @@ impl Monitor {
         Ok(())
     }
 
-    /// Check if path is within monitoring scope
-    /// Uses per-path recursive setting from path_options
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn is_path_in_scope(&self, path: &Path) -> bool {
         filters::is_path_in_scope(&self.paths, &self.monitored_entries, &self.canonical_paths, path)
     }
@@ -1901,12 +1831,7 @@ mod tests {
                 .map(|p| {
                     (
                         PathBuf::from(p),
-                        options(
-                            size_filter,
-                            event_types.clone(),
-                            /* exclude, */
-                            recursive,
-                        ),
+                        options(size_filter, event_types.clone(), recursive),
                     )
                 })
                 .collect(),
@@ -1954,23 +1879,7 @@ mod tests {
         assert!(!m.should_output(&make_event("/tmp/a", EventType::Create, 1, 500)));
     }
 
-    #[test]
-    #[cfg(never)]
-    fn test_should_output_exclude_pattern() {
-        let m = make_monitor(vec!["/tmp"], None, None, Some(".*\\.tmp$"), false);
-        assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
-        assert!(!m.should_output(&make_event("/tmp/foo.tmp", EventType::Delete, 1, 0)));
-    }
 
-    #[test]
-    #[cfg(never)]
-    fn test_should_output_exclude_exact_pattern() {
-        let m = make_monitor(vec!["/tmp"], None, None, Some("test\\.tmp$"), false);
-        assert!(m.should_output(&make_event("/tmp/test.txt", EventType::Create, 1, 0)));
-        assert!(!m.should_output(&make_event("/tmp/test.tmp", EventType::Create, 1, 0)));
-        assert!(m.should_output(&make_event("/tmp/foo.tmp", EventType::Delete, 1, 0)));
-        assert!(m.should_output(&make_event("/tmp/testXtmp", EventType::Create, 1, 0)));
-    }
 
     #[test]
     fn test_should_output_combined_filters() {
@@ -2013,93 +1922,6 @@ mod tests {
         assert!(m.is_path_in_scope(Path::new("/tmp/file")));
         assert!(m.is_path_in_scope(Path::new("/var/log/syslog")));
         assert!(!m.is_path_in_scope(Path::new("/etc/passwd")));
-    }
-
-    #[test]
-    #[cfg(never)]
-    fn test_should_output_exclude_pipe_multiple() {
-        // --exclude '.*\.tmp$|.*\.log$' → excludes both .tmp and .log
-        let m = make_monitor_exclude(Some(".*\\.tmp$|.*\\.log$"), None, false, false);
-        assert!(!m.should_output(&make_event("/tmp/a.tmp", EventType::Create, 1, 0)));
-        assert!(!m.should_output(&make_event("/tmp/a.log", EventType::Create, 1, 0)));
-        assert!(m.should_output(&make_event("/tmp/a.txt", EventType::Create, 1, 0)));
-    }
-
-    #[test]
-    #[cfg(never)]
-    fn test_should_output_exclude_invert() {
-        // --exclude "!.*\.py$" → only .py files pass
-        let m = make_monitor_exclude(Some("!.*\\.py$"), None, false, false);
-        assert!(m.should_output(&make_event("/tmp/main.py", EventType::Create, 1, 0)));
-        assert!(!m.should_output(&make_event("/tmp/main.rs", EventType::Create, 1, 0)));
-        assert!(!m.should_output(&make_event("/tmp/a.txt", EventType::Create, 1, 0)));
-    }
-
-    #[test]
-    #[cfg(never)]
-    fn test_should_output_exclude_cmd_basic() {
-        // --exclude-cmd "rsync" → excludes rsync
-        let m = make_monitor_exclude(None, Some("rsync"), false, false);
-        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 1, 0, "rsync")));
-        assert!(m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 2, 0, "nginx")));
-    }
-
-    #[test]
-    #[cfg(never)]
-    fn test_should_output_exclude_cmd_pipe() {
-        // --exclude-cmd "rsync|apt" → excludes both
-        let m = make_monitor_exclude(None, Some("rsync|apt"), false, false);
-        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 1, 0, "rsync")));
-        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 2, 0, "apt")));
-        assert!(m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 3, 0, "nginx")));
-    }
-
-    #[test]
-    #[cfg(never)]
-    fn test_should_output_exclude_cmd_invert() {
-        // --exclude-cmd "!nginx" → only nginx passes
-        let m = make_monitor_exclude(None, Some("!nginx"), false, false);
-        assert!(m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 1, 0, "nginx")));
-        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 2, 0, "rsync")));
-        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 3, 0, "apt")));
-    }
-
-    #[test]
-    #[cfg(never)]
-    fn test_should_output_exclude_cmd_invert_multi() {
-        // --exclude-cmd "!nginx|python" → only nginx and python pass
-        let m = make_monitor_exclude(None, Some("!nginx|python"), false, false);
-        assert!(m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 1, 0, "nginx")));
-        assert!(m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 2, 0, "python")));
-        assert!(!m.should_output(&make_event_cmd("/tmp/a", EventType::Create, 3, 0, "rsync")));
-    }
-
-    #[test]
-    #[cfg(never)]
-    fn test_should_output_exclude_and_exclude_cmd() {
-        // --exclude '.*\.tmp$' --exclude-cmd "rsync" → both filters
-        let m = make_monitor_exclude(Some(".*\\.tmp$"), Some("rsync"), false, false);
-        assert!(!m.should_output(&make_event_cmd(
-            "/tmp/a.tmp",
-            EventType::Create,
-            1,
-            0,
-            "vim"
-        )));
-        assert!(!m.should_output(&make_event_cmd(
-            "/tmp/a.txt",
-            EventType::Create,
-            1,
-            0,
-            "rsync"
-        )));
-        assert!(m.should_output(&make_event_cmd(
-            "/tmp/a.txt",
-            EventType::Create,
-            2,
-            0,
-            "vim"
-        )));
     }
 
     #[test]
@@ -2190,19 +2012,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// Build a Monitor with custom exclude/exclude_cmd patterns for testing.
-    /*
-    fn make_monitor_exclude(
-        exclude: Option<&str>,
-        exclude_cmd: Option<&str>,
-        _exclude_invert: bool,
-        _exclude_cmd_invert: bool,
-    ) -> Monitor {
-        // exclude-related helper - commented out
-        unimplemented!()
-    }
-    */
-
     fn make_event(path: &str, event_type: EventType, pid: u32, size: u64) -> FileEvent {
         FileEvent {
             time: Utc::now(),
@@ -2218,26 +2027,7 @@ mod tests {
         }
     }
 
-    fn make_event_cmd(
-        path: &str,
-        event_type: EventType,
-        pid: u32,
-        size: u64,
-        cmd: &str,
-    ) -> FileEvent {
-        FileEvent {
-            time: Utc::now(),
-            event_type,
-            path: PathBuf::from(path),
-            pid,
-            cmd: cmd.to_string(),
-            user: "root".to_string(),
-            file_size: size,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
-        }
-    }
+
 
     // ---- Integration tests (require sudo) ----
 
@@ -2392,78 +2182,5 @@ mod tests {
         let _ = std::fs::remove_dir_all(&test_dir_for_cleanup);
     }
 
-    // ---- build_exclude_regex ----
 
-    #[test]
-    #[cfg(never)]
-    fn test_build_exclude_regex_none() {
-        let (re, inv) = filters::build_exclude_regex(None, "exclude").unwrap();
-        assert!(re.is_none());
-        assert!(!inv);
-    }
-
-    #[test]
-    #[cfg(never)]
-    fn test_build_exclude_regex_empty() {
-        let (re, inv) = filters::build_exclude_regex(Some(&[]), "exclude").unwrap();
-        assert!(re.is_none());
-        assert!(!inv);
-    }
-
-    #[test]
-    #[cfg(never)]
-    fn test_build_exclude_regex_single_pattern() {
-        let patterns = vec![".*\\.tmp$".to_string()];
-        let (re, inv) = filters::build_exclude_regex(Some(&patterns), "exclude").unwrap();
-        assert!(re.is_some());
-        assert!(!inv);
-        assert!(re.as_ref().unwrap().is_match("foo.tmp"));
-        assert!(!re.as_ref().unwrap().is_match("foo.txt"));
-    }
-
-    #[test]
-    #[cfg(never)]
-    fn test_build_exclude_regex_multiple_patterns() {
-        let patterns = vec![".*\\.tmp$".to_string(), ".*\\.log$".to_string()];
-        let (re, inv) = filters::build_exclude_regex(Some(&patterns), "exclude").unwrap();
-        assert!(re.is_some());
-        assert!(!inv);
-        assert!(re.as_ref().unwrap().is_match("foo.tmp"));
-        assert!(re.as_ref().unwrap().is_match("bar.log"));
-        assert!(!re.as_ref().unwrap().is_match("foo.txt"));
-    }
-
-    #[test]
-    #[cfg(never)]
-    fn test_build_exclude_regex_invert() {
-        let patterns = vec!["!.*\\.py$".to_string()];
-        let (re, inv) = filters::build_exclude_regex(Some(&patterns), "exclude").unwrap();
-        assert!(re.is_some());
-        assert!(inv);
-        assert!(re.as_ref().unwrap().is_match("foo.py"));
-        assert!(!re.as_ref().unwrap().is_match("foo.tmp"));
-    }
-
-    #[test]
-    #[cfg(never)]
-    fn test_build_exclude_regex_cmd() {
-        let patterns = vec!["rsync".to_string(), "apt".to_string()];
-        let (re, inv) = filters::build_exclude_regex(Some(&patterns), "--exclude-cmd").unwrap();
-        assert!(re.is_some());
-        assert!(!inv);
-        assert!(re.as_ref().unwrap().is_match("rsync"));
-        assert!(re.as_ref().unwrap().is_match("apt"));
-        assert!(!re.as_ref().unwrap().is_match("nginx"));
-    }
-
-    #[test]
-    #[cfg(never)]
-    fn test_build_exclude_regex_cmd_wildcard() {
-        let patterns = vec!["nginx.*".to_string()];
-        let (re, _inv) = filters::build_exclude_regex(Some(&patterns), "--exclude-cmd").unwrap();
-        assert!(re.is_some());
-        assert!(re.as_ref().unwrap().is_match("nginx"));
-        assert!(re.as_ref().unwrap().is_match("nginx-worker"));
-        assert!(!re.as_ref().unwrap().is_match("apache"));
-    }
 }

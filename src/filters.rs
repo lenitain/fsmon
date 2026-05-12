@@ -22,6 +22,7 @@ pub fn resolve_recursion_check(path: &Path) -> PathBuf {
 }
 
 /// Find the PathOptions matching a given event path.
+#[cfg(test)]
 pub fn get_matching_path_options<'a>(
     paths: &[PathBuf],
     entries: &'a [(PathBuf, PathOptions)],
@@ -117,6 +118,7 @@ pub fn matching_path<'a>(
 }
 
 /// Check if path is within monitoring scope.
+#[cfg(test)]
 pub fn is_path_in_scope(
     paths: &[PathBuf],
     entries: &[(PathBuf, PathOptions)],

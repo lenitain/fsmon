@@ -87,16 +87,6 @@ pub struct AddArgs {
     /// Size filter with operator (required: >=, >, <=, <, =). e.g. >1MB, >=500KB, <100MB, =0
     #[arg(short, long, value_name = "SIZE")]
     pub size: Option<String>,
-
-    /*
-    /// Path glob patterns to exclude (repeatable, prefix ! to invert)
-    #[arg(short, long, value_name = "PATTERN")]
-    pub exclude: Vec<String>,
-
-    /// Process names to exclude (glob, repeatable, prefix ! to invert)
-    #[arg(long, value_name = "PATTERN")]
-    pub exclude_cmd: Vec<String>,
-    */
 }
 
 #[derive(Parser)]
@@ -197,54 +187,7 @@ mod tests {
         assert_eq!(args.types, vec!["MODIFY", "CREATE"]);
     }
 
-    /*
-    #[test]
-    fn test_add_exclude_long() {
-        let args = AddArgs::try_parse_from(&[
-            "add", "--path", "/tmp",
-            "--exclude", "*.tmp", "--exclude", "*.log",
-        ]).unwrap();
-        // exclude field removed
-    }
 
-    #[test]
-    fn test_add_exclude_short() {
-        let args = AddArgs::try_parse_from(&[
-            "add", "--path", "/tmp",
-            "-e", "*.tmp", "-e", "*.log",
-        ]).unwrap();
-        // exclude field removed
-    }
-
-    #[test]
-    fn test_add_exclude_invert() {
-        let args = AddArgs::try_parse_from(&[
-            "add", "--path", "/tmp",
-            "--exclude", "!*.py",
-        ]).unwrap();
-        // exclude field removed
-    }
-
-    #[test]
-    fn test_add_exclude_cmd_long() {
-        let args = AddArgs::try_parse_from(&[
-            "add", "--path", "/tmp",
-            "--exclude-cmd", "rsync", "--exclude-cmd", "apt",
-        ]).unwrap();
-        // exclude_cmd field removed
-        assert!(args.cmd.is_none());
-    }
-
-    #[test]
-    fn test_add_exclude_cmd_short_not_applicable() {
-        let args = AddArgs::try_parse_from(&[
-            "add", "--path", "/tmp",
-            "--exclude-cmd", "nginx",
-        ]).unwrap();
-        // exclude_cmd field removed
-        assert!(args.cmd.is_none());
-    }
-    */
 
     #[test]
     fn test_add_recursive_short() {
