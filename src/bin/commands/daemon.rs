@@ -8,7 +8,7 @@ use std::path::Path;
 
 use super::parse_path_entries;
 
-pub async fn cmd_daemon() -> Result<()> {
+pub async fn cmd_daemon(debug: bool) -> Result<()> {
     // Acquire singleton lock first — only one daemon instance allowed
     let (uid, _gid) = fsmon::config::resolve_uid_gid();
     let _lock = DaemonLock::acquire(uid)?;
@@ -54,6 +54,7 @@ pub async fn cmd_daemon() -> Result<()> {
         Some(store_path),
         None,
         Some(socket_listener),
+        debug,
     )?;
 
     if !store.is_empty() {

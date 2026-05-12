@@ -20,7 +20,11 @@ struct Cli {
 pub enum Commands {
     /// Run the fsmon daemon (requires sudo for fanotify)
     #[command(about = help::about(HelpTopic::Daemon), long_about = help::long_about(HelpTopic::Daemon))]
-    Daemon,
+    Daemon {
+        /// Enable debug output (event matching, routing decisions)
+        #[arg(short, long)]
+        debug: bool,
+    },
 
     /// Add a path to the monitoring list
     #[command(about = help::about(HelpTopic::Add), long_about = help::long_about(HelpTopic::Add))]

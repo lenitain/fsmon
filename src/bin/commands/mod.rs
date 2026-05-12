@@ -25,7 +25,7 @@ pub use remove::cmd_remove;
 pub fn run(command: crate::Commands) -> Result<()> {
     use crate::Commands::*;
     match command {
-        Daemon => cmd_daemon().await_(),
+        Daemon { debug } => cmd_daemon(debug).await_(),
         Add(args) => cmd_add(args),
         Remove { cmd, path } => cmd_remove(cmd, path),
         Monitored => cmd_monitored(),

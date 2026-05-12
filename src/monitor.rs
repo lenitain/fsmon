@@ -66,6 +66,8 @@ pub struct Monitor {
     /// PID of the fsmon daemon itself — events from this PID (or its children)
     /// are discarded to prevent self-triggering feedback loops.
     daemon_pid: u32,
+    /// Enable debug output
+    debug: bool,
 }
 
 impl Monitor {
@@ -75,6 +77,7 @@ impl Monitor {
         monitored_path: Option<PathBuf>,
         buffer_size: Option<usize>,
         socket_listener: Option<tokio::net::UnixListener>,
+        debug: bool,
     ) -> Result<Self> {
         let buffer_size = buffer_size.unwrap_or(4096 * 8); // Default 32KB
 
@@ -136,6 +139,7 @@ impl Monitor {
             buffer_size,
 
             socket_listener,
+            debug,
             fs_groups: Vec::new(),
             path_to_group: HashMap::new(),
             dir_cache: DashMap::new(),
@@ -626,30 +630,30 @@ impl Monitor {
                             continue;
                         }
 
-                        // Debug: event arrived
-                        let event_cmd = get_process_info_by_pid(event_pid, &raw.path, self.proc_cache.as_ref());
-                        eprintln!("[DEBUG] Event on {} pid={} cmd={}", raw.path.display(), event_pid, event_cmd.cmd);
-
                         // Match event against ALL cmd groups for this path
                         let matching_entries = self.matching_opts_for_event(&raw.path);
-                        eprintln!("[DEBUG]   monitored_entries count={}, matching count={}",
-                            self.monitored_entries.len(), matching_entries.len());
-
+                        if self.debug && matching_entries.is_empty() {
+                            eprintln!("[debug] event on {} (pid={}): no matching entries",
+                                raw.path.display(), event_pid);
+                        }
                         for (_monitored_path, opts) in &matching_entries {
                             // Check process tree filter
                             let cmd_match = if let Some(ref cmd_name) = opts.cmd {
-                                let tree_ok = self.pid_tree.as_ref()
+                                let matched = self.pid_tree.as_ref()
                                     .map(|tree| is_descendant(tree, event_pid, cmd_name))
                                     .unwrap_or(false);
-                                eprintln!("[DEBUG]   checking cmd=\"{}\" against event_pid={}: is_descendant={}",
-                                    cmd_name, event_pid, tree_ok);
-                                tree_ok
+                                if self.debug {
+                                    eprintln!("[debug]   check cmd=\"{}\" pid={}: {}",
+                                        cmd_name, event_pid, if matched { "MATCH" } else { "SKIP" });
+                                }
+                                matched
                             } else {
-                                eprintln!("[DEBUG]   checking cmd=null(global): match=true");
+                                if self.debug {
+                                    eprintln!("[debug]   check cmd=global pid={}: MATCH", event_pid);
+                                }
                                 true
                             };
                             if !cmd_match {
-                                eprintln!("[DEBUG]     -> SKIPPED (no cmd match)");
                                 continue;
                             }
 
@@ -657,18 +661,17 @@ impl Monitor {
                                 let event = self.build_file_event_for_opts(raw, *event_type, opts);
 
                                 if !self.is_path_in_scope_for_opts(&event.path, opts) {
-                                    eprintln!("[DEBUG]     -> SKIPPED (not in scope for opts)");
                                     continue;
                                 }
 
                                 if self.should_output_for_opts(&event, opts) {
-                                    let cmd_name = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
-                                    eprintln!("[DEBUG]     -> WRITING to {}_log.jsonl", cmd_name);
+                                    if self.debug {
+                                        let cmd = opts.cmd.as_deref().unwrap_or("global");
+                                        eprintln!("[debug]   -> {}_log.jsonl", cmd);
+                                    }
                                     if let Err(e) = self.write_event_for_opts(&event, opts) {
                                         eprintln!("[ERROR] Failed to write event: {}", e);
                                     }
-                                } else {
-                                    eprintln!("[DEBUG]     -> SKIPPED (filtered by should_output)");
                                 }
                             }
                         }
@@ -1611,6 +1614,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         )
         .unwrap()
     }
@@ -1803,6 +1807,7 @@ mod tests {
             None,
             Some(1024),
             None,
+            false,
         );
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("at least 4096"));
@@ -1813,6 +1818,7 @@ mod tests {
             None,
             Some(2 * 1024 * 1024),
             None,
+            false,
         );
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("not exceed"));
@@ -1823,13 +1829,14 @@ mod tests {
             None,
             Some(65536),
             None,
+            false,
         );
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_add_path_and_remove_path() {
-        let mut m = Monitor::new(vec![], None, None, None, None).unwrap();
+        let mut m = Monitor::new(vec![], None, None, None, None, false).unwrap();
 
         let entry = PathEntry {
             cmd: None,
