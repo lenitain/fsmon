@@ -75,7 +75,7 @@ sudo fsmon daemon &
 fsmon add /var/www/myapp -r --types MODIFY --types CREATE --exclude '\.swp$' --cmd nginx --cmd vim
 
 # List what's being monitored
-fsmon managed
+fsmon monitored
 # {"path":"/var/www/myapp","recursive":true,"types":["MODIFY","CREATE"],"exclude":["\\.swp$"],"cmd":"nginx"}
 ```
 
@@ -151,12 +151,12 @@ kill %1
 | Purpose | Path | Format |
 |---|---|---|
 | Infrastructure config | `~/.config/fsmon/fsmon.toml` | TOML (optional — defaults without it) |
-| Path database | `~/.local/share/fsmon/managed.jsonl` | JSONL (one entry per line) |
+| Path database | `~/.local/share/fsmon/monitored.jsonl` | JSONL (one entry per line) |
 | Event logs | `~/.local/state/fsmon/*_log.jsonl` | JSONL (one event per line) |
 | Unix socket | `/tmp/fsmon-<UID>.sock` | TOML over stream |
 
 Both the store path and log directory are configurable in `~/.config/fsmon/fsmon.toml`
-(see `[managed].path` and `[logging].path`).
+(see `[monitored].path` and `[logging].path`).
 
 The daemon runs as root (via sudo) but resolves your original user's home directory
 via `SUDO_UID` + `getpwuid_r`, so it writes to `/home/<you>/...` not `/root/...`.
@@ -191,7 +191,7 @@ sudo fsmon daemon &        Start daemon in background
 ```
 
 Config:           `~/.config/fsmon/fsmon.toml` (optional — defaults without it)
-Managed paths:    `~/.local/share/fsmon/managed.jsonl`
+Monitored paths:    `~/.local/share/fsmon/monitored.jsonl`
 Log dir:          `~/.local/state/fsmon/`
 Socket:           `/tmp/fsmon-<UID>.sock`
 
@@ -236,12 +236,12 @@ fsmon remove <path>                        Remove a monitored path
 fsmon remove <path1> <path2> <path3>       Remove multiple paths at once
 ```
 
-### managed
+### monitored
 
 List all monitored paths with their filtering configuration.
 
 ```
-fsmon managed                              Show all monitored paths
+fsmon monitored                              Show all monitored paths
 ```
 
 ### query
@@ -304,11 +304,11 @@ find ~/.local/state/fsmon/ -name '*.jsonl' -mtime +30 -delete
 ### init
 
 Initialize fsmon data directories (chezmoi-style). Creates the log directory,
-managed data directory. Does NOT write a config file —
+monitored data directory. Does NOT write a config file —
 config is optional, defaults apply without it.
 
 ```
-fsmon init                                 Create log & managed directories
+fsmon init                                 Create log & monitored directories
 ```
 
 ### p2l
@@ -338,13 +338,13 @@ Config file is optional — defaults apply without it.
 ```toml
 # fsmon configuration file
 #
-# Infrastructure paths for fsmon. Monitored paths are managed separately
-# via 'fsmon add' / 'fsmon remove' and persisted in [managed].path.
+# Infrastructure paths for fsmon. Monitored paths are monitored separately
+# via 'fsmon add' / 'fsmon remove' and persisted in [monitored].path.
 # All paths support ~ expansion. <UID> is replaced with the numeric UID at runtime.
 
-[managed]
-# Path to the auto-managed monitored paths database.
-path = "~/.local/share/fsmon/managed.jsonl"
+[monitored]
+# Path to the auto-monitored monitored paths database.
+path = "~/.local/share/fsmon/monitored.jsonl"
 
 [logging]
 # Path to the event log directory (per-path *_log.jsonl files).
@@ -439,7 +439,7 @@ src/
 │       ├── daemon.rs           cmd_daemon: fanotify init, socket setup, Monitor::run()
 │       ├── add.rs              cmd_add: path normalization, store update, live socket
 │       ├── remove.rs           cmd_remove: store update, live socket
-│       ├── manage.rs           cmd_managed, cmd_list_managed_paths
+│       ├── manage.rs           cmd_monitored, cmd_list_monitored_paths
 │       ├── query.rs            cmd_query: time filter, Query::execute()
 │       ├── clean.rs            cmd_clean: time/size filter delegation
 │       ├── init_cd.rs          cmd_init, cmd_cd
@@ -447,7 +447,7 @@ src/
 ├── lib.rs             FileEvent, EventType, DaemonLock (singleton via flock)
 ├── clean.rs           Log cleanup engine: time/size trim, tail-offset, dry-run
 ├── config.rs          Infrastructure config, SUDO_UID home resolution
-├── managed.rs         Managed paths database (JSONL)
+├── monitored.rs         Monitored paths database (JSONL)
 ├── monitor.rs         Fanotify loop, socket handler, add/remove/event processing
 ├── fid_parser.rs      Low-level FID event parsing, two-pass path recovery
 ├── filters.rs         PathOptions, event/size/path/process filters, path matching

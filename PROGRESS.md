@@ -64,7 +64,7 @@ pub struct FileEvent {
 | `src/proc_cache.rs` | 处理 Fork/Exec/Exit，提供 `is_descendant(pid, cmd)` + `build_chain(pid)` |
 | `src/monitor.rs` | 集成 proc connector Fork/Exit；build_file_event 中查进程树 |
 | `src/filters.rs` | PathOptions 增加 `cmd: Option<String>`，`should_output` 查进程树 |
-| `src/managed.rs` | PathEntry 增加 `cmd_positive` 字段 |
+| `src/monitored.rs` | PathEntry 增加 `cmd_positive` 字段 |
 | `src/socket.rs` | SocketCmd 调整 |
 | `src/bin/fsmon.rs` | `--exclude-cmd` → `--cmd` |
 | `src/bin/commands/` | 传递新参数 |

@@ -12,16 +12,16 @@ use users::os::unix::UserExt;
 /// CLI (running as user) uses the user's own HOME directly.
 ///
 /// This file is manually edited. Only infrastructure paths go here.
-/// Monitored path entries are stored in the separate store file (see `[managed].path`).
+/// Monitored path entries are stored in the separate store file (see `[monitored].path`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub managed: ManagedConfig,
+    pub monitored: MonitoredConfig,
     pub logging: LoggingConfig,
     pub socket: SocketConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ManagedConfig {
+pub struct MonitoredConfig {
     pub path: PathBuf,
 }
 
@@ -142,8 +142,8 @@ pub fn expand_tilde(path: &Path, home: &str) -> PathBuf {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            managed: ManagedConfig {
-                path: PathBuf::from("~/.local/share/fsmon/managed.jsonl"),
+            monitored: MonitoredConfig {
+                path: PathBuf::from("~/.local/share/fsmon/monitored.jsonl"),
             },
             logging: LoggingConfig {
                 path: PathBuf::from("~/.local/state/fsmon"),
@@ -192,7 +192,7 @@ impl Config {
         let home = guess_home();
         let uid = resolve_uid();
 
-        self.managed.path = expand_tilde(&self.managed.path, &home);
+        self.monitored.path = expand_tilde(&self.monitored.path, &home);
         self.logging.path = expand_tilde(&self.logging.path, &home);
 
         let socket_str = self.socket.path.to_string_lossy().to_string();
@@ -204,7 +204,7 @@ impl Config {
     }
 
     /// Create the default data directories (chezmoi-style init).
-    /// Creates log dir and managed data dir. Config file is optional.
+    /// Creates log dir and monitored data dir. Config file is optional.
     pub fn init_dirs() -> Result<()> {
         let config_path = Self::path();
         let using_defaults = !config_path.exists();
@@ -216,11 +216,11 @@ impl Config {
         };
         cfg.resolve_paths()?;
 
-        let managed_dir = cfg
-            .managed
+        let monitored_dir = cfg
+            .monitored
             .path
             .parent()
-            .context("Managed file path has no parent")?
+            .context("Monitored file path has no parent")?
             .to_path_buf();
 
         fs::create_dir_all(&cfg.logging.path).with_context(|| {
@@ -229,19 +229,19 @@ impl Config {
                 cfg.logging.path.display()
             )
         })?;
-        fs::create_dir_all(&managed_dir).with_context(|| {
+        fs::create_dir_all(&monitored_dir).with_context(|| {
             format!(
-                "Failed to create managed directory: {}",
-                managed_dir.display()
+                "Failed to create monitored directory: {}",
+                monitored_dir.display()
             )
         })?;
 
         // Chown to original user
         chown_to_original_user(&cfg.logging.path);
-        chown_to_original_user(&managed_dir);
+        chown_to_original_user(&monitored_dir);
 
         eprintln!("Created log directory:  {}", cfg.logging.path.display());
-        eprintln!("Created managed directory: {}", managed_dir.display());
+        eprintln!("Created monitored directory: {}", monitored_dir.display());
         if using_defaults {
             eprintln!(
                 "(config file is optional \u{2014} defaults apply without {})",
@@ -301,8 +301,8 @@ mod tests {
         with_isolated_home(|_| {
             let cfg = Config::load().unwrap();
             assert_eq!(
-                cfg.managed.path.to_string_lossy(),
-                "~/.local/share/fsmon/managed.jsonl"
+                cfg.monitored.path.to_string_lossy(),
+                "~/.local/share/fsmon/monitored.jsonl"
             );
             assert_eq!(cfg.logging.path.to_string_lossy(), "~/.local/state/fsmon");
             assert_eq!(cfg.socket.path.to_string_lossy(), "/tmp/fsmon-<UID>.sock");
@@ -315,8 +315,8 @@ mod tests {
             // Write a config file
             let config_path = Config::path();
             fs::create_dir_all(config_path.parent().unwrap()).unwrap();
-            let content = r#"[managed]
-path = "/custom/managed.jsonl"
+            let content = r#"[monitored]
+path = "/custom/monitored.jsonl"
 
 [logging]
 path = "/custom/logs"
@@ -327,7 +327,7 @@ path = "/tmp/custom.sock"
             fs::write(&config_path, content).unwrap();
 
             let cfg = Config::load().unwrap();
-            assert_eq!(cfg.managed.path, PathBuf::from("/custom/managed.jsonl"));
+            assert_eq!(cfg.monitored.path, PathBuf::from("/custom/monitored.jsonl"));
             assert_eq!(cfg.logging.path, PathBuf::from("/custom/logs"));
             assert_eq!(cfg.socket.path, PathBuf::from("/tmp/custom.sock"));
         });
@@ -357,9 +357,9 @@ path = "/tmp/custom.sock"
 
             let home_str = home.to_string_lossy();
             assert!(
-                cfg.managed.path.to_string_lossy().starts_with(&*home_str),
-                "managed.path should start with home dir: {} vs {}",
-                cfg.managed.path.display(),
+                cfg.monitored.path.to_string_lossy().starts_with(&*home_str),
+                "monitored.path should start with home dir: {} vs {}",
+                cfg.monitored.path.display(),
                 home_str
             );
             assert!(
@@ -410,11 +410,11 @@ path = "/tmp/custom.sock"
             Config::init_dirs().unwrap();
 
             let log_dir = home.join(".local/state/fsmon");
-            let managed_dir = home.join(".local/share/fsmon");
+            let monitored_dir = home.join(".local/share/fsmon");
             let config_dir = home.join(".config/fsmon");
 
             assert!(log_dir.exists(), "log dir should exist");
-            assert!(managed_dir.exists(), "managed dir should exist");
+            assert!(monitored_dir.exists(), "monitored dir should exist");
             assert!(
                 !config_dir.exists(),
                 "config dir should NOT be created by init"
@@ -428,8 +428,8 @@ path = "/tmp/custom.sock"
             let config_path = Config::path();
             fs::create_dir_all(config_path.parent().unwrap()).unwrap();
             // Write config with default paths
-            fs::write(&config_path, r#"[managed]
-path = "~/.local/share/fsmon/managed.jsonl"
+            fs::write(&config_path, r#"[monitored]
+path = "~/.local/share/fsmon/monitored.jsonl"
 
 [logging]
 path = "~/.local/state/fsmon"
@@ -441,9 +441,9 @@ path = "/tmp/fsmon-<UID>.sock"
             Config::init_dirs().unwrap();
 
             let log_dir = home.join(".local/state/fsmon");
-            let managed_dir = home.join(".local/share/fsmon");
+            let monitored_dir = home.join(".local/share/fsmon");
             assert!(log_dir.exists(), "log dir should exist");
-            assert!(managed_dir.exists(), "managed dir should exist");
+            assert!(monitored_dir.exists(), "monitored dir should exist");
         });
     }
 
@@ -453,10 +453,10 @@ path = "/tmp/fsmon-<UID>.sock"
             let config_path = Config::path();
             fs::create_dir_all(config_path.parent().unwrap()).unwrap();
             let custom_log = home.join("my_logs");
-            let custom_managed_dir = home.join("my_data");
-            let _custom_managed_file = custom_managed_dir.join("paths.jsonl");
+            let custom_monitored_dir = home.join("my_data");
+            let _custom_monitored_file = custom_monitored_dir.join("paths.jsonl");
             let content = format!(
-                r#"[managed]
+                r#"[monitored]
 path = "{}/my_data/paths.jsonl"
 
 [logging]
@@ -473,7 +473,7 @@ path = "/tmp/test.sock"
             Config::init_dirs().unwrap();
 
             assert!(custom_log.exists(), "custom log dir should exist");
-            assert!(custom_managed_dir.exists(), "custom managed dir should exist");
+            assert!(custom_monitored_dir.exists(), "custom monitored dir should exist");
         });
     }
 

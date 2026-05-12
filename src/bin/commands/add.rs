@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 use fsmon::config::Config;
-use fsmon::managed::{Managed, PathEntry};
+use fsmon::monitored::{Monitored, PathEntry};
 use fsmon::socket::{self, SocketCmd};
 use path_clean::PathClean;
 use std::path::PathBuf;
@@ -63,7 +63,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         None
     };
 
-    let mut store = Managed::load(&cfg.managed.path)?;
+    let mut store = Monitored::load(&cfg.monitored.path)?;
 
     // Check for duplicates if path is specified
     if let Some(ref path) = path {
@@ -145,7 +145,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     };
 
     store.add_entry(entry.clone());
-    store.save(&cfg.managed.path)?;
+    store.save(&cfg.monitored.path)?;
 
     // Try live update via socket (non-fatal if fails)
     let socket_path = cfg.socket.path.clone();
@@ -165,21 +165,21 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
 
     match result {
         Ok(resp) if resp.ok => {
-            println!("Entry added into managed: ");
+            println!("Entry added into monitored: ");
         }
         Ok(resp) => {
             if resp.error_kind == Some(fsmon::socket::ErrorKind::Permanent) {
-                let mut store = Managed::load(&cfg.managed.path)?;
+                let mut store = Monitored::load(&cfg.monitored.path)?;
                 store.remove_entry(&entry.path, entry.cmd.as_deref());
-                store.save(&cfg.managed.path)?;
+                store.save(&cfg.monitored.path)?;
                 eprintln!("Error: {}", resp.error.unwrap_or_default());
             } else {
-                println!("Entry added into managed: ");
+                println!("Entry added into monitored: ");
                 eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
             }
         }
         Err(_) => {
-            println!("Entry added into managed: ");
+            println!("Entry added into monitored: ");
             eprintln!("Daemon is not running — will be monitored after daemon restart.");
         }
     }

@@ -24,8 +24,8 @@ use tokio::signal::unix::{SignalKind, signal};
 use crate::dir_cache;
 use crate::proc_cache::{self, ProcCache, ProcInfo, PidTree, build_chain, is_descendant, snapshot_process_tree, new_pid_tree};
 use crate::socket::{SocketCmd, SocketResp};
-use crate::managed::PathEntry;
-use crate::managed::Managed;
+use crate::monitored::PathEntry;
+use crate::monitored::Monitored;
 use crate::utils::{format_size, get_process_info_by_pid, parse_size_filter};
 use crate::filters::{self, PathOptions};
 use crate::fid_parser::{FanFd, FsGroup, read_fid_events_dashmap, mask_to_event_types,
@@ -40,7 +40,7 @@ pub struct Monitor {
     canonical_paths: Vec<PathBuf>,
     path_options: HashMap<PathBuf, PathOptions>,
     log_dir: Option<PathBuf>,
-    managed_path: Option<PathBuf>,
+    monitored_path: Option<PathBuf>,
     proc_cache: Option<ProcCache>,
     pid_tree: Option<PidTree>,
     file_size_cache: LruCache<PathBuf, u64>,
@@ -67,7 +67,7 @@ impl Monitor {
     pub fn new(
         paths_and_options: Vec<(PathBuf, PathOptions)>,
         log_dir: Option<PathBuf>,
-        managed_path: Option<PathBuf>,
+        monitored_path: Option<PathBuf>,
         buffer_size: Option<usize>,
         socket_listener: Option<tokio::net::UnixListener>,
     ) -> Result<Self> {
@@ -109,7 +109,7 @@ impl Monitor {
             canonical_paths: Vec::new(),
             path_options,
             log_dir,
-            managed_path,
+            monitored_path,
             proc_cache: None,
             pid_tree: None,
             file_size_cache: LruCache::new(NonZeroUsize::new(FILE_SIZE_CACHE_CAP).unwrap()),
@@ -564,7 +564,7 @@ impl Monitor {
                         let event_types = mask_to_event_types(raw.mask);
                         let matched_path = self.matching_path(&raw.path).cloned();
 
-                        // If a managed directory was deleted, move to pending_paths
+                        // If a monitored directory was deleted, move to pending_paths
                         let is_delete_self = event_types.contains(&EventType::DeleteSelf)
                             || event_types.contains(&EventType::MovedFrom);
                         let is_canonical_root = is_delete_self
@@ -865,7 +865,7 @@ impl Monitor {
 
     pub fn add_path(&mut self, entry: &PathEntry) -> Result<()> {
         // Normalize path: expand tilde + resolve symlinks/../.
-        // Managed the shortest canonical form so all comparisons work consistently.
+        // Monitored the shortest canonical form so all comparisons work consistently.
         let path = filters::resolve_recursion_check(&entry.path);
 
         if self.path_options.contains_key(&path) {
@@ -1205,11 +1205,11 @@ impl Monitor {
     }
 
     fn reload_config(&mut self) -> Result<()> {
-        let managed_path = self
-            .managed_path
+        let monitored_path = self
+            .monitored_path
             .as_ref()
             .context("No store path configured")?;
-        let store = Managed::load(managed_path)?;
+        let store = Monitored::load(monitored_path)?;
         // Add new paths that appear in store
         for entry in &store.entries {
             if !self.path_options.contains_key(&entry.path)

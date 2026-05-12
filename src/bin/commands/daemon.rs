@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use fsmon::config::Config;
 use fsmon::DaemonLock;
 use fsmon::monitor::Monitor;
-use fsmon::managed::Managed;
+use fsmon::monitored::Monitored;
 use std::fs;
 use std::path::Path;
 
@@ -17,11 +17,11 @@ pub async fn cmd_daemon() -> Result<()> {
     cfg.resolve_paths()?;
 
     eprintln!("Config loaded:");
-    eprintln!("  Managed path database:  {}", cfg.managed.path.display());
+    eprintln!("  Monitored path database:  {}", cfg.monitored.path.display());
     eprintln!("  Event logs:     {}", cfg.logging.path.display());
     eprintln!("  Command socket: {}", cfg.socket.path.display());
 
-    let store = Managed::load(&cfg.managed.path)?;
+    let store = Monitored::load(&cfg.monitored.path)?;
 
     let socket_path = cfg.socket.path.clone();
 
@@ -41,13 +41,13 @@ pub async fn cmd_daemon() -> Result<()> {
 
     // Chown store parent dir to the original user (daemon runs as root)
     let (uid, gid) = fsmon::config::resolve_uid_gid();
-    if let Some(parent) = cfg.managed.path.parent() {
+    if let Some(parent) = cfg.monitored.path.parent() {
         chown_path(parent, uid, gid);
     }
 
     let paths_and_options = parse_path_entries(&store.entries)?;
 
-    let store_path = cfg.managed.path.clone();
+    let store_path = cfg.monitored.path.clone();
     let mut monitor = Monitor::new(
         paths_and_options,
         Some(cfg.logging.path.clone()),
@@ -57,7 +57,7 @@ pub async fn cmd_daemon() -> Result<()> {
     )?;
 
     if !store.entries.is_empty() {
-        eprintln!("Managed paths ({}):", store.entries.len());
+        eprintln!("Monitored paths ({}):", store.entries.len());
         for entry in &store.entries {
             eprintln!("  {}", entry.path.display());
         }

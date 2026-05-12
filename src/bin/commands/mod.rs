@@ -1,6 +1,6 @@
 use anyhow::Result;
 use fsmon::filters::{self, PathOptions};
-use fsmon::managed::PathEntry;
+use fsmon::monitored::PathEntry;
 use fsmon::EventType;
 use fsmon::utils::parse_size_filter;
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ pub use clean::cmd_clean;
 pub use daemon::cmd_daemon;
 pub use init_cd::{cmd_cd, cmd_init};
 pub use p2l::cmd_p2l;
-pub use manage::{cmd_list_managed_paths, cmd_managed};
+pub use manage::{cmd_list_monitored_paths, cmd_monitored};
 pub use query::cmd_query;
 pub use remove::cmd_remove;
 
@@ -30,13 +30,13 @@ pub fn run(command: crate::Commands) -> Result<()> {
         Daemon => cmd_daemon().await_(),
         Add(args) => cmd_add(args),
         Remove { path, cmd } => cmd_remove(path, cmd),
-        Managed => cmd_managed(),
+        Monitored => cmd_monitored(),
         Query(args) => cmd_query(args).await_(),
         Clean(args) => cmd_clean(args).await_(),
         Init => cmd_init(),
         Cd => cmd_cd(),
         P2l { paths } => cmd_p2l(paths),
-        ListManagedPaths => cmd_list_managed_paths(),
+        ListMonitoredPaths => cmd_list_monitored_paths(),
     }
 }
 

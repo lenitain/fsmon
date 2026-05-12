@@ -5,7 +5,7 @@ pub enum HelpTopic {
     Cd,
     Add,
     Remove,
-    Managed,
+    Monitored,
     Query,
     Clean,
     P2l,
@@ -15,11 +15,11 @@ pub const fn about(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::Root => "Lightweight high-performance file change tracking tool",
         HelpTopic::Daemon => "Run the fsmon daemon (requires sudo for fanotify)",
-        HelpTopic::Init => "Initialize log and managed data directories",
+        HelpTopic::Init => "Initialize log and monitored data directories",
         HelpTopic::Cd => "Open a subshell in the log directory",
         HelpTopic::Add => "Add a path to the monitoring list",
         HelpTopic::Remove => "Remove one or more paths from the monitoring list",
-        HelpTopic::Managed => "List all monitored paths with their configuration",
+        HelpTopic::Monitored => "List all monitored paths with their configuration",
         HelpTopic::Query => "Query historical file change events from log files",
         HelpTopic::Clean => "Clean historical log files, retain by time or size",
         HelpTopic::P2l => "Path to log filename (pure hash, no I/O)",
@@ -40,24 +40,24 @@ Usage:
   sudo fsmon daemon &       Start daemon in background
   fsmon add /path --types all       All 14 event types
   fsmon add /path --exclude-cmd 'rsync'  Exclude by process name
-  fsmon managed                       List monitored paths
+  fsmon monitored                       List monitored paths
   fsmon query -t '>1h'    Query events from last hour
 
 Config:           ~/.config/fsmon/fsmon.toml
-Managed:          ~/.local/share/fsmon/managed.jsonl (configurable via [managed].path)
+Monitored:          ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
 Log dir:          ~/.local/state/fsmon/ (configurable via [logging].path)
 Socket:           /tmp/fsmon-<UID>.sock (configurable via [socket].path)"#
         }
         HelpTopic::Init => {
             r#"Initialize fsmon data directories (chezmoi-style).
 
-Creates the default log directory and managed data directory.
+Creates the default log directory and monitored data directory.
 Config file at ~/.config/fsmon/fsmon.toml is optional — defaults
 apply without it.
 
 Created:
   ~/.local/state/fsmon/     Event log storage
-  ~/.local/share/fsmon/     Managed paths database
+  ~/.local/share/fsmon/     Monitored paths database
 
 Examples:
   fsmon init"#
@@ -76,7 +76,7 @@ Examples:
             r#"Add a path to the monitoring list.
 
 The path is added immediately if the daemon is running, and persisted
-in the managed paths database for automatic monitoring on daemon restart.
+in the monitored paths database for automatic monitoring on daemon restart.
 
 No sudo needed — store is updated immediately.
 
@@ -113,14 +113,14 @@ Examples:
   fsmon remove /path/to/watch
   fsmon remove /path/a /path/b /path/c"#
         }
-        HelpTopic::Managed => {
+        HelpTopic::Monitored => {
             r#"List all monitored paths with their configuration.
 
 Displays each path with its recursive flag, event type filters,
 size threshold, path/cmd exclusion patterns.
 
 Examples:
-  fsmon managed"#
+  fsmon monitored"#
         }
         HelpTopic::Query => {
             r#"Query historical file change events from log files.
@@ -194,7 +194,7 @@ pub const fn after_help() -> &'static str {
     r#"Use 'fsmon <COMMAND> --help' for detailed help
 
 Setup (no sudo needed):
-  fsmon init                        Create log and managed directories
+  fsmon init                        Create log and monitored directories
   fsmon cd                          Open subshell in log directory
 
 Daemon (requires sudo):
@@ -205,7 +205,7 @@ Management (no sudo needed):
   fsmon add /path -r                Add path (recursive, default 8 types)
   fsmon add /path --exclude-cmd 'rsync'  Exclude by process name
   fsmon remove /path                Remove path(s), multiple paths OK
-  fsmon managed                     List monitored paths
+  fsmon monitored                     List monitored paths
   fsmon p2l /path1 /path2      Resolve log file path(s)
 
 Query (stdout JSONL, pipe to jq):
@@ -220,6 +220,6 @@ Clean (config defaults: keep_days=30, size=>=1GB):
   tail -500 ...                     Or direct Unix tools (slower)
 
 Config: ~/.config/fsmon/fsmon.toml (optional — defaults without it)
-Managed: ~/.local/share/fsmon/managed.jsonl (configurable via [managed].path)
+Monitored: ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
 Logs:   ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].path)"#
 }

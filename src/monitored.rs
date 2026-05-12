@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 
 use crate::config::chown_to_original_user;
 
-/// The monitored paths database, stored in the file configured by `[managed].path`.
+/// The monitored paths database, stored in the file configured by `[monitored].path`.
 ///
-/// Managed automatically by `fsmon add` and `fsmon remove`.
+/// Monitored automatically by `fsmon add` and `fsmon remove`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Managed {
+pub struct Monitored {
     /// Monitored path entries.
     pub entries: Vec<PathEntry>,
 }
@@ -35,15 +35,15 @@ pub struct PathEntry {
     pub exclude_cmd: Option<Vec<String>>,
 }
 
-impl Managed {
-    /// Load Managed from file (JSONL format). Returns empty Managed if file doesn't exist.
+impl Monitored {
+    /// Load Monitored from file (JSONL format). Returns empty Monitored if file doesn't exist.
     /// Automatically validates and repairs common consistency issues:
     ///   - Duplicate paths: keeps the last entry per unique path
     ///
     /// If repairs were made, callers should re-save the store.
     pub fn load(path: &Path) -> Result<Self> {
         if !path.exists() {
-            return Ok(Managed::default());
+            return Ok(Monitored::default());
         }
         let file = fs::File::open(path)
             .with_context(|| format!("Failed to open store {}", path.display()))?;
@@ -59,7 +59,7 @@ impl Managed {
                 .with_context(|| format!("Invalid JSON in store {}: {}", path.display(), trimmed))?;
             entries.push(entry);
         }
-        let mut store = Managed { entries };
+        let mut store = Monitored { entries };
         store.validate();
         Ok(store)
     }
@@ -87,9 +87,9 @@ impl Managed {
         repaired
     }
 
-    /// Save Managed to file (JSONL format). Creates parent directories if needed.
+    /// Save Monitored to file (JSONL format). Creates parent directories if needed.
     pub fn save(&self, path: &Path) -> Result<()> {
-        let parent = path.parent().context("Managed path has no parent")?;
+        let parent = path.parent().context("Monitored path has no parent")?;
         fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create directory {}", parent.display()))?;
         let mut file = fs::File::create(path)
@@ -146,28 +146,28 @@ mod tests {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
-            "fsmon_managed_test_{}_{}",
+            "fsmon_monitored_test_{}_{}",
             std::process::id(),
             n
         ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        let managed_path = dir.join("managed.jsonl");
-        (dir, managed_path)
+        let monitored_path = dir.join("monitored.jsonl");
+        (dir, monitored_path)
     }
 
     #[test]
     fn test_load_returns_default_when_no_file() {
         let (_dir, path) = temp_path();
         assert!(!path.exists());
-        let store = Managed::load(&path).unwrap();
+        let store = Monitored::load(&path).unwrap();
         assert!(store.entries.is_empty());
     }
 
     #[test]
     fn test_add_entry_uses_path_as_key() {
         let (_dir, path) = temp_path();
-        let mut store = Managed::load(&path).unwrap();
+        let mut store = Monitored::load(&path).unwrap();
 
         store.add_entry(PathEntry {
             path: PathBuf::from("/tmp"),
@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn test_add_entry_replaces_same_path() {
         let (_dir, path) = temp_path();
-        let mut store = Managed::load(&path).unwrap();
+        let mut store = Monitored::load(&path).unwrap();
 
         store.add_entry(PathEntry {
             path: PathBuf::from("/home"),
@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn test_remove_entry_by_path() {
         let (_dir, path) = temp_path();
-        let mut store = Managed::load(&path).unwrap();
+        let mut store = Monitored::load(&path).unwrap();
 
         store.add_entry(PathEntry {
             path: PathBuf::from("/tmp"),
@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn test_save_and_load_round_trip() {
         let (_dir, path) = temp_path();
-        let mut store = Managed::load(&path).unwrap();
+        let mut store = Monitored::load(&path).unwrap();
 
         store.add_entry(PathEntry {
             path: PathBuf::from("/srv"),
@@ -273,7 +273,7 @@ mod tests {
 
         store.save(&path).unwrap();
 
-        let loaded = Managed::load(&path).unwrap();
+        let loaded = Monitored::load(&path).unwrap();
         assert_eq!(loaded.entries.len(), 1);
         assert_eq!(loaded.entries[0].path, PathBuf::from("/srv"));
         assert_eq!(
@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn test_get_entry_by_path() {
         let (_dir, path) = temp_path();
-        let mut store = Managed::load(&path).unwrap();
+        let mut store = Monitored::load(&path).unwrap();
 
         store.add_entry(PathEntry {
             path: PathBuf::from("/data"),
@@ -307,14 +307,14 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_managed_defaults() {
-        let store = Managed::default();
+    fn test_empty_monitored_defaults() {
+        let store = Monitored::default();
         assert!(store.entries.is_empty());
     }
 
     #[test]
     fn test_validate_dedup_path_keeps_last() {
-        let mut store = Managed {
+        let mut store = Monitored {
             entries: vec![
                 PathEntry {
                     path: PathBuf::from("/home"),
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_validate_no_repair_on_unique_paths() {
-        let mut store = Managed {
+        let mut store = Monitored {
             entries: vec![
                 PathEntry {
                     path: PathBuf::from("/a"),
@@ -391,8 +391,8 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_clean_managed_unchanged() {
-        let mut store = Managed {
+    fn test_validate_clean_monitored_unchanged() {
+        let mut store = Monitored {
             entries: vec![
                 PathEntry {
                     path: PathBuf::from("/a"),
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn test_validate_empty_noop() {
-        let mut store = Managed::default();
+        let mut store = Monitored::default();
         assert!(!store.validate());
     }
 
@@ -435,7 +435,7 @@ mod tests {
         );
         let (_dir, path) = temp_path();
         fs::write(&path, jsonl).unwrap();
-        let store = Managed::load(&path).unwrap();
+        let store = Monitored::load(&path).unwrap();
         assert_eq!(store.entries.len(), 2);
         assert_eq!(store.entries[0].path, PathBuf::from("/tmp"));
         assert_eq!(store.entries[1].path, PathBuf::from("/home"));

@@ -8,7 +8,7 @@ pub mod monitor;
 pub mod proc_cache;
 pub mod query;
 pub mod socket;
-pub mod managed;
+pub mod monitored;
 pub mod utils;
 pub use utils::{SizeOp, SizeFilter, TimeFilter, parse_size_filter, parse_size, parse_time_filter};
 

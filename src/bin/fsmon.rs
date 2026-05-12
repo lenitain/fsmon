@@ -38,8 +38,8 @@ pub enum Commands {
     },
 
     /// List all monitored paths with their configuration
-    #[command(about = help::about(HelpTopic::Managed), long_about = help::long_about(HelpTopic::Managed))]
-    Managed,
+    #[command(about = help::about(HelpTopic::Monitored), long_about = help::long_about(HelpTopic::Monitored))]
+    Monitored,
 
     /// Query historical file change events
     #[command(about = help::about(HelpTopic::Query), long_about = help::long_about(HelpTopic::Query))]
@@ -49,7 +49,7 @@ pub enum Commands {
     #[command(about = help::about(HelpTopic::Clean), long_about = help::long_about(HelpTopic::Clean))]
     Clean(CleanArgs),
 
-    /// Initialize log and managed data directories
+    /// Initialize log and monitored data directories
     #[command(about = help::about(HelpTopic::Init), long_about = help::long_about(HelpTopic::Init))]
     Init,
 
@@ -64,9 +64,9 @@ pub enum Commands {
         paths: Vec<PathBuf>,
     },
 
-    /// List managed paths (one per line, for shell completion use)
+    /// List monitored paths (one per line, for shell completion use)
     #[command(hide = true)]
-    ListManagedPaths,
+    ListMonitoredPaths,
 }
 
 #[derive(Parser)]

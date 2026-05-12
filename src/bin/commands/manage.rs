@@ -1,11 +1,11 @@
 use anyhow::Result;
 use fsmon::config::Config;
-use fsmon::managed::Managed;
+use fsmon::monitored::Monitored;
 
-pub fn cmd_managed() -> Result<()> {
+pub fn cmd_monitored() -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
-    let entries = Managed::load(&cfg.managed.path)
+    let entries = Monitored::load(&cfg.monitored.path)
         .map(|s| s.entries)
         .unwrap_or_default();
 
@@ -16,11 +16,11 @@ pub fn cmd_managed() -> Result<()> {
     Ok(())
 }
 
-/// Output all managed paths (one per line) — used by shell completion scripts.
-pub fn cmd_list_managed_paths() -> Result<()> {
+/// Output all monitored paths (one per line) — used by shell completion scripts.
+pub fn cmd_list_monitored_paths() -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
-    let entries = Managed::load(&cfg.managed.path)
+    let entries = Monitored::load(&cfg.monitored.path)
         .map(|s| s.entries)
         .unwrap_or_default();
     for entry in &entries {

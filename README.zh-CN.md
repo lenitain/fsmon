@@ -74,7 +74,7 @@ sudo fsmon daemon &
 fsmon add --path /var/www/myapp -r --types MODIFY --types CREATE --exclude '\.swp$' --cmd nginx --cmd vim
 
 # 查看当前监控配置
-fsmon managed
+fsmon monitored
 # → /var/www/myapp
 # {"path":"/var/www/myapp","recursive":true,"types":["MODIFY","CREATE"],"exclude":["\\.swp$"],"cmd":"nginx"}
 ```
@@ -147,12 +147,12 @@ kill %1
 | 用途 | 路径 | 格式 |
 |---|---|---|
 | 基础设施配置 | `~/.config/fsmon/fsmon.toml` | TOML（可选 — 无配置文件时使用默认值） |
-| Managed 路径数据库 | `~/.local/share/fsmon/managed.jsonl` | JSONL（每行一条目） |
+| Monitored 路径数据库 | `~/.local/share/fsmon/monitored.jsonl` | JSONL（每行一条目） |
 | 事件日志 | `~/.local/state/fsmon/*_log.jsonl` | JSONL（每行一事件） |
 | Unix Socket | `/tmp/fsmon-<UID>.sock` | TOML over stream |
 
-managed 路径和日志目录均在 `~/.config/fsmon/fsmon.toml` 中可配
-（见 `[managed].path` 和 `[logging].path`）。
+monitored 路径和日志目录均在 `~/.config/fsmon/fsmon.toml` 中可配
+（见 `[monitored].path` 和 `[logging].path`）。
 
 daemon 通过 sudo 以 root 运行，但通过 `SUDO_UID` + `getpwuid_r` 解析原始用户的 home 目录，
 所以日志文件会写入 `/home/<你>/...` 而非 `/root/...`。
@@ -186,7 +186,7 @@ sudo fsmon daemon &        后台启动守护进程
 ```
 
 配置：            `~/.config/fsmon/fsmon.toml`（可选 — 无配置文件时使用默认值）
-监控路径数据库：  `~/.local/share/fsmon/managed.jsonl`
+监控路径数据库：  `~/.local/share/fsmon/monitored.jsonl`
 日志目录：        `~/.local/state/fsmon/`
 Socket：          `/tmp/fsmon-<UID>.sock`
 
@@ -228,12 +228,12 @@ fsmon remove <path>                        移除一个监控路径
 fsmon remove <path1> <path2> <path3>       一次移除多个路径
 ```
 
-### managed
+### monitored
 
 列出所有监控路径及其过滤配置。
 
 ```
-fsmon managed                              显示所有监控路径
+fsmon monitored                              显示所有监控路径
 ```
 
 ### query
@@ -298,11 +298,11 @@ find ~/.local/state/fsmon/ -name '*.jsonl' -mtime +30 -delete
 
 ### init
 
-初始化 fsmon 数据目录（chezmoi 风格）。创建日志目录和 managed 数据目录。
+初始化 fsmon 数据目录（chezmoi 风格）。创建日志目录和 monitored 数据目录。
 **不会**写入配置文件 — 配置文件是可选的，无配置时使用默认值。
 
 ```
-fsmon init                                 创建日志 & managed 目录
+fsmon init                                 创建日志 & monitored 目录
 ```
 
 ### p2l
@@ -332,12 +332,12 @@ ls                                         查看日志文件
 ```toml
 # fsmon 配置文件
 #
-# 基础设施路径。监控路径通过 'fsmon add' / 'fsmon remove' 管理，存储在 [managed].path 中。
+# 基础设施路径。监控路径通过 'fsmon add' / 'fsmon remove' 管理，存储在 [monitored].path 中。
 # 所有路径支持 ~ 展开。<UID> 在运行时替换为实际 UID。
 
-[managed]
+[monitored]
 # 自动管理的监控路径数据库。
-path = "~/.local/share/fsmon/managed.jsonl"
+path = "~/.local/share/fsmon/monitored.jsonl"
 
 [logging]
 # 事件日志目录（按路径哈希命名的文件）。
@@ -429,7 +429,7 @@ src/
 │       ├── daemon.rs           cmd_daemon: fanotify 初始化, socket 设置, Monitor::run()
 │       ├── add.rs              cmd_add: 路径标准化, store 更新, socket 热更新
 │       ├── remove.rs           cmd_remove: store 更新, socket 热更新
-│       ├── manage.rs           cmd_managed, cmd_list_managed_paths
+│       ├── manage.rs           cmd_monitored, cmd_list_monitored_paths
 │       ├── query.rs            cmd_query: 时间过滤, Query::execute()
 │       ├── clean.rs            cmd_clean: 时间/大小过滤委托
 │       ├── init_cd.rs          cmd_init, cmd_cd
@@ -437,7 +437,7 @@ src/
 ├── lib.rs             FileEvent, EventType, DaemonLock (flock 进程单例)
 ├── clean.rs           日志清理引擎: 时间/大小截断, 尾部偏移, 预览模式
 ├── config.rs          基础设施配置, SUDO_UID 用户解析
-├── managed.rs         Managed 路径数据库（JSONL 格式）
+├── monitored.rs         Monitored 路径数据库（JSONL 格式）
 ├── monitor.rs         Fanotify 循环, socket 处理, add/remove/事件处理
 ├── fid_parser.rs      FID 事件底层解析, 两阶段路径恢复
 ├── filters.rs         PathOptions, 事件/大小/路径/进程过滤, 路径匹配

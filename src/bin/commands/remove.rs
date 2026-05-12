@@ -1,6 +1,6 @@
 use anyhow::Result;
 use fsmon::config::Config;
-use fsmon::managed::Managed;
+use fsmon::monitored::Monitored;
 use fsmon::socket::{self, SocketCmd};
 use std::path::PathBuf;
 
@@ -8,7 +8,7 @@ pub fn cmd_remove(path: Option<PathBuf>, cmd: Option<String>) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
 
-    let mut store = Managed::load(&cfg.managed.path)?;
+    let mut store = Monitored::load(&cfg.monitored.path)?;
 
     // Match by (path, cmd) pair precisely
     let removed = if let Some(ref p) = path {
@@ -29,7 +29,7 @@ pub fn cmd_remove(path: Option<PathBuf>, cmd: Option<String>) -> Result<()> {
         eprintln!("Entry not found");
         return Ok(());
     }
-    store.save(&cfg.managed.path)?;
+    store.save(&cfg.monitored.path)?;
 
     // Try live update via socket (non-fatal if fails)
     let socket_path = cfg.socket.path.clone();
