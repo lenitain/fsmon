@@ -220,10 +220,13 @@ impl Monitor {
         snapshot_process_tree(&pid_tree);
         self.pid_tree = Some(pid_tree.clone());
 
-        // Compute combined event mask (OR of all per-path masks)
-        let combined_mask = self.path_options.values()
-            .map(path_mask_from_options)
+        // Compute combined event mask from ALL cmd groups (OR over all entries)
+        let combined_mask = self.monitored_entries.iter()
+            .map(|(_, opts)| path_mask_from_options(opts))
             .fold(0, |a, b| a | b);
+        if self.debug {
+            eprintln!("[debug] combined fanotify mask: {:#x}", combined_mask);
+        }
 
         // Collect canonical paths — non-existent paths go to pending_paths
         // and are removed from paths/path_options so add_path can work on retry
@@ -637,7 +640,7 @@ impl Monitor {
                                     size: opts.and_then(|o| o.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes)))),
                                     cmd: None,
                                 };
-                                if let Err(e) = self.remove_path(path) {
+                                if let Err(e) = self.remove_path(path, None) {
                                     eprintln!("[WARNING] Failed to remove deleted path '{}': {e}", path.display());
                                 }
                                 self.pending_paths.push((path.clone(), pending_entry));
@@ -1039,9 +1042,8 @@ impl Monitor {
         let is_new_path = !self.path_options.contains_key(&path);
         if !is_new_path {
             if self.debug {
-                eprintln!("[debug]   path already monitored (different cmd) — updating only monitored_entries");
+                eprintln!("[debug]   path already monitored — adding cmd and updating fanotify mask");
             }
-            // Other cmd group already set up fanotify — just add entry tracking
             let cmd = entry.cmd.as_deref().and_then(|c| {
                 if c == crate::monitored::CMD_GLOBAL { None } else { Some(c.to_string()) }
             });
@@ -1057,7 +1059,33 @@ impl Monitor {
                 cmd,
             };
             self.monitored_entries.push((path.clone(), opts.clone()));
-            self.path_options.insert(path.clone(), opts);
+            self.path_options.insert(path.clone(), opts.clone());
+
+            // Update fanotify mask: OR all entries for this path
+            let new_mask = self.monitored_entries.iter()
+                .filter(|(p, _)| p == &path)
+                .map(|(_, o)| path_mask_from_options(o))
+                .fold(0, |a, b| a | b);
+            if let Some(&gi) = self.path_to_group.get(&path) {
+                let fan_fd = &self.fs_groups[gi].fan_fd;
+                let canonical = self.paths.iter().position(|p| p == &path)
+                    .and_then(|i| self.canonical_paths.get(i).cloned())
+                    .unwrap_or_else(|| path.clone());
+                if self.fs_groups[gi].is_fs_mark {
+                    let _ = fanotify_mark(
+                        fan_fd,
+                        FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
+                        new_mask,
+                        AT_FDCWD,
+                        &canonical,
+                    );
+                } else {
+                    let _ = mark_directory(fan_fd, new_mask, &canonical);
+                }
+                if self.debug {
+                    eprintln!("[debug]   updated fanotify mask to {:#x}", new_mask);
+                }
+            }
             return Ok(());
         }
 
@@ -1258,62 +1286,97 @@ impl Monitor {
         Ok(())
     }
 
-    pub fn remove_path(&mut self, path: &Path) -> Result<()> {
+    pub fn remove_path(&mut self, path: &Path, cmd: Option<&str>) -> Result<()> {
         if self.debug {
-            eprintln!("[debug] remove_path: {}", path.display());
+            let label = cmd.unwrap_or("*");
+            eprintln!("[debug] remove_path: path={} cmd={}", path.display(), label);
         }
-        let pos = self
-            .paths
-            .iter()
-            .position(|p| p == path)
-            .ok_or_else(|| anyhow::anyhow!("Path not being monitored: {}", path.display()))?;
 
-        let canonical = &self.canonical_paths[pos];
-        let opts = self
-            .path_options
-            .get(path)
-            .ok_or_else(|| anyhow::anyhow!("No options for path: {}", path.display()))?;
-        let path_mask = path_mask_from_options(opts);
-
-        // Look up which FsGroup this path belongs to
-        if let Some(&gi) = self.path_to_group.get(path) {
-            // Remove fanotify mark
-            let fan_fd = &self.fs_groups[gi].fan_fd;
-            let _ = fanotify_mark(
-                fan_fd,
-                FAN_MARK_REMOVE | FAN_MARK_FILESYSTEM,
-                path_mask,
-                AT_FDCWD,
-                canonical,
-            );
-            let _ = fanotify_mark(fan_fd, FAN_MARK_REMOVE, path_mask, AT_FDCWD, canonical);
-
-            // Decrement ref_count; if zero, drop the entire FsGroup (close both fds)
-            self.fs_groups[gi].ref_count = self.fs_groups[gi].ref_count.saturating_sub(1);
-            if self.fs_groups[gi].ref_count == 0 {
-                self.fs_groups.remove(gi);
-                // Shift indices in path_to_group for groups after the removed one
-                self.path_to_group.iter_mut().for_each(|(_, idx)| {
-                    if *idx > gi {
-                        *idx -= 1;
-                    }
-                });
+        // Remove matching entries from monitored_entries
+        let before = self.monitored_entries.len();
+        self.monitored_entries.retain(|(p, o)| {
+            if p != path { return true; }
+            if let Some(c) = cmd {
+                o.cmd.as_deref() != Some(c)  // keep if cmd doesn't match
+            } else {
+                false  // remove all entries for this path
             }
+        });
+        let removed = before - self.monitored_entries.len();
+        if removed == 0 {
+            return Err(anyhow::anyhow!("Path not found: {}", path.display()));
         }
 
-        self.paths.remove(pos);
-        self.canonical_paths.remove(pos);
-        self.path_options.remove(path);
-        self.path_to_group.remove(path);
-        self.monitored_entries.retain(|(p, _)| p != path);
+        // Check if other cmd groups still monitor this path
+        let has_other = self.monitored_entries.iter().any(|(p, _)| p == path);
 
-        // Find which cmd groups this path belonged to
-        let cmds: Vec<&str> = self.monitored_entries.iter()
-            .filter(|(p, _)| p == path)
-            .map(|(_, o)| o.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL))
-            .collect();
-        let cmd_str = if cmds.is_empty() { "?" } else { cmds[0] };
-        println!("Removed path: [{}] {}", cmd_str, path.display());
+        if !has_other {
+            // No more entries for this path — tear down fanotify
+            if let Some(pos) = self.paths.iter().position(|p| p == path) {
+                let canonical = &self.canonical_paths[pos];
+                if let Some(opts) = self.path_options.get(path) {
+                    let path_mask = path_mask_from_options(opts);
+                    if let Some(&gi) = self.path_to_group.get(path) {
+                        let fan_fd = &self.fs_groups[gi].fan_fd;
+                        let _ = fanotify_mark(
+                            fan_fd,
+                            FAN_MARK_REMOVE | FAN_MARK_FILESYSTEM,
+                            path_mask,
+                            AT_FDCWD,
+                            canonical,
+                        );
+                        let _ = fanotify_mark(fan_fd, FAN_MARK_REMOVE, path_mask, AT_FDCWD, canonical);
+                        self.fs_groups[gi].ref_count = self.fs_groups[gi].ref_count.saturating_sub(1);
+                        if self.fs_groups[gi].ref_count == 0 {
+                            self.fs_groups.remove(gi);
+                            self.path_to_group.iter_mut().for_each(|(_, idx)| {
+                                if *idx > gi { *idx -= 1; }
+                            });
+                        }
+                    }
+                }
+                self.paths.remove(pos);
+                self.canonical_paths.remove(pos);
+                self.path_options.remove(path);
+                self.path_to_group.remove(path);
+            }
+            println!("Removed path: {}", path.display());
+        } else {
+            // Other cmd groups still exist — update fanotify mask
+            let new_mask = self.monitored_entries.iter()
+                .filter(|(p, _)| p == path)
+                .map(|(_, o)| path_mask_from_options(o))
+                .fold(0, |a, b| a | b);
+            if let Some(&gi) = self.path_to_group.get(path) {
+                let fan_fd = &self.fs_groups[gi].fan_fd;
+                let canonical = self.paths.iter().position(|p| p == &path)
+                    .and_then(|i| self.canonical_paths.get(i).cloned())
+                    .unwrap_or_else(|| path.to_path_buf());
+                if self.fs_groups[gi].is_fs_mark {
+                    let _ = fanotify_mark(
+                        fan_fd,
+                        FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
+                        new_mask,
+                        AT_FDCWD,
+                        &canonical,
+                    );
+                } else {
+                    let _ = mark_directory(fan_fd, new_mask, &canonical);
+                }
+            }
+            // Update path_options to reflect current mask
+            if let Some(any_opts) = self.monitored_entries.iter()
+                .find(|(p, _)| p == path)
+                .map(|(_, o)| o.clone())
+            {
+                self.path_options.insert(path.to_path_buf(), any_opts);
+            }
+            if self.debug {
+                eprintln!("[debug]   updated fanotify mask to {:#x} (other cmd groups remain)", new_mask);
+            }
+            let label = cmd.unwrap_or("?");
+            println!("Removed [{}] from {}", label, path.display());
+        }
         Ok(())
     }
 
@@ -1340,7 +1403,7 @@ impl Monitor {
                 let has_other_cmds = self.monitored_entries.iter().any(|(p, _)| p == &path);
                 if !has_other_cmds {
                     // No other cmd groups for this path — full teardown + setup
-                    let _ = self.remove_path(&path);
+                    let _ = self.remove_path(&path, None);
                 }
                 // Rebuild fanotify mask: last seen mask stays via path_options
                 let entry = PathEntry {
@@ -1372,7 +1435,7 @@ impl Monitor {
                         return SocketResp::err("Missing 'path' field");
                     }
                 };
-                match self.remove_path(&path) {
+                match self.remove_path(&path, cmd.track_cmd.as_deref()) {
                     Ok(()) => {
                         SocketResp::ok()
                     }
@@ -1441,7 +1504,7 @@ impl Monitor {
         let current_paths: Vec<PathBuf> = self.paths.clone();
         for path in &current_paths {
             if !flat_entries.iter().any(|p| p.path == *path)
-                && let Err(e) = self.remove_path(path)
+                && let Err(e) = self.remove_path(path, None)
             {
                 eprintln!("Failed to remove path {} on reload: {e}", path.display());
             }
@@ -1950,7 +2013,7 @@ mod tests {
         assert!(!m.path_options.contains_key(Path::new("/tmp/test_add")));
 
         // remove_path on non-existent path (not in options)
-        let result = m.remove_path(Path::new("/nonexistent"));
+        let result = m.remove_path(Path::new("/nonexistent"), None);
         assert!(result.is_err());
     }
 
