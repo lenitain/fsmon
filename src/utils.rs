@@ -297,10 +297,18 @@ pub fn uid_to_username(uid: u32) -> Option<String> {
 }
 
 /// Convert a monitored path to a deterministic, fixed-length log filename.
+/// Resolve log filename from cmd name.
+/// `None` → `"null_log.jsonl"`, `Some("openclaw")` → `"openclaw_log.jsonl"`.
+pub fn cmd_to_log_name(cmd: Option<&str>) -> String {
+    let name = cmd.unwrap_or("null");
+    format!("{}_log.jsonl", name)
+}
+
+/// Resolve log filename from a monitored path (FNV-1a hash based).
+/// Superseded by `cmd_to_log_name` — kept for backward compat.
 ///
 /// Uses FNV-1a 64-bit hash (stable across runs, no dependencies) to avoid
 /// the 255-byte filename limit that the old escape-based encoding could exceed.
-/// Use `fsmon p2l <PATH>` to resolve the hashed log filename.
 ///
 /// Examples:
 /// - `/tmp/foo`          → `a1b2c3d4e5f6a7b8_log.jsonl`

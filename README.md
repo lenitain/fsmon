@@ -316,16 +316,7 @@ config is optional, defaults apply without it.
 fsmon init                                 Create log & monitored directories
 ```
 
-### p2l
 
-Path to log filename — pure hash computation, no I/O. Resolve a monitored path
-to its log file path for piping or tailing.
-
-```
-fsmon p2l /path                            Resolve log file path
-tail -f "$(fsmon p2l /path)"               Tail events for a path
-fsmon p2l /path1 /path2 /path3             Multiple paths, one per line
-```
 
 ### cd
 
@@ -448,7 +439,7 @@ src/
 │       ├── query.rs            cmd_query: time filter, Query::execute()
 │       ├── clean.rs            cmd_clean: time/size filter delegation
 │       ├── init_cd.rs          cmd_init, cmd_cd
-│       └── p2l.rs              cmd_p2l: path→log filename hash resolve
+
 ├── lib.rs             FileEvent, EventType, DaemonLock (singleton via flock)
 ├── clean.rs           Log cleanup engine: time/size trim, tail-offset, dry-run
 ├── config.rs          Infrastructure config, SUDO_UID home resolution

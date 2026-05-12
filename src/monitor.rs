@@ -1330,11 +1330,10 @@ impl Monitor {
             Some(d) => d,
             None => return Ok(()),
         };
-        // Resolve the monitored root path from the event path for log file naming
-        let matched_path = self.matching_path(&event.path)
-            .cloned()
-            .unwrap_or_else(|| event.path.clone());
-        let log_path = log_dir.join(crate::utils::path_to_log_name(&matched_path));
+        // Resolve which cmd group this event belongs to for log file naming
+        let opts = self.get_matching_path_options(&event.path);
+        let cmd_name = opts.and_then(|o| o.cmd.as_deref());
+        let log_path = log_dir.join(crate::utils::cmd_to_log_name(cmd_name));
         let is_new = !log_path.exists();
         let mut file = OpenOptions::new()
             .create(true)

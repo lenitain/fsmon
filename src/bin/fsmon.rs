@@ -57,13 +57,6 @@ pub enum Commands {
     #[command(about = help::about(HelpTopic::Cd), long_about = help::long_about(HelpTopic::Cd))]
     Cd,
 
-    /// Resolve the log file path for one or more paths
-    #[command(about = help::about(HelpTopic::P2l), long_about = help::long_about(HelpTopic::P2l))]
-    P2l {
-        /// Path(s) to resolve. Multiple paths can be specified.
-        paths: Vec<PathBuf>,
-    },
-
     /// List monitored paths (one per line, for shell completion use)
     #[command(hide = true)]
     ListMonitoredPaths,

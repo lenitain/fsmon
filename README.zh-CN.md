@@ -309,16 +309,7 @@ find ~/.local/state/fsmon/ -name '*.jsonl' -mtime +30 -delete
 fsmon init                                 创建日志 & monitored 目录
 ```
 
-### p2l
 
-路径转日志文件名 — 纯哈希计算，无 I/O。将受监控路径解析为日志文件路径，
-方便管道和 tail。
-
-```
-fsmon p2l /path                             解析日志文件路径
-tail -f "$(fsmon p2l /path)"                实时查看某路径事件
-fsmon p2l /path1 /path2 /path3              多路径，每行一个
-```
 
 ### cd
 
@@ -437,7 +428,7 @@ src/
 │       ├── query.rs            cmd_query: 时间过滤, Query::execute()
 │       ├── clean.rs            cmd_clean: 时间/大小过滤委托
 │       ├── init_cd.rs          cmd_init, cmd_cd
-│       └── p2l.rs              cmd_p2l: 路径→日志文件名的哈希计算
+
 ├── lib.rs             FileEvent, EventType, DaemonLock (flock 进程单例)
 ├── clean.rs           日志清理引擎: 时间/大小截断, 尾部偏移, 预览模式
 ├── config.rs          基础设施配置, SUDO_UID 用户解析
