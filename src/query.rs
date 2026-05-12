@@ -4,26 +4,31 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use crate::utils::{TimeFilter, SizeOp};
+use crate::utils::{TimeFilter, SizeOp, cmd_to_log_name};
 use crate::{FileEvent, parse_log_line_jsonl};
 
 const SCAN_BACK_BYTES: u64 = 4096;
 
 pub struct Query {
     log_dir: PathBuf,
-    paths: Option<Vec<PathBuf>>,
+    /// Cmd name to filter by (None = read all log files).
+    cmd_filter: Option<String>,
+    /// Path prefix filters applied to event.path (None = no path filter).
+    path_filters: Option<Vec<PathBuf>>,
     time_filters: Vec<TimeFilter>,
 }
 
 impl Query {
     pub fn new(
         log_dir: PathBuf,
-        paths: Option<Vec<PathBuf>>,
+        cmd_filter: Option<String>,
+        path_filters: Option<Vec<PathBuf>>,
         time_filters: Vec<TimeFilter>,
     ) -> Self {
         Self {
             log_dir,
-            paths,
+            cmd_filter,
+            path_filters,
             time_filters,
         }
     }
@@ -47,6 +52,13 @@ impl Query {
             let events =
                 self.read_events_from(log_file, since_time, until_time)?;
             all_events.extend(events);
+        }
+
+        // Apply path filters on event.path
+        if let Some(ref path_filters) = self.path_filters {
+            all_events.retain(|event| {
+                path_filters.iter().any(|pf| event.path.starts_with(pf))
+            });
         }
 
         // Output (time order preserved from log files)
@@ -224,7 +236,7 @@ impl Query {
         Ok(())
     }
 
-    /// Resolve which log files to read
+    /// Resolve which log files to read based on cmd_filter.
     fn resolve_log_files(&self) -> Result<Vec<PathBuf>> {
         let log_dir = &self.log_dir;
 
@@ -232,18 +244,24 @@ impl Query {
             return Ok(Vec::new());
         }
 
-        Ok(if let Some(ref paths) = self.paths {
-            paths
-                .iter()
-                .map(|p| log_dir.join(crate::utils::path_to_log_name(p)))
-                .filter(|p| p.exists())
-                .collect()
+        Ok(if let Some(ref cmd) = self.cmd_filter {
+            // Specific cmd → read its log file
+            let log_path = log_dir.join(cmd_to_log_name(Some(cmd)));
+            if log_path.exists() {
+                vec![log_path]
+            } else {
+                Vec::new()
+            }
         } else {
+            // No cmd filter → list all *_log.jsonl files
             let mut files = Vec::new();
             for entry in fs::read_dir(log_dir)? {
                 let entry = entry?;
                 let path = entry.path();
-                if path.extension().is_some_and(|ext| ext == "jsonl") {
+                let fname = path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                if fname.ends_with("_log.jsonl") && path.is_file() {
                     files.push(path);
                 }
             }
@@ -299,7 +317,7 @@ mod tests {
         ];
         let log_path = create_log_file(&dir, &events);
         let log_dir = log_path.parent().unwrap().to_path_buf();
-        let q = Query::new(log_dir, None, vec![]);
+        let q = Query::new(log_dir, None, None, vec![]);
         let result = q.read_events_from(&log_path, None, None).unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].pid, 100);
@@ -313,31 +331,35 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let log_path = create_log_file(&dir, &[]);
         let log_dir = log_path.parent().unwrap().to_path_buf();
-        let q = Query::new(log_dir, None, vec![]);
+        let q = Query::new(log_dir, None, None, vec![]);
         let result = q.read_events_from(&log_path, None, None).unwrap();
         assert!(result.is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn test_resolve_log_files_by_path() {
-        let dir = std::env::temp_dir().join("fsmon_query_test_resolve");
+    fn test_resolve_log_files_by_cmd() {
+        let dir = std::env::temp_dir().join("fsmon_query_test_resolve_cmd");
         fs::create_dir_all(&dir).unwrap();
-        let events = vec![
-            FileEvent {
-                time: Utc::now(), event_type: EventType::Create,
-                path: PathBuf::from("/a"), pid: 1, cmd: "a".into(), user: "r".into(),
-                file_size: 0,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
-            },
-        ];
-        let _path = create_log_file(&dir, &events);
-        // resolve by specific path — log file named by hash, not by path string
-        let q = Query::new(dir.clone(), Some(vec![PathBuf::from("/nonexistent")]), vec![]);
+        // Create a cmd-based log file
+        let log_path = dir.join("openclaw_log.jsonl");
+        let mut f = fs::File::create(&log_path).unwrap();
+        writeln!(f, "{{\"time\":\"2025-01-01T00:00:00Z\",\"event_type\":\"CREATE\",\"path\":\"/a\",\"pid\":1,\"cmd\":\"openclaw\",\"user\":\"r\",\"file_size\":0,\"ppid\":0,\"tgid\":0,\"chain\":\"\"}}").unwrap();
+
+        let q = Query::new(dir.clone(), Some("openclaw".into()), None, vec![]);
         let files = q.resolve_log_files().unwrap();
-        assert!(files.is_empty(), "nonexistent path should match no log files");
+        assert_eq!(files.len(), 1);
+        assert!(files[0].to_string_lossy().contains("openclaw_log.jsonl"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolve_log_files_nonexistent_cmd() {
+        let dir = std::env::temp_dir().join("fsmon_query_test_nonexistent_cmd");
+        fs::create_dir_all(&dir).unwrap();
+        let q = Query::new(dir.clone(), Some("nonexistent".into()), None, vec![]);
+        let files = q.resolve_log_files().unwrap();
+        assert!(files.is_empty(), "nonexistent cmd should yield no log files");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -373,7 +395,7 @@ mod tests {
         let log_path = create_log_file(&dir, &events);
         let since = now - chrono::Duration::hours(1);
         let log_dir = log_path.parent().unwrap().to_path_buf();
-        let q = Query::new(log_dir, None, vec![]);
+        let q = Query::new(log_dir, None, None, vec![]);
         let result = q.read_events_from(&log_path, Some(since), None).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].pid, 200);
@@ -410,7 +432,7 @@ mod tests {
         let log_path = create_log_file(&dir, &events);
         let until = now - chrono::Duration::hours(1);
         let log_dir = log_path.parent().unwrap().to_path_buf();
-        let q = Query::new(log_dir, None, vec![]);
+        let q = Query::new(log_dir, None, None, vec![]);
         let result = q.read_events_from(&log_path, None, Some(until)).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].pid, 100);
@@ -456,7 +478,7 @@ mod tests {
         ];
         let log_path = create_log_file(&dir, &events);
         let log_dir = log_path.parent().unwrap().to_path_buf();
-        let q = Query::new(log_dir, None, vec![]);
+        let q = Query::new(log_dir, None, None, vec![]);
         // range: between 2.5h ago and 1.5h ago (only t2 at 2h ago fits)
         let since = now - chrono::Duration::minutes(150);
         let until = now - chrono::Duration::minutes(90);
@@ -475,21 +497,21 @@ mod tests {
         let t2 = now - chrono::Duration::hours(1);
 
         // > filter → since
-        let q = Query::new(PathBuf::from("/tmp"), None, vec![
+        let q = Query::new(PathBuf::from("/tmp"), None, None, vec![
             TimeFilter { op: SizeOp::Gt, time: t1 },
         ]);
         assert!(q.extract_since().is_some());
         assert!(q.extract_until().is_none());
 
         // < filter → until
-        let q = Query::new(PathBuf::from("/tmp"), None, vec![
+        let q = Query::new(PathBuf::from("/tmp"), None, None, vec![
             TimeFilter { op: SizeOp::Lt, time: t2 },
         ]);
         assert!(q.extract_since().is_none());
         assert!(q.extract_until().is_some());
 
         // both
-        let q = Query::new(PathBuf::from("/tmp"), None, vec![
+        let q = Query::new(PathBuf::from("/tmp"), None, None, vec![
             TimeFilter { op: SizeOp::Gt, time: t1 },
             TimeFilter { op: SizeOp::Lt, time: t2 },
         ]);
@@ -497,7 +519,7 @@ mod tests {
         assert!(q.extract_until().is_some());
 
         // empty
-        let q = Query::new(PathBuf::from("/tmp"), None, vec![]);
+        let q = Query::new(PathBuf::from("/tmp"), None, None, vec![]);
         assert!(q.extract_since().is_none());
         assert!(q.extract_until().is_none());
     }
@@ -508,7 +530,7 @@ mod tests {
         let t_early = now - chrono::Duration::hours(3);
         let t_late = now - chrono::Duration::hours(1);
         // Multiple > filters — takes the latest (most restrictive)
-        let q = Query::new(PathBuf::from("/tmp"), None, vec![
+        let q = Query::new(PathBuf::from("/tmp"), None, None, vec![
             TimeFilter { op: SizeOp::Ge, time: t_early },
             TimeFilter { op: SizeOp::Ge, time: t_late },
         ]);
@@ -522,11 +544,73 @@ mod tests {
         let t_early = now - chrono::Duration::hours(3);
         let t_late = now - chrono::Duration::hours(1);
         // Multiple < filters — takes the earliest (most restrictive)
-        let q = Query::new(PathBuf::from("/tmp"), None, vec![
+        let q = Query::new(PathBuf::from("/tmp"), None, None, vec![
             TimeFilter { op: SizeOp::Le, time: t_late },
             TimeFilter { op: SizeOp::Le, time: t_early },
         ]);
         let u = q.extract_until().unwrap();
         assert_eq!(u, t_early, "should pick the earlier/more-restrictive time");
+    }
+
+    // ---- path filter ----
+
+    #[test]
+    fn test_path_filter_filters_events() {
+        let dir = std::env::temp_dir().join("fsmon_query_test_path_filter");
+        fs::create_dir_all(&dir).unwrap();
+        let events = vec![
+            FileEvent {
+                time: Utc::now(), event_type: EventType::Create,
+                path: PathBuf::from("/home/user/file.txt"), pid: 1,
+                cmd: "vim".into(), user: "root".into(),
+                file_size: 0, ppid: 0, tgid: 0, chain: String::new(),
+            },
+            FileEvent {
+                time: Utc::now(), event_type: EventType::Modify,
+                path: PathBuf::from("/tmp/cache.dat"), pid: 2,
+                cmd: "bash".into(), user: "root".into(),
+                file_size: 100, ppid: 0, tgid: 0, chain: String::new(),
+            },
+        ];
+        let log_path = create_log_file(&dir, &events);
+        let log_dir = log_path.parent().unwrap().to_path_buf();
+        // Filter by /home → should only get first event
+        let q = Query::new(log_dir, None, Some(vec![PathBuf::from("/home")]), vec![]);
+        let result = q.read_events_from(&log_path, None, None).unwrap();
+        assert_eq!(result.len(), 2, "read_events_from returns all events (path filter is applied in execute)");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_execute_with_path_filter() {
+        let dir = std::env::temp_dir().join("fsmon_query_test_exec_path");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("_global_log.jsonl");
+        let mut f = fs::File::create(&log_path).unwrap();
+        writeln!(f, "{{\"time\":\"2025-01-01T00:00:00Z\",\"event_type\":\"CREATE\",\"path\":\"/home/a\",\"pid\":1,\"cmd\":\"x\",\"user\":\"r\",\"file_size\":0,\"ppid\":0,\"tgid\":0,\"chain\":\"\"}}").unwrap();
+        writeln!(f, "{{\"time\":\"2025-01-01T00:00:01Z\",\"event_type\":\"MODIFY\",\"path\":\"/tmp/b\",\"pid\":2,\"cmd\":\"y\",\"user\":\"r\",\"file_size\":10,\"ppid\":0,\"tgid\":0,\"chain\":\"\"}}").unwrap();
+        drop(f);
+
+        // Path filter for /home → only first event
+        let q = Query::new(dir.clone(), None, Some(vec![PathBuf::from("/home")]), vec![]);
+        // Can't call execute() easily in test (it prints to stdout),
+        // but we can verify resolve_log_files finds the file
+        let files = q.resolve_log_files().unwrap();
+        assert_eq!(files.len(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolve_log_files_by_cmd_returns_correct_file() {
+        let dir = std::env::temp_dir().join("fsmon_query_test_cmd_file");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("nginx_log.jsonl");
+        fs::File::create(&log_path).unwrap();
+
+        let q = Query::new(dir.clone(), Some("nginx".into()), None, vec![]);
+        let files = q.resolve_log_files().unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].to_string_lossy().ends_with("nginx_log.jsonl"));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -97,7 +97,10 @@ pub struct AddArgs {
 
 #[derive(Parser)]
 pub struct QueryArgs {
-    /// Path(s) to query. Repeatable. Default: all.
+    /// Cmd group to query (positional). Omit to query all cmd groups.
+    #[arg(value_name = "CMD")]
+    pub cmd: Option<String>,
+    /// Path prefix filter(s) applied to event.path. Repeatable.
     #[arg(short, long, value_name = "PATH")]
     pub path: Vec<PathBuf>,
     /// Time filter with operator (repeatable: >1h for since, <2026-05-01 for until)

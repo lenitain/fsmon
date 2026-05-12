@@ -9,7 +9,7 @@ pub async fn cmd_query(args: QueryArgs) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
 
-    let paths = if args.path.is_empty() {
+    let path_filters = if args.path.is_empty() {
         None
     } else {
         Some(args.path.clone())
@@ -22,7 +22,8 @@ pub async fn cmd_query(args: QueryArgs) -> Result<()> {
 
     let query = Query::new(
         cfg.logging.path,
-        paths,
+        args.cmd,
+        path_filters,
         time_filters,
     );
 

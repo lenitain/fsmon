@@ -138,8 +138,15 @@ Examples:
 
 Output is JSONL (one JSON object per line), pipe to jq for custom filtering.
 
+USAGE:
+  fsmon query [CMD] [OPTIONS]
+
+ARGS:
+  <CMD>   Cmd group to query (positional). Omit to query all cmd groups.
+          Log files are named by cmd: `{cmd}_log.jsonl` or `_global_log.jsonl`.
+
 Options:
-  -p, --path        Path(s) to query. Repeatable. Default: all.
+  -p, --path        Path prefix filter(s) applied to event.path. Repeatable.
   -t, --time        Time filter with operator (repeatable).
                     >1h  — events newer than 1 hour ago (since)
                     <2026-05-01 — events before a date (until)
@@ -152,10 +159,11 @@ Alternatively, query the log files directly with standard Unix tools:
 (Note: native fsmon query uses binary search and is significantly faster on large logs)
 
 Examples:
-  fsmon query -t '>1h'
-  fsmon query --path /tmp -t '>1h'
-  fsmon query -t '>1h' -t '<now' | jq 'select(.cmd == "nginx")'
-  fsmon query | jq -s 'sort_by(.file_size)[]'"#
+  fsmon query                        All events from all cmd groups
+  fsmon query openclaw               Events from openclaw cmd group
+  fsmon query --path /home           Events under /home (all cmd groups)
+  fsmon query nginx --path /var/www  Nginx events under /var/www
+  fsmon query -t '>1h'               Events from last hour"#
         }
         HelpTopic::Clean => {
             r#"Clean historical log files, retain by time or size.
