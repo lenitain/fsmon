@@ -104,25 +104,20 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     let exclude = if args.exclude.is_empty() { None } else { Some(args.exclude.clone()) };
     let exclude_cmd = if args.exclude_cmd.is_empty() { None } else { Some(args.exclude_cmd.clone()) };
     let recursive = if args.recursive { Some(true) } else { Some(false) };
-    let human_path = path.as_ref().map(|p| p.display().to_string())
-        .unwrap_or_else(|| process_name.as_ref().cloned().unwrap_or_default());
-    let human_desc = match (&path, &process_name) {
-        (Some(p), Some(c)) => format!("--path {} --cmd {}", p.display(), c),
-        (Some(p), None) => format!("--path {}", p.display()),
-        (None, Some(c)) => format!("--cmd {}", c),
-        (None, None) => String::new(),
-    };
-
-    store.add_entry(PathEntry {
-        path: path.clone().unwrap_or_else(|| PathBuf::from(&human_path)),
+    let entry = PathEntry {
+        path: path.clone().unwrap_or_else(|| PathBuf::from(
+            process_name.as_ref().map(|s| s.as_str()).unwrap_or("")),
+        ),
         recursive,
         types: types.clone(),
         size: size_val.clone(),
         exclude: exclude.clone(),
         exclude_cmd: exclude_cmd.clone(),
         cmd: process_name.clone(),
-    });
+    };
+    let entry_json = serde_json::to_string(&entry).expect("PathEntry serialization");
 
+    store.add_entry(entry.clone());
     store.save(&cfg.managed.path)?;
 
     // Try live update via socket (non-fatal if fails)
@@ -137,30 +132,30 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             size: size_val,
             exclude,
             exclude_cmd,
-            track_cmd: process_name.clone(),
+            track_cmd: process_name,
         },
     );
 
     match result {
         Ok(resp) if resp.ok => {
-            println!("Added: {}", human_desc);
+            println!("{}", entry_json);
             println!("Daemon updated live");
         }
         Ok(resp) => {
             let is_permanent = resp.error_kind == Some(fsmon::socket::ErrorKind::Permanent);
             if is_permanent {
                 let mut store = Managed::load(&cfg.managed.path)?;
-                store.remove_entry(Path::new(&human_path), process_name.as_deref().clone());
+                store.remove_entry(&entry.path, entry.cmd.as_deref());
                 store.save(&cfg.managed.path)?;
                 eprintln!("Error: {}", resp.error.unwrap_or_default());
             } else {
-                println!("Added: {}", human_desc);
+                println!("{}", entry_json);
                 eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
                 eprintln!("Will be monitored after daemon restart");
             }
         }
         Err(_) => {
-            println!("Added: {}", human_desc);
+            println!("{}", entry_json);
             eprintln!("Daemon not running — will be monitored after daemon restart.");
         }
     }
