@@ -1,9 +1,9 @@
 use anyhow::{Result, bail};
 use fsmon::config::Config;
-use std::path::{Path, PathBuf};
 use fsmon::managed::{Managed, PathEntry};
 use fsmon::socket::{self, SocketCmd};
 use path_clean::PathClean;
+use std::path::{Path, PathBuf};
 
 use crate::AddArgs;
 
@@ -33,14 +33,21 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             Ok(c) => c,
             Err(_) => {
                 if cleaned.components().count() == 0 {
-                    bail!("Invalid path (empty after normalization): {}", raw_path.display());
+                    bail!(
+                        "Invalid path (empty after normalization): {}",
+                        raw_path.display()
+                    );
                 }
                 eprintln!("[Note] path does not exist yet — will start monitoring when created.");
                 cleaned
             }
         };
 
-        let log_dir_canon = cfg.logging.path.canonicalize().unwrap_or_else(|_| cfg.logging.path.clone());
+        let log_dir_canon = cfg
+            .logging
+            .path
+            .canonicalize()
+            .unwrap_or_else(|_| cfg.logging.path.clone());
         if log_dir_canon.starts_with(&resolved) {
             bail!(
                 "Cannot monitor '{}': log directory '{}' is inside this path — \
@@ -91,23 +98,44 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         None
     } else if args.types.iter().any(|s| s.eq_ignore_ascii_case("all")) {
         Some(vec![
-            "ACCESS".into(), "MODIFY".into(), "CLOSE_WRITE".into(),
-            "CLOSE_NOWRITE".into(), "OPEN".into(), "OPEN_EXEC".into(),
-            "ATTRIB".into(), "CREATE".into(), "DELETE".into(),
-            "DELETE_SELF".into(), "MOVED_FROM".into(), "MOVED_TO".into(),
-            "MOVE_SELF".into(), "FS_ERROR".into(),
+            "ACCESS".into(),
+            "MODIFY".into(),
+            "CLOSE_WRITE".into(),
+            "CLOSE_NOWRITE".into(),
+            "OPEN".into(),
+            "OPEN_EXEC".into(),
+            "ATTRIB".into(),
+            "CREATE".into(),
+            "DELETE".into(),
+            "DELETE_SELF".into(),
+            "MOVED_FROM".into(),
+            "MOVED_TO".into(),
+            "MOVE_SELF".into(),
+            "FS_ERROR".into(),
         ])
     } else {
         Some(args.types.clone())
     };
     let size_val = args.size.clone();
-    let exclude = if args.exclude.is_empty() { None } else { Some(args.exclude.clone()) };
-    let exclude_cmd = if args.exclude_cmd.is_empty() { None } else { Some(args.exclude_cmd.clone()) };
-    let recursive = if args.recursive { Some(true) } else { Some(false) };
+    let exclude = if args.exclude.is_empty() {
+        None
+    } else {
+        Some(args.exclude.clone())
+    };
+    let exclude_cmd = if args.exclude_cmd.is_empty() {
+        None
+    } else {
+        Some(args.exclude_cmd.clone())
+    };
+    let recursive = if args.recursive {
+        Some(true)
+    } else {
+        Some(false)
+    };
     let entry = PathEntry {
-        path: path.clone().unwrap_or_else(|| PathBuf::from(
-            process_name.as_ref().map(|s| s.as_str()).unwrap_or("")),
-        ),
+        path: path.clone().unwrap_or_else(|| {
+            PathBuf::from(process_name.as_ref().map(|s| s.as_str()).unwrap_or(""))
+        }),
         recursive,
         types: types.clone(),
         size: size_val.clone(),
@@ -115,7 +143,6 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         exclude_cmd: exclude_cmd.clone(),
         cmd: process_name.clone(),
     };
-    let entry_json = serde_json::to_string(&entry).expect("PathEntry serialization");
 
     store.add_entry(entry.clone());
     store.save(&cfg.managed.path)?;
@@ -138,7 +165,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
 
     match result {
         Ok(resp) if resp.ok => {
-            println!("{}", entry_json);
+            println!("Entry added");
             println!("Daemon updated live");
         }
         Ok(resp) => {
@@ -149,13 +176,13 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
                 store.save(&cfg.managed.path)?;
                 eprintln!("Error: {}", resp.error.unwrap_or_default());
             } else {
-                println!("{}", entry_json);
+                println!("Entry added");
                 eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
                 eprintln!("Will be monitored after daemon restart");
             }
         }
         Err(_) => {
-            println!("{}", entry_json);
+            println!("Entry added");
             eprintln!("Daemon not running — will be monitored after daemon restart.");
         }
     }
