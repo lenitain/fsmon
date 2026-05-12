@@ -109,13 +109,13 @@ Every event includes `ppid` (parent PID) and `tgid` (thread group ID). When a `<
 
 ```bash
 # What did nginx do in the last hour?
-fsmon query -t '>1h' | jq 'select(.cmd == "nginx")'
+fsmon query _global -t '>1h' | jq 'select(.cmd == "nginx")'
 
 # What files were deleted?
-fsmon query | jq 'select(.event_type == "DELETE")'
+fsmon query _global | jq 'select(.event_type == "DELETE")'
 
 # Who made the biggest changes?
-fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
+fsmon query _global | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 
 # Real-time tail with filter (watch for deployments)
 tail -f ~/.local/state/fsmon/*_log.jsonl | jq 'select(.user == "deploy")'
@@ -127,7 +127,7 @@ No built-in `--pid`, `--cmd`, `--user`, `--sort` flags needed — `jq` does it a
 
 ```bash
 # Preview what would be deleted (config default: keep 30 days)
-fsmon clean --dry-run
+fsmon clean _global --dry-run
 
 # Actually clean with custom retention
 fsmon clean _global --time '>7d'
@@ -192,10 +192,10 @@ Add a path (optionally with process tracking) to the monitoring list. No sudo ne
 ```
 fsmon add nginx --path /var/www/myapp -r          Track nginx on /myapp recursively
 fsmon add nginx --path /var/www/myapp             Track nginx on /myapp (non-recursive)
-fsmon add --path /home -r                         Monitor all events on /home (global)
-fsmon add --path /home --types MODIFY --types CREATE  Filter by event types
-fsmon add --path /home --types all                     All 14 event types
-fsmon add --path /home --size '>=1MB'                  Minimum file size filter
+fsmon add _global --path /home -r                 Monitor all events on /home (global)
+fsmon add _global --path /home --types MODIFY --types CREATE  Filter by event types
+fsmon add _global --path /home --types all                     All 14 event types
+fsmon add _global --path /home --size '>=1MB'                  Minimum file size filter
 ```
 
 **Modes:**
@@ -203,21 +203,21 @@ fsmon add --path /home --size '>=1MB'                  Minimum file size filter
 | Mode | Example | Behavior |
 |------|---------|----------|
 | **CMD + --path** | `fsmon add openclaw --path /home` | Track openclaw (and descendants) on /home. Matching events include `chain`. |
-| **--path only** | `fsmon add --path /home` | All events on /home captured. Each event has `ppid`/`tgid`. |
+| **Global (_global)** | `fsmon add _global --path /home` | All events on /home captured. Each event has `ppid`/`tgid`. |
 
 - `<CMD>` (positional arg) enables **process tree tracking**: fork/exec children are automatically included. Matching events get a `chain` field (e.g., `"102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root"`).
 - Multiple entries with different `<CMD>` values can be added (OR logic per entry).
-- `--path` is required. Use `_global` as CMD for process-only global monitoring (uncommon).
+- `--path` is required. Use `_global` as CMD for global monitoring (all processes).
 
 ### remove
 
 Remove one or more paths from the monitoring list. No sudo needed.
 
 ```
-fsmon remove                    Remove entire global (null) cmd group
+fsmon remove _global            Remove entire global cmd group
 fsmon remove nginx              Remove entire nginx cmd group
 fsmon remove nginx --path /home  Remove /home from nginx group
-fsmon remove --path /home        Remove /home from global group
+fsmon remove _global --path /home  Remove /home from global group
 ```
 
 ### monitored
@@ -235,28 +235,28 @@ Each line is a JSON object with `cmd` and `paths` fields. Pipe to `jq` for filte
 Query historical events from log files. Output is JSONL — pipe to `jq` for filtering.
 
 ```
-fsmon query                     Query all log files
-fsmon query nginx               Query nginx log only
-fsmon query -t '>1h'            Events from last hour
-fsmon query -t '>=2026-05-01'   From absolute time
-fsmon query -t '<30m'           Events until 30 minutes ago
-fsmon query -t '>1h' -t '<now'  Time range (since + until)
-fsmon query --path /tmp         Filter events by path prefix
+fsmon query _global              Query global log
+fsmon query nginx                Query nginx log only
+fsmon query _global -t '>1h'     Events from last hour
+fsmon query _global -t '>=2026-05-01'  From absolute time
+fsmon query _global -t '<30m'    Events until 30 minutes ago
+fsmon query _global -t '>1h' -t '<now'  Time range (since + until)
+fsmon query _global --path /tmp  Filter events by path prefix
 ```
 
 Examples with `jq`:
 
 ```bash
 # Search by process (ppid/tgid always present)
-fsmon query | jq 'select(.ppid == 100)'
+fsmon query _global | jq 'select(.ppid == 100)'
 
 # Search by ancestry chain (only when --cmd was used on add)
-fsmon query | jq 'select(.chain != "") | .chain'
+fsmon query _global | jq 'select(.chain != "") | .chain'
 
 # Traditional cmd/user filtering
-fsmon query -t '>1h' | jq 'select(.cmd == "nginx")'
-fsmon query | jq 'select(.event_type == "DELETE")'
-fsmon query | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
+fsmon query _global -t '>1h' | jq 'select(.cmd == "nginx")'
+fsmon query _global | jq 'select(.event_type == "DELETE")'
+fsmon query _global | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 ```
 
 ### clean
@@ -371,7 +371,7 @@ When `<CMD>` was specified on add and the event matches: `chain` is also include
 }
 ```
 
-The `chain` format: `pid|cmd|user` per entry, `;`-separated from root (PID 1) down to the event process.
+The `chain` format: `pid|cmd|user` per entry, `;`-separated from the event process up to PID 1 (root).
 
 Old logs without `ppid`/`tgid`/`chain` are backward compatible — missing fields default to `0` or `""`.
 
