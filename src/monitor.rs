@@ -430,25 +430,43 @@ impl Monitor {
 
         println!("Starting file trace monitor...");
         if !self.canonical_paths.is_empty() {
-            println!(
-                "Active paths: {}",
-                self.canonical_paths
-                    .iter()
-                    .map(|p| p.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            );
-            println!("  FDs: {} file-descriptor(s)", fan_group_count);
+            println!("Active paths ({} fd(s)):", fan_group_count);
+            // Group by cmd for display
+            let mut by_cmd: std::collections::BTreeMap<Option<String>, Vec<&PathBuf>> = std::collections::BTreeMap::new();
+            for (i, path) in self.paths.iter().enumerate() {
+                let cmd = self.paths.get(i)
+                    .and_then(|p| self.path_options.get(p))
+                    .and_then(|o| o.cmd.clone());
+                by_cmd.entry(cmd).or_default().push(path);
+            }
+            for (cmd, paths) in &by_cmd {
+                let label = match cmd {
+                    Some(name) => format!("[{}]", name),
+                    None => "[global]".to_string(),
+                };
+                for path in paths {
+                    println!("  {} {}", label, path.display());
+                }
+            }
         }
         if !self.pending_paths.is_empty() {
-            println!(
-                "Pending paths (waiting for directory creation): {}",
-                self.pending_paths
-                    .iter()
-                    .map(|(p, _)| p.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            );
+            println!("Pending paths (waiting for directory creation):");
+            let mut by_cmd: std::collections::BTreeMap<Option<String>, Vec<&PathBuf>> = std::collections::BTreeMap::new();
+            for (path, entry) in &self.pending_paths {
+                let cmd = entry.cmd.as_deref().and_then(|c| {
+                    if c == crate::monitored::CMD_GLOBAL { None } else { Some(c.to_string()) }
+                });
+                by_cmd.entry(cmd).or_default().push(path);
+            }
+            for (cmd, paths) in &by_cmd {
+                let label = match cmd {
+                    Some(name) => format!("[{}]", name),
+                    None => "[global]".to_string(),
+                };
+                for path in paths {
+                    println!("  {} {}", label, path.display());
+                }
+            }
         }
 
         // Spawn one reader task per FsGroup (one per filesystem).

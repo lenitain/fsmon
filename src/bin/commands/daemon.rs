@@ -57,9 +57,16 @@ pub async fn cmd_daemon() -> Result<()> {
     )?;
 
     if !store.is_empty() {
-        eprintln!("Monitored paths ({}):", store.entry_count());
-        for entry in &store.flatten() {
-            eprintln!("  {}", entry.path.display());
+        for group in &store.groups {
+            let cmd_label = if group.cmd == fsmon::monitored::CMD_GLOBAL {
+                "[global]".to_string()
+            } else {
+                format!("[{}]", group.cmd)
+            };
+            eprintln!("  {} ({} path(s)):", cmd_label, group.paths.len());
+            for path in group.paths.keys() {
+                eprintln!("    {}", path.display());
+            }
         }
     }
 
