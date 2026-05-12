@@ -107,9 +107,9 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     let human_path = path.as_ref().map(|p| p.display().to_string())
         .unwrap_or_else(|| process_name.as_ref().cloned().unwrap_or_default());
     let human_desc = match (&path, &process_name) {
-        (Some(p), Some(c)) => format!("{} [cmd={}]", p.display(), c),
-        (Some(p), None) => p.display().to_string(),
-        (None, Some(c)) => format!("[cmd={}]", c),
+        (Some(p), Some(c)) => format!("--path {} --cmd {}", p.display(), c),
+        (Some(p), None) => format!("--path {}", p.display()),
+        (None, Some(c)) => format!("--cmd {}", c),
         (None, None) => String::new(),
     };
 
