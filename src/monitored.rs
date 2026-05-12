@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use crate::config::chown_to_original_user;
@@ -10,21 +10,17 @@ use crate::config::chown_to_original_user;
 /// Sentinel value for the global cmd group (no specific process).
 pub const CMD_GLOBAL: &str = "_global";
 
-fn default_cmd() -> String {
-    CMD_GLOBAL.to_string()
-}
-
 /// The monitored paths database, stored in the file configured by `[monitored].path`.
 ///
 /// Monitored automatically by `fsmon add` and `fsmon remove`.
 ///
 /// # JSONL Format (grouped by cmd)
-/// Each line groups paths under a common `cmd`:
+/// Each line must have a `cmd` field:
 /// ```json
 /// {"cmd":"bash","paths":{"/a":{"recursive":true},"/b":{"recursive":false,"types":["MODIFY"]}}}
 /// {"cmd":"_global","paths":{"/c":{"recursive":true}}}
 /// ```
-/// `cmd` is always present. Use `"_global"` for the global group (no specific process).
+/// Use `"_global"` for the global group (no specific process).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Monitored {
     /// Monitored path groups, each keyed by cmd.
@@ -35,7 +31,6 @@ pub struct Monitored {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CmdGroup {
     /// Process name for process-tree tracking. `"_global"` = match all processes.
-    #[serde(default = "default_cmd")]
     pub cmd: String,
     /// Map of path → per-path parameters.
     pub paths: BTreeMap<PathBuf, PathParams>,
@@ -90,63 +85,27 @@ impl From<&PathEntry> for PathParams {
 
 impl Monitored {
     /// Load Monitored from file (JSONL format). Returns empty Monitored if file doesn't exist.
-    /// Automatically validates and repairs common consistency issues.
-    ///
-    /// Handles migration from old flat-format and from old null-cmd format.
+    /// Each line must be a valid `CmdGroup` JSON with a `cmd` field.
     pub fn load(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Monitored::default());
         }
-        let content = fs::read_to_string(path)
-            .with_context(|| format!("Failed to read store {}", path.display()))?;
-
-        let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+        let file = fs::File::open(path)
+            .with_context(|| format!("Failed to open store {}", path.display()))?;
+        let reader = BufReader::new(file);
         let mut groups = Vec::new();
-        let mut needs_migration = false;
-
-        for trimmed in &lines {
-            match serde_json::from_str::<CmdGroup>(trimmed) {
-                Ok(group) => groups.push(group),
-                Err(_) => {
-                    // Not a CmdGroup — try old flat PathEntry format
-                    needs_migration = true;
-                    break;
-                }
+        for line in reader.lines() {
+            let line = line?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
             }
+            let group: CmdGroup = serde_json::from_str(trimmed)
+                .with_context(|| format!("Invalid JSON in store {}: {}", path.display(), trimmed))?;
+            groups.push(group);
         }
-
-        if needs_migration {
-            return Self::migrate_from_flat(&lines, path);
-        }
-
         let mut store = Monitored { groups };
         store.validate();
-        Ok(store)
-    }
-
-    /// Migrate old flat-format PathEntry lines to new grouped CmdGroup format.
-    fn migrate_from_flat(lines: &[&str], path: &Path) -> Result<Self> {
-        eprintln!("[migration] Converting monitored.jsonl to new grouped format...");
-        let mut old_entries = Vec::new();
-        for trimmed in lines {
-            match serde_json::from_str::<PathEntry>(trimmed) {
-                Ok(entry) => old_entries.push(entry),
-                Err(e) => {
-                    anyhow::bail!(
-                        "Failed to parse old-format entry in store {}: {} — {}.",
-                        path.display(), trimmed, e,
-                    );
-                }
-            }
-        }
-        let mut store = Monitored::default();
-        for entry in old_entries {
-            store.add_entry(entry);
-        }
-        store.validate();
-        if let Err(e) = store.save(path) {
-            eprintln!("[warning] Could not re-save migrated store: {e}");
-        }
         Ok(store)
     }
 
@@ -532,36 +491,30 @@ mod tests {
         assert_eq!(store.entry_count(), 3);
     }
 
-    /// Old format without cmd field defaults to `"_global"`.
+    /// Old format without cmd field should fail to load.
     #[test]
-    fn test_jsonl_old_no_cmd_defaults_to_global() {
+    fn test_jsonl_missing_cmd_field_fails() {
         let jsonl = concat!(
             r#"{"paths":{"/tmp":{"recursive":true}}}"#,
             "\n",
         );
         let (_dir, path) = temp_path();
         fs::write(&path, jsonl).unwrap();
-        let store = Monitored::load(&path).unwrap();
-        assert_eq!(store.groups.len(), 1);
-        assert_eq!(store.groups[0].cmd, "_global");
+        let result = Monitored::load(&path);
+        assert!(result.is_err(), "missing cmd field should fail");
     }
 
-    /// Old flat PathEntry format auto-migrates.
+    /// Old flat PathEntry format should fail to load.
     #[test]
-    fn test_jsonl_old_flat_format_auto_migrates() {
+    fn test_jsonl_old_flat_format_fails() {
         let jsonl = concat!(
-            r#"{"path":"/tmp","recursive":true,"extra_field":99}"#,
-            "\n",
-            r#"{"path":"/home","recursive":false}"#,
+            r#"{"path":"/tmp","recursive":true}"#,
             "\n",
         );
         let (_dir, path) = temp_path();
         fs::write(&path, jsonl).unwrap();
-        let store = Monitored::load(&path).unwrap();
-        assert_eq!(store.entry_count(), 2);
-        let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("\"cmd\":\"_global\""),
-            "migrated file should contain cmd:_global");
+        let result = Monitored::load(&path);
+        assert!(result.is_err(), "old flat format should fail");
     }
 
     #[test]
