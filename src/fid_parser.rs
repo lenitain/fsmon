@@ -167,7 +167,6 @@ pub fn read_fid_events_dashmap(
 // ---- Constants ----
 
 pub const FILE_SIZE_CACHE_CAP: usize = 10_000;
-pub const PROC_CONNECTOR_TIMEOUT_SECS: u64 = 2;
 
 /// Default mask: 8 core events (FS_ERROR excluded — only works with FS marks).
 /// Use --types all to get all 14 (FS_ERROR included, but only effective on FS marks).
@@ -395,7 +394,6 @@ mod tests {
     #[test]
     fn test_constants_are_positive() {
         assert!(FILE_SIZE_CACHE_CAP > 0, "FILE_SIZE_CACHE_CAP should be > 0");
-        assert!(PROC_CONNECTOR_TIMEOUT_SECS > 0, "PROC_CONNECTOR_TIMEOUT_SECS should be > 0");
         assert!(DEFAULT_EVENT_MASK > 0, "DEFAULT_EVENT_MASK should be > 0");
     }
 }
