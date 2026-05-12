@@ -1,10 +1,10 @@
 use anyhow::Result;
 use chrono::Utc;
+use fsmon::clean::clean_logs;
 use fsmon::config::Config;
 use fsmon::monitored::CMD_GLOBAL;
-use fsmon::utils::{parse_size_filter, SizeFilter};
-use fsmon::{SizeOp, parse_time_filter, TimeFilter, DEFAULT_KEEP_DAYS, DEFAULT_MAX_SIZE};
-use fsmon::clean::clean_logs;
+use fsmon::utils::{SizeFilter, parse_size_filter};
+use fsmon::{DEFAULT_KEEP_DAYS, DEFAULT_MAX_SIZE, SizeOp, TimeFilter, parse_time_filter};
 
 use crate::CleanArgs;
 
@@ -13,10 +13,9 @@ pub async fn cmd_clean(args: CleanArgs) -> Result<()> {
     cfg.resolve_paths()?;
 
     // CMD is required. Use '_global' for the global log.
-    let cmd = args.cmd.as_deref()
-        .ok_or_else(|| anyhow::anyhow!(
-            "CMD is required. Use '{}' for the global log.", CMD_GLOBAL
-        ))?;
+    let cmd = args.cmd.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("CMD is required. Use '{}' for the global log.", CMD_GLOBAL)
+    })?;
 
     // Time filter: CLI > config > default
     let time_filter: TimeFilter = if let Some(ref t) = args.time {

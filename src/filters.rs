@@ -49,8 +49,7 @@ pub fn get_matching_path_options<'a>(
                 if path.starts_with(canonical) {
                     return Some(opts);
                 }
-            } else if path == canonical.as_path() || path.parent() == Some(canonical.as_path())
-            {
+            } else if path == canonical.as_path() || path.parent() == Some(canonical.as_path()) {
                 return Some(opts);
             }
         }
@@ -59,10 +58,7 @@ pub fn get_matching_path_options<'a>(
 }
 
 /// Check whether an event should be output, given matching path options.
-pub fn should_output(
-    opts: Option<&PathOptions>,
-    event: &FileEvent,
-) -> bool {
+pub fn should_output(opts: Option<&PathOptions>, event: &FileEvent) -> bool {
     let opts = match opts {
         Some(o) => o,
         None => return true,
@@ -82,7 +78,9 @@ pub fn should_output(
             SizeOp::Le => event.file_size <= filter.bytes as u64,
             SizeOp::Eq => event.file_size == filter.bytes as u64,
         };
-        if !passes { return false; }
+        if !passes {
+            return false;
+        }
     }
 
     true
@@ -168,8 +166,14 @@ mod tests {
 
     #[test]
     fn test_should_output_no_opts() {
-        assert!(should_output(None, &make_event("/tmp/x", EventType::Create, 1, 0)));
-        assert!(should_output(None, &make_event("/tmp/y", EventType::Delete, 2, 999)));
+        assert!(should_output(
+            None,
+            &make_event("/tmp/x", EventType::Create, 1, 0)
+        ));
+        assert!(should_output(
+            None,
+            &make_event("/tmp/y", EventType::Delete, 2, 999)
+        ));
     }
 
     #[test]
@@ -180,61 +184,118 @@ mod tests {
             recursive: false,
             cmd: None,
         };
-        assert!(should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 0)));
-        assert!(should_output(Some(&opts), &make_event("/tmp/a", EventType::Delete, 1, 0)));
-        assert!(!should_output(Some(&opts), &make_event("/tmp/a", EventType::Modify, 1, 0)));
+        assert!(should_output(
+            Some(&opts),
+            &make_event("/tmp/a", EventType::Create, 1, 0)
+        ));
+        assert!(should_output(
+            Some(&opts),
+            &make_event("/tmp/a", EventType::Delete, 1, 0)
+        ));
+        assert!(!should_output(
+            Some(&opts),
+            &make_event("/tmp/a", EventType::Modify, 1, 0)
+        ));
     }
 
     #[test]
     fn test_should_output_size_filter_ge() {
         let opts = PathOptions {
-            size_filter: Some(SizeFilter { op: SizeOp::Ge, bytes: 1000 }),
+            size_filter: Some(SizeFilter {
+                op: SizeOp::Ge,
+                bytes: 1000,
+            }),
             event_types: None,
             recursive: false,
             cmd: None,
         };
-        assert!(should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 2000)));
-        assert!(should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 1000)));
-        assert!(!should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 500)));
+        assert!(should_output(
+            Some(&opts),
+            &make_event("/tmp/a", EventType::Create, 1, 2000)
+        ));
+        assert!(should_output(
+            Some(&opts),
+            &make_event("/tmp/a", EventType::Create, 1, 1000)
+        ));
+        assert!(!should_output(
+            Some(&opts),
+            &make_event("/tmp/a", EventType::Create, 1, 500)
+        ));
     }
 
     #[test]
     fn test_should_output_size_filter_lt() {
         let opts = PathOptions {
-            size_filter: Some(SizeFilter { op: SizeOp::Lt, bytes: 100 }),
+            size_filter: Some(SizeFilter {
+                op: SizeOp::Lt,
+                bytes: 100,
+            }),
             event_types: None,
             recursive: false,
             cmd: None,
         };
-        assert!(should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 50)));
-        assert!(!should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 100)));
-        assert!(!should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 200)));
+        assert!(should_output(
+            Some(&opts),
+            &make_event("/tmp/a", EventType::Create, 1, 50)
+        ));
+        assert!(!should_output(
+            Some(&opts),
+            &make_event("/tmp/a", EventType::Create, 1, 100)
+        ));
+        assert!(!should_output(
+            Some(&opts),
+            &make_event("/tmp/a", EventType::Create, 1, 200)
+        ));
     }
 
     #[test]
     fn test_should_output_size_filter_eq() {
         let opts = PathOptions {
-            size_filter: Some(SizeFilter { op: SizeOp::Eq, bytes: 100 }),
+            size_filter: Some(SizeFilter {
+                op: SizeOp::Eq,
+                bytes: 100,
+            }),
             event_types: None,
             recursive: false,
             cmd: None,
         };
-        assert!(should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 100)));
-        assert!(!should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 99)));
-        assert!(!should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 101)));
+        assert!(should_output(
+            Some(&opts),
+            &make_event("/tmp/a", EventType::Create, 1, 100)
+        ));
+        assert!(!should_output(
+            Some(&opts),
+            &make_event("/tmp/a", EventType::Create, 1, 99)
+        ));
+        assert!(!should_output(
+            Some(&opts),
+            &make_event("/tmp/a", EventType::Create, 1, 101)
+        ));
     }
 
     #[test]
     fn test_should_output_combined_filters() {
         let opts = PathOptions {
-            size_filter: Some(SizeFilter { op: SizeOp::Ge, bytes: 100 }),
+            size_filter: Some(SizeFilter {
+                op: SizeOp::Ge,
+                bytes: 100,
+            }),
             event_types: Some(vec![EventType::Create]),
             recursive: false,
             cmd: None,
         };
-        assert!(should_output(Some(&opts), &make_event("/tmp/data", EventType::Create, 1, 200)));
-        assert!(!should_output(Some(&opts), &make_event("/tmp/data", EventType::Delete, 1, 200)));
-        assert!(!should_output(Some(&opts), &make_event("/tmp/data", EventType::Create, 1, 50)));
+        assert!(should_output(
+            Some(&opts),
+            &make_event("/tmp/data", EventType::Create, 1, 200)
+        ));
+        assert!(!should_output(
+            Some(&opts),
+            &make_event("/tmp/data", EventType::Delete, 1, 200)
+        ));
+        assert!(!should_output(
+            Some(&opts),
+            &make_event("/tmp/data", EventType::Create, 1, 50)
+        ));
     }
 
     // ---- matching_path ----
@@ -264,7 +325,10 @@ mod tests {
 
     #[test]
     fn test_matching_path_direct_match() {
-        let paths = vec![PathBuf::from("/home/user/project"), PathBuf::from("/var/log")];
+        let paths = vec![
+            PathBuf::from("/home/user/project"),
+            PathBuf::from("/var/log"),
+        ];
         let canonical = paths.clone();
         let result = matching_path(&paths, &canonical, Path::new("/home/user/project"));
         assert_eq!(result, Some(&PathBuf::from("/home/user/project")));
@@ -272,9 +336,16 @@ mod tests {
 
     #[test]
     fn test_matching_path_recursive_prefix() {
-        let paths = vec![PathBuf::from("/home/user/project"), PathBuf::from("/var/log")];
+        let paths = vec![
+            PathBuf::from("/home/user/project"),
+            PathBuf::from("/var/log"),
+        ];
         let canonical = paths.clone();
-        let result = matching_path(&paths, &canonical, Path::new("/home/user/project/src/main.rs"));
+        let result = matching_path(
+            &paths,
+            &canonical,
+            Path::new("/home/user/project/src/main.rs"),
+        );
         assert_eq!(result, Some(&PathBuf::from("/home/user/project")));
     }
 
@@ -307,53 +378,129 @@ mod tests {
     #[test]
     fn test_is_path_in_scope_recursive() {
         let paths = vec![PathBuf::from("/tmp")];
-        let entries = vec![
-            (PathBuf::from("/tmp"), PathOptions {
-                size_filter: None, event_types: None,
-                recursive: true, cmd: None,
-            }),
-        ];
+        let entries = vec![(
+            PathBuf::from("/tmp"),
+            PathOptions {
+                size_filter: None,
+                event_types: None,
+                recursive: true,
+                cmd: None,
+            },
+        )];
         let canonical = paths.clone();
-        assert!(is_path_in_scope(&paths, &entries, &canonical, Path::new("/tmp")));
-        assert!(is_path_in_scope(&paths, &entries, &canonical, Path::new("/tmp/sub")));
-        assert!(is_path_in_scope(&paths, &entries, &canonical, Path::new("/tmp/sub/deep/file.txt")));
-        assert!(!is_path_in_scope(&paths, &entries, &canonical, Path::new("/var/log")));
-        assert!(!is_path_in_scope(&paths, &entries, &canonical, Path::new("/tmpfile")));
+        assert!(is_path_in_scope(
+            &paths,
+            &entries,
+            &canonical,
+            Path::new("/tmp")
+        ));
+        assert!(is_path_in_scope(
+            &paths,
+            &entries,
+            &canonical,
+            Path::new("/tmp/sub")
+        ));
+        assert!(is_path_in_scope(
+            &paths,
+            &entries,
+            &canonical,
+            Path::new("/tmp/sub/deep/file.txt")
+        ));
+        assert!(!is_path_in_scope(
+            &paths,
+            &entries,
+            &canonical,
+            Path::new("/var/log")
+        ));
+        assert!(!is_path_in_scope(
+            &paths,
+            &entries,
+            &canonical,
+            Path::new("/tmpfile")
+        ));
     }
 
     #[test]
     fn test_is_path_in_scope_non_recursive() {
         let paths = vec![PathBuf::from("/tmp")];
-        let entries = vec![
-            (PathBuf::from("/tmp"), PathOptions {
-                size_filter: None, event_types: None,
-                recursive: false, cmd: None,
-            }),
-        ];
+        let entries = vec![(
+            PathBuf::from("/tmp"),
+            PathOptions {
+                size_filter: None,
+                event_types: None,
+                recursive: false,
+                cmd: None,
+            },
+        )];
         let canonical = paths.clone();
-        assert!(is_path_in_scope(&paths, &entries, &canonical, Path::new("/tmp")));
-        assert!(is_path_in_scope(&paths, &entries, &canonical, Path::new("/tmp/file.txt")));
-        assert!(!is_path_in_scope(&paths, &entries, &canonical, Path::new("/tmp/sub/file.txt")));
-        assert!(!is_path_in_scope(&paths, &entries, &canonical, Path::new("/var/log")));
+        assert!(is_path_in_scope(
+            &paths,
+            &entries,
+            &canonical,
+            Path::new("/tmp")
+        ));
+        assert!(is_path_in_scope(
+            &paths,
+            &entries,
+            &canonical,
+            Path::new("/tmp/file.txt")
+        ));
+        assert!(!is_path_in_scope(
+            &paths,
+            &entries,
+            &canonical,
+            Path::new("/tmp/sub/file.txt")
+        ));
+        assert!(!is_path_in_scope(
+            &paths,
+            &entries,
+            &canonical,
+            Path::new("/var/log")
+        ));
     }
 
     #[test]
     fn test_is_path_in_scope_multiple_paths() {
         let paths = vec![PathBuf::from("/tmp"), PathBuf::from("/var/log")];
         let entries = vec![
-            (PathBuf::from("/tmp"), PathOptions {
-                size_filter: None, event_types: None,
-                recursive: true, cmd: None,
-            }),
-            (PathBuf::from("/var/log"), PathOptions {
-                size_filter: None, event_types: None,
-                recursive: true, cmd: None,
-            }),
+            (
+                PathBuf::from("/tmp"),
+                PathOptions {
+                    size_filter: None,
+                    event_types: None,
+                    recursive: true,
+                    cmd: None,
+                },
+            ),
+            (
+                PathBuf::from("/var/log"),
+                PathOptions {
+                    size_filter: None,
+                    event_types: None,
+                    recursive: true,
+                    cmd: None,
+                },
+            ),
         ];
         let canonical = paths.clone();
-        assert!(is_path_in_scope(&paths, &entries, &canonical, Path::new("/tmp/file")));
-        assert!(is_path_in_scope(&paths, &entries, &canonical, Path::new("/var/log/syslog")));
-        assert!(!is_path_in_scope(&paths, &entries, &canonical, Path::new("/etc/passwd")));
+        assert!(is_path_in_scope(
+            &paths,
+            &entries,
+            &canonical,
+            Path::new("/tmp/file")
+        ));
+        assert!(is_path_in_scope(
+            &paths,
+            &entries,
+            &canonical,
+            Path::new("/var/log/syslog")
+        ));
+        assert!(!is_path_in_scope(
+            &paths,
+            &entries,
+            &canonical,
+            Path::new("/etc/passwd")
+        ));
     }
 
     // ---- get_matching_path_options ----
@@ -361,56 +508,80 @@ mod tests {
     #[test]
     fn test_get_matching_path_options_recursive() {
         let paths = vec![PathBuf::from("/home")];
-        let entries = vec![
-            (PathBuf::from("/home"), PathOptions {
-                size_filter: None, event_types: None,
-                recursive: true, cmd: None,
-            }),
-        ];
+        let entries = vec![(
+            PathBuf::from("/home"),
+            PathOptions {
+                size_filter: None,
+                event_types: None,
+                recursive: true,
+                cmd: None,
+            },
+        )];
         let canonical = paths.clone();
-        let result = get_matching_path_options(&paths, &entries, &canonical, Path::new("/home/user/file.txt"));
+        let result = get_matching_path_options(
+            &paths,
+            &entries,
+            &canonical,
+            Path::new("/home/user/file.txt"),
+        );
         assert!(result.is_some());
     }
 
     #[test]
     fn test_get_matching_path_options_non_recursive_child() {
         let paths = vec![PathBuf::from("/var/log")];
-        let entries = vec![
-            (PathBuf::from("/var/log"), PathOptions {
-                size_filter: None, event_types: None,
-                recursive: false, cmd: None,
-            }),
-        ];
+        let entries = vec![(
+            PathBuf::from("/var/log"),
+            PathOptions {
+                size_filter: None,
+                event_types: None,
+                recursive: false,
+                cmd: None,
+            },
+        )];
         let canonical = paths.clone();
-        let result = get_matching_path_options(&paths, &entries, &canonical, Path::new("/var/log/messages"));
+        let result =
+            get_matching_path_options(&paths, &entries, &canonical, Path::new("/var/log/messages"));
         assert!(result.is_some());
     }
 
     #[test]
     fn test_get_matching_path_options_non_recursive_grandchild() {
         let paths = vec![PathBuf::from("/var/log")];
-        let entries = vec![
-            (PathBuf::from("/var/log"), PathOptions {
-                size_filter: None, event_types: None,
-                recursive: false, cmd: None,
-            }),
-        ];
+        let entries = vec![(
+            PathBuf::from("/var/log"),
+            PathOptions {
+                size_filter: None,
+                event_types: None,
+                recursive: false,
+                cmd: None,
+            },
+        )];
         let canonical = paths.clone();
-        let result = get_matching_path_options(&paths, &entries, &canonical, Path::new("/var/log/sub/messages"));
+        let result = get_matching_path_options(
+            &paths,
+            &entries,
+            &canonical,
+            Path::new("/var/log/sub/messages"),
+        );
         assert!(result.is_none());
     }
 
     #[test]
     fn test_get_matching_path_options_canonical_fallback() {
         let paths = vec![PathBuf::from("/symlink_target")];
-        let entries = vec![
-            (PathBuf::from("/symlink_target"), PathOptions {
-                size_filter: None, event_types: None,
-                recursive: true, cmd: None,
-            }),
-        ];
+        let entries = vec![(
+            PathBuf::from("/symlink_target"),
+            PathOptions {
+                size_filter: None,
+                event_types: None,
+                recursive: true,
+                cmd: None,
+            },
+        )];
         let canonical = vec![PathBuf::from("/real/path")];
-        let result = get_matching_path_options(&paths, &entries, &canonical, Path::new("/real/path/sub"));
+        let result =
+            get_matching_path_options(&paths, &entries, &canonical, Path::new("/real/path/sub"));
         assert!(result.is_some());
     }
 

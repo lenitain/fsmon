@@ -11,10 +11,9 @@ pub async fn cmd_query(args: QueryArgs) -> Result<()> {
     cfg.resolve_paths()?;
 
     // CMD is required. Use '_global' to query all global events.
-    let cmd = args.cmd.as_deref()
-        .ok_or_else(|| anyhow::anyhow!(
-            "CMD is required. Use '{}' for global events.", CMD_GLOBAL
-        ))?;
+    let cmd = args.cmd.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("CMD is required. Use '{}' for global events.", CMD_GLOBAL)
+    })?;
 
     let path_filters = if args.path.is_empty() {
         None
@@ -23,7 +22,9 @@ pub async fn cmd_query(args: QueryArgs) -> Result<()> {
     };
 
     // Parse time filters
-    let time_filters: Vec<TimeFilter> = args.time.iter()
+    let time_filters: Vec<TimeFilter> = args
+        .time
+        .iter()
         .map(|s| parse_time_filter(s))
         .collect::<Result<Vec<_>>>()?;
 

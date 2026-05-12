@@ -51,14 +51,12 @@ async fn clean_single_log(
             }
 
             let (should_keep, event) = if let Some(event) = parse_log_line_jsonl(trimmed) {
-                let passes_time = time_filter.as_ref().is_none_or(|f| {
-                    match f.op {
-                        SizeOp::Gt => event.time > f.time,
-                        SizeOp::Ge => event.time >= f.time,
-                        SizeOp::Lt => event.time < f.time,
-                        SizeOp::Le => event.time <= f.time,
-                        SizeOp::Eq => event.time == f.time,
-                    }
+                let passes_time = time_filter.as_ref().is_none_or(|f| match f.op {
+                    SizeOp::Gt => event.time > f.time,
+                    SizeOp::Ge => event.time >= f.time,
+                    SizeOp::Lt => event.time < f.time,
+                    SizeOp::Le => event.time <= f.time,
+                    SizeOp::Eq => event.time == f.time,
                 });
                 (passes_time, Some(event))
             } else {
@@ -70,10 +68,12 @@ async fn clean_single_log(
                 kept_bytes += line.len() + 1; // +1 for newline
             } else if dry_run {
                 if let Some(ev) = event {
-                    println!("  [to-delete] {} | {} | {}",
+                    println!(
+                        "  [to-delete] {} | {} | {}",
                         ev.time.format("%Y-%m-%d %H:%M:%S"),
                         ev.event_type,
-                        ev.path.display());
+                        ev.path.display()
+                    );
                 }
                 time_deleted += 1;
             } else {
@@ -103,7 +103,10 @@ async fn clean_single_log(
         let _ = fs::remove_file(&temp_file);
         if total_deleted > 0 {
             println!("---");
-            println!("Dry run: {} entries would be deleted (use --dry-run to preview)", total_deleted);
+            println!(
+                "Dry run: {} entries would be deleted (use --dry-run to preview)",
+                total_deleted
+            );
         } else {
             println!("Dry run: 0 entries match cleanup criteria");
         }
@@ -158,9 +161,9 @@ fn find_tail_offset(path: &Path, max_bytes: usize) -> Result<usize> {
         return Ok(0);
     }
 
-    let target = file_len - max_bytes;         // we want to start here
-    let scan_start = target.saturating_sub(4096);  // scan back up to 4KB
-    let scan_len = file_len - scan_start;           // scan from scan_start to EOF
+    let target = file_len - max_bytes; // we want to start here
+    let scan_start = target.saturating_sub(4096); // scan back up to 4KB
+    let scan_len = file_len - scan_start; // scan from scan_start to EOF
 
     f.seek(SeekFrom::Start(scan_start as u64))?;
     let mut buf = vec![0u8; scan_len];
@@ -174,10 +177,10 @@ fn find_tail_offset(path: &Path, max_bytes: usize) -> Result<usize> {
     let first_nl_after = buf[target_rel..].iter().position(|&b| b == b'\n');
 
     let offset = match last_nl_before {
-        Some(pos) => scan_start + pos + 1,  // keep after this newline
+        Some(pos) => scan_start + pos + 1, // keep after this newline
         None => match first_nl_after {
-            Some(pos) => target + pos + 1,  // keep after next newline
-            None => file_len,                // no newline at all — keep nothing
+            Some(pos) => target + pos + 1, // keep after next newline
+            None => file_len,              // no newline at all — keep nothing
         },
     };
     Ok(offset)
@@ -235,10 +238,10 @@ fn count_lines(path: &Path, upto: usize) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{EventType, FileEvent, SizeFilter, SizeOp, TimeFilter};
+    use chrono::Utc;
     use std::io::Write;
     use std::path::PathBuf;
-    use chrono::Utc;
-    use crate::{EventType, FileEvent, TimeFilter, SizeFilter, SizeOp};
 
     fn create_test_file(dir: &Path, name: &str, content: &str) -> PathBuf {
         let path = dir.join(name);
@@ -357,11 +360,20 @@ mod tests {
         }
 
         let cutoff = Utc::now() - chrono::Duration::days(30);
-        let time_filter = TimeFilter { op: SizeOp::Gt, time: cutoff };
+        let time_filter = TimeFilter {
+            op: SizeOp::Gt,
+            time: cutoff,
+        };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let log_dir = log_path.parent().unwrap();
-        rt.block_on(clean_logs(log_dir, "_global", Some(time_filter), None, false))
-            .unwrap();
+        rt.block_on(clean_logs(
+            log_dir,
+            "_global",
+            Some(time_filter),
+            None,
+            false,
+        ))
+        .unwrap();
 
         let content = fs::read_to_string(&log_path).unwrap();
         let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
@@ -399,11 +411,20 @@ mod tests {
         let original_content = fs::read_to_string(&log_path).unwrap();
 
         let cutoff = Utc::now() - chrono::Duration::days(30);
-        let time_filter = TimeFilter { op: SizeOp::Gt, time: cutoff };
+        let time_filter = TimeFilter {
+            op: SizeOp::Gt,
+            time: cutoff,
+        };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let log_dir = log_path.parent().unwrap();
-        rt.block_on(clean_logs(log_dir, "_global", Some(time_filter), None, true))
-            .unwrap();
+        rt.block_on(clean_logs(
+            log_dir,
+            "_global",
+            Some(time_filter),
+            None,
+            true,
+        ))
+        .unwrap();
 
         let after_content = fs::read_to_string(&log_path).unwrap();
         assert_eq!(original_content, after_content);
@@ -416,7 +437,10 @@ mod tests {
         let path = PathBuf::from("/tmp/fsmon_nonexistent_dir_clean_test");
         let rt = tokio::runtime::Runtime::new().unwrap();
         let cutoff = Utc::now() - chrono::Duration::days(30);
-        let time_filter = TimeFilter { op: SizeOp::Gt, time: cutoff };
+        let time_filter = TimeFilter {
+            op: SizeOp::Gt,
+            time: cutoff,
+        };
         assert!(
             rt.block_on(clean_logs(&path, "_global", Some(time_filter), None, false))
                 .is_ok()
@@ -440,9 +464,9 @@ mod tests {
                     cmd: "test".into(),
                     user: "root".into(),
                     file_size: 0,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
+                    ppid: 0,
+                    tgid: 0,
+                    chain: String::new(),
                 };
                 writeln!(f, "{}", event.to_jsonl_string()).unwrap();
             }
@@ -452,8 +476,17 @@ mod tests {
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let log_dir = log_path.parent().unwrap();
-        rt.block_on(clean_logs(log_dir, "_global", None, Some(SizeFilter { op: SizeOp::Gt, bytes: 500 }), false))
-            .unwrap();
+        rt.block_on(clean_logs(
+            log_dir,
+            "_global",
+            None,
+            Some(SizeFilter {
+                op: SizeOp::Gt,
+                bytes: 500,
+            }),
+            false,
+        ))
+        .unwrap();
 
         let new_size = fs::metadata(&log_path).unwrap().len();
         assert!(new_size < original_size);
@@ -465,37 +498,127 @@ mod tests {
 
     #[test]
     fn test_should_trim_gt() {
-        assert!(should_trim(100, &SizeFilter { op: SizeOp::Gt, bytes: 50 }));
-        assert!(!should_trim(50, &SizeFilter { op: SizeOp::Gt, bytes: 50 }));
-        assert!(!should_trim(30, &SizeFilter { op: SizeOp::Gt, bytes: 50 }));
+        assert!(should_trim(
+            100,
+            &SizeFilter {
+                op: SizeOp::Gt,
+                bytes: 50
+            }
+        ));
+        assert!(!should_trim(
+            50,
+            &SizeFilter {
+                op: SizeOp::Gt,
+                bytes: 50
+            }
+        ));
+        assert!(!should_trim(
+            30,
+            &SizeFilter {
+                op: SizeOp::Gt,
+                bytes: 50
+            }
+        ));
     }
 
     #[test]
     fn test_should_trim_ge() {
-        assert!(should_trim(100, &SizeFilter { op: SizeOp::Ge, bytes: 50 }));
-        assert!(should_trim(50, &SizeFilter { op: SizeOp::Ge, bytes: 50 }));
-        assert!(!should_trim(30, &SizeFilter { op: SizeOp::Ge, bytes: 50 }));
+        assert!(should_trim(
+            100,
+            &SizeFilter {
+                op: SizeOp::Ge,
+                bytes: 50
+            }
+        ));
+        assert!(should_trim(
+            50,
+            &SizeFilter {
+                op: SizeOp::Ge,
+                bytes: 50
+            }
+        ));
+        assert!(!should_trim(
+            30,
+            &SizeFilter {
+                op: SizeOp::Ge,
+                bytes: 50
+            }
+        ));
     }
 
     #[test]
     fn test_should_trim_lt() {
-        assert!(should_trim(30, &SizeFilter { op: SizeOp::Lt, bytes: 50 }));
-        assert!(!should_trim(50, &SizeFilter { op: SizeOp::Lt, bytes: 50 }));
-        assert!(!should_trim(100, &SizeFilter { op: SizeOp::Lt, bytes: 50 }));
+        assert!(should_trim(
+            30,
+            &SizeFilter {
+                op: SizeOp::Lt,
+                bytes: 50
+            }
+        ));
+        assert!(!should_trim(
+            50,
+            &SizeFilter {
+                op: SizeOp::Lt,
+                bytes: 50
+            }
+        ));
+        assert!(!should_trim(
+            100,
+            &SizeFilter {
+                op: SizeOp::Lt,
+                bytes: 50
+            }
+        ));
     }
 
     #[test]
     fn test_should_trim_le() {
-        assert!(should_trim(30, &SizeFilter { op: SizeOp::Le, bytes: 50 }));
-        assert!(should_trim(50, &SizeFilter { op: SizeOp::Le, bytes: 50 }));
-        assert!(!should_trim(100, &SizeFilter { op: SizeOp::Le, bytes: 50 }));
+        assert!(should_trim(
+            30,
+            &SizeFilter {
+                op: SizeOp::Le,
+                bytes: 50
+            }
+        ));
+        assert!(should_trim(
+            50,
+            &SizeFilter {
+                op: SizeOp::Le,
+                bytes: 50
+            }
+        ));
+        assert!(!should_trim(
+            100,
+            &SizeFilter {
+                op: SizeOp::Le,
+                bytes: 50
+            }
+        ));
     }
 
     #[test]
     fn test_should_trim_eq() {
-        assert!(should_trim(50, &SizeFilter { op: SizeOp::Eq, bytes: 50 }));
-        assert!(!should_trim(100, &SizeFilter { op: SizeOp::Eq, bytes: 50 }));
-        assert!(!should_trim(30, &SizeFilter { op: SizeOp::Eq, bytes: 50 }));
+        assert!(should_trim(
+            50,
+            &SizeFilter {
+                op: SizeOp::Eq,
+                bytes: 50
+            }
+        ));
+        assert!(!should_trim(
+            100,
+            &SizeFilter {
+                op: SizeOp::Eq,
+                bytes: 50
+            }
+        ));
+        assert!(!should_trim(
+            30,
+            &SizeFilter {
+                op: SizeOp::Eq,
+                bytes: 50
+            }
+        ));
     }
 
     // ---- integration: size filter edge cases ----
@@ -508,13 +631,16 @@ mod tests {
         {
             let mut f = fs::File::create(&log_path).unwrap();
             let event = FileEvent {
-                time: Utc::now(), event_type: EventType::Create,
-                path: PathBuf::from("/f"), pid: 1,
-                cmd: "t".into(), user: "r".into(),
+                time: Utc::now(),
+                event_type: EventType::Create,
+                path: PathBuf::from("/f"),
+                pid: 1,
+                cmd: "t".into(),
+                user: "r".into(),
                 file_size: 0,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
             };
             writeln!(f, "{}", event.to_jsonl_string()).unwrap();
         }
@@ -522,11 +648,21 @@ mod tests {
         let log_dir = log_path.parent().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(clean_logs(
-            log_dir, "_global", None,
-            Some(SizeFilter { op: SizeOp::Eq, bytes: 0 }), false,
-        )).unwrap();
+            log_dir,
+            "_global",
+            None,
+            Some(SizeFilter {
+                op: SizeOp::Eq,
+                bytes: 0,
+            }),
+            false,
+        ))
+        .unwrap();
         let after = fs::read_to_string(&log_path).unwrap();
-        assert_eq!(original, after, "=0 should NOT delete when file is non-empty");
+        assert_eq!(
+            original, after,
+            "=0 should NOT delete when file is non-empty"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -538,24 +674,38 @@ mod tests {
         {
             let mut f = fs::File::create(&log_path).unwrap();
             let event = FileEvent {
-                time: Utc::now(), event_type: EventType::Create,
-                path: PathBuf::from("/f"), pid: 1,
-                cmd: "t".into(), user: "r".into(),
+                time: Utc::now(),
+                event_type: EventType::Create,
+                path: PathBuf::from("/f"),
+                pid: 1,
+                cmd: "t".into(),
+                user: "r".into(),
                 file_size: 0,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
             };
             writeln!(f, "{}", event.to_jsonl_string()).unwrap();
         }
         let log_dir = log_path.parent().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(clean_logs(
-            log_dir, "_global", None,
-            Some(SizeFilter { op: SizeOp::Gt, bytes: 0 }), false,
-        )).unwrap();
+            log_dir,
+            "_global",
+            None,
+            Some(SizeFilter {
+                op: SizeOp::Gt,
+                bytes: 0,
+            }),
+            false,
+        ))
+        .unwrap();
         let after = fs::read_to_string(&log_path).unwrap();
-        assert!(after.trim().is_empty(), ">0 should delete all content, got: {:?}", after);
+        assert!(
+            after.trim().is_empty(),
+            ">0 should delete all content, got: {:?}",
+            after
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -568,26 +718,43 @@ mod tests {
             let mut f = fs::File::create(&log_path).unwrap();
             for i in 0..20 {
                 let event = FileEvent {
-                    time: Utc::now(), event_type: EventType::Create,
-                    path: PathBuf::from(format!("/f{}", i)), pid: 1,
-                    cmd: "t".into(), user: "r".into(),
+                    time: Utc::now(),
+                    event_type: EventType::Create,
+                    path: PathBuf::from(format!("/f{}", i)),
+                    pid: 1,
+                    cmd: "t".into(),
+                    user: "r".into(),
                     file_size: 0,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
+                    ppid: 0,
+                    tgid: 0,
+                    chain: String::new(),
                 };
                 writeln!(f, "{}", event.to_jsonl_string()).unwrap();
             }
         }
         let log_dir = log_path.parent().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let size_filter = SizeFilter { op: SizeOp::Lt, bytes: 100000 };
+        let size_filter = SizeFilter {
+            op: SizeOp::Lt,
+            bytes: 100000,
+        };
         rt.block_on(clean_logs(
-            log_dir, "_global", None, Some(size_filter), false,
-        )).unwrap();
+            log_dir,
+            "_global",
+            None,
+            Some(size_filter),
+            false,
+        ))
+        .unwrap();
         let after = fs::read_to_string(&log_path).unwrap();
-        assert!(after.len() > 0, "should keep at least 0 bytes worth of content");
-        assert!(after.len() <= 100000, "kept content should be ≤ 100000 bytes");
+        assert!(
+            after.len() > 0,
+            "should keep at least 0 bytes worth of content"
+        );
+        assert!(
+            after.len() <= 100000,
+            "kept content should be ≤ 100000 bytes"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -601,8 +768,11 @@ mod tests {
         let now = Utc::now();
         let old_event = FileEvent {
             time: now - chrono::Duration::days(10),
-            event_type: EventType::Create, path: PathBuf::from("/old"),
-            pid: 1, cmd: "t".into(), user: "r".into(),
+            event_type: EventType::Create,
+            path: PathBuf::from("/old"),
+            pid: 1,
+            cmd: "t".into(),
+            user: "r".into(),
             file_size: 0,
             ppid: 0,
             tgid: 0,
@@ -610,8 +780,11 @@ mod tests {
         };
         let mid_event = FileEvent {
             time: now - chrono::Duration::days(5),
-            event_type: EventType::Create, path: PathBuf::from("/mid"),
-            pid: 1, cmd: "t".into(), user: "r".into(),
+            event_type: EventType::Create,
+            path: PathBuf::from("/mid"),
+            pid: 1,
+            cmd: "t".into(),
+            user: "r".into(),
             file_size: 0,
             ppid: 0,
             tgid: 0,
@@ -619,8 +792,11 @@ mod tests {
         };
         let new_event = FileEvent {
             time: now,
-            event_type: EventType::Create, path: PathBuf::from("/new"),
-            pid: 1, cmd: "t".into(), user: "r".into(),
+            event_type: EventType::Create,
+            path: PathBuf::from("/new"),
+            pid: 1,
+            cmd: "t".into(),
+            user: "r".into(),
             file_size: 0,
             ppid: 0,
             tgid: 0,
@@ -633,10 +809,14 @@ mod tests {
             writeln!(f, "{}", new_event.to_jsonl_string()).unwrap();
         }
         let cutoff = now - chrono::Duration::days(7);
-        let tf = TimeFilter { op: SizeOp::Ge, time: cutoff };
+        let tf = TimeFilter {
+            op: SizeOp::Ge,
+            time: cutoff,
+        };
         let log_dir = log_path.parent().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(clean_logs(log_dir, "_global", Some(tf), None, false)).unwrap();
+        rt.block_on(clean_logs(log_dir, "_global", Some(tf), None, false))
+            .unwrap();
         let content = fs::read_to_string(&log_path).unwrap();
         let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
         assert_eq!(lines.len(), 2, ">=7d should keep mid(5d) + new(0d)");
@@ -651,8 +831,11 @@ mod tests {
         let now = Utc::now();
         let old_event = FileEvent {
             time: now - chrono::Duration::days(10),
-            event_type: EventType::Create, path: PathBuf::from("/old"),
-            pid: 1, cmd: "t".into(), user: "r".into(),
+            event_type: EventType::Create,
+            path: PathBuf::from("/old"),
+            pid: 1,
+            cmd: "t".into(),
+            user: "r".into(),
             file_size: 0,
             ppid: 0,
             tgid: 0,
@@ -660,8 +843,11 @@ mod tests {
         };
         let new_event = FileEvent {
             time: now,
-            event_type: EventType::Create, path: PathBuf::from("/new"),
-            pid: 1, cmd: "t".into(), user: "r".into(),
+            event_type: EventType::Create,
+            path: PathBuf::from("/new"),
+            pid: 1,
+            cmd: "t".into(),
+            user: "r".into(),
             file_size: 0,
             ppid: 0,
             tgid: 0,
@@ -673,10 +859,14 @@ mod tests {
             writeln!(f, "{}", new_event.to_jsonl_string()).unwrap();
         }
         let cutoff = now - chrono::Duration::days(7);
-        let tf = TimeFilter { op: SizeOp::Le, time: cutoff };
+        let tf = TimeFilter {
+            op: SizeOp::Le,
+            time: cutoff,
+        };
         let log_dir = log_path.parent().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(clean_logs(log_dir, "_global", Some(tf), None, false)).unwrap();
+        rt.block_on(clean_logs(log_dir, "_global", Some(tf), None, false))
+            .unwrap();
         let content = fs::read_to_string(&log_path).unwrap();
         let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
         assert_eq!(lines.len(), 1, "<=7d should keep old(10d) only");
@@ -691,8 +881,11 @@ mod tests {
         let now = Utc::now();
         let old_event = FileEvent {
             time: now - chrono::Duration::days(100),
-            event_type: EventType::Create, path: PathBuf::from("/old"),
-            pid: 1, cmd: "t".into(), user: "r".into(),
+            event_type: EventType::Create,
+            path: PathBuf::from("/old"),
+            pid: 1,
+            cmd: "t".into(),
+            user: "r".into(),
             file_size: 0,
             ppid: 0,
             tgid: 0,
@@ -705,7 +898,8 @@ mod tests {
         let original = fs::read_to_string(&log_path).unwrap();
         let log_dir = log_path.parent().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(clean_logs(log_dir, "_global", None, None, false)).unwrap();
+        rt.block_on(clean_logs(log_dir, "_global", None, None, false))
+            .unwrap();
         let after = fs::read_to_string(&log_path).unwrap();
         assert_eq!(original, after, "no time filter should keep all events");
         let _ = fs::remove_dir_all(&dir);
@@ -723,9 +917,15 @@ mod tests {
             let mut f = fs::File::create(&log_global).unwrap();
             let event = FileEvent {
                 time: Utc::now() - chrono::Duration::days(100),
-                event_type: EventType::Create, path: PathBuf::from("/a/x"),
-                pid: 1, cmd: "t".into(), user: "r".into(),
-                file_size: 0, ppid: 0, tgid: 0, chain: String::new(),
+                event_type: EventType::Create,
+                path: PathBuf::from("/a/x"),
+                pid: 1,
+                cmd: "t".into(),
+                user: "r".into(),
+                file_size: 0,
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
             };
             writeln!(f, "{}", event.to_jsonl_string()).unwrap();
         }
@@ -734,11 +934,19 @@ mod tests {
             writeln!(f, "keep").unwrap();
         }
         let cutoff = Utc::now();
-        let tf = TimeFilter { op: SizeOp::Gt, time: cutoff };
+        let tf = TimeFilter {
+            op: SizeOp::Gt,
+            time: cutoff,
+        };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(clean_logs(&dir, "_global", Some(tf), None, false)).unwrap();
+        rt.block_on(clean_logs(&dir, "_global", Some(tf), None, false))
+            .unwrap();
         let content_oc = fs::read_to_string(&log_oc).unwrap();
-        assert_eq!(content_oc.trim(), "keep", "openclaw log should be untouched");
+        assert_eq!(
+            content_oc.trim(),
+            "keep",
+            "openclaw log should be untouched"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -752,36 +960,58 @@ mod tests {
             let mut f = fs::File::create(&log_path).unwrap();
             let old = FileEvent {
                 time: now - chrono::Duration::days(60),
-                event_type: EventType::Create, path: PathBuf::from("/old"),
-                pid: 1, cmd: "t".into(), user: "r".into(),
+                event_type: EventType::Create,
+                path: PathBuf::from("/old"),
+                pid: 1,
+                cmd: "t".into(),
+                user: "r".into(),
                 file_size: 0,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
             };
             writeln!(f, "{}", old.to_jsonl_string()).unwrap();
             for i in 0..50 {
                 let ev = FileEvent {
                     time: now,
-                    event_type: EventType::Create, path: PathBuf::from(format!("/f{}", i)),
-                    pid: 1, cmd: "t".into(), user: "r".into(),
+                    event_type: EventType::Create,
+                    path: PathBuf::from(format!("/f{}", i)),
+                    pid: 1,
+                    cmd: "t".into(),
+                    user: "r".into(),
                     file_size: 0,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
+                    ppid: 0,
+                    tgid: 0,
+                    chain: String::new(),
                 };
                 writeln!(f, "{}", ev.to_jsonl_string()).unwrap();
             }
         }
-        let tf = TimeFilter { op: SizeOp::Gt, time: now - chrono::Duration::days(7) };
-        let sf = SizeFilter { op: SizeOp::Gt, bytes: 2000 };
+        let tf = TimeFilter {
+            op: SizeOp::Gt,
+            time: now - chrono::Duration::days(7),
+        };
+        let sf = SizeFilter {
+            op: SizeOp::Gt,
+            bytes: 2000,
+        };
         let original_size = fs::metadata(&log_path).unwrap().len();
         let log_dir = log_path.parent().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(clean_logs(log_dir, "_global", Some(tf), Some(sf), false)).unwrap();
+        rt.block_on(clean_logs(log_dir, "_global", Some(tf), Some(sf), false))
+            .unwrap();
         let new_size = fs::metadata(&log_path).unwrap().len();
-        assert!(new_size < original_size, "combined filters should reduce size (orig={}, new={})", original_size, new_size);
-        assert!(new_size <= 2200, "should be trimmed to ~2000 bytes (newline-aligned), got {}", new_size);
+        assert!(
+            new_size < original_size,
+            "combined filters should reduce size (orig={}, new={})",
+            original_size,
+            new_size
+        );
+        assert!(
+            new_size <= 2200,
+            "should be trimmed to ~2000 bytes (newline-aligned), got {}",
+            new_size
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

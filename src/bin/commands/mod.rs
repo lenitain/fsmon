@@ -1,7 +1,7 @@
 use anyhow::Result;
+use fsmon::EventType;
 use fsmon::filters::PathOptions;
 use fsmon::monitored::PathEntry;
-use fsmon::EventType;
 use fsmon::utils::parse_size_filter;
 use std::path::PathBuf;
 
@@ -44,7 +44,10 @@ trait AsyncPolyfill {
     fn await_(self) -> Self::Output;
 }
 
-impl<T> AsyncPolyfill for T where T: std::future::Future<Output = Result<()>> {
+impl<T> AsyncPolyfill for T
+where
+    T: std::future::Future<Output = Result<()>>,
+{
     type Output = Result<()>;
     fn await_(self) -> Self::Output {
         tokio::runtime::Runtime::new().unwrap().block_on(self)
@@ -63,7 +66,11 @@ pub fn parse_path_entries(entries: &[PathEntry]) -> Result<Vec<(PathBuf, PathOpt
 
 /// Convert a single `PathEntry` to `PathOptions`.
 pub fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
-    let size_filter = entry.size.as_ref().map(|s| parse_size_filter(s)).transpose()?;
+    let size_filter = entry
+        .size
+        .as_ref()
+        .map(|s| parse_size_filter(s))
+        .transpose()?;
     let event_types = entry
         .types
         .as_ref()
@@ -75,7 +82,11 @@ pub fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
         .transpose()
         .map_err(|e: String| anyhow::anyhow!(e))?;
     let cmd = entry.cmd.as_deref().and_then(|c| {
-        if c == fsmon::monitored::CMD_GLOBAL { None } else { Some(c.to_string()) }
+        if c == fsmon::monitored::CMD_GLOBAL {
+            None
+        } else {
+            Some(c.to_string())
+        }
     });
     Ok(PathOptions {
         size_filter,

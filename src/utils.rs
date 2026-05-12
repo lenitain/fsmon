@@ -58,7 +58,10 @@ pub fn parse_size_filter(s: &str) -> Result<SizeFilter> {
     } else if let Some(r) = s.strip_prefix('=') {
         (SizeOp::Eq, r)
     } else {
-        anyhow::bail!("size filter must start with an operator (>=, >, <=, <, =), got: {}", s);
+        anyhow::bail!(
+            "size filter must start with an operator (>=, >, <=, <, =), got: {}",
+            s
+        );
     };
     let bytes = parse_size(rest)?;
     Ok(SizeFilter { op, bytes })
@@ -181,7 +184,10 @@ pub fn parse_time_filter(s: &str) -> Result<TimeFilter> {
     } else if let Some(r) = s.strip_prefix('=') {
         (SizeOp::Eq, r)
     } else {
-        anyhow::bail!("time filter must start with an operator (>=, >, <=, <, =), got: {}", s);
+        anyhow::bail!(
+            "time filter must start with an operator (>=, >, <=, <, =), got: {}",
+            s
+        );
     };
     let time = parse_time(rest)?;
     Ok(TimeFilter { op, time })
@@ -214,12 +220,16 @@ pub fn get_process_info_by_pid(
     // If the process just exited, /proc/{pid} might still exist briefly
     // as a zombie before the parent reaps it. Retry with short sleep.
     let cmd = retry(|| read_proc_comm(pid)).unwrap_or_else(|| "unknown".to_string());
-    let (user, ppid, tgid) = retry(|| read_proc_status_fields(pid))
-        .unwrap_or_else(|| {
-            let fallback_user = read_file_owner(file_path).unwrap_or_else(|| "unknown".to_string());
-            (fallback_user, 0u32, 0u32)
-        });
-    ProcInfo { cmd, user, ppid, tgid }
+    let (user, ppid, tgid) = retry(|| read_proc_status_fields(pid)).unwrap_or_else(|| {
+        let fallback_user = read_file_owner(file_path).unwrap_or_else(|| "unknown".to_string());
+        (fallback_user, 0u32, 0u32)
+    });
+    ProcInfo {
+        cmd,
+        user,
+        ppid,
+        tgid,
+    }
 }
 
 /// Retry a fallible operation up to 3 times with 500µs sleep between attempts.
@@ -346,15 +356,24 @@ mod tests {
     fn test_parse_size_negative() {
         assert_eq!(parse_size("-100").unwrap(), -100);
         assert_eq!(parse_size("-1KB").unwrap(), -1024);
-        assert_eq!(parse_size("-2.5MB").unwrap(), -(2.5 * 1024.0 * 1024.0) as i64);
+        assert_eq!(
+            parse_size("-2.5MB").unwrap(),
+            -(2.5 * 1024.0 * 1024.0) as i64
+        );
     }
 
     #[test]
     fn test_parse_size_small_decimals() {
         // Sub-unit decimals
         assert_eq!(parse_size("0.5KB").unwrap(), 512);
-        assert_eq!(parse_size("0.001MB").unwrap(), (0.001 * 1024.0 * 1024.0) as i64);
-        assert_eq!(parse_size("0.1GB").unwrap(), (0.1 * 1024.0 * 1024.0 * 1024.0) as i64);
+        assert_eq!(
+            parse_size("0.001MB").unwrap(),
+            (0.001 * 1024.0 * 1024.0) as i64
+        );
+        assert_eq!(
+            parse_size("0.1GB").unwrap(),
+            (0.1 * 1024.0 * 1024.0 * 1024.0) as i64
+        );
         // Negative small decimal
         assert_eq!(parse_size("-0.5KB").unwrap(), -512);
     }
@@ -474,7 +493,6 @@ mod tests {
         assert!(parse_size_filter("<=").is_err());
         assert!(parse_size_filter("==1KB").is_err());
     }
-
 
     #[test]
     fn test_format_size() {

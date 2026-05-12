@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use fsmon::config::Config;
 use fsmon::DaemonLock;
+use fsmon::config::Config;
 use fsmon::monitor::Monitor;
 use fsmon::monitored::Monitored;
 use std::fs;
@@ -17,7 +17,10 @@ pub async fn cmd_daemon(debug: bool) -> Result<()> {
     cfg.resolve_paths()?;
 
     eprintln!("Config loaded:");
-    eprintln!("  Monitored path database:  {}", cfg.monitored.path.display());
+    eprintln!(
+        "  Monitored path database:  {}",
+        cfg.monitored.path.display()
+    );
     eprintln!("  Event logs:     {}", cfg.logging.path.display());
     eprintln!("  Command socket: {}", cfg.socket.path.display());
 

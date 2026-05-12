@@ -109,7 +109,8 @@ pub fn build_chain(tree: &PidTree, cache: &ProcCache, pid: u32) -> String {
     loop {
         // Try tree first for ppid, then cache for user
         let (ppid, cmd, user) = if let Some(node) = tree.get(&current) {
-            let user = cache.get(&current)
+            let user = cache
+                .get(&current)
                 .map(|info| info.user.clone())
                 .unwrap_or_else(|| "unknown".to_string());
             (node.ppid, node.cmd.clone(), user)
@@ -122,17 +123,20 @@ pub fn build_chain(tree: &PidTree, cache: &ProcCache, pid: u32) -> String {
                     break;
                 }
             };
-            let cmd = status.lines()
+            let cmd = status
+                .lines()
                 .find(|l| l.starts_with("Name:"))
                 .and_then(|l| l.split(':').nth(1))
                 .map(|s| s.trim().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
-            let ppid = status.lines()
+            let ppid = status
+                .lines()
                 .find(|l| l.starts_with("PPid:"))
                 .and_then(|l| l.split_whitespace().nth(1))
                 .and_then(|s| s.parse::<u32>().ok())
                 .unwrap_or(0);
-            let user = status.lines()
+            let user = status
+                .lines()
                 .find(|l| l.starts_with("Uid:"))
                 .and_then(|l| l.split_whitespace().nth(1))
                 .and_then(|uid_str| uid_str.parse::<u32>().ok())
@@ -156,8 +160,10 @@ pub fn try_create_connector() -> Option<ProcConnector> {
     let conn = match ProcConnector::new() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[WARNING] Failed to create proc connector: {e}. \
-                       Process tree tracking will be unavailable.");
+            eprintln!(
+                "[WARNING] Failed to create proc connector: {e}. \
+                       Process tree tracking will be unavailable."
+            );
             return None;
         }
     };
@@ -171,12 +177,7 @@ pub fn try_create_connector() -> Option<ProcConnector> {
 /// Process proc connector events.
 /// Handles Exec (update ProcCache + PidTree cmd), Fork (insert PidTree),
 /// and Exit (optional, no cleanup needed for correct lookups).
-pub fn handle_proc_events(
-    cache: &ProcCache,
-    tree: &PidTree,
-    data: &[u8],
-    n: usize,
-) -> bool {
+pub fn handle_proc_events(cache: &ProcCache, tree: &PidTree, data: &[u8], n: usize) -> bool {
     let mut processed = false;
     for msg in NetlinkMessageIter::new(data, n) {
         match msg {
@@ -186,19 +187,37 @@ pub fn handle_proc_events(
                     .map(|s| s.trim().to_string())
                     .unwrap_or_else(|| "unknown".to_string());
 
-                let (user, ppid, tgid) = read_proc_info(pid)
-                    .unwrap_or_else(|| ("unknown".to_string(), 0, 0));
+                let (user, ppid, tgid) =
+                    read_proc_info(pid).unwrap_or_else(|| ("unknown".to_string(), 0, 0));
 
-                cache.insert(pid, ProcInfo { cmd: cmd.clone(), user, ppid, tgid });
+                cache.insert(
+                    pid,
+                    ProcInfo {
+                        cmd: cmd.clone(),
+                        user,
+                        ppid,
+                        tgid,
+                    },
+                );
 
                 // Also update PidTree with the resolved cmd/ppid
                 tree.insert(pid, PidNode { ppid, cmd });
 
                 processed = true;
             }
-            Ok(Some(ProcEvent::Fork { child_pid, parent_pid, .. })) => {
+            Ok(Some(ProcEvent::Fork {
+                child_pid,
+                parent_pid,
+                ..
+            })) => {
                 // Pre-populate tree: we know the parent but not cmd yet
-                tree.insert(child_pid, PidNode { ppid: parent_pid, cmd: String::new() });
+                tree.insert(
+                    child_pid,
+                    PidNode {
+                        ppid: parent_pid,
+                        cmd: String::new(),
+                    },
+                );
                 processed = true;
             }
             Ok(Some(ProcEvent::Exit { .. })) => {
@@ -207,7 +226,7 @@ pub fn handle_proc_events(
                 processed = true;
             }
             Ok(Some(_)) => {} // Uid, Gid, Sid, etc. — ignore
-            Ok(None) => {}     // Control message (NLMSG_NOOP, NLMSG_DONE, NLMSG_ERROR-ACK)
+            Ok(None) => {}    // Control message (NLMSG_NOOP, NLMSG_DONE, NLMSG_ERROR-ACK)
             Err(proc_connector::Error::Overrun) => {
                 eprintln!("[WARNING] proc connector overrun — some exec events may have been lost");
             }
@@ -247,9 +266,15 @@ mod tests {
     #[test]
     fn test_proc_cache_insert_and_get() {
         let cache: ProcCache = Arc::new(DashMap::new());
-        cache.insert(12345, ProcInfo {
-            cmd: "test_process".into(), user: "testuser".into(), ppid: 1, tgid: 12345,
-        });
+        cache.insert(
+            12345,
+            ProcInfo {
+                cmd: "test_process".into(),
+                user: "testuser".into(),
+                ppid: 1,
+                tgid: 12345,
+            },
+        );
         let info = cache.get(&12345).unwrap();
         assert_eq!(info.cmd, "test_process");
         assert_eq!(info.ppid, 1);
@@ -259,10 +284,34 @@ mod tests {
     #[test]
     fn test_is_descendant() {
         let tree: PidTree = Arc::new(DashMap::new());
-        tree.insert(1, PidNode { ppid: 0, cmd: "systemd".into() });
-        tree.insert(100, PidNode { ppid: 1, cmd: "openclaw".into() });
-        tree.insert(101, PidNode { ppid: 100, cmd: "sh".into() });
-        tree.insert(102, PidNode { ppid: 101, cmd: String::new() }); // Fork, no Exec yet
+        tree.insert(
+            1,
+            PidNode {
+                ppid: 0,
+                cmd: "systemd".into(),
+            },
+        );
+        tree.insert(
+            100,
+            PidNode {
+                ppid: 1,
+                cmd: "openclaw".into(),
+            },
+        );
+        tree.insert(
+            101,
+            PidNode {
+                ppid: 100,
+                cmd: "sh".into(),
+            },
+        );
+        tree.insert(
+            102,
+            PidNode {
+                ppid: 101,
+                cmd: String::new(),
+            },
+        ); // Fork, no Exec yet
 
         assert!(is_descendant(&tree, 102, "openclaw"));
         assert!(is_descendant(&tree, 101, "openclaw"));
@@ -274,7 +323,13 @@ mod tests {
     #[test]
     fn test_is_descendant_unknown_pid() {
         let tree: PidTree = Arc::new(DashMap::new());
-        tree.insert(1, PidNode { ppid: 0, cmd: "systemd".into() });
+        tree.insert(
+            1,
+            PidNode {
+                ppid: 0,
+                cmd: "systemd".into(),
+            },
+        );
         assert!(!is_descendant(&tree, 99999, "systemd"));
     }
 
@@ -282,25 +337,98 @@ mod tests {
     fn test_build_chain_from_tree() {
         let tree: PidTree = Arc::new(DashMap::new());
         let cache: ProcCache = Arc::new(DashMap::new());
-        tree.insert(1, PidNode { ppid: 0, cmd: "systemd".into() });
-        cache.insert(1, ProcInfo { cmd: "systemd".into(), user: "root".into(), ppid: 0, tgid: 1 });
-        tree.insert(100, PidNode { ppid: 1, cmd: "openclaw".into() });
-        cache.insert(100, ProcInfo { cmd: "openclaw".into(), user: "root".into(), ppid: 1, tgid: 100 });
-        tree.insert(101, PidNode { ppid: 100, cmd: "sh".into() });
-        cache.insert(101, ProcInfo { cmd: "sh".into(), user: "root".into(), ppid: 100, tgid: 101 });
-        tree.insert(102, PidNode { ppid: 101, cmd: "touch".into() });
-        cache.insert(102, ProcInfo { cmd: "touch".into(), user: "root".into(), ppid: 101, tgid: 102 });
+        tree.insert(
+            1,
+            PidNode {
+                ppid: 0,
+                cmd: "systemd".into(),
+            },
+        );
+        cache.insert(
+            1,
+            ProcInfo {
+                cmd: "systemd".into(),
+                user: "root".into(),
+                ppid: 0,
+                tgid: 1,
+            },
+        );
+        tree.insert(
+            100,
+            PidNode {
+                ppid: 1,
+                cmd: "openclaw".into(),
+            },
+        );
+        cache.insert(
+            100,
+            ProcInfo {
+                cmd: "openclaw".into(),
+                user: "root".into(),
+                ppid: 1,
+                tgid: 100,
+            },
+        );
+        tree.insert(
+            101,
+            PidNode {
+                ppid: 100,
+                cmd: "sh".into(),
+            },
+        );
+        cache.insert(
+            101,
+            ProcInfo {
+                cmd: "sh".into(),
+                user: "root".into(),
+                ppid: 100,
+                tgid: 101,
+            },
+        );
+        tree.insert(
+            102,
+            PidNode {
+                ppid: 101,
+                cmd: "touch".into(),
+            },
+        );
+        cache.insert(
+            102,
+            ProcInfo {
+                cmd: "touch".into(),
+                user: "root".into(),
+                ppid: 101,
+                tgid: 102,
+            },
+        );
 
         let chain = build_chain(&tree, &cache, 102);
-        assert_eq!(chain, "102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root");
+        assert_eq!(
+            chain,
+            "102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root"
+        );
     }
 
     #[test]
     fn test_build_chain_single() {
         let tree: PidTree = Arc::new(DashMap::new());
         let cache: ProcCache = Arc::new(DashMap::new());
-        tree.insert(1, PidNode { ppid: 0, cmd: "systemd".into() });
-        cache.insert(1, ProcInfo { cmd: "systemd".into(), user: "root".into(), ppid: 0, tgid: 1 });
+        tree.insert(
+            1,
+            PidNode {
+                ppid: 0,
+                cmd: "systemd".into(),
+            },
+        );
+        cache.insert(
+            1,
+            ProcInfo {
+                cmd: "systemd".into(),
+                user: "root".into(),
+                ppid: 0,
+                tgid: 1,
+            },
+        );
 
         let chain = build_chain(&tree, &cache, 1);
         assert_eq!(chain, "1|systemd|root");

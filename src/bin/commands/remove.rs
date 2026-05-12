@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 use fsmon::config::Config;
-use fsmon::monitored::{Monitored, CMD_GLOBAL};
+use fsmon::monitored::{CMD_GLOBAL, Monitored};
 use fsmon::socket::{self, SocketCmd};
 use std::path::PathBuf;
 
@@ -11,10 +11,12 @@ pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
     let mut store = Monitored::load(&cfg.monitored.path)?;
 
     // CMD is required. Use '_global' for global monitoring.
-    let cmd_str = cmd.as_deref()
-        .ok_or_else(|| anyhow::anyhow!(
-            "CMD is required. Use '{}' for global monitoring.", CMD_GLOBAL
-        ))?;
+    let cmd_str = cmd.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "CMD is required. Use '{}' for global monitoring.",
+            CMD_GLOBAL
+        )
+    })?;
 
     match paths.as_slice() {
         // fsmon remove bash (no --path) → remove entire cmd group
@@ -59,7 +61,9 @@ pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
                 size: None,
                 track_cmd: Some(cmd_str.to_string()),
             },
-        ).is_err() {
+        )
+        .is_err()
+        {
             break;
         }
     }

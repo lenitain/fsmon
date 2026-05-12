@@ -4,7 +4,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use crate::utils::{TimeFilter, SizeOp, cmd_to_log_name};
+use crate::utils::{SizeOp, TimeFilter, cmd_to_log_name};
 use crate::{FileEvent, parse_log_line_jsonl};
 
 const SCAN_BACK_BYTES: u64 = 4096;
@@ -49,16 +49,13 @@ impl Query {
         // Read events from each file
         let mut all_events = Vec::new();
         for log_file in &log_files {
-            let events =
-                self.read_events_from(log_file, since_time, until_time)?;
+            let events = self.read_events_from(log_file, since_time, until_time)?;
             all_events.extend(events);
         }
 
         // Apply path filters on event.path
         if let Some(ref path_filters) = self.path_filters {
-            all_events.retain(|event| {
-                path_filters.iter().any(|pf| event.path.starts_with(pf))
-            });
+            all_events.retain(|event| path_filters.iter().any(|pf| event.path.starts_with(pf)));
         }
 
         // Output (time order preserved from log files)
@@ -139,14 +136,12 @@ impl Query {
                 && let Some(event) = parse_log_line_jsonl(trimmed)
             {
                 // Apply time filters
-                let pass = self.time_filters.iter().all(|f| {
-                    match f.op {
-                        SizeOp::Gt => event.time > f.time,
-                        SizeOp::Ge => event.time >= f.time,
-                        SizeOp::Lt => event.time < f.time,
-                        SizeOp::Le => event.time <= f.time,
-                        SizeOp::Eq => event.time == f.time,
-                    }
+                let pass = self.time_filters.iter().all(|f| match f.op {
+                    SizeOp::Gt => event.time > f.time,
+                    SizeOp::Ge => event.time >= f.time,
+                    SizeOp::Lt => event.time < f.time,
+                    SizeOp::Le => event.time <= f.time,
+                    SizeOp::Eq => event.time == f.time,
                 });
                 if pass {
                     // Check until bound before push (event consumed by push)
@@ -254,9 +249,7 @@ impl Query {
             for entry in fs::read_dir(log_dir)? {
                 let entry = entry?;
                 let path = entry.path();
-                let fname = path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
+                let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 if fname.ends_with("_log.jsonl") && path.is_file() {
                     files.push(path);
                 }
@@ -294,21 +287,25 @@ mod tests {
                 time: Utc::now(),
                 event_type: EventType::Create,
                 path: PathBuf::from("/tmp/test"),
-                pid: 100, cmd: "touch".into(), user: "root".into(),
+                pid: 100,
+                cmd: "touch".into(),
+                user: "root".into(),
                 file_size: 0,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
             },
             FileEvent {
                 time: Utc::now(),
                 event_type: EventType::Modify,
                 path: PathBuf::from("/tmp/test"),
-                pid: 200, cmd: "vim".into(), user: "root".into(),
+                pid: 200,
+                cmd: "vim".into(),
+                user: "root".into(),
                 file_size: 100,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
             },
         ];
         let log_path = create_log_file(&dir, &events);
@@ -355,7 +352,10 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let q = Query::new(dir.clone(), Some("nonexistent".into()), None, vec![]);
         let files = q.resolve_log_files().unwrap();
-        assert!(files.is_empty(), "nonexistent cmd should yield no log files");
+        assert!(
+            files.is_empty(),
+            "nonexistent cmd should yield no log files"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -370,22 +370,28 @@ mod tests {
         let recent_time = now - chrono::Duration::minutes(30);
         let events = vec![
             FileEvent {
-                time: old_time, event_type: EventType::Create,
-                path: PathBuf::from("/tmp/old"), pid: 100,
-                cmd: "test".into(), user: "root".into(),
+                time: old_time,
+                event_type: EventType::Create,
+                path: PathBuf::from("/tmp/old"),
+                pid: 100,
+                cmd: "test".into(),
+                user: "root".into(),
                 file_size: 0,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
             },
             FileEvent {
-                time: recent_time, event_type: EventType::Modify,
-                path: PathBuf::from("/tmp/recent"), pid: 200,
-                cmd: "test".into(), user: "root".into(),
+                time: recent_time,
+                event_type: EventType::Modify,
+                path: PathBuf::from("/tmp/recent"),
+                pid: 200,
+                cmd: "test".into(),
+                user: "root".into(),
                 file_size: 50,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
             },
         ];
         let log_path = create_log_file(&dir, &events);
@@ -407,22 +413,28 @@ mod tests {
         let recent_time = now - chrono::Duration::minutes(30);
         let events = vec![
             FileEvent {
-                time: old_time, event_type: EventType::Create,
-                path: PathBuf::from("/tmp/old"), pid: 100,
-                cmd: "test".into(), user: "root".into(),
+                time: old_time,
+                event_type: EventType::Create,
+                path: PathBuf::from("/tmp/old"),
+                pid: 100,
+                cmd: "test".into(),
+                user: "root".into(),
                 file_size: 0,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
             },
             FileEvent {
-                time: recent_time, event_type: EventType::Modify,
-                path: PathBuf::from("/tmp/recent"), pid: 200,
-                cmd: "test".into(), user: "root".into(),
+                time: recent_time,
+                event_type: EventType::Modify,
+                path: PathBuf::from("/tmp/recent"),
+                pid: 200,
+                cmd: "test".into(),
+                user: "root".into(),
                 file_size: 50,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
             },
         ];
         let log_path = create_log_file(&dir, &events);
@@ -445,31 +457,40 @@ mod tests {
         let t3 = now - chrono::Duration::hours(1);
         let events = vec![
             FileEvent {
-                time: t1, event_type: EventType::Create,
-                path: PathBuf::from("/a"), pid: 1,
-                cmd: "t".into(), user: "r".into(),
+                time: t1,
+                event_type: EventType::Create,
+                path: PathBuf::from("/a"),
+                pid: 1,
+                cmd: "t".into(),
+                user: "r".into(),
                 file_size: 0,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
             },
             FileEvent {
-                time: t2, event_type: EventType::Modify,
-                path: PathBuf::from("/b"), pid: 2,
-                cmd: "t".into(), user: "r".into(),
+                time: t2,
+                event_type: EventType::Modify,
+                path: PathBuf::from("/b"),
+                pid: 2,
+                cmd: "t".into(),
+                user: "r".into(),
                 file_size: 0,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
             },
             FileEvent {
-                time: t3, event_type: EventType::Delete,
-                path: PathBuf::from("/c"), pid: 3,
-                cmd: "t".into(), user: "r".into(),
+                time: t3,
+                event_type: EventType::Delete,
+                path: PathBuf::from("/c"),
+                pid: 3,
+                cmd: "t".into(),
+                user: "r".into(),
                 file_size: 0,
-            ppid: 0,
-            tgid: 0,
-            chain: String::new(),
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
             },
         ];
         let log_path = create_log_file(&dir, &events);
@@ -478,7 +499,9 @@ mod tests {
         // range: between 2.5h ago and 1.5h ago (only t2 at 2h ago fits)
         let since = now - chrono::Duration::minutes(150);
         let until = now - chrono::Duration::minutes(90);
-        let result = q.read_events_from(&log_path, Some(since), Some(until)).unwrap();
+        let result = q
+            .read_events_from(&log_path, Some(since), Some(until))
+            .unwrap();
         assert_eq!(result.len(), 1, "expected only t2 in range");
         assert_eq!(result[0].pid, 2);
         let _ = fs::remove_dir_all(&dir);
@@ -493,24 +516,47 @@ mod tests {
         let t2 = now - chrono::Duration::hours(1);
 
         // > filter → since
-        let q = Query::new(PathBuf::from("/tmp"), None, None, vec![
-            TimeFilter { op: SizeOp::Gt, time: t1 },
-        ]);
+        let q = Query::new(
+            PathBuf::from("/tmp"),
+            None,
+            None,
+            vec![TimeFilter {
+                op: SizeOp::Gt,
+                time: t1,
+            }],
+        );
         assert!(q.extract_since().is_some());
         assert!(q.extract_until().is_none());
 
         // < filter → until
-        let q = Query::new(PathBuf::from("/tmp"), None, None, vec![
-            TimeFilter { op: SizeOp::Lt, time: t2 },
-        ]);
+        let q = Query::new(
+            PathBuf::from("/tmp"),
+            None,
+            None,
+            vec![TimeFilter {
+                op: SizeOp::Lt,
+                time: t2,
+            }],
+        );
         assert!(q.extract_since().is_none());
         assert!(q.extract_until().is_some());
 
         // both
-        let q = Query::new(PathBuf::from("/tmp"), None, None, vec![
-            TimeFilter { op: SizeOp::Gt, time: t1 },
-            TimeFilter { op: SizeOp::Lt, time: t2 },
-        ]);
+        let q = Query::new(
+            PathBuf::from("/tmp"),
+            None,
+            None,
+            vec![
+                TimeFilter {
+                    op: SizeOp::Gt,
+                    time: t1,
+                },
+                TimeFilter {
+                    op: SizeOp::Lt,
+                    time: t2,
+                },
+            ],
+        );
         assert!(q.extract_since().is_some());
         assert!(q.extract_until().is_some());
 
@@ -526,10 +572,21 @@ mod tests {
         let t_early = now - chrono::Duration::hours(3);
         let t_late = now - chrono::Duration::hours(1);
         // Multiple > filters — takes the latest (most restrictive)
-        let q = Query::new(PathBuf::from("/tmp"), None, None, vec![
-            TimeFilter { op: SizeOp::Ge, time: t_early },
-            TimeFilter { op: SizeOp::Ge, time: t_late },
-        ]);
+        let q = Query::new(
+            PathBuf::from("/tmp"),
+            None,
+            None,
+            vec![
+                TimeFilter {
+                    op: SizeOp::Ge,
+                    time: t_early,
+                },
+                TimeFilter {
+                    op: SizeOp::Ge,
+                    time: t_late,
+                },
+            ],
+        );
         let s = q.extract_since().unwrap();
         assert_eq!(s, t_late, "should pick the later/more-restrictive time");
     }
@@ -540,10 +597,21 @@ mod tests {
         let t_early = now - chrono::Duration::hours(3);
         let t_late = now - chrono::Duration::hours(1);
         // Multiple < filters — takes the earliest (most restrictive)
-        let q = Query::new(PathBuf::from("/tmp"), None, None, vec![
-            TimeFilter { op: SizeOp::Le, time: t_late },
-            TimeFilter { op: SizeOp::Le, time: t_early },
-        ]);
+        let q = Query::new(
+            PathBuf::from("/tmp"),
+            None,
+            None,
+            vec![
+                TimeFilter {
+                    op: SizeOp::Le,
+                    time: t_late,
+                },
+                TimeFilter {
+                    op: SizeOp::Le,
+                    time: t_early,
+                },
+            ],
+        );
         let u = q.extract_until().unwrap();
         assert_eq!(u, t_early, "should pick the earlier/more-restrictive time");
     }
@@ -556,16 +624,28 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let events = vec![
             FileEvent {
-                time: Utc::now(), event_type: EventType::Create,
-                path: PathBuf::from("/home/user/file.txt"), pid: 1,
-                cmd: "vim".into(), user: "root".into(),
-                file_size: 0, ppid: 0, tgid: 0, chain: String::new(),
+                time: Utc::now(),
+                event_type: EventType::Create,
+                path: PathBuf::from("/home/user/file.txt"),
+                pid: 1,
+                cmd: "vim".into(),
+                user: "root".into(),
+                file_size: 0,
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
             },
             FileEvent {
-                time: Utc::now(), event_type: EventType::Modify,
-                path: PathBuf::from("/tmp/cache.dat"), pid: 2,
-                cmd: "bash".into(), user: "root".into(),
-                file_size: 100, ppid: 0, tgid: 0, chain: String::new(),
+                time: Utc::now(),
+                event_type: EventType::Modify,
+                path: PathBuf::from("/tmp/cache.dat"),
+                pid: 2,
+                cmd: "bash".into(),
+                user: "root".into(),
+                file_size: 100,
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
             },
         ];
         let log_path = create_log_file(&dir, &events);
@@ -573,7 +653,11 @@ mod tests {
         // Filter by /home → should only get first event
         let q = Query::new(log_dir, None, Some(vec![PathBuf::from("/home")]), vec![]);
         let result = q.read_events_from(&log_path, None, None).unwrap();
-        assert_eq!(result.len(), 2, "read_events_from returns all events (path filter is applied in execute)");
+        assert_eq!(
+            result.len(),
+            2,
+            "read_events_from returns all events (path filter is applied in execute)"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -588,7 +672,12 @@ mod tests {
         drop(f);
 
         // Path filter for /home → only first event
-        let q = Query::new(dir.clone(), None, Some(vec![PathBuf::from("/home")]), vec![]);
+        let q = Query::new(
+            dir.clone(),
+            None,
+            Some(vec![PathBuf::from("/home")]),
+            vec![],
+        );
         // Can't call execute() easily in test (it prints to stdout),
         // but we can verify resolve_log_files finds the file
         let files = q.resolve_log_files().unwrap();

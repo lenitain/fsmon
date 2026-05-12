@@ -69,7 +69,11 @@ pub struct PathEntry {
 
 impl PathParams {
     pub fn new(recursive: Option<bool>, types: Option<Vec<String>>, size: Option<String>) -> Self {
-        PathParams { recursive, types, size }
+        PathParams {
+            recursive,
+            types,
+            size,
+        }
     }
 }
 
@@ -100,8 +104,9 @@ impl Monitored {
             if trimmed.is_empty() {
                 continue;
             }
-            let group: CmdGroup = serde_json::from_str(trimmed)
-                .with_context(|| format!("Invalid JSON in store {}: {}", path.display(), trimmed))?;
+            let group: CmdGroup = serde_json::from_str(trimmed).with_context(|| {
+                format!("Invalid JSON in store {}: {}", path.display(), trimmed)
+            })?;
             groups.push(group);
         }
         let mut store = Monitored { groups };
@@ -153,10 +158,8 @@ impl Monitored {
         chown_to_original_user(path);
         chown_to_original_user(parent);
         for group in &self.groups {
-            let line = serde_json::to_string(group)
-                .context("Failed to serialize store group")?;
-            writeln!(file, "{}", line)
-                .context("Failed to write store group")?;
+            let line = serde_json::to_string(group).context("Failed to serialize store group")?;
+            writeln!(file, "{}", line).context("Failed to write store group")?;
         }
         Ok(())
     }
@@ -233,9 +236,9 @@ impl Monitored {
     /// cmd=None → `"_global"` group.
     pub fn has_entry(&self, path: &Path, cmd: Option<&str>) -> bool {
         let target = cmd.unwrap_or(CMD_GLOBAL);
-        self.groups.iter().any(|g| {
-            g.cmd == target && g.paths.contains_key(path)
-        })
+        self.groups
+            .iter()
+            .any(|g| g.cmd == target && g.paths.contains_key(path))
     }
 }
 
@@ -248,11 +251,8 @@ mod tests {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "fsmon_monitored_test_{}_{}",
-            std::process::id(),
-            n
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("fsmon_monitored_test_{}_{}", std::process::id(), n));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let monitored_path = dir.join("monitored.jsonl");
@@ -398,10 +398,14 @@ mod tests {
 
         let flat = store.flatten();
         assert_eq!(flat.len(), 2);
-        assert!(flat.iter().any(|e| e.path == PathBuf::from("/a")
-            && e.cmd.as_deref() == Some("bash")));
-        assert!(flat.iter().any(|e| e.path == PathBuf::from("/b")
-            && e.cmd.as_deref() == Some("_global")));
+        assert!(
+            flat.iter()
+                .any(|e| e.path == PathBuf::from("/a") && e.cmd.as_deref() == Some("bash"))
+        );
+        assert!(
+            flat.iter()
+                .any(|e| e.path == PathBuf::from("/b") && e.cmd.as_deref() == Some("_global"))
+        );
     }
 
     #[test]
@@ -444,7 +448,10 @@ mod tests {
                     cmd: CMD_GLOBAL.into(),
                     paths: {
                         let mut m = BTreeMap::new();
-                        m.insert(PathBuf::from("/tmp"), PathParams::new(Some(true), None, None));
+                        m.insert(
+                            PathBuf::from("/tmp"),
+                            PathParams::new(Some(true), None, None),
+                        );
                         m
                     },
                 },
@@ -494,10 +501,7 @@ mod tests {
     /// Old format without cmd field should fail to load.
     #[test]
     fn test_jsonl_missing_cmd_field_fails() {
-        let jsonl = concat!(
-            r#"{"paths":{"/tmp":{"recursive":true}}}"#,
-            "\n",
-        );
+        let jsonl = concat!(r#"{"paths":{"/tmp":{"recursive":true}}}"#, "\n",);
         let (_dir, path) = temp_path();
         fs::write(&path, jsonl).unwrap();
         let result = Monitored::load(&path);
@@ -507,10 +511,7 @@ mod tests {
     /// Old flat PathEntry format should fail to load.
     #[test]
     fn test_jsonl_old_flat_format_fails() {
-        let jsonl = concat!(
-            r#"{"path":"/tmp","recursive":true}"#,
-            "\n",
-        );
+        let jsonl = concat!(r#"{"path":"/tmp","recursive":true}"#, "\n",);
         let (_dir, path) = temp_path();
         fs::write(&path, jsonl).unwrap();
         let result = Monitored::load(&path);

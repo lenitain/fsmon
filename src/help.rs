@@ -21,7 +21,6 @@ pub const fn about(topic: HelpTopic) -> &'static str {
         HelpTopic::Monitored => "List all monitored paths with their configuration",
         HelpTopic::Query => "Query historical file change events from log files",
         HelpTopic::Clean => "Clean historical log files, retain by time or size",
-
     }
 }
 
@@ -194,7 +193,6 @@ Examples:
   fsmon clean openclaw -t '>7d'     Keep last 7 days of openclaw events
   fsmon clean nginx --dry-run        Preview nginx log cleaning"#
         }
-
     }
 }
 

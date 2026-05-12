@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 use fsmon::config::Config;
-use fsmon::monitored::{Monitored, PathEntry, CMD_GLOBAL};
+use fsmon::monitored::{CMD_GLOBAL, Monitored, PathEntry};
 use fsmon::socket::{self, SocketCmd};
 use path_clean::PathClean;
 use std::path::PathBuf;
@@ -12,10 +12,12 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     cfg.resolve_paths()?;
 
     // CMD is required. Use '_global' for global monitoring.
-    let process_name = args.cmd.as_deref()
-        .ok_or_else(|| anyhow::anyhow!(
-            "CMD is required. Use '{}' for global monitoring.", CMD_GLOBAL
-        ))?;
+    let process_name = args.cmd.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "CMD is required. Use '{}' for global monitoring.",
+            CMD_GLOBAL
+        )
+    })?;
     let process_name = Some(process_name.to_string());
 
     // Require at least --path
@@ -148,9 +150,9 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         Some(false)
     };
     let entry = PathEntry {
-        path: path.clone().unwrap_or_else(|| {
-            PathBuf::from(process_name.as_deref().unwrap_or(""))
-        }),
+        path: path
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(process_name.as_deref().unwrap_or(""))),
         cmd: process_name.clone(),
         recursive,
         types: types.clone(),

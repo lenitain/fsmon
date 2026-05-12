@@ -1,13 +1,13 @@
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use dashmap::DashMap;
-use std::collections::HashMap;
 use fanotify_fid::consts::{
     AT_FDCWD, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_MARK_ADD, FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE,
     FAN_NONBLOCK, FAN_Q_OVERFLOW, FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
 };
 use fanotify_fid::prelude::*;
 use fanotify_fid::types::FidEvent;
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::num::NonZeroUsize;
@@ -1126,7 +1126,12 @@ impl Monitor {
                 }
             }
             let cmd_label = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
-            println!("Monitoring entry: [{}] {} (recursive={})", cmd_label, path.display(), recursive);
+            println!(
+                "Monitoring entry: [{}] {} (recursive={})",
+                cmd_label,
+                path.display(),
+                recursive
+            );
             return Ok(());
         }
 
@@ -1155,9 +1160,10 @@ impl Monitor {
 
         if !path.exists() {
             // Avoid duplicate pending entries for the same (path, cmd)
-            let already_pending = self.pending_paths.iter().any(|(p, e)| {
-                p == &path && e.cmd == entry.cmd
-            });
+            let already_pending = self
+                .pending_paths
+                .iter()
+                .any(|(p, e)| p == &path && e.cmd == entry.cmd);
             if !already_pending {
                 eprintln!(
                     "[INFO] Path '{}' does not exist yet — will start monitoring when created.",
@@ -1520,12 +1526,20 @@ impl Monitor {
                     .monitored_entries
                     .iter()
                     .map(|(p, opts)| {
-                        let cmd = opts.cmd.clone().or(Some(crate::monitored::CMD_GLOBAL.to_string()));
+                        let cmd = opts
+                            .cmd
+                            .clone()
+                            .or(Some(crate::monitored::CMD_GLOBAL.to_string()));
                         PathEntry {
                             path: p.clone(),
                             recursive: Some(opts.recursive),
-                            types: opts.event_types.as_ref().map(|v| v.iter().map(|t| t.to_string()).collect()),
-                            size: opts.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes))),
+                            types: opts
+                                .event_types
+                                .as_ref()
+                                .map(|v| v.iter().map(|t| t.to_string()).collect()),
+                            size: opts
+                                .size_filter
+                                .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
                             cmd,
                         }
                     })
@@ -1719,7 +1733,12 @@ impl Monitor {
 
     #[cfg(test)]
     fn is_path_in_scope(&self, path: &Path) -> bool {
-        filters::is_path_in_scope(&self.paths, &self.monitored_entries, &self.canonical_paths, path)
+        filters::is_path_in_scope(
+            &self.paths,
+            &self.monitored_entries,
+            &self.canonical_paths,
+            path,
+        )
     }
 
     /// Check if event path is within scope of a specific PathOptions.
@@ -1879,8 +1898,6 @@ mod tests {
         assert!(!m.should_output(&make_event("/tmp/a", EventType::Create, 1, 500)));
     }
 
-
-
     #[test]
     fn test_should_output_combined_filters() {
         let m = make_monitor(
@@ -2026,8 +2043,6 @@ mod tests {
             chain: String::new(),
         }
     }
-
-
 
     // ---- Integration tests (require sudo) ----
 
@@ -2181,6 +2196,4 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&test_dir_for_cleanup);
     }
-
-
 }

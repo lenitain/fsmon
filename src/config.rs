@@ -178,11 +178,7 @@ impl Config {
             .with_context(|| format!("Failed to read config {}", p.display()))?;
         match toml::from_str::<Config>(&content) {
             Ok(cfg) => Ok(cfg),
-            Err(e) => bail!(
-                "Invalid config file at {}: {}",
-                p.display(),
-                e
-            ),
+            Err(e) => bail!("Invalid config file at {}: {}", p.display(), e),
         }
     }
 
@@ -345,7 +341,10 @@ path = "/tmp/custom.sock"
 
             // File should be untouched
             let content = fs::read_to_string(&config_path).unwrap();
-            assert!(content.trim().is_empty(), "file content should be untouched");
+            assert!(
+                content.trim().is_empty(),
+                "file content should be untouched"
+            );
         });
     }
 
@@ -428,7 +427,9 @@ path = "/tmp/custom.sock"
             let config_path = Config::path();
             fs::create_dir_all(config_path.parent().unwrap()).unwrap();
             // Write config with default paths
-            fs::write(&config_path, r#"[monitored]
+            fs::write(
+                &config_path,
+                r#"[monitored]
 path = "~/.local/share/fsmon/monitored.jsonl"
 
 [logging]
@@ -436,7 +437,9 @@ path = "~/.local/state/fsmon"
 
 [socket]
 path = "/tmp/fsmon-<UID>.sock"
-"#).unwrap();
+"#,
+            )
+            .unwrap();
 
             Config::init_dirs().unwrap();
 
@@ -473,7 +476,10 @@ path = "/tmp/test.sock"
             Config::init_dirs().unwrap();
 
             assert!(custom_log.exists(), "custom log dir should exist");
-            assert!(custom_monitored_dir.exists(), "custom monitored dir should exist");
+            assert!(
+                custom_monitored_dir.exists(),
+                "custom monitored dir should exist"
+            );
         });
     }
 

@@ -5,20 +5,20 @@ pub mod fid_parser;
 pub mod filters;
 pub mod help;
 pub mod monitor;
+pub mod monitored;
 pub mod proc_cache;
 pub mod query;
 pub mod socket;
-pub mod monitored;
 pub mod utils;
-pub use utils::{SizeOp, SizeFilter, TimeFilter, parse_size_filter, parse_size, parse_time_filter};
+pub use utils::{SizeFilter, SizeOp, TimeFilter, parse_size, parse_size_filter, parse_time_filter};
 
 use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
 
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
-use fs2::FileExt;
 use std::path::PathBuf;
 
 /// Enforces single daemon instance via `flock`.
@@ -40,7 +40,13 @@ impl DaemonLock {
             .read(true)
             .write(true)
             .open(&path)
-            .map_err(|e| anyhow::anyhow!("Failed to open daemon lock file '{}': {}", path.display(), e))?;
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to open daemon lock file '{}': {}",
+                    path.display(),
+                    e
+                )
+            })?;
 
         match file.try_lock_exclusive() {
             Ok(()) => {}
