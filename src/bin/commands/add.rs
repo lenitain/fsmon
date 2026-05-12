@@ -3,7 +3,7 @@ use fsmon::config::Config;
 use fsmon::managed::{Managed, PathEntry};
 use fsmon::socket::{self, SocketCmd};
 use path_clean::PathClean;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::AddArgs;
 
@@ -165,25 +165,21 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
 
     match result {
         Ok(resp) if resp.ok => {
-            println!("Entry added");
-            println!("Daemon updated live");
+            println!("{}", serde_json::to_string(&entry).expect("PathEntry serialization"));
         }
         Ok(resp) => {
-            let is_permanent = resp.error_kind == Some(fsmon::socket::ErrorKind::Permanent);
-            if is_permanent {
+            if resp.error_kind == Some(fsmon::socket::ErrorKind::Permanent) {
                 let mut store = Managed::load(&cfg.managed.path)?;
                 store.remove_entry(&entry.path, entry.cmd.as_deref());
                 store.save(&cfg.managed.path)?;
                 eprintln!("Error: {}", resp.error.unwrap_or_default());
             } else {
-                println!("Entry added");
+                println!("{}", serde_json::to_string(&entry).expect("PathEntry serialization"));
                 eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
-                eprintln!("Will be monitored after daemon restart");
             }
         }
         Err(_) => {
-            println!("Entry added");
-            eprintln!("Daemon not running — will be monitored after daemon restart.");
+            println!("{}", serde_json::to_string(&entry).expect("PathEntry serialization"));
         }
     }
     Ok(())

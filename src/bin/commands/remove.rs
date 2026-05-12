@@ -10,11 +10,16 @@ pub fn cmd_remove(path: Option<PathBuf>, cmd: Option<String>) -> Result<()> {
 
     let mut store = Managed::load(&cfg.managed.path)?;
 
+    // Match by (path, cmd) pair precisely
     let removed = if let Some(ref p) = path {
+        // --path /home --cmd openclaw → exact (path, cmd) match
+        // --path /home (no cmd)       → only match entries where cmd is None
         store.remove_entry(p, cmd.as_deref())
     } else if let Some(ref c) = cmd {
+        // --cmd openclaw (no path) → only match process-only entries (path == cmd sentinel)
         let len_before = store.entries.len();
-        store.entries.retain(|e| e.cmd.as_deref() != Some(c.as_str()));
+        let path_str = PathBuf::from(c.as_str());
+        store.entries.retain(|e| !(e.path == path_str && e.cmd.as_deref() == Some(c.as_str())));
         store.entries.len() < len_before
     } else {
         false
