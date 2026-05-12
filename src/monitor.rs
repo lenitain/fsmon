@@ -927,11 +927,15 @@ impl Monitor {
         });
         let size_filter = entry.size.as_ref().map(|s| parse_size_filter(s)).transpose()?;
         let recursive = entry.recursive.unwrap_or(false);
+        // `_global` in PathEntry means no process tracking → convert to None
+        let cmd = entry.cmd.as_deref().and_then(|c| {
+            if c == crate::monitored::CMD_GLOBAL { None } else { Some(c.to_string()) }
+        });
         let opts = PathOptions {
             size_filter,
             event_types,
             recursive,
-            cmd: entry.cmd.clone(),
+            cmd,
         };
 
         let path_mask = path_mask_from_options(&opts);
@@ -1190,6 +1194,8 @@ impl Monitor {
                     .iter()
                     .map(|p| {
                         let opts = self.path_options.get(p);
+                        // Map internal None cmd back to "_global" for external reporting
+                        let cmd = opts.and_then(|o| o.cmd.clone());
                         PathEntry {
                             path: p.clone(),
                             recursive: opts.map(|o| o.recursive),
@@ -1199,7 +1205,7 @@ impl Monitor {
                                     .map(|v| v.iter().map(|t| t.to_string()).collect())
                             }),
                             size: opts.and_then(|o| o.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes)))),
-                            cmd: None,
+                            cmd: cmd.or(Some(crate::monitored::CMD_GLOBAL.to_string())),
                         }
                     })
                     .collect();
