@@ -180,7 +180,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
 
     match result {
         Ok(resp) if resp.ok => {
-            println!("Entry added into monitored: ");
+            println!("Entry added into monitored");
         }
         Ok(resp) => {
             if resp.error_kind == Some(fsmon::socket::ErrorKind::Permanent) {
@@ -189,12 +189,12 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
                 store.save(&cfg.monitored.path)?;
                 eprintln!("Error: {}", resp.error.unwrap_or_default());
             } else {
-                println!("Entry added into monitored: ");
+                println!("Entry added into monitored");
                 eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
             }
         }
         Err(_) => {
-            println!("Entry added into monitored: ");
+            println!("Entry added into monitored");
             eprintln!("Daemon is not running — will be monitored after daemon restart.");
         }
     }
