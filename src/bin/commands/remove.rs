@@ -49,7 +49,7 @@ pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
     // Try live update via socket (non-fatal if fails)
     let socket_path = cfg.socket.path.clone();
     for p in &paths {
-        if let Err(_) = socket::send_cmd(
+        if socket::send_cmd(
             &socket_path,
             &SocketCmd {
                 cmd: "remove".to_string(),
@@ -59,7 +59,7 @@ pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
                 size: None,
                 track_cmd: Some(cmd_str.to_string()),
             },
-        ) {
+        ).is_err() {
             break;
         }
     }

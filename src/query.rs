@@ -74,7 +74,7 @@ impl Query {
             match f.op {
                 SizeOp::Gt | SizeOp::Ge => {
                     let candidate = f.time;
-                    if since.map_or(true, |s| candidate > s) {
+                    if since.is_none_or(|s| candidate > s) {
                         since = Some(candidate);
                     }
                 }
@@ -91,7 +91,7 @@ impl Query {
             match f.op {
                 SizeOp::Lt | SizeOp::Le => {
                     let candidate = f.time;
-                    if until.map_or(true, |u| candidate < u) {
+                    if until.is_none_or(|u| candidate < u) {
                         until = Some(candidate);
                     }
                 }
@@ -128,34 +128,34 @@ impl Query {
             File::open(log_path)
                 .with_context(|| format!("Failed to open log file {}", log_path.display()))?,
         );
-        reader.seek(SeekFrom::Start(start_pos as u64))?;
+        reader.seek(SeekFrom::Start(start_pos))?;
 
         let mut events = Vec::new();
         let mut line = String::new();
 
         while reader.read_line(&mut line)? > 0 {
             let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                if let Some(event) = parse_log_line_jsonl(trimmed) {
-                    // Apply time filters
-                    let pass = self.time_filters.iter().all(|f| {
-                        match f.op {
-                            SizeOp::Gt => event.time > f.time,
-                            SizeOp::Ge => event.time >= f.time,
-                            SizeOp::Lt => event.time < f.time,
-                            SizeOp::Le => event.time <= f.time,
-                            SizeOp::Eq => event.time == f.time,
-                        }
-                    });
-                    if pass {
-                        // Check until bound before push (event consumed by push)
-                        if let Some(u) = until {
-                            if event.time > u {
-                                break;
-                            }
-                        }
-                        events.push(event);
+            if !trimmed.is_empty()
+                && let Some(event) = parse_log_line_jsonl(trimmed)
+            {
+                // Apply time filters
+                let pass = self.time_filters.iter().all(|f| {
+                    match f.op {
+                        SizeOp::Gt => event.time > f.time,
+                        SizeOp::Ge => event.time >= f.time,
+                        SizeOp::Lt => event.time < f.time,
+                        SizeOp::Le => event.time <= f.time,
+                        SizeOp::Eq => event.time == f.time,
                     }
+                });
+                if pass {
+                    // Check until bound before push (event consumed by push)
+                    if let Some(u) = until
+                        && event.time > u
+                    {
+                        break;
+                    }
+                    events.push(event);
                 }
             }
             line.clear();
@@ -182,11 +182,7 @@ impl Query {
             let mid = low + (high - low) / 2;
 
             // Scan back to find a complete line (start of JSON object)
-            let scan_start = if mid < SCAN_BACK_BYTES {
-                0
-            } else {
-                mid - SCAN_BACK_BYTES
-            };
+            let scan_start = mid.saturating_sub(SCAN_BACK_BYTES);
 
             let mut buf = vec![0u8; (mid - scan_start) as usize];
             reader.seek(SeekFrom::Start(scan_start))?;

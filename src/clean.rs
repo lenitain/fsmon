@@ -51,7 +51,7 @@ async fn clean_single_log(
             }
 
             let (should_keep, event) = if let Some(event) = parse_log_line_jsonl(trimmed) {
-                let passes_time = time_filter.as_ref().map_or(true, |f| {
+                let passes_time = time_filter.as_ref().is_none_or(|f| {
                     match f.op {
                         SizeOp::Gt => event.time > f.time,
                         SizeOp::Ge => event.time >= f.time,

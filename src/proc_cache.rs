@@ -88,18 +88,14 @@ pub fn snapshot_process_tree(tree: &PidTree) {
 /// Walks up the tree via ppid until hitting root (pid=1, pid=0, or self-loop).
 pub fn is_descendant(tree: &PidTree, pid: u32, target_cmd: &str) -> bool {
     let mut current = pid;
-    loop {
-        if let Some(node) = tree.get(&current) {
-            if node.cmd == target_cmd {
-                return true;
-            }
-            if node.ppid == 0 || current == node.ppid {
-                break;
-            }
-            current = node.ppid;
-        } else {
+    while let Some(node) = tree.get(&current) {
+        if node.cmd == target_cmd {
+            return true;
+        }
+        if node.ppid == 0 || current == node.ppid {
             break;
         }
+        current = node.ppid;
     }
     false
 }
@@ -140,7 +136,7 @@ pub fn build_chain(tree: &PidTree, cache: &ProcCache, pid: u32) -> String {
                 .find(|l| l.starts_with("Uid:"))
                 .and_then(|l| l.split_whitespace().nth(1))
                 .and_then(|uid_str| uid_str.parse::<u32>().ok())
-                .and_then(|uid| uid_to_username(uid))
+                .and_then(uid_to_username)
                 .unwrap_or_else(|| "unknown".to_string());
             (ppid, cmd, user)
         };
@@ -233,7 +229,7 @@ fn read_proc_info(pid: u32) -> Option<(String, u32, u32)> {
     let mut tgid = 0u32;
     for line in status.lines() {
         if let Some(val) = line.strip_prefix("Uid:") {
-            let uid: u32 = val.split_whitespace().nth(0)?.parse().ok()?;
+            let uid: u32 = val.split_whitespace().next()?.parse().ok()?;
             user = uid_to_username(uid).unwrap_or_else(|| "unknown".to_string());
         } else if let Some(val) = line.strip_prefix("PPid:") {
             ppid = val.trim().parse().ok()?;

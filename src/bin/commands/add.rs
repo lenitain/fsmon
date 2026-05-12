@@ -149,7 +149,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     };
     let entry = PathEntry {
         path: path.clone().unwrap_or_else(|| {
-            PathBuf::from(process_name.as_ref().map(|s| s.as_str()).unwrap_or(""))
+            PathBuf::from(process_name.as_deref().unwrap_or(""))
         }),
         cmd: process_name.clone(),
         recursive,

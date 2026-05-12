@@ -113,7 +113,7 @@ impl Monitor {
                          Tip: use a path outside the log directory, or use a different logging.path",
                         path.display(),
                         if is_exact {
-                            format!("this path is the log directory itself")
+                            "this path is the log directory itself".to_string()
                         } else {
                             format!("log directory '{}' is inside this path", log_dir.display())
                         },
@@ -177,7 +177,7 @@ impl Monitor {
     /// The returned `OwnedFd` has independent lifetime from the source
     /// and will be closed on drop.
     fn dup_fd(fd: &impl AsRawFd) -> std::io::Result<OwnedFd> {
-        let new_raw = nix::unistd::dup(fd.as_raw_fd()).map_err(|e| std::io::Error::other(e))?;
+        let new_raw = nix::unistd::dup(fd.as_raw_fd()).map_err(std::io::Error::other)?;
         // SAFETY: nix::unistd::dup returned a new valid fd that we
         // exclusively own. The kernel guarantees dup returns the
         // lowest-numbered unused fd, not owned by any other OwnedFd.
@@ -193,7 +193,7 @@ impl Monitor {
             nix::fcntl::OFlag::O_DIRECTORY,
             nix::sys::stat::Mode::empty(),
         )
-        .map_err(|e| std::io::Error::other(e))?;
+        .map_err(std::io::Error::other)?;
         // SAFETY: nix::fcntl::open succeeded, returning a new valid fd
         // that we exclusively own. It will be closed when OwnedFd drops.
         Ok(unsafe { OwnedFd::from_raw_fd(raw) })
@@ -1145,7 +1145,7 @@ impl Monitor {
                      Tip: use a path outside the log directory, or use a different logging.path",
                     path.display(),
                     if is_exact {
-                        format!("this path is the log directory itself")
+                        "this path is the log directory itself".to_string()
                     } else {
                         format!("log directory '{}' is inside this path", log_dir.display())
                     },
@@ -1416,7 +1416,7 @@ impl Monitor {
                 let canonical = self
                     .paths
                     .iter()
-                    .position(|p| p == &path)
+                    .position(|p| p == path)
                     .and_then(|i| self.canonical_paths.get(i).cloned())
                     .unwrap_or_else(|| path.to_path_buf());
                 if self.fs_groups[gi].is_fs_mark {

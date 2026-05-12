@@ -47,16 +47,16 @@ pub struct TimeFilter {
 /// Operator is required — no default. Returns error if missing.
 pub fn parse_size_filter(s: &str) -> Result<SizeFilter> {
     let s = s.trim();
-    let (op, rest) = if s.starts_with(">=") {
-        (SizeOp::Ge, &s[2..])
-    } else if s.starts_with("<=") {
-        (SizeOp::Le, &s[2..])
-    } else if s.starts_with('>') {
-        (SizeOp::Gt, &s[1..])
-    } else if s.starts_with('<') {
-        (SizeOp::Lt, &s[1..])
-    } else if s.starts_with('=') {
-        (SizeOp::Eq, &s[1..])
+    let (op, rest) = if let Some(r) = s.strip_prefix(">=") {
+        (SizeOp::Ge, r)
+    } else if let Some(r) = s.strip_prefix("<=") {
+        (SizeOp::Le, r)
+    } else if let Some(r) = s.strip_prefix('>') {
+        (SizeOp::Gt, r)
+    } else if let Some(r) = s.strip_prefix('<') {
+        (SizeOp::Lt, r)
+    } else if let Some(r) = s.strip_prefix('=') {
+        (SizeOp::Eq, r)
     } else {
         anyhow::bail!("size filter must start with an operator (>=, >, <=, <, =), got: {}", s);
     };
@@ -170,16 +170,16 @@ pub fn parse_time(time_str: &str) -> Result<DateTime<Utc>> {
 /// Operator is required — no default. Returns error if missing.
 pub fn parse_time_filter(s: &str) -> Result<TimeFilter> {
     let s = s.trim();
-    let (op, rest) = if s.starts_with(">=") {
-        (SizeOp::Ge, &s[2..])
-    } else if s.starts_with("<=") {
-        (SizeOp::Le, &s[2..])
-    } else if s.starts_with('>') {
-        (SizeOp::Gt, &s[1..])
-    } else if s.starts_with('<') {
-        (SizeOp::Lt, &s[1..])
-    } else if s.starts_with('=') {
-        (SizeOp::Eq, &s[1..])
+    let (op, rest) = if let Some(r) = s.strip_prefix(">=") {
+        (SizeOp::Ge, r)
+    } else if let Some(r) = s.strip_prefix("<=") {
+        (SizeOp::Le, r)
+    } else if let Some(r) = s.strip_prefix('>') {
+        (SizeOp::Gt, r)
+    } else if let Some(r) = s.strip_prefix('<') {
+        (SizeOp::Lt, r)
+    } else if let Some(r) = s.strip_prefix('=') {
+        (SizeOp::Eq, r)
     } else {
         anyhow::bail!("time filter must start with an operator (>=, >, <=, <, =), got: {}", s);
     };
@@ -253,7 +253,7 @@ fn read_proc_status_fields(pid: u32) -> Option<(String, u32, u32)> {
     let mut tgid = 0u32;
     for line in status.lines() {
         if let Some(val) = line.strip_prefix("Uid:") {
-            let uid: u32 = val.split_whitespace().nth(0)?.parse().ok()?;
+            let uid: u32 = val.split_whitespace().next()?.parse().ok()?;
             user = uid_to_username(uid).unwrap_or_else(|| "unknown".to_string());
         } else if let Some(val) = line.strip_prefix("PPid:") {
             ppid = val.trim().parse().ok()?;
