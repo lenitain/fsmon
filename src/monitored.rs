@@ -281,11 +281,11 @@ impl Monitored {
         self.groups.is_empty() || self.groups.iter().all(|g| g.paths.is_empty())
     }
 
-    /// Remove an entire cmd group by cmd name.
+    /// Remove an entire cmd group by cmd name (None = null cmd group).
     /// Returns `true` if the group was found and removed.
-    pub fn remove_cmd_group(&mut self, cmd: &str) -> bool {
+    pub fn remove_cmd_group(&mut self, cmd: Option<&str>) -> bool {
         let len_before = self.groups.len();
-        self.groups.retain(|g| g.cmd.as_deref() != Some(cmd));
+        self.groups.retain(|g| g.cmd.as_deref() != cmd);
         self.groups.len() < len_before
     }
 

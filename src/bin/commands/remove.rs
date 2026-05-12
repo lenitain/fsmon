@@ -12,13 +12,15 @@ pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
 
     let cmd_str = cmd.as_deref();
     match (cmd_str, paths.as_slice()) {
-        // fsmon remove (no args) → error
+        // fsmon remove (no args) → remove entire null cmd group
         (None, &[]) => {
-            bail!("Specify a cmd group name or --path to remove");
+            if !store.remove_cmd_group(None) {
+                bail!("Null cmd group not found (no paths monitored without a cmd)");
+            }
         }
         // fsmon remove bash (no --path) → remove entire cmd group
         (Some(c), &[]) => {
-            if !store.remove_cmd_group(c) {
+            if !store.remove_cmd_group(Some(c)) {
                 bail!("Cmd group '{}' not found", c);
             }
         }
