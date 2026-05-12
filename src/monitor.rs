@@ -85,6 +85,7 @@ impl Monitor {
 
         let mut paths = Vec::new();
         let mut path_options = HashMap::new();
+        let mut seen = std::collections::HashSet::new();
         let log_dir_canonical = log_dir.as_ref().map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()));
         for (path, opts) in &paths_and_options {
             // Reject paths that overlap with the log directory.
@@ -109,8 +110,11 @@ impl Monitor {
                     );
                 }
             }
+            // Same path under multiple cmd groups → last one wins
+            if seen.insert(resolved.clone()) {
+                paths.push(resolved.clone());
+            }
             path_options.insert(resolved.clone(), opts.clone());
-            paths.push(resolved.clone());
         }
 
         Ok(Self {
