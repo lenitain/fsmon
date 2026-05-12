@@ -74,10 +74,13 @@ pub fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
         })
         .transpose()
         .map_err(|e: String| anyhow::anyhow!(e))?;
+    let cmd = entry.cmd.as_deref().and_then(|c| {
+        if c == fsmon::monitored::CMD_GLOBAL { None } else { Some(c.to_string()) }
+    });
     Ok(PathOptions {
         size_filter,
         event_types,
         recursive: entry.recursive.unwrap_or(false),
-        cmd: entry.cmd.clone(),
+        cmd,
     })
 }

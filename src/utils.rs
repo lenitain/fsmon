@@ -298,12 +298,9 @@ pub fn uid_to_username(uid: u32) -> Option<String> {
 
 /// Convert a monitored path to a deterministic, fixed-length log filename.
 /// Resolve log filename from cmd name.
-/// `None` → `"_global_log.jsonl"`, `Some("openclaw")` → `"openclaw_log.jsonl"`.
-pub fn cmd_to_log_name(cmd: Option<&str>) -> String {
-    match cmd {
-        Some(name) => format!("{}_log.jsonl", name),
-        None => "_global_log.jsonl".to_string(),
-    }
+/// `"_global"` → `"_global_log.jsonl"`, `"openclaw"` → `"openclaw_log.jsonl"`.
+pub fn cmd_to_log_name(cmd: &str) -> String {
+    format!("{}_log.jsonl", cmd)
 }
 
 /// Resolve log filename from a monitored path (FNV-1a hash based).

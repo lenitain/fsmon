@@ -1332,7 +1332,7 @@ impl Monitor {
         };
         // Resolve which cmd group this event belongs to for log file naming
         let opts = self.get_matching_path_options(&event.path);
-        let cmd_name = opts.and_then(|o| o.cmd.as_deref());
+        let cmd_name = opts.and_then(|o| o.cmd.as_deref()).unwrap_or(crate::monitored::CMD_GLOBAL);
         let log_path = log_dir.join(crate::utils::cmd_to_log_name(cmd_name));
         let is_new = !log_path.exists();
         let mut file = OpenOptions::new()

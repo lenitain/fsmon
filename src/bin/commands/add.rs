@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 use fsmon::config::Config;
-use fsmon::monitored::{Monitored, PathEntry};
+use fsmon::monitored::{Monitored, PathEntry, CMD_GLOBAL};
 use fsmon::socket::{self, SocketCmd};
 use path_clean::PathClean;
 use std::path::PathBuf;
@@ -11,10 +11,15 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
 
-    let process_name = args.cmd.clone();
+    // CMD is required. Use '_global' for global monitoring.
+    let process_name = args.cmd.as_deref()
+        .ok_or_else(|| anyhow::anyhow!(
+            "CMD is required. Use '{}' for global monitoring.", CMD_GLOBAL
+        ))?;
+    let process_name = Some(process_name.to_string());
 
-    // Require at least --path or a process name
-    if args.path.is_none() && process_name.is_none() {
+    // Require at least --path
+    if args.path.is_none() {
         bail!("At least one of --path or a process name is required");
     }
 

@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 use fsmon::config::Config;
-use fsmon::monitored::Monitored;
+use fsmon::monitored::{Monitored, CMD_GLOBAL};
 use fsmon::socket::{self, SocketCmd};
 use std::path::PathBuf;
 
@@ -10,42 +10,35 @@ pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
 
     let mut store = Monitored::load(&cfg.monitored.path)?;
 
-    let cmd_str = cmd.as_deref();
-    match (cmd_str, paths.as_slice()) {
-        // fsmon remove (no args) → remove entire null cmd group
-        (None, &[]) => {
-            if !store.remove_cmd_group(None) {
-                bail!("Null cmd group not found (no paths monitored without a cmd)");
-            }
-        }
+    // CMD is required. Use '_global' for global monitoring.
+    let cmd_str = cmd.as_deref()
+        .ok_or_else(|| anyhow::anyhow!(
+            "CMD is required. Use '{}' for global monitoring.", CMD_GLOBAL
+        ))?;
+
+    match paths.as_slice() {
         // fsmon remove bash (no --path) → remove entire cmd group
-        (Some(c), &[]) => {
-            if !store.remove_cmd_group(Some(c)) {
-                bail!("Cmd group '{}' not found", c);
+        &[] => {
+            if !store.remove_cmd_group(Some(cmd_str)) {
+                bail!("Cmd group '{}' not found", cmd_str);
             }
         }
         // fsmon remove bash --path /a --path /b → remove from that cmd group
-        // fsmon remove --path /a (no cmd) → remove from null cmd group
-        (cmd_val, ps) => {
+        ps => {
             // Atomic: check all paths exist first
             for p in ps {
-                if !store.has_entry(p, cmd_val) {
-                    if let Some(c) = cmd_val {
-                        bail!("Path '{}' not found under cmd '{}'", p.display(), c);
-                    } else {
-                        bail!("Path '{}' is not being monitored (null cmd group)", p.display());
-                    }
+                if !store.has_entry(p, Some(cmd_str)) {
+                    bail!("Path '{}' not found under cmd '{}'", p.display(), cmd_str);
                 }
             }
             let mut removed_any = false;
             for p in ps {
-                if store.remove_entry(p, cmd_val) {
+                if store.remove_entry(p, Some(cmd_str)) {
                     removed_any = true;
                 }
             }
             if !removed_any {
-                let label = cmd_val.unwrap_or("null");
-                bail!("No entries removed (cmd group '{}')", label);
+                bail!("No entries removed (cmd group '{}')", cmd_str);
             }
         }
     }
@@ -64,10 +57,9 @@ pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
                 recursive: None,
                 types: None,
                 size: None,
-                track_cmd: cmd.clone(),
+                track_cmd: Some(cmd_str.to_string()),
             },
         ) {
-            // daemon not running — OK, will take effect on restart
             break;
         }
     }

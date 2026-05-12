@@ -579,15 +579,18 @@ mod tests {
     }
 
     #[test]
-    fn test_integration_add_path_only() {
+    fn test_integration_add_global() {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
-            let args = AddArgs::try_parse_from(&["add", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(&[
+                "add", "_global", "--path", p.as_ref(),
+            ]).unwrap();
             super::commands::cmd_add(args).unwrap();
 
             let store = load_store(home);
             assert_eq!(store.entry_count(), 1);
             assert!(store.get(mp, None).is_some());
+            assert_eq!(store.groups[0].cmd, "_global");
         });
     }
 
@@ -611,7 +614,7 @@ mod tests {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
             let args = AddArgs::try_parse_from(&[
-                "add", "--path", p.as_ref(),
+                "add", "_global", "--path", p.as_ref(),
                 "--types", "MODIFY",
                 "--types", "CREATE",
             ]).unwrap();
@@ -630,7 +633,7 @@ mod tests {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
             let args = AddArgs::try_parse_from(&[
-                "add", "--path", p.as_ref(), "-r",
+                "add", "_global", "--path", p.as_ref(), "-r",
             ]).unwrap();
             super::commands::cmd_add(args).unwrap();
 
@@ -644,10 +647,15 @@ mod tests {
     fn test_integration_add_and_remove_path() {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
-            let args = AddArgs::try_parse_from(&["add", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(&[
+                "add", "_global", "--path", p.as_ref(),
+            ]).unwrap();
             super::commands::cmd_add(args).unwrap();
 
-            super::commands::cmd_remove(None, vec![mp.to_path_buf()]).unwrap();
+            super::commands::cmd_remove(
+                Some("_global".into()),
+                vec![mp.to_path_buf()],
+            ).unwrap();
 
             let store = load_store(home);
             assert_eq!(store.entry_count(), 0);
@@ -655,15 +663,17 @@ mod tests {
     }
 
     #[test]
-    fn test_integration_remove_entire_null_group() {
+    fn test_integration_remove_entire_global_group() {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
-            let args = AddArgs::try_parse_from(&["add", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(&[
+                "add", "_global", "--path", p.as_ref(),
+            ]).unwrap();
             super::commands::cmd_add(args).unwrap();
 
             assert_eq!(load_store(home).entry_count(), 1);
 
-            super::commands::cmd_remove(None, vec![]).unwrap();
+            super::commands::cmd_remove(Some("_global".into()), vec![]).unwrap();
             assert_eq!(load_store(home).entry_count(), 0);
         });
     }
@@ -687,12 +697,14 @@ mod tests {
     fn test_integration_remove_path_from_cmd_group() {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
-            // Same path in both myapp and null group
+            // Same path in both myapp and _global group
             let args = AddArgs::try_parse_from(&[
                 "add", "myapp", "--path", p.as_ref(),
             ]).unwrap();
             super::commands::cmd_add(args).unwrap();
-            let args = AddArgs::try_parse_from(&["add", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(&[
+                "add", "_global", "--path", p.as_ref(),
+            ]).unwrap();
             super::commands::cmd_add(args).unwrap();
             assert_eq!(load_store(home).entry_count(), 2);
 
@@ -713,18 +725,20 @@ mod tests {
     fn test_integration_remove_multi_path_atomic_failure() {
         with_isolated_home(|_home, mp| {
             let p = mp.to_string_lossy();
-            let args = AddArgs::try_parse_from(&["add", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(&[
+                "add", "_global", "--path", p.as_ref(),
+            ]).unwrap();
             super::commands::cmd_add(args).unwrap();
 
             // One path exists, one doesn't → should fail atomically
             let result = super::commands::cmd_remove(
-                None,
+                Some("_global".into()),
                 vec![mp.to_path_buf(), PathBuf::from("/nonexistent")],
             );
             assert!(result.is_err(), "should fail atomically");
             let err = result.unwrap_err().to_string();
             assert!(
-                err.contains("not being monitored"),
+                err.contains("not found under cmd"),
                 "error should mention path not found, got: {}",
                 err,
             );
@@ -740,10 +754,12 @@ mod tests {
     }
 
     #[test]
-    fn test_integration_add_to_both_null_and_cmd() {
+    fn test_integration_add_to_both_global_and_cmd() {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
-            let args = AddArgs::try_parse_from(&["add", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(&[
+                "add", "_global", "--path", p.as_ref(),
+            ]).unwrap();
             super::commands::cmd_add(args).unwrap();
             let args = AddArgs::try_parse_from(&[
                 "add", "myapp", "--path", p.as_ref(),

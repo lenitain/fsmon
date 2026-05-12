@@ -246,7 +246,7 @@ impl Query {
 
         Ok(if let Some(ref cmd) = self.cmd_filter {
             // Specific cmd → read its log file
-            let log_path = log_dir.join(cmd_to_log_name(Some(cmd)));
+            let log_path = log_dir.join(cmd_to_log_name(cmd));
             if log_path.exists() {
                 vec![log_path]
             } else {
