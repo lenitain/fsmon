@@ -23,6 +23,20 @@ fsmon add --path /home               # 路径模式：无变化
 
 改动文件：`src/bin/fsmon.rs`、`src/bin/commands/add.rs`、`src/help.rs`、`README.md`、`README.zh-CN.md`
 
+### CLI: 移除所有 exclude 相关功能
+
+注释掉全部 exclude 相关代码（`--exclude`、`--exclude-cmd` 以及内部 `exclude_regex`/`exclude_cmd_regex` 逻辑）。
+
+```bash
+# 不再支持
+fsmon add --path /home --exclude '*.tmp'
+fsmon add --path /home --exclude-cmd rsync
+```
+
+移除的字段：`PathEntry.exclude_path`、`PathEntry.exclude_cmd`、`PathOptions.exclude_regex`、`PathOptions.exclude_invert`、`PathOptions.exclude_cmd_regex`、`PathOptions.exclude_cmd_invert`、`SocketCmd.exclude_path`、`SocketCmd.exclude_cmd`、`AddArgs.exclude`、`AddArgs.exclude_cmd`
+
+另：`PathEntry` 字段顺序 `cmd` 放 `path` 前面（JSON 序列化顺序）。
+
 ## 改动清单
 
 ### 1. `--exclude-cmd` 重命名为 `--cmd`

@@ -206,21 +206,17 @@ fsmon add nginx                                     Track nginx globally (proces
 fsmon add --path /home -r                           Monitor /home recursively (path-only)
 fsmon add --path /home --types MODIFY --types CREATE Filter by event types
 fsmon add --path /home --types all                   All 14 event types
-fsmon add --path /home --exclude '*.tmp'             Exclude path patterns
 fsmon add --path /home -s '>=1MB'                    Minimum file size change
-fsmon add --path /home --exclude-cmd rsync           Exclude noise processes (path-only mode)
 
 **Modes:**
 
 | Mode | Example | Behavior |
 |------|---------|----------|
 | **Both** | `fsmon add openclaw --path /home` | Only track openclaw (and descendants) on /home. Matched events include `chain`. |
-| **Path only** | `fsmon add --path /home` | All events on /home pass through. Each event has `ppid`/`tgid`. Optionally filter noise with `--exclude-cmd`. |
+| **Path only** | `fsmon add --path /home` | All events on /home pass through. Each event has `ppid`/`tgid`. |
 | **Process only** | `fsmon add openclaw` | Track openclaw globally across all paths. Matched events include `chain`. |
 
 - `<CMD>` (positional arg) enables **process tree tracking**: fork/exec children are automatically included. Matching events get a `chain` field (e.g., `"102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root"`).
-- `--exclude-cmd <pattern>` (only in path-only mode) filters by process name **without** process tree — single level only.
-- `--exclude-cmd` is NOT equivalent to the positional `<CMD>` (which enables tree tracking) — they serve different purposes.
 - Multiple entries with different `<CMD>` values can be added (OR logic per entry).
 
 All capture filters run inside the daemon process (nanosecond-fast, no fork).

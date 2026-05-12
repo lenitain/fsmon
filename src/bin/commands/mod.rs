@@ -1,5 +1,5 @@
 use anyhow::Result;
-use fsmon::filters::{self, PathOptions};
+use fsmon::filters::PathOptions;
 use fsmon::monitored::PathEntry;
 use fsmon::EventType;
 use fsmon::utils::parse_size_filter;
@@ -77,15 +77,9 @@ pub fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
         })
         .transpose()
         .map_err(|e: String| anyhow::anyhow!(e))?;
-    let (exclude_regex, exclude_invert) = filters::build_exclude_regex(entry.exclude_path.as_deref(), "exclude_path")?;
-    let (exclude_cmd_regex, exclude_cmd_invert) = filters::build_exclude_regex(entry.exclude_cmd.as_deref(), "--exclude-cmd")?;
     Ok(PathOptions {
         size_filter,
         event_types,
-        exclude_regex,
-        exclude_invert,
-        exclude_cmd_regex,
-        exclude_cmd_invert,
         recursive: entry.recursive.unwrap_or(false),
         cmd: entry.cmd.clone(),
     })

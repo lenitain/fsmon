@@ -95,26 +95,13 @@ Options:
   -t, --types             Event types to monitor (repeatable; use "all" for all 14 types)
   -s, --size             Size filter with operator (required: >=, >, <=, <, =)
                           e.g. >1MB, >=500KB, <100MB, =0
-  -e, --exclude           Path regex patterns to exclude (repeatable, prefix ! to invert)
-  --exclude-cmd           Process name regex patterns to exclude (repeatable, prefix ! to invert)
-
-Regex syntax:
-  --exclude '\.tmp$' --exclude '\.log$'   Exclude .tmp and .log files
-  --exclude '!.*\.py$'                      Only track .py files, exclude all others
-  --exclude-cmd 'rsync' --exclude-cmd 'apt'  Exclude rsync and apt processes
-  --exclude-cmd '!nginx|python'              Only track nginx and python processes
-  Standard Rust regex syntax supported.
-  prefix ! to invert (only valid as the first pattern)
-
 Examples:
   fsmon add openclaw --path /home -r           Track openclaw on /home (recursive)
   fsmon add nginx                              Track nginx globally (process-only)
   fsmon add --path /home -r                    Monitor /home recursively (path-only)
   fsmon add --path /home --types MODIFY --types CREATE  Filter by event types
   fsmon add --path /home --types all                   All 14 event types
-  fsmon add --path /home --exclude '*.tmp'             Exclude path patterns
-  fsmon add --path /home -s '>=1MB'                    Minimum file size change
-  fsmon add --path /home --exclude-cmd rsync           Exclude noise processes"#
+  fsmon add --path /home -s '>=1MB'                    Minimum file size change"#
         }
         HelpTopic::Remove => {
             r#"Remove one or more paths from the monitoring list.
@@ -216,7 +203,6 @@ Daemon (requires sudo):
 Management (no sudo needed):
   fsmon add openclaw --path /home -r   Track openclaw on /home (recursive)
   fsmon add /path -r                Monitor path (recursive, default 8 types)
-  fsmon add /path --exclude-cmd rsync    Exclude by process name
   fsmon remove /path                Remove path(s), multiple paths OK
   fsmon monitored                     List monitored paths
   fsmon p2l /path1 /path2      Resolve log file path(s)
