@@ -4,53 +4,46 @@ use fsmon::monitored::Monitored;
 use fsmon::socket::{self, SocketCmd};
 use std::path::PathBuf;
 
-pub fn cmd_remove(paths: Vec<PathBuf>, cmd: Option<String>) -> Result<()> {
+pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
 
     let mut store = Monitored::load(&cfg.monitored.path)?;
 
-    match (cmd.as_deref(), paths.as_slice()) {
-        // --cmd bash (no --path) → remove entire cmd group
+    let cmd_str = cmd.as_deref();
+    match (cmd_str, paths.as_slice()) {
+        // fsmon remove (no args) → error
+        (None, &[]) => {
+            bail!("Specify a cmd group name or --path to remove");
+        }
+        // fsmon remove bash (no --path) → remove entire cmd group
         (Some(c), &[]) => {
             if !store.remove_cmd_group(c) {
                 bail!("Cmd group '{}' not found", c);
             }
         }
-        // --cmd bash --path /a --path /b → remove specific paths from that cmd group
-        (Some(c), ps) => {
+        // fsmon remove bash --path /a --path /b → remove from that cmd group
+        // fsmon remove --path /a (no cmd) → remove from null cmd group
+        (cmd_val, ps) => {
             // Atomic: check all paths exist first
             for p in ps {
-                if !store.has_entry(p, Some(c)) {
-                    bail!("Path '{}' not found under cmd '{}'", p.display(), c);
+                if !store.has_entry(p, cmd_val) {
+                    if let Some(c) = cmd_val {
+                        bail!("Path '{}' not found under cmd '{}'", p.display(), c);
+                    } else {
+                        bail!("Path '{}' is not being monitored (null cmd group)", p.display());
+                    }
                 }
             }
             let mut removed_any = false;
             for p in ps {
-                if store.remove_entry(p, Some(c)) {
+                if store.remove_entry(p, cmd_val) {
                     removed_any = true;
                 }
             }
             if !removed_any {
-                bail!("No entries removed");
-            }
-        }
-        // --path /a --path /b (no --cmd) → remove paths from all groups
-        (None, ps) => {
-            // Atomic: pre-check that ALL paths exist in ANY group
-            for p in ps {
-                if !store.has_entry(p, None) {
-                    bail!("Path '{}' is not being monitored", p.display());
-                }
-            }
-            let mut removed_any = false;
-            for p in ps {
-                if store.remove_entry(p, None) {
-                    removed_any = true;
-                }
-            }
-            if !removed_any {
-                bail!("No entries removed");
+                let label = cmd_val.unwrap_or("null");
+                bail!("No entries removed (cmd group '{}')", label);
             }
         }
     }

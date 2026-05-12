@@ -247,15 +247,10 @@ impl Monitored {
     pub fn remove_entry(&mut self, path: &Path, cmd: Option<&str>) -> bool {
         let mut removed = false;
         self.groups.iter_mut().for_each(|group| {
-            if let Some(cmd_str) = cmd {
-                // Only remove from this specific cmd group
-                if group.cmd.as_deref() == Some(cmd_str) {
-                    removed |= group.paths.remove(path).is_some();
-                }
-            } else {
-                // cmd is None: remove path from all groups that have it
-                removed |= group.paths.remove(path).is_some();
+            if group.cmd.as_deref() != cmd {
+                return;
             }
+            removed |= group.paths.remove(path).is_some();
         });
         // Remove empty groups
         self.groups.retain(|g| !g.paths.is_empty());
@@ -295,14 +290,12 @@ impl Monitored {
     }
 
     /// Check if a specific (path, cmd) entry exists.
-    /// If cmd is None, checks across ALL groups.
+    /// If cmd is None, checks only the null-cmd group.
     /// If cmd is Some, checks only the matching cmd group.
     pub fn has_entry(&self, path: &Path, cmd: Option<&str>) -> bool {
         self.groups.iter().any(|g| {
-            if let Some(cmd_str) = cmd {
-                if g.cmd.as_deref() != Some(cmd_str) {
-                    return false;
-                }
+            if g.cmd.as_deref() != cmd {
+                return false;
             }
             g.paths.contains_key(path)
         })

@@ -29,7 +29,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
     match command {
         Daemon => cmd_daemon().await_(),
         Add(args) => cmd_add(args),
-        Remove { path, cmd } => cmd_remove(path, cmd),
+        Remove { cmd, path } => cmd_remove(cmd, path),
         Monitored => cmd_monitored(),
         Query(args) => cmd_query(args).await_(),
         Clean(args) => cmd_clean(args).await_(),
