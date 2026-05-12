@@ -29,13 +29,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
     match command {
         Daemon => cmd_daemon().await_(),
         Add(args) => cmd_add(args),
-        Remove { paths } => {
-            for path in paths {
-                eprintln!("[Info] Removing {}...", path.display());
-                cmd_remove(path)?;
-            }
-            Ok(())
-        }
+        Remove { path, cmd } => cmd_remove(path, cmd),
         Managed => cmd_managed(),
         Query(args) => cmd_query(args).await_(),
         Clean(args) => cmd_clean(args).await_(),

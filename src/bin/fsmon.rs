@@ -29,8 +29,12 @@ pub enum Commands {
     /// Remove one or more paths from the monitoring list
     #[command(about = help::about(HelpTopic::Remove), long_about = help::long_about(HelpTopic::Remove))]
     Remove {
-        /// Path(s) to remove. Multiple paths can be specified.
-        paths: Vec<PathBuf>,
+        /// Path to remove (optional, use with --cmd for precise matching)
+        #[arg(long, value_name = "PATH")]
+        path: Option<PathBuf>,
+        /// Process name to remove (optional, use with --path for precise matching)
+        #[arg(long, value_name = "NAME")]
+        cmd: Option<String>,
     },
 
     /// List all monitored paths with their configuration
@@ -418,36 +422,50 @@ mod tests {
     // ---- Remove command (positional paths) ----
 
     #[test]
-    fn test_remove_single_path() {
-        let cli = Cli::try_parse_from(&["fsmon", "remove", "/tmp"]).unwrap();
-        let paths = match cli.command {
-            Commands::Remove { paths } => paths,
+    fn test_remove_path() {
+        let cli = Cli::try_parse_from(&["fsmon", "remove", "--path", "/tmp"]).unwrap();
+        match cli.command {
+            Commands::Remove { path, cmd } => {
+                assert_eq!(path, Some(PathBuf::from("/tmp")));
+                assert_eq!(cmd, None);
+            }
             _ => panic!("expected Remove"),
         };
-        assert_eq!(paths, vec![PathBuf::from("/tmp")]);
     }
 
     #[test]
-    fn test_remove_multiple_paths() {
-        let cli = Cli::try_parse_from(&["fsmon", "remove", "/tmp", "/home", "/var/log"]).unwrap();
-        let paths = match cli.command {
-            Commands::Remove { paths } => paths,
+    fn test_remove_cmd() {
+        let cli = Cli::try_parse_from(&["fsmon", "remove", "--cmd", "nginx"]).unwrap();
+        match cli.command {
+            Commands::Remove { path, cmd } => {
+                assert_eq!(path, None);
+                assert_eq!(cmd, Some("nginx".to_string()));
+            }
             _ => panic!("expected Remove"),
         };
-        assert_eq!(paths, vec![
-            PathBuf::from("/tmp"),
-            PathBuf::from("/home"),
-            PathBuf::from("/var/log"),
-        ]);
+    }
+
+    #[test]
+    fn test_remove_path_and_cmd() {
+        let cli = Cli::try_parse_from(&["fsmon", "remove", "--path", "/tmp", "--cmd", "openclaw"]).unwrap();
+        match cli.command {
+            Commands::Remove { path, cmd } => {
+                assert_eq!(path, Some(PathBuf::from("/tmp")));
+                assert_eq!(cmd, Some("openclaw".to_string()));
+            }
+            _ => panic!("expected Remove"),
+        };
     }
 
     #[test]
     fn test_remove_empty_ok() {
         let cli = Cli::try_parse_from(&["fsmon", "remove"]).unwrap();
-        let paths = match cli.command {
-            Commands::Remove { paths } => paths,
+        match cli.command {
+            Commands::Remove { path, cmd } => {
+                assert!(path.is_none());
+                assert!(cmd.is_none());
+            }
             _ => panic!("expected Remove"),
         };
-        assert!(paths.is_empty());
     }
 }

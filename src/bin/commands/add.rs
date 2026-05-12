@@ -60,7 +60,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
 
     // Check for duplicates if path is specified
     if let Some(ref path) = path {
-        if store.get(path).is_some() {
+        if store.get(path, process_name.as_deref()).is_some() {
             eprintln!(
                 "[Note] '{}' is already monitored — new parameters will replace the existing configuration.",
                 path.display()
@@ -131,7 +131,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             size: size_val,
             exclude,
             exclude_cmd,
-            track_cmd: process_name,
+            track_cmd: process_name.clone(),
         },
     );
 
@@ -144,7 +144,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             let is_permanent = resp.error_kind == Some(fsmon::socket::ErrorKind::Permanent);
             if is_permanent {
                 let mut store = Managed::load(&cfg.managed.path)?;
-                store.remove_entry(Path::new(&human_path));
+                store.remove_entry(Path::new(&human_path), process_name.as_deref().clone());
                 store.save(&cfg.managed.path)?;
                 eprintln!("Error: {}", resp.error.unwrap_or_default());
             } else {

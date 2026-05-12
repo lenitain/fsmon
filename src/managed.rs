@@ -112,25 +112,33 @@ impl Managed {
         Ok(())
     }
 
-    /// Add an entry. If an entry with the same path already exists,
-    /// it is replaced (all old entries with that path are removed first).
+    /// Add an entry. If an entry with the same (path, cmd) pair already exists,
+    /// it is replaced. Otherwise appended as a new entry.
     pub fn add_entry(&mut self, entry: PathEntry) {
-        // Remove all existing entries with the same path so the new one replaces them
-        self.entries.retain(|e| e.path != entry.path);
+        self.entries.retain(|e| !(e.path == entry.path && e.cmd == entry.cmd));
         self.entries.push(entry);
     }
 
-    /// Remove an entry by its path.
-    /// Returns `true` if an entry was found and removed.
-    pub fn remove_entry(&mut self, path: &Path) -> bool {
+    /// Remove entries matching path and optionally cmd.
+    /// If cmd is Some, only removes the entry with matching (path, cmd).
+    /// If cmd is None, removes all entries with matching path.
+    /// Returns `true` if any entry was removed.
+    pub fn remove_entry(&mut self, path: &Path, cmd: Option<&str>) -> bool {
         let len_before = self.entries.len();
-        self.entries.retain(|e| e.path != path);
+        self.entries.retain(|e| {
+            if e.path != *path { return true; }
+            if let Some(cmd) = cmd {
+                e.cmd.as_deref() != Some(cmd)
+            } else {
+                false // remove all with this path
+            }
+        });
         self.entries.len() < len_before
     }
 
-    /// Get an entry by its path.
-    pub fn get(&self, path: &Path) -> Option<&PathEntry> {
-        self.entries.iter().find(|e| e.path == path)
+    /// Get an entry by (path, cmd) pair.
+    pub fn get(&self, path: &Path, cmd: Option<&str>) -> Option<&PathEntry> {
+        self.entries.iter().find(|e| e.path == *path && e.cmd.as_deref() == cmd)
     }
 }
 
@@ -177,7 +185,7 @@ mod tests {
             cmd: None,
         });
         assert_eq!(store.entries.len(), 1);
-        assert!(store.get(Path::new("/tmp")).is_some());
+        assert!(store.get(Path::new("/tmp"), None).is_some());
 
         store.add_entry(PathEntry {
             path: PathBuf::from("/var/log"),
@@ -246,11 +254,11 @@ mod tests {
             cmd: None,
         });
 
-        assert!(store.remove_entry(Path::new("/tmp")));
+        assert!(store.remove_entry(Path::new("/tmp"), None));
         assert_eq!(store.entries.len(), 1);
         assert_eq!(store.entries[0].path, PathBuf::from("/var"));
 
-        assert!(!store.remove_entry(Path::new("/nonexistent")));
+        assert!(!store.remove_entry(Path::new("/nonexistent"), None));
         assert_eq!(store.entries.len(), 1);
     }
 
@@ -297,11 +305,11 @@ mod tests {
             cmd: None,
         });
 
-        let entry = store.get(Path::new("/data"));
+        let entry = store.get(Path::new("/data"), None);
         assert!(entry.is_some());
         assert_eq!(entry.unwrap().path, PathBuf::from("/data"));
 
-        assert!(store.get(Path::new("/nonexistent")).is_none());
+        assert!(store.get(Path::new("/nonexistent"), None).is_none());
     }
 
     #[test]
