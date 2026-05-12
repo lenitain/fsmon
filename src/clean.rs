@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::config::chown_to_original_user;
 use crate::utils::{self, cmd_to_log_name};
-use crate::{SizeFilter, SizeOp, TimeFilter, parse_log_line_jsonl};
+use crate::{SizeFilter, SizeOp, TimeOp, TimeFilter, parse_log_line_jsonl};
 
 /// Check if `kept_bytes` exceeds the limit per the filter's operator.
 fn should_trim(kept_bytes: usize, filter: &SizeFilter) -> bool {
@@ -52,11 +52,11 @@ async fn clean_single_log(
 
             let (should_keep, event) = if let Some(event) = parse_log_line_jsonl(trimmed) {
                 let passes_time = time_filter.as_ref().is_none_or(|f| match f.op {
-                    SizeOp::Gt => event.time > f.time,
-                    SizeOp::Ge => event.time >= f.time,
-                    SizeOp::Lt => event.time < f.time,
-                    SizeOp::Le => event.time <= f.time,
-                    SizeOp::Eq => event.time == f.time,
+                    TimeOp::Gt => event.time > f.time,
+                    TimeOp::Ge => event.time >= f.time,
+                    TimeOp::Lt => event.time < f.time,
+                    TimeOp::Le => event.time <= f.time,
+                    TimeOp::Eq => event.time == f.time,
                 });
                 (passes_time, Some(event))
             } else {
@@ -361,7 +361,7 @@ mod tests {
 
         let cutoff = Utc::now() - chrono::Duration::days(30);
         let time_filter = TimeFilter {
-            op: SizeOp::Gt,
+            op: TimeOp::Gt,
             time: cutoff,
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -412,7 +412,7 @@ mod tests {
 
         let cutoff = Utc::now() - chrono::Duration::days(30);
         let time_filter = TimeFilter {
-            op: SizeOp::Gt,
+            op: TimeOp::Gt,
             time: cutoff,
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -438,7 +438,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let cutoff = Utc::now() - chrono::Duration::days(30);
         let time_filter = TimeFilter {
-            op: SizeOp::Gt,
+            op: TimeOp::Gt,
             time: cutoff,
         };
         assert!(
@@ -810,7 +810,7 @@ mod tests {
         }
         let cutoff = now - chrono::Duration::days(7);
         let tf = TimeFilter {
-            op: SizeOp::Ge,
+            op: TimeOp::Ge,
             time: cutoff,
         };
         let log_dir = log_path.parent().unwrap();
@@ -860,7 +860,7 @@ mod tests {
         }
         let cutoff = now - chrono::Duration::days(7);
         let tf = TimeFilter {
-            op: SizeOp::Le,
+            op: TimeOp::Le,
             time: cutoff,
         };
         let log_dir = log_path.parent().unwrap();
@@ -935,7 +935,7 @@ mod tests {
         }
         let cutoff = Utc::now();
         let tf = TimeFilter {
-            op: SizeOp::Gt,
+            op: TimeOp::Gt,
             time: cutoff,
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -988,7 +988,7 @@ mod tests {
             }
         }
         let tf = TimeFilter {
-            op: SizeOp::Gt,
+            op: TimeOp::Gt,
             time: now - chrono::Duration::days(7),
         };
         let sf = SizeFilter {

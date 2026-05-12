@@ -4,7 +4,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use crate::utils::{SizeOp, TimeFilter, cmd_to_log_name};
+use crate::utils::{TimeOp, TimeFilter, cmd_to_log_name};
 use crate::{FileEvent, parse_log_line_jsonl};
 
 const SCAN_BACK_BYTES: u64 = 4096;
@@ -69,7 +69,7 @@ impl Query {
         let mut since = None;
         for f in &self.time_filters {
             match f.op {
-                SizeOp::Gt | SizeOp::Ge => {
+                TimeOp::Gt | TimeOp::Ge => {
                     let candidate = f.time;
                     if since.is_none_or(|s| candidate > s) {
                         since = Some(candidate);
@@ -86,7 +86,7 @@ impl Query {
         let mut until = None;
         for f in &self.time_filters {
             match f.op {
-                SizeOp::Lt | SizeOp::Le => {
+                TimeOp::Lt | TimeOp::Le => {
                     let candidate = f.time;
                     if until.is_none_or(|u| candidate < u) {
                         until = Some(candidate);
@@ -137,11 +137,11 @@ impl Query {
             {
                 // Apply time filters
                 let pass = self.time_filters.iter().all(|f| match f.op {
-                    SizeOp::Gt => event.time > f.time,
-                    SizeOp::Ge => event.time >= f.time,
-                    SizeOp::Lt => event.time < f.time,
-                    SizeOp::Le => event.time <= f.time,
-                    SizeOp::Eq => event.time == f.time,
+                    TimeOp::Gt => event.time > f.time,
+                    TimeOp::Ge => event.time >= f.time,
+                    TimeOp::Lt => event.time < f.time,
+                    TimeOp::Le => event.time <= f.time,
+                    TimeOp::Eq => event.time == f.time,
                 });
                 if pass {
                     // Check until bound before push (event consumed by push)
@@ -521,7 +521,7 @@ mod tests {
             None,
             None,
             vec![TimeFilter {
-                op: SizeOp::Gt,
+                op: TimeOp::Gt,
                 time: t1,
             }],
         );
@@ -534,7 +534,7 @@ mod tests {
             None,
             None,
             vec![TimeFilter {
-                op: SizeOp::Lt,
+                op: TimeOp::Lt,
                 time: t2,
             }],
         );
@@ -548,11 +548,11 @@ mod tests {
             None,
             vec![
                 TimeFilter {
-                    op: SizeOp::Gt,
+                    op: TimeOp::Gt,
                     time: t1,
                 },
                 TimeFilter {
-                    op: SizeOp::Lt,
+                    op: TimeOp::Lt,
                     time: t2,
                 },
             ],
@@ -578,11 +578,11 @@ mod tests {
             None,
             vec![
                 TimeFilter {
-                    op: SizeOp::Ge,
+                    op: TimeOp::Ge,
                     time: t_early,
                 },
                 TimeFilter {
-                    op: SizeOp::Ge,
+                    op: TimeOp::Ge,
                     time: t_late,
                 },
             ],
@@ -603,11 +603,11 @@ mod tests {
             None,
             vec![
                 TimeFilter {
-                    op: SizeOp::Le,
+                    op: TimeOp::Le,
                     time: t_late,
                 },
                 TimeFilter {
-                    op: SizeOp::Le,
+                    op: TimeOp::Le,
                     time: t_early,
                 },
             ],

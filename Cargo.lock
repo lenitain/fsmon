@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "fsmon"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -316,6 +316,7 @@ dependencies = [
  "smallvec",
  "temp-env",
  "tempfile",
+ "timefilter",
  "tokio",
  "toml",
  "users",
@@ -930,6 +931,15 @@ dependencies = [
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "timefilter"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99b332998ebdc0440dd8e03baed6de4187d2a41cb4740d1433cd3371f8d99439"
+dependencies = [
+ "chrono",
 ]
 
 [[package]]

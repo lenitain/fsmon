@@ -1,6 +1,6 @@
 [package]
 name = "fsmon"
-version = "0.2.7"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 description = "Lightweight High-Performance File System Change Tracking Tool"
@@ -45,6 +45,7 @@ smallvec = "1.15.1"
 inotify = "0.10"
 toml = "0.8"
 sizefilter = "0.1"
+timefilter = "0.1"
 
 [profile.release]
 opt-level = 3

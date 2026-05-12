@@ -4,7 +4,7 @@ use fsmon::clean::clean_logs;
 use fsmon::config::Config;
 use fsmon::monitored::CMD_GLOBAL;
 use fsmon::utils::{SizeFilter, parse_size_filter};
-use fsmon::{DEFAULT_KEEP_DAYS, DEFAULT_MAX_SIZE, SizeOp, TimeFilter, parse_time_filter};
+use fsmon::{DEFAULT_KEEP_DAYS, DEFAULT_MAX_SIZE, TimeOp, TimeFilter, parse_time_filter};
 
 use crate::CleanArgs;
 
@@ -22,12 +22,12 @@ pub async fn cmd_clean(args: CleanArgs) -> Result<()> {
         parse_time_filter(t)?
     } else if let Some(days) = cfg.logging.keep_days {
         TimeFilter {
-            op: SizeOp::Gt,
+            op: TimeOp::Gt,
             time: Utc::now() - chrono::Duration::days(days as i64),
         }
     } else {
         TimeFilter {
-            op: SizeOp::Gt,
+            op: TimeOp::Gt,
             time: Utc::now() - chrono::Duration::days(DEFAULT_KEEP_DAYS as i64),
         }
     };

@@ -1,106 +1,11 @@
-use anyhow::{Result, anyhow};
-use chrono::{DateTime, Duration, Local, NaiveDateTime, Utc};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
 pub use sizefilter::{SizeFilter, SizeOp, format_size, parse_size, parse_size_filter};
-
-/// A time filter with operator (e.g., >1h, <2026-05-01).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TimeFilter {
-    pub op: SizeOp,
-    pub time: DateTime<Utc>,
-}
+pub use timefilter::{TimeFilter, TimeOp, format_datetime, parse_time, parse_time_filter};
 
 use crate::proc_cache::{ProcCache, ProcInfo};
-
-/// Parse human-readable time (e.g., "1h", "30m", "2024-05-01 10:00")
-pub fn parse_time(time_str: &str) -> Result<DateTime<Utc>> {
-    let time_str = time_str.trim();
-
-    // Try relative time formats
-    if let Some(num) = time_str.strip_suffix('h') {
-        let hours: i64 = num.trim().parse()?;
-        return Ok(Utc::now() - Duration::hours(hours));
-    }
-
-    if let Some(num) = time_str.strip_suffix("hr") {
-        let hours: i64 = num.trim().parse()?;
-        return Ok(Utc::now() - Duration::hours(hours));
-    }
-
-    if let Some(num) = time_str.strip_suffix('m') {
-        let minutes: i64 = num.trim().parse()?;
-        return Ok(Utc::now() - Duration::minutes(minutes));
-    }
-
-    if let Some(num) = time_str.strip_suffix("min") {
-        let minutes: i64 = num.trim().parse()?;
-        return Ok(Utc::now() - Duration::minutes(minutes));
-    }
-
-    if let Some(num) = time_str.strip_suffix('d') {
-        let days: i64 = num.trim().parse()?;
-        return Ok(Utc::now() - Duration::days(days));
-    }
-
-    if let Some(num) = time_str.strip_suffix('s') {
-        let seconds: i64 = num.trim().parse()?;
-        return Ok(Utc::now() - Duration::seconds(seconds));
-    }
-
-    // Try absolute time formats
-    // Format: "2024-05-01 10:00"
-    if let Ok(naive) = NaiveDateTime::parse_from_str(time_str, "%Y-%m-%d %H:%M") {
-        return Ok(DateTime::from_naive_utc_and_offset(naive, Utc));
-    }
-
-    // Format: "2024-05-01 10:00:00"
-    if let Ok(naive) = NaiveDateTime::parse_from_str(time_str, "%Y-%m-%d %H:%M:%S") {
-        return Ok(DateTime::from_naive_utc_and_offset(naive, Utc));
-    }
-
-    // Format: "2024-05-01"
-    if let Ok(naive) =
-        NaiveDateTime::parse_from_str(&format!("{} 00:00", time_str), "%Y-%m-%d %H:%M")
-    {
-        return Ok(DateTime::from_naive_utc_and_offset(naive, Utc));
-    }
-
-    Err(anyhow!("Failed to parse time format: {}", time_str))
-}
-
-/// Parse a time filter string like ">1h", "<2026-05-01", ">=30d".
-/// Operator is required — no default. Returns error if missing.
-pub fn parse_time_filter(s: &str) -> Result<TimeFilter> {
-    let s = s.trim();
-    let (op, rest) = if let Some(r) = s.strip_prefix(">=") {
-        (SizeOp::Ge, r)
-    } else if let Some(r) = s.strip_prefix("<=") {
-        (SizeOp::Le, r)
-    } else if let Some(r) = s.strip_prefix('>') {
-        (SizeOp::Gt, r)
-    } else if let Some(r) = s.strip_prefix('<') {
-        (SizeOp::Lt, r)
-    } else if let Some(r) = s.strip_prefix('=') {
-        (SizeOp::Eq, r)
-    } else {
-        anyhow::bail!(
-            "time filter must start with an operator (>=, >, <=, <, =), got: {}",
-            s
-        );
-    };
-    let time = parse_time(rest)?;
-    Ok(TimeFilter { op, time })
-}
-
-/// Format datetime for display
-pub fn format_datetime(dt: &DateTime<Utc>) -> String {
-    dt.with_timezone(&Local)
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string()
-}
 
 /// Get process info by PID (from fanotify event)
 /// Checks proc connector cache first (for short-lived processes),
@@ -218,6 +123,7 @@ pub fn cmd_to_log_name(cmd: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{Duration, Utc};
     use chrono::{Datelike, TimeZone, Timelike};
 
     #[test]
@@ -313,7 +219,7 @@ mod tests {
     #[test]
     fn test_parse_time_filter_gt() {
         let f = parse_time_filter(">1h").unwrap();
-        assert_eq!(f.op, SizeOp::Gt);
+        assert_eq!(f.op, TimeOp::Gt);
         let diff = Utc::now() - f.time;
         assert!(diff >= chrono::Duration::minutes(59) && diff <= chrono::Duration::minutes(61));
     }
@@ -321,7 +227,7 @@ mod tests {
     #[test]
     fn test_parse_time_filter_ge() {
         let f = parse_time_filter(">=7d").unwrap();
-        assert_eq!(f.op, SizeOp::Ge);
+        assert_eq!(f.op, TimeOp::Ge);
         let diff = Utc::now() - f.time;
         assert!(diff >= chrono::Duration::days(6) && diff <= chrono::Duration::days(8));
     }
@@ -329,7 +235,7 @@ mod tests {
     #[test]
     fn test_parse_time_filter_lt() {
         let f = parse_time_filter("<2026-05-01").unwrap();
-        assert_eq!(f.op, SizeOp::Lt);
+        assert_eq!(f.op, TimeOp::Lt);
         assert_eq!(f.time.year(), 2026);
         assert_eq!(f.time.month(), 5);
         assert_eq!(f.time.day(), 1);
@@ -338,7 +244,7 @@ mod tests {
     #[test]
     fn test_parse_time_filter_le() {
         let f = parse_time_filter("<=30m").unwrap();
-        assert_eq!(f.op, SizeOp::Le);
+        assert_eq!(f.op, TimeOp::Le);
         let diff = Utc::now() - f.time;
         assert!(diff >= chrono::Duration::minutes(29) && diff <= chrono::Duration::minutes(31));
     }
@@ -346,7 +252,7 @@ mod tests {
     #[test]
     fn test_parse_time_filter_eq() {
         let f = parse_time_filter("=2026-05-01 10:00").unwrap();
-        assert_eq!(f.op, SizeOp::Eq);
+        assert_eq!(f.op, TimeOp::Eq);
         assert_eq!(f.time.year(), 2026);
         assert_eq!(f.time.month(), 5);
         assert_eq!(f.time.day(), 1);
@@ -398,13 +304,15 @@ mod tests {
     }
 
     #[test]
-    fn time_filter_uses_sizefilter_sizeop() {
-        // fsmon's TimeFilter still uses sizefilter::SizeOp (not timefilter::TimeOp)
-        // This is by design — verify it compiles and matches correctly
-        fn check_op(op: SizeOp) -> bool {
-            matches!(op, SizeOp::Gt | SizeOp::Ge | SizeOp::Lt | SizeOp::Le | SizeOp::Eq)
+    fn time_filter_now_uses_timeop() {
+        // After timefilter integration, TimeFilter uses TimeOp not SizeOp
+        fn check_op(op: TimeOp) -> bool {
+            matches!(op, TimeOp::Gt | TimeOp::Ge | TimeOp::Lt | TimeOp::Le | TimeOp::Eq)
         }
-        assert!(check_op(SizeOp::Gt));
-        assert!(check_op(SizeOp::Eq));
+        assert!(check_op(TimeOp::Gt));
+        assert!(check_op(TimeOp::Eq));
+
+        let tf = parse_time_filter(">=1h").unwrap();
+        assert!(matches!(tf.op, TimeOp::Ge));
     }
 }

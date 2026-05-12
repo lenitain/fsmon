@@ -25,7 +25,7 @@ pub async fn cmd_query(args: QueryArgs) -> Result<()> {
     let time_filters: Vec<TimeFilter> = args
         .time
         .iter()
-        .map(|s| parse_time_filter(s))
+        .map(|s| parse_time_filter(s).map_err(anyhow::Error::from))
         .collect::<Result<Vec<_>>>()?;
 
     let query = Query::new(
