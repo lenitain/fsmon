@@ -82,3 +82,10 @@ pub struct FileEvent {
 ❌ 不创建 ProcessEntry / ProcessStore 新类型
 ❌ 不改监控路径的数据模型
 ❌ 不破坏现有配置格式
+
+## 额外：fsmon 进程自排除
+
+fsmon daemon 自身写入日志时会触发 fanotify 事件，导致自我递归循环。
+新增 `daemon_pid` 字段记录 daemon PID，在事件处理循环中跳过自身 PID。
+
+所有 tokio worker 线程共享 TGID = 主 PID，一次 PID 比较覆盖所有场景。

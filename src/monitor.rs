@@ -61,6 +61,9 @@ pub struct Monitor {
     inotify: Option<inotify::Inotify>,
     /// Watch descriptors kept alive so watches stay active
     _inotify_watches: Vec<inotify::WatchDescriptor>,
+    /// PID of the fsmon daemon itself — events from this PID (or its children)
+    /// are discarded to prevent self-triggering feedback loops.
+    daemon_pid: u32,
 }
 
 impl Monitor {
@@ -89,15 +92,14 @@ impl Monitor {
             let resolved = filters::resolve_recursion_check(path);
             if let Some(ref log_dir) = log_dir_canonical
                 && log_dir.starts_with(&resolved)
+                && log_dir.as_path() != resolved
             {
                 bail!(
                     "Cannot monitor '{}': log directory '{}' is inside this path — \
-                     would cause infinite recursion on every log write.\n\
-                     Tip: fsmon remove {} or exclude the log directory with --exclude \
-                     or use a different logging.path",
+                     every log write would trigger a new event.\n\
+                     Tip: use a more specific path or a different logging.path",
                     path.display(),
                     log_dir_canonical.as_ref().unwrap().display(),
-                    path.display()
                 );
             }
             path_options.insert(resolved.clone(), opts.clone());
@@ -125,6 +127,7 @@ impl Monitor {
             pending_paths: Vec::new(),
             inotify: None,
             _inotify_watches: Vec::new(),
+            daemon_pid: std::process::id(),
         })
     }
 
@@ -595,6 +598,13 @@ impl Monitor {
 
                         let event_pid = raw.pid.unsigned_abs();
 
+                        // Exclude fsmon daemon's own events to prevent self-triggering.
+                        // All tokio worker threads share TGID == main PID, so a single
+                        // PID check covers all cases (no fork needed currently).
+                        if event_pid == self.daemon_pid {
+                            continue;
+                        }
+
                         // Check process tree filter before building event
                         let matched_opts = self.get_matching_path_options(&raw.path);
                         let cmd_match = if let Some(opts) = matched_opts {
@@ -872,17 +882,19 @@ impl Monitor {
             bail!("Path already being monitored: {}", path.display());
         }
 
-        // Reject paths that would cause infinite recursion (log dir inside monitored path)
-        if let Some(ref log_dir) = self.log_dir
-            && log_dir.canonicalize().unwrap_or_else(|_| log_dir.clone()).starts_with(&path)
-        {
-            bail!(
-                "Cannot monitor '{}': log directory '{}' is inside this path — \
-                 every log write would trigger a new event, causing infinite recursion.\n\
-                 Tip: exclude the log directory with --exclude or use a different logging.path",
-                path.display(),
-                log_dir.display()
-            );
+        // Reject paths that would cause infinite recursion (log dir inside monitored path).
+        // Allow exact match on log dir: PID filter prevents self-triggering.
+        if let Some(ref log_dir) = self.log_dir {
+            let log_canonical = log_dir.canonicalize().unwrap_or_else(|_| log_dir.clone());
+            if log_canonical.starts_with(&path) && log_canonical != path {
+                bail!(
+                    "Cannot monitor '{}': log directory '{}' is inside this path — \
+                     every log write would trigger a new event.\n\
+                     Tip: use a more specific path or a different logging.path",
+                    path.display(),
+                    log_dir.display()
+                );
+            }
         }
 
         if !path.exists() {
