@@ -450,6 +450,14 @@ impl Monitor {
                     println!("  {} {}", label, path.display());
                 }
             }
+            eprintln!("[DEBUG] Monitor initialized with {} monitored_entries", self.monitored_entries.len());
+            for (i, (p, c)) in self.monitored_entries.iter().enumerate() {
+                eprintln!("[DEBUG]   entry[{}]: path={} cmd={:?}", i, p.display(), c);
+            }
+            eprintln!("[DEBUG] path_options has {} entries (may be fewer due to HashMap dedup)", self.path_options.len());
+            for (p, o) in &self.path_options {
+                eprintln!("[DEBUG]   path_opt: path={} cmd={:?} recursive={}", p.display(), o.cmd, o.recursive);
+            }
         }
         if !self.pending_paths.is_empty() {
             println!("Pending paths (waiting for directory creation):");
@@ -632,18 +640,30 @@ impl Monitor {
                             continue;
                         }
 
+                        // Debug: event arrived
+                        let event_cmd = get_process_info_by_pid(event_pid, &raw.path, self.proc_cache.as_ref());
+                        eprintln!("[DEBUG] Event on {} pid={} cmd={}", raw.path.display(), event_pid, event_cmd.cmd);
+
                         // Match event against ALL cmd groups for this path
                         let matching_entries = self.matching_opts_for_event(&raw.path);
+                        eprintln!("[DEBUG]   monitored_entries count={}, matching count={}",
+                            self.monitored_entries.len(), matching_entries.len());
+
                         for (_monitored_path, opts) in &matching_entries {
                             // Check process tree filter
                             let cmd_match = if let Some(ref cmd_name) = opts.cmd {
-                                self.pid_tree.as_ref()
+                                let tree_ok = self.pid_tree.as_ref()
                                     .map(|tree| is_descendant(tree, event_pid, cmd_name))
-                                    .unwrap_or(false)
+                                    .unwrap_or(false);
+                                eprintln!("[DEBUG]   checking cmd=\"{}\" against event_pid={}: is_descendant={}",
+                                    cmd_name, event_pid, tree_ok);
+                                tree_ok
                             } else {
+                                eprintln!("[DEBUG]   checking cmd=null(global): match=true");
                                 true
                             };
                             if !cmd_match {
+                                eprintln!("[DEBUG]     -> SKIPPED (no cmd match)");
                                 continue;
                             }
 
@@ -651,13 +671,18 @@ impl Monitor {
                                 let event = self.build_file_event_for_opts(raw, *event_type, opts);
 
                                 if !self.is_path_in_scope_for_opts(&event.path, opts) {
+                                    eprintln!("[DEBUG]     -> SKIPPED (not in scope for opts)");
                                     continue;
                                 }
 
-                                if self.should_output_for_opts(&event, opts)
-                                    && let Err(e) = self.write_event_for_opts(&event, opts)
-                                {
-                                    eprintln!("[ERROR] Failed to write event: {}", e);
+                                if self.should_output_for_opts(&event, opts) {
+                                    let cmd_name = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
+                                    eprintln!("[DEBUG]     -> WRITING to {}_log.jsonl", cmd_name);
+                                    if let Err(e) = self.write_event_for_opts(&event, opts) {
+                                        eprintln!("[ERROR] Failed to write event: {}", e);
+                                    }
+                                } else {
+                                    eprintln!("[DEBUG]     -> SKIPPED (filtered by should_output)");
                                 }
                             }
                         }
@@ -879,6 +904,11 @@ impl Monitor {
 
     /// Return all PathOptions matching an event path (owned, no borrow conflict).
     fn matching_opts_for_event(&self, event_path: &Path) -> Vec<(PathBuf, PathOptions)> {
+        eprintln!("[DEBUG] matching_opts_for_event: path={}", event_path.display());
+        eprintln!("[DEBUG]   monitored_entries ({} total):", self.monitored_entries.len());
+        for (i, (mp, cmd)) in self.monitored_entries.iter().enumerate() {
+            eprintln!("[DEBUG]     [{}] path={} cmd={:?}", i, mp.display(), cmd);
+        }
         let mut result = Vec::new();
         for (monitored_path, _) in &self.monitored_entries {
             if let Some(opts) = self.path_options.get(monitored_path) {
@@ -888,11 +918,17 @@ impl Monitor {
                     event_path == monitored_path.as_path()
                         || event_path.parent() == Some(monitored_path.as_path())
                 };
+                eprintln!("[DEBUG]     checking monitored_path={}: recursive={}, matches={}",
+                    monitored_path.display(), opts.recursive, matches);
                 if matches {
                     result.push((monitored_path.clone(), opts.clone()));
                 }
+            } else {
+                eprintln!("[DEBUG]     monitored_path={}: NOT FOUND in path_options!",
+                    monitored_path.display());
             }
         }
+        eprintln!("[DEBUG]   matching_opts result: {} entries", result.len());
         result
     }
 
