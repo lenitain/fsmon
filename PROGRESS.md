@@ -31,7 +31,9 @@ fsmon add openclaw --path /data
 | **内核过滤** | 无（全量事件到用户空间） | 无（fanotify 无法按进程过滤） |
 | **用户空间过滤** | 先匹配路径，再 `exclude_cmd` | **先匹配进程**，不匹配直接丢弃，不读 /proc |
 | **子进程继承** | 无（只查 cmd，不查树） | 有（Fork/Exec 事件维护进程树） |
-| **chain** | 对每条事件构建 | 只对匹配的进程构建 |
+| **ppid/tgid** | ✗ 无（当前没有） | ✅ 始终记录（4字节，来自已读的 /proc/{pid}/status） |
+| **chain** | ✗ 无 | 只对匹配的进程构建 |
+| **/proc 读** | 每条事件已有一次（proc_cache 未命中时） | 不匹配的事件 **零 /proc 读** |
 
 ### ProcessEntry 数据结构
 
@@ -60,6 +62,18 @@ pub struct ProcessStore {
     pub entries: Vec<ProcessEntry>,
 }
 ```
+
+## 双模式行为
+
+| 模式 | 触发条件 | 事件中的额外字段 | chain构建 | /proc 读 |
+|------|---------|----------------|-----------|---------|
+| **路径优先（默认）** | `fsmon add /path`（未传 `--cmd`） | `ppid`, `tgid` | 不构建 | 零额外 |
+| **进程优先** | `fsmon add --cmd openclaw` | `ppid`, `tgid`, `chain` | ✅ 从进程树缓存构建 | 只在匹配事件上构建 chain |
+
+**关键规则**：
+1. `ppid` 和 `tgid` **始终记录**（来自已读的 `/proc/{pid}/status`，4字节，零额外开销）
+2. `chain` **只在进程优先模式下构建**（默认路径优先模式不记录 chain）
+3. 进程优先模式不匹配的事件也按默认模式处理（有 ppid/tgid，无 chain）
 
 ## 实现路径
 
@@ -129,7 +143,7 @@ fsmon list                        # 显示进程列表而非路径列表
 ### Phase 4：日志格式升级
 
 ```json
-// 新 FileEvent（向后兼容旧格式，解析时 chain 不存在则 = ""）
+// 默认模式（无 --cmd）—— 新增 ppid, tgid，无 chain
 {
   "time": "...",
   "event_type": "CREATE",
@@ -138,9 +152,21 @@ fsmon list                        # 显示进程列表而非路径列表
   "cmd": "touch",
   "user": "root",
   "file_size": 0,
+  "ppid": 101,
+  "tgid": 102
+}
+
+// 进程优先模式（--cmd openclaw）—— 额外 chain
+{
+  ...,
+  "ppid": 101,
+  "tgid": 102,
   "chain": "102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root"
 }
 ```
+
+**重要**：`ppid` 和 `tgid` 在两种模式下都存在。`chain` 只在进程优先模式存在。
+旧日志反序列化时 ppid/tgid=0，chain=""，完全向后兼容。
 
 ## 向后兼容策略
 
