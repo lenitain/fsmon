@@ -125,7 +125,7 @@ impl Monitor {
             monitored_entries.push((resolved.clone(), opts.clone()));
         }
 
-        Ok(Self {
+        let monitor = Self {
             paths,
             canonical_paths: Vec::new(),
             path_options,
@@ -149,7 +149,17 @@ impl Monitor {
             inotify: None,
             _inotify_watches: Vec::new(),
             daemon_pid: std::process::id(),
-        })
+        };
+        if debug {
+            eprintln!("[debug] Monitor initialized with {} path entries:", paths_and_options.len());
+            for (i, (p, o)) in paths_and_options.iter().enumerate() {
+                let label = o.cmd.as_deref().unwrap_or("global");
+                eprintln!("[debug]   [{}] {} cmd={} recursive={}", i, p.display(), label, o.recursive);
+            }
+            eprintln!("[debug] log_dir: {:?}", monitor.log_dir);
+            eprintln!("[debug] buffer_size: {}", buffer_size);
+        }
+        Ok(monitor)
     }
 
     /// Duplicate a file descriptor, returning an owned fd.
@@ -449,6 +459,18 @@ impl Monitor {
                 println!("  {} {}", label, path.display());
             }
         }
+        if self.debug {
+            eprintln!("[debug] path_options ({} entries, dedup'd by path):", self.path_options.len());
+            for (p, o) in &self.path_options {
+                let label = o.cmd.as_deref().unwrap_or("global");
+                eprintln!("[debug]   {} cmd={} recursive={}", p.display(), label, o.recursive);
+            }
+            eprintln!("[debug] monitored_entries ({} entries, full list):", self.monitored_entries.len());
+            for (i, (p, o)) in self.monitored_entries.iter().enumerate() {
+                let label = o.cmd.as_deref().unwrap_or("global");
+                eprintln!("[debug]   [{}] {} cmd={} recursive={}", i, p.display(), label, o.recursive);
+            }
+        }
         if !self.pending_paths.is_empty() {
             println!("Pending paths (waiting for directory creation):");
             let mut by_cmd: std::collections::BTreeMap<Option<String>, Vec<&PathBuf>> = std::collections::BTreeMap::new();
@@ -600,6 +622,9 @@ impl Monitor {
                         let is_canonical_root = is_delete_self
                             && self.canonical_paths.iter().any(|cp| cp == &raw.path);
                         if is_canonical_root {
+                            if self.debug {
+                                eprintln!("[debug] monitored directory deleted: {}", raw.path.display());
+                            }
                             if let Some(ref path) = matched_path {
                                 // Preserve options before removing
                                 let opts = self.path_options.get(path);
@@ -627,6 +652,9 @@ impl Monitor {
                         // All tokio worker threads share TGID == main PID, so a single
                         // PID check covers all cases (no fork needed currently).
                         if event_pid == self.daemon_pid {
+                            if self.debug {
+                                eprintln!("[debug] skip daemon self-event (pid={})", event_pid);
+                            }
                             continue;
                         }
 
@@ -661,6 +689,9 @@ impl Monitor {
                                 let event = self.build_file_event_for_opts(raw, *event_type, opts);
 
                                 if !self.is_path_in_scope_for_opts(&event.path, opts) {
+                                    if self.debug {
+                                        eprintln!("[debug]   -> out of scope for this opts");
+                                    }
                                     continue;
                                 }
 
@@ -896,6 +927,9 @@ impl Monitor {
     /// are preserved even when the same path exists under multiple cmd groups.
     fn matching_opts_for_event(&self, event_path: &Path) -> Vec<(PathBuf, PathOptions)> {
         let mut result = Vec::new();
+        if self.debug {
+            eprintln!("[debug] matching path={}", event_path.display());
+        }
         for (monitored_path, opts) in &self.monitored_entries {
             let matches = if opts.recursive {
                 event_path.starts_with(monitored_path)
@@ -903,9 +937,18 @@ impl Monitor {
                 event_path == monitored_path.as_path()
                     || event_path.parent() == Some(monitored_path.as_path())
             };
+            if self.debug {
+                let label = opts.cmd.as_deref().unwrap_or("global");
+                eprintln!("[debug]   check {} (cmd={}, recursive={}): {}",
+                    monitored_path.display(), label, opts.recursive,
+                    if matches { "MATCH" } else { "no" });
+            }
             if matches {
                 result.push((monitored_path.clone(), opts.clone()));
             }
+        }
+        if self.debug && result.is_empty() {
+            eprintln!("[debug]   -> no matching entries");
         }
         result
     }
@@ -987,8 +1030,10 @@ impl Monitor {
     }
 
     pub fn add_path(&mut self, entry: &PathEntry) -> Result<()> {
-        // Normalize path: expand tilde + resolve symlinks/../.
-        // Monitored the shortest canonical form so all comparisons work consistently.
+        if self.debug {
+            let cmd = entry.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
+            eprintln!("[debug] add_path: path={} cmd={}", entry.path.display(), cmd);
+        }
         let path = filters::resolve_recursion_check(&entry.path);
 
         if self.path_options.contains_key(&path) {
@@ -1193,6 +1238,9 @@ impl Monitor {
     }
 
     pub fn remove_path(&mut self, path: &Path) -> Result<()> {
+        if self.debug {
+            eprintln!("[debug] remove_path: {}", path.display());
+        }
         let pos = self
             .paths
             .iter()
@@ -1243,6 +1291,10 @@ impl Monitor {
     }
 
     fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> SocketResp {
+        if self.debug {
+            eprintln!("[debug] socket command: {} path={:?} track_cmd={:?}",
+                cmd.cmd, cmd.path, cmd.track_cmd);
+        }
         match cmd.cmd.as_str() {
             "add" => {
                 let raw = match &cmd.path {
@@ -1333,6 +1385,9 @@ impl Monitor {
     }
 
     fn reload_config(&mut self) -> Result<()> {
+        if self.debug {
+            eprintln!("[debug] reload_config");
+        }
         let monitored_path = self
             .monitored_path
             .as_ref()
@@ -1402,6 +1457,9 @@ impl Monitor {
     /// Retry setting up fanotify monitoring for paths that didn't exist before.
     /// Called when inotify detects directory creation under a watched parent.
     fn check_pending(&mut self) {
+        if self.debug && !self.pending_paths.is_empty() {
+            eprintln!("[debug] check_pending: {} pending path(s)", self.pending_paths.len());
+        }
         let mut i = 0;
         while i < self.pending_paths.len() {
             let (path, _) = &self.pending_paths[i];
@@ -1473,6 +1531,10 @@ impl Monitor {
     /// Low-level: write an event to `{log_dir}/{cmd}_log.jsonl`.
     fn write_raw_event(&self, event: &FileEvent, log_dir: &Path, cmd_name: &str) -> std::io::Result<()> {
         let log_path = log_dir.join(crate::utils::cmd_to_log_name(cmd_name));
+        if self.debug {
+            eprintln!("[debug] write_event: path={} event={:?} type={:?} -> {}",
+                event.path.display(), event.event_type, event.cmd, log_path.file_name().unwrap_or_default().to_string_lossy());
+        }
         let is_new = !log_path.exists();
         let mut file = OpenOptions::new()
             .create(true)
