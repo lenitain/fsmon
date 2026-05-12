@@ -213,6 +213,7 @@ impl Monitor {
                     size: opts.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes))),
                     exclude: opts.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()]),
                     exclude_cmd: None,
+                    cmd: None,
                 }));
             }
         }
@@ -576,6 +577,7 @@ impl Monitor {
                                     size: opts.and_then(|o| o.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes)))),
                                     exclude: opts.and_then(|o| o.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()])),
                                     exclude_cmd: None,
+                                    cmd: None,
                                 };
                                 if let Err(e) = self.remove_path(path) {
                                     eprintln!("[WARNING] Failed to remove deleted path '{}': {e}", path.display());
@@ -877,6 +879,7 @@ impl Monitor {
             exclude_cmd_regex,
             exclude_cmd_invert,
             recursive,
+            cmd: entry.cmd.clone(),
         };
 
         let path_mask = path_mask_from_options(&opts);
@@ -1092,6 +1095,7 @@ impl Monitor {
                     size: cmd.size.clone(),
                     exclude: cmd.exclude.clone(),
                     exclude_cmd: cmd.exclude_cmd.clone(),
+                    cmd: cmd.track_cmd.clone(),
                 };
                 match self.add_path(&entry) {
                     Ok(()) => {
@@ -1149,6 +1153,7 @@ impl Monitor {
                                 o.exclude_regex.as_ref().map(|r| vec![r.as_str().to_string()])
                             }),
                             exclude_cmd: None,
+                            cmd: None,
                         }
                     })
                     .collect();
@@ -1385,6 +1390,7 @@ mod tests {
             exclude_cmd_regex: None,
             exclude_cmd_invert: false,
             recursive,
+            cmd: None,
         }
     }
 
@@ -1635,6 +1641,7 @@ mod tests {
             size: None,
             exclude: None,
             exclude_cmd: None,
+            cmd: None,
         };
 
         // add_path on non-existent path → goes to pending_paths
@@ -1680,6 +1687,7 @@ mod tests {
                     exclude_cmd_regex,
                     exclude_cmd_invert,
                     recursive: false,
+                    cmd: None,
                 },
             )],
             None,

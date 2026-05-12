@@ -93,5 +93,6 @@ pub fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
         exclude_cmd_regex,
         exclude_cmd_invert,
         recursive: entry.recursive.unwrap_or(false),
+        cmd: entry.cmd.clone(),
     })
 }

@@ -330,6 +330,7 @@ mod tests {
             exclude_cmd_regex: None,
             exclude_cmd_invert: false,
             recursive: false,
+            cmd: None,
         }
     }
 

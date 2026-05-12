@@ -31,6 +31,8 @@ pub struct PathEntry {
     pub exclude: Option<Vec<String>>,
     /// Process names to exclude (glob, repeatable).
     pub exclude_cmd: Option<Vec<String>>,
+    /// Process name for process-tree tracking (--cmd flag).
+    pub cmd: Option<String>,
 }
 
 impl Managed {
@@ -166,6 +168,7 @@ mod tests {
             size: None,
             exclude: None,
     exclude_cmd: None,
+            cmd: None,
         });
         assert_eq!(store.entries.len(), 1);
         assert!(store.get(Path::new("/tmp")).is_some());
@@ -177,6 +180,7 @@ mod tests {
             size: None,
             exclude: None,
     exclude_cmd: None,
+            cmd: None,
         });
         assert_eq!(store.entries.len(), 2);
     }
@@ -193,6 +197,7 @@ mod tests {
             size: None,
             exclude: None,
     exclude_cmd: None,
+            cmd: None,
         });
         assert_eq!(store.entries.len(), 1);
 
@@ -204,6 +209,7 @@ mod tests {
             size: None,
             exclude: None,
     exclude_cmd: None,
+            cmd: None,
         });
         assert_eq!(store.entries.len(), 1); // replaced, not duplicated
         assert_eq!(store.entries[0].path, PathBuf::from("/home"));
@@ -222,6 +228,7 @@ mod tests {
             size: None,
             exclude: None,
     exclude_cmd: None,
+            cmd: None,
         });
         store.add_entry(PathEntry {
             path: PathBuf::from("/var"),
@@ -230,6 +237,7 @@ mod tests {
             size: None,
             exclude: None,
     exclude_cmd: None,
+            cmd: None,
         });
 
         assert!(store.remove_entry(Path::new("/tmp")));
@@ -252,6 +260,7 @@ mod tests {
             size: Some("1KB".into()),
             exclude: Some(vec!["*.tmp".into()]),
     exclude_cmd: None,
+            cmd: None,
         });
 
         store.save(&path).unwrap();
@@ -279,6 +288,7 @@ mod tests {
             size: None,
             exclude: None,
     exclude_cmd: None,
+            cmd: None,
         });
 
         let entry = store.get(Path::new("/data"));
@@ -305,6 +315,7 @@ mod tests {
                     size: None,
                     exclude: None,
     exclude_cmd: None,
+            cmd: None,
                 },
                 PathEntry {
                     path: PathBuf::from("/tmp"),
@@ -313,6 +324,7 @@ mod tests {
                     size: None,
                     exclude: None,
     exclude_cmd: None,
+            cmd: None,
                 },
                 PathEntry {
                     path: PathBuf::from("/home"), // dup path, should keep last
@@ -321,6 +333,7 @@ mod tests {
                     size: None,
                     exclude: None,
     exclude_cmd: None,
+            cmd: None,
                 },
             ],
         };
@@ -343,6 +356,7 @@ mod tests {
                     size: None,
                     exclude: None,
     exclude_cmd: None,
+            cmd: None,
                 },
                 PathEntry {
                     path: PathBuf::from("/b"),
@@ -351,6 +365,7 @@ mod tests {
                     size: None,
                     exclude: None,
     exclude_cmd: None,
+            cmd: None,
                 },
                 PathEntry {
                     path: PathBuf::from("/c"),
@@ -359,6 +374,7 @@ mod tests {
                     size: None,
                     exclude: None,
     exclude_cmd: None,
+            cmd: None,
                 },
             ],
         };
@@ -377,6 +393,7 @@ mod tests {
                     size: None,
                     exclude: None,
     exclude_cmd: None,
+            cmd: None,
                 },
                 PathEntry {
                     path: PathBuf::from("/b"),
@@ -385,6 +402,7 @@ mod tests {
                     size: None,
                     exclude: None,
     exclude_cmd: None,
+            cmd: None,
                 },
             ],
         };

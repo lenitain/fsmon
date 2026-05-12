@@ -103,6 +103,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     let exclude = if args.exclude.is_empty() { None } else { Some(args.exclude.clone()) };
     let exclude_cmd = if args.exclude_cmd.is_empty() { None } else { Some(args.exclude_cmd.clone()) };
     let recursive = if args.recursive { Some(true) } else { None };
+    let process_name = args.cmd.clone();
 
     store.add_entry(PathEntry {
         path: path.clone(),
@@ -111,6 +112,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         size: size_val.clone(),
         exclude: exclude.clone(),
         exclude_cmd: exclude_cmd.clone(),
+        cmd: process_name.clone(),
     });
 
     store.save(&cfg.managed.path)?;
@@ -127,6 +129,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             size: size_val,
             exclude,
             exclude_cmd,
+            track_cmd: process_name,
         },
     );
 

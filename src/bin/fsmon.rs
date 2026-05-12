@@ -89,6 +89,10 @@ pub struct AddArgs {
     /// Process names to exclude (glob, repeatable, prefix ! to invert)
     #[arg(long, value_name = "PATTERN")]
     pub exclude_cmd: Vec<String>,
+
+    /// Track a process and its descendants (process tree + ancestry chain)
+    #[arg(long, value_name = "NAME")]
+    pub cmd: Option<String>,
 }
 
 #[derive(Parser)]

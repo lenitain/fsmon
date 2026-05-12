@@ -38,6 +38,7 @@ pub fn cmd_remove(raw: PathBuf) -> Result<()> {
             size: None,
             exclude: None,
             exclude_cmd: None,
+            track_cmd: None,
         },
     ) {
         Ok(resp) if resp.ok => {

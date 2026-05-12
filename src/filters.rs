@@ -17,6 +17,7 @@ pub struct PathOptions {
     pub exclude_cmd_regex: Option<regex::Regex>,
     pub exclude_cmd_invert: bool,
     pub recursive: bool,
+    pub cmd: Option<String>,
 }
 
 /// Resolve a path for recursion check: expand tilde, then canonicalize if the path exists
@@ -292,6 +293,7 @@ mod tests {
             exclude_cmd_regex: None,
             exclude_cmd_invert: false,
             recursive: false,
+            cmd: None,
         };
         assert!(should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 0)));
         assert!(should_output(Some(&opts), &make_event("/tmp/a", EventType::Delete, 1, 0)));
@@ -308,6 +310,7 @@ mod tests {
             exclude_cmd_regex: None,
             exclude_cmd_invert: false,
             recursive: false,
+            cmd: None,
         };
         assert!(should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 2000)));
         assert!(should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 1000)));
@@ -324,6 +327,7 @@ mod tests {
             exclude_cmd_regex: None,
             exclude_cmd_invert: false,
             recursive: false,
+            cmd: None,
         };
         assert!(should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 50)));
         assert!(!should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 100)));
@@ -340,6 +344,7 @@ mod tests {
             exclude_cmd_regex: None,
             exclude_cmd_invert: false,
             recursive: false,
+            cmd: None,
         };
         assert!(should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 100)));
         assert!(!should_output(Some(&opts), &make_event("/tmp/a", EventType::Create, 1, 99)));
@@ -356,6 +361,7 @@ mod tests {
             exclude_cmd_regex: None,
             exclude_cmd_invert: false,
             recursive: false,
+            cmd: None,
         };
         assert!(!should_output(Some(&opts), &make_event("/tmp/a.tmp", EventType::Create, 1, 0)));
         assert!(!should_output(Some(&opts), &make_event("/tmp/b.tmp", EventType::Delete, 1, 0)));
@@ -373,6 +379,7 @@ mod tests {
             exclude_cmd_regex: None,
             exclude_cmd_invert: false,
             recursive: false,
+            cmd: None,
         };
         assert!(should_output(Some(&opts), &make_event("/tmp/main.py", EventType::Create, 1, 0)));
         assert!(!should_output(Some(&opts), &make_event("/tmp/main.rs", EventType::Create, 1, 0)));
@@ -388,6 +395,7 @@ mod tests {
             exclude_cmd_regex: Some(Regex::new("rsync|apt").unwrap()),
             exclude_cmd_invert: false,
             recursive: false,
+            cmd: None,
         };
         assert!(!should_output(Some(&opts), &make_event_cmd("/tmp/a", EventType::Create, 1, 0, "rsync")));
         assert!(!should_output(Some(&opts), &make_event_cmd("/tmp/a", EventType::Create, 2, 0, "apt")));
@@ -404,6 +412,7 @@ mod tests {
             exclude_cmd_regex: Some(Regex::new("nginx").unwrap()),
             exclude_cmd_invert: true,
             recursive: false,
+            cmd: None,
         };
         assert!(should_output(Some(&opts), &make_event_cmd("/tmp/a", EventType::Create, 1, 0, "nginx")));
         assert!(!should_output(Some(&opts), &make_event_cmd("/tmp/a", EventType::Create, 2, 0, "rsync")));
@@ -419,6 +428,7 @@ mod tests {
             exclude_cmd_regex: None,
             exclude_cmd_invert: false,
             recursive: false,
+            cmd: None,
         };
         // Size >= 100, type=Create, not .log -> passes
         assert!(should_output(Some(&opts), &make_event("/tmp/data", EventType::Create, 1, 200)));
@@ -444,6 +454,7 @@ mod tests {
                 exclude_cmd_regex: None,
                 exclude_cmd_invert: false,
                 recursive: true,
+            cmd: None,
             },
         );
         map.insert(
@@ -456,6 +467,7 @@ mod tests {
                 exclude_cmd_regex: None,
                 exclude_cmd_invert: false,
                 recursive: false,
+            cmd: None,
             },
         );
         map
@@ -525,6 +537,7 @@ mod tests {
             exclude_regex: None, exclude_invert: false,
             exclude_cmd_regex: None, exclude_cmd_invert: false,
             recursive: true,
+            cmd: None,
         });
         let canonical = paths.clone();
 
@@ -544,6 +557,7 @@ mod tests {
             exclude_regex: None, exclude_invert: false,
             exclude_cmd_regex: None, exclude_cmd_invert: false,
             recursive: false,
+            cmd: None,
         });
         let canonical = paths.clone();
 
@@ -562,12 +576,14 @@ mod tests {
             exclude_regex: None, exclude_invert: false,
             exclude_cmd_regex: None, exclude_cmd_invert: false,
             recursive: true,
+            cmd: None,
         });
         opts.insert(PathBuf::from("/var/log"), PathOptions {
             size_filter: None, event_types: None,
             exclude_regex: None, exclude_invert: false,
             exclude_cmd_regex: None, exclude_cmd_invert: false,
             recursive: true,
+            cmd: None,
         });
         let canonical = paths.clone();
 
@@ -587,6 +603,7 @@ mod tests {
             exclude_regex: None, exclude_invert: false,
             exclude_cmd_regex: None, exclude_cmd_invert: false,
             recursive: true,
+            cmd: None,
         });
         let canonical = paths.clone();
 
@@ -603,6 +620,7 @@ mod tests {
             exclude_regex: None, exclude_invert: false,
             exclude_cmd_regex: None, exclude_cmd_invert: false,
             recursive: false,
+            cmd: None,
         });
         let canonical = paths.clone();
 
@@ -620,6 +638,7 @@ mod tests {
             exclude_regex: None, exclude_invert: false,
             exclude_cmd_regex: None, exclude_cmd_invert: false,
             recursive: false,
+            cmd: None,
         });
         let canonical = paths.clone();
 
@@ -637,6 +656,7 @@ mod tests {
             exclude_regex: None, exclude_invert: false,
             exclude_cmd_regex: None, exclude_cmd_invert: false,
             recursive: true,
+            cmd: None,
         });
         let canonical = vec![PathBuf::from("/real/path")];
 
