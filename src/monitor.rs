@@ -25,16 +25,15 @@ use moka::sync::Cache;
 use crate::config::ResolvedCacheConfig;
 use crate::dir_cache;
 use crate::fid_parser::{
-    DIR_CACHE_CAP, FanFd, FsGroup, chown_to_user,
-    mark_directory, mark_recursive, mask_to_event_types, path_mask_from_options,
-    read_fid_events_cached,
+    DIR_CACHE_CAP, FanFd, FsGroup, chown_to_user, mark_directory, mark_recursive,
+    mask_to_event_types, path_mask_from_options, read_fid_events_cached,
 };
 use crate::filters::{self, PathOptions};
 use crate::monitored::Monitored;
 use crate::monitored::PathEntry;
 use crate::proc_cache::{
-    self, PidTree, ProcCache, build_chain, is_descendant,
-    snapshot_process_tree, PROC_CACHE_CAP, PID_TREE_CAP,
+    self, PID_TREE_CAP, PROC_CACHE_CAP, PidTree, ProcCache, build_chain, is_descendant,
+    snapshot_process_tree,
 };
 use crate::socket::{SocketCmd, SocketResp};
 use crate::utils::{format_size, get_process_info_by_pid, parse_size_filter};
@@ -132,15 +131,11 @@ impl Monitor {
             // so --cmd fsmon would never match anything. This check mirrors the
             // validation in add.rs to prevent silent misconfiguration via direct
             // jsonl edits.
-            if let Some(ref cmd) = opts.cmd {
-                if cmd == "fsmon" {
-                    bail!(
-                        "Cannot monitor 'fsmon' process: fsmon daemon's own events \
-                         are excluded from monitoring.\n\
-                         Tip: use a different process name, or omit the process \
-                         name to capture all events."
-                    );
-                }
+            if opts.cmd.as_deref() == Some("fsmon") {
+                bail!(
+                    "Cannot monitor 'fsmon' process: fsmon daemon's own events \
+                    are excluded from monitoring."
+                );
             }
             // Same path under multiple cmd groups → fanotify dedup by path only
             if seen.insert(resolved.clone()) {
@@ -159,7 +154,7 @@ impl Monitor {
             proc_cache: None,
             pid_tree: None,
             file_size_cache: LruCache::new(
-                NonZeroUsize::new(cache_config.file_size_capacity).unwrap()
+                NonZeroUsize::new(cache_config.file_size_capacity).unwrap(),
             ),
             buffer_size,
 
@@ -673,8 +668,7 @@ impl Monitor {
                             break;
                         }
                     };
-                    let events =
-                        read_fid_events_cached(afd.get_ref(), &mfds, &dc, &mut buf);
+                    let events = read_fid_events_cached(afd.get_ref(), &mfds, &dc, &mut buf);
                     if !events.is_empty() && tx.send(events).is_err() {
                         break;
                     }
@@ -1283,9 +1277,7 @@ impl Monitor {
         if cmd.as_deref() == Some("fsmon") {
             bail!(
                 "Cannot monitor 'fsmon' process: fsmon daemon's own events \
-                 are excluded from monitoring.\n\
-                 Tip: use a different process name, or omit the process \
-                 name to capture all events."
+                 are excluded from monitoring."
             );
         }
 
@@ -2075,10 +2067,7 @@ mod tests {
             false,
             None,
         );
-        assert!(
-            result.is_err(),
-            "Monitor::new() should reject cmd=fsmon"
-        );
+        assert!(result.is_err(), "Monitor::new() should reject cmd=fsmon");
         let err = result.err().unwrap().to_string();
         assert!(
             err.contains("Cannot monitor 'fsmon' process"),
@@ -2291,10 +2280,10 @@ mod tests {
             let mut buf = vec![0u8; 4096];
             let start = std::time::Instant::now();
             while start.elapsed() < std::time::Duration::from_millis(200) {
-                if let Ok(events) = fanotify_fid::read::read_fid_events(&fd, &[], &mut buf, None) {
-                    if !events.is_empty() {
-                        counter_clone.fetch_add(events.len(), Ordering::SeqCst);
-                    }
+                if let Ok(events) = fanotify_fid::read::read_fid_events(&fd, &[], &mut buf, None)
+                    && !events.is_empty()
+                {
+                    counter_clone.fetch_add(events.len(), Ordering::SeqCst);
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }

@@ -361,7 +361,7 @@ mod tests {
         let home_val = dir.to_string_lossy().to_string();
 
         temp_env::with_vars(
-            &[
+            [
                 ("HOME", Some(home_val.as_str())),
                 ("XDG_CONFIG_HOME", None::<&str>),
                 ("SUDO_UID", None::<&str>),
@@ -467,7 +467,7 @@ path = "/tmp/custom.sock"
         let _lock = ENV_LOCK.lock().unwrap();
 
         temp_env::with_vars(
-            &[
+            [
                 ("XDG_CONFIG_HOME", Some("/custom/xdg/config")),
                 ("HOME", Some("/home/test")),
             ],

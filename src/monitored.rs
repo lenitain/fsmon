@@ -400,11 +400,11 @@ mod tests {
         assert_eq!(flat.len(), 2);
         assert!(
             flat.iter()
-                .any(|e| e.path == PathBuf::from("/a") && e.cmd.as_deref() == Some("bash"))
+                .any(|e| e.path == Path::new("/a") && e.cmd.as_deref() == Some("bash"))
         );
         assert!(
             flat.iter()
-                .any(|e| e.path == PathBuf::from("/b") && e.cmd.as_deref() == Some("_global"))
+                .any(|e| e.path == Path::new("/b") && e.cmd.as_deref() == Some("_global"))
         );
     }
 
@@ -571,7 +571,7 @@ mod tests {
 
     #[test]
     fn test_remove_cmd_group_global() {
-        let (_dir, path) = temp_path();
+        let (_dir, _path) = temp_path();
         let mut store = Monitored::default();
         store.add_entry(make_entry("/a", None, None));
         store.add_entry(make_entry("/b", Some("x"), None));

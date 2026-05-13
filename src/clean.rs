@@ -748,8 +748,8 @@ mod tests {
         .unwrap();
         let after = fs::read_to_string(&log_path).unwrap();
         assert!(
-            after.len() > 0,
-            "should keep at least 0 bytes worth of content"
+            !after.is_empty(),
+            "should not be empty after trimming"
         );
         assert!(
             after.len() <= 100000,

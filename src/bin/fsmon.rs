@@ -161,21 +161,21 @@ mod tests {
 
     #[test]
     fn test_add_positional_cmd() {
-        let args = AddArgs::try_parse_from(&["add", "openclaw", "--path", "/home"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "openclaw", "--path", "/home"]).unwrap();
         assert_eq!(args.cmd, Some("openclaw".to_string()));
         assert_eq!(args.path, Some(PathBuf::from("/home")));
     }
 
     #[test]
     fn test_add_positional_cmd_only() {
-        let args = AddArgs::try_parse_from(&["add", "nginx"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "nginx"]).unwrap();
         assert_eq!(args.cmd, Some("nginx".to_string()));
         assert!(args.path.is_none());
     }
 
     #[test]
     fn test_add_path_only() {
-        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "--path", "/tmp"]).unwrap();
         assert_eq!(args.path, Some(PathBuf::from("/tmp")));
         assert!(args.cmd.is_none());
         assert!(args.types.is_empty());
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn test_add_types_long() {
-        let args = AddArgs::try_parse_from(&[
+        let args = AddArgs::try_parse_from([
             "add", "--path", "/tmp", "--types", "MODIFY", "--types", "CREATE",
         ])
         .unwrap();
@@ -195,20 +195,20 @@ mod tests {
     #[test]
     fn test_add_types_short() {
         let args =
-            AddArgs::try_parse_from(&["add", "--path", "/tmp", "-t", "MODIFY", "-t", "CREATE"])
+            AddArgs::try_parse_from(["add", "--path", "/tmp", "-t", "MODIFY", "-t", "CREATE"])
                 .unwrap();
         assert_eq!(args.types, vec!["MODIFY", "CREATE"]);
     }
 
     #[test]
     fn test_add_types_all_long() {
-        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "--types", "all"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "--path", "/tmp", "--types", "all"]).unwrap();
         assert_eq!(args.types, vec!["all"]);
     }
 
     #[test]
     fn test_add_types_mixed() {
-        let args = AddArgs::try_parse_from(&[
+        let args = AddArgs::try_parse_from([
             "add", "--path", "/tmp", "-t", "MODIFY", "--types", "CREATE",
         ])
         .unwrap();
@@ -217,56 +217,56 @@ mod tests {
 
     #[test]
     fn test_add_recursive_short() {
-        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "-r"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "--path", "/tmp", "-r"]).unwrap();
         assert!(args.recursive);
         assert!(args.cmd.is_none());
     }
 
     #[test]
     fn test_add_size_short() {
-        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "-s", "1GB"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "--path", "/tmp", "-s", "1GB"]).unwrap();
         assert_eq!(args.size, Some("1GB".into()));
     }
 
     #[test]
     fn test_add_size_long() {
-        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "--size", "100MB"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "--path", "/tmp", "--size", "100MB"]).unwrap();
         assert_eq!(args.size, Some("100MB".into()));
     }
 
     #[test]
     fn test_add_size_with_operator() {
-        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "-s", ">=1MB"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "--path", "/tmp", "-s", ">=1MB"]).unwrap();
         assert_eq!(args.size, Some(">=1MB".into()));
 
-        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "--size", "<500KB"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "--path", "/tmp", "--size", "<500KB"]).unwrap();
         assert_eq!(args.size, Some("<500KB".into()));
 
-        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "-s", "=0"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "--path", "/tmp", "-s", "=0"]).unwrap();
         assert_eq!(args.size, Some("=0".into()));
     }
 
     #[test]
     fn test_add_size_decimal_and_negative() {
-        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "-s", "1.5KB"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "--path", "/tmp", "-s", "1.5KB"]).unwrap();
         assert_eq!(args.size, Some("1.5KB".into()));
 
-        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "--size", ">-1KB"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "--path", "/tmp", "--size", ">-1KB"]).unwrap();
         assert_eq!(args.size, Some(">-1KB".into()));
     }
 
     #[test]
     fn test_add_size_case_insensitive_unit() {
-        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "-s", "1mb"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "--path", "/tmp", "-s", "1mb"]).unwrap();
         assert_eq!(args.size, Some("1mb".into()));
 
-        let args = AddArgs::try_parse_from(&["add", "--path", "/tmp", "--size", "100Kb"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "--path", "/tmp", "--size", "100Kb"]).unwrap();
         assert_eq!(args.size, Some("100Kb".into()));
     }
 
     #[test]
     fn test_add_all_flags() {
-        let args = AddArgs::try_parse_from(&[
+        let args = AddArgs::try_parse_from([
             "add", "nginx", "--path", "/tmp", "-r", "-t", "MODIFY", "--types", "CREATE", "-s",
             "1KB",
         ])
@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn test_add_positional_cmd_with_recursive() {
-        let args = AddArgs::try_parse_from(&["add", "openclaw", "--path", "/home", "-r"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "openclaw", "--path", "/home", "-r"]).unwrap();
         assert_eq!(args.cmd, Some("openclaw".to_string()));
         assert_eq!(args.path, Some(PathBuf::from("/home")));
         assert!(args.recursive);
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn test_query_no_flags() {
-        let args = QueryArgs::try_parse_from(&["query"]).unwrap();
+        let args = QueryArgs::try_parse_from(["query"]).unwrap();
         assert!(args.path.is_empty());
         assert!(args.time.is_empty());
     }
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn test_query_path_long() {
         let args =
-            QueryArgs::try_parse_from(&["query", "--path", "/tmp", "--path", "/home"]).unwrap();
+            QueryArgs::try_parse_from(["query", "--path", "/tmp", "--path", "/home"]).unwrap();
         assert_eq!(
             args.path,
             vec![PathBuf::from("/tmp"), PathBuf::from("/home")]
@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn test_query_path_short() {
-        let args = QueryArgs::try_parse_from(&["query", "-p", "/tmp", "-p", "/home"]).unwrap();
+        let args = QueryArgs::try_parse_from(["query", "-p", "/tmp", "-p", "/home"]).unwrap();
         assert_eq!(
             args.path,
             vec![PathBuf::from("/tmp"), PathBuf::from("/home")]
@@ -316,26 +316,26 @@ mod tests {
 
     #[test]
     fn test_query_time_since() {
-        let args = QueryArgs::try_parse_from(&["query", "-t", ">1h"]).unwrap();
+        let args = QueryArgs::try_parse_from(["query", "-t", ">1h"]).unwrap();
         assert_eq!(args.time, vec![">1h".to_string()]);
     }
 
     #[test]
     fn test_query_time_until() {
-        let args = QueryArgs::try_parse_from(&["query", "--time", "<2026-05-01"]).unwrap();
+        let args = QueryArgs::try_parse_from(["query", "--time", "<2026-05-01"]).unwrap();
         assert_eq!(args.time, vec!["<2026-05-01".to_string()]);
     }
 
     #[test]
     fn test_query_time_repeatable() {
         let args =
-            QueryArgs::try_parse_from(&["query", "--time", ">1h", "--time", "<now"]).unwrap();
+            QueryArgs::try_parse_from(["query", "--time", ">1h", "--time", "<now"]).unwrap();
         assert_eq!(args.time, vec![">1h".to_string(), "<now".to_string()]);
     }
 
     #[test]
     fn test_query_time_with_path() {
-        let args = QueryArgs::try_parse_from(&["query", "-p", "/tmp", "-t", ">1h"]).unwrap();
+        let args = QueryArgs::try_parse_from(["query", "-p", "/tmp", "-t", ">1h"]).unwrap();
         assert_eq!(args.path, vec![PathBuf::from("/tmp")]);
         assert_eq!(args.time, vec![">1h".to_string()]);
     }
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn test_clean_basic_cmd() {
-        let args = CleanArgs::try_parse_from(&["clean", "_global"]).unwrap();
+        let args = CleanArgs::try_parse_from(["clean", "_global"]).unwrap();
         assert_eq!(args.cmd, Some("_global".into()));
         assert!(args.time.is_none());
         assert!(args.size.is_none());
@@ -353,28 +353,28 @@ mod tests {
 
     #[test]
     fn test_clean_cmd_with_time() {
-        let args = CleanArgs::try_parse_from(&["clean", "openclaw", "--time", ">30d"]).unwrap();
+        let args = CleanArgs::try_parse_from(["clean", "openclaw", "--time", ">30d"]).unwrap();
         assert_eq!(args.cmd, Some("openclaw".into()));
         assert_eq!(args.time, Some(">30d".into()));
     }
 
     #[test]
     fn test_clean_cmd_with_size() {
-        let args = CleanArgs::try_parse_from(&["clean", "nginx", "-s", "500MB"]).unwrap();
+        let args = CleanArgs::try_parse_from(["clean", "nginx", "-s", "500MB"]).unwrap();
         assert_eq!(args.cmd, Some("nginx".into()));
         assert_eq!(args.size, Some("500MB".into()));
     }
 
     #[test]
     fn test_clean_cmd_with_dry_run() {
-        let args = CleanArgs::try_parse_from(&["clean", "_global", "--dry-run"]).unwrap();
+        let args = CleanArgs::try_parse_from(["clean", "_global", "--dry-run"]).unwrap();
         assert_eq!(args.cmd, Some("_global".into()));
         assert!(args.dry_run);
     }
 
     #[test]
     fn test_clean_all_flags() {
-        let args = CleanArgs::try_parse_from(&[
+        let args = CleanArgs::try_parse_from([
             "clean",
             "openclaw",
             "--time",
@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_remove_path() {
-        let cli = Cli::try_parse_from(&["fsmon", "remove", "--path", "/tmp"]).unwrap();
+        let cli = Cli::try_parse_from(["fsmon", "remove", "--path", "/tmp"]).unwrap();
         match cli.command {
             Commands::Remove { cmd, path } => {
                 assert!(cmd.is_none());
@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn test_remove_multi_path() {
         let cli =
-            Cli::try_parse_from(&["fsmon", "remove", "--path", "/tmp", "--path", "/home"]).unwrap();
+            Cli::try_parse_from(["fsmon", "remove", "--path", "/tmp", "--path", "/home"]).unwrap();
         match cli.command {
             Commands::Remove { cmd, path } => {
                 assert!(cmd.is_none());
@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn test_remove_cmd() {
         // fsmon remove nginx (positional cmd)
-        let cli = Cli::try_parse_from(&["fsmon", "remove", "nginx"]).unwrap();
+        let cli = Cli::try_parse_from(["fsmon", "remove", "nginx"]).unwrap();
         match cli.command {
             Commands::Remove { cmd, path } => {
                 assert_eq!(cmd, Some("nginx".to_string()));
@@ -433,7 +433,7 @@ mod tests {
     #[test]
     fn test_remove_path_and_cmd() {
         // fsmon remove openclaw --path /tmp
-        let cli = Cli::try_parse_from(&["fsmon", "remove", "openclaw", "--path", "/tmp"]).unwrap();
+        let cli = Cli::try_parse_from(["fsmon", "remove", "openclaw", "--path", "/tmp"]).unwrap();
         match cli.command {
             Commands::Remove { cmd, path } => {
                 assert_eq!(cmd, Some("openclaw".to_string()));
@@ -446,7 +446,7 @@ mod tests {
     #[test]
     fn test_remove_empty_ok() {
         // fsmon remove (no args) — valid parse, handler will error
-        let cli = Cli::try_parse_from(&["fsmon", "remove"]).unwrap();
+        let cli = Cli::try_parse_from(["fsmon", "remove"]).unwrap();
         match cli.command {
             Commands::Remove { cmd, path } => {
                 assert!(cmd.is_none());
@@ -496,7 +496,7 @@ mod tests {
         fs::create_dir_all(&monitored_path).unwrap();
 
         temp_env::with_vars(
-            &[
+            [
                 ("HOME", Some(home_str.as_str())),
                 ("XDG_CONFIG_HOME", None::<&str>),
                 ("SUDO_UID", None::<&str>),
@@ -524,7 +524,7 @@ mod tests {
     fn test_integration_add_global() {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
-            let args = AddArgs::try_parse_from(&["add", "_global", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref()]).unwrap();
             super::commands::cmd_add(args).unwrap();
 
             let store = load_store(home);
@@ -538,7 +538,7 @@ mod tests {
     fn test_integration_add_with_cmd() {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
-            let args = AddArgs::try_parse_from(&["add", "openclaw", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "openclaw", "--path", p.as_ref()]).unwrap();
             super::commands::cmd_add(args).unwrap();
 
             let store = load_store(home);
@@ -551,7 +551,7 @@ mod tests {
     fn test_integration_add_with_types() {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
-            let args = AddArgs::try_parse_from(&[
+            let args = AddArgs::try_parse_from([
                 "add",
                 "_global",
                 "--path",
@@ -577,7 +577,7 @@ mod tests {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
             let args =
-                AddArgs::try_parse_from(&["add", "_global", "--path", p.as_ref(), "-r"]).unwrap();
+                AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref(), "-r"]).unwrap();
             super::commands::cmd_add(args).unwrap();
 
             let store = load_store(home);
@@ -590,7 +590,7 @@ mod tests {
     fn test_integration_add_and_remove_path() {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
-            let args = AddArgs::try_parse_from(&["add", "_global", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref()]).unwrap();
             super::commands::cmd_add(args).unwrap();
 
             super::commands::cmd_remove(Some("_global".into()), vec![mp.to_path_buf()]).unwrap();
@@ -604,7 +604,7 @@ mod tests {
     fn test_integration_remove_entire_global_group() {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
-            let args = AddArgs::try_parse_from(&["add", "_global", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref()]).unwrap();
             super::commands::cmd_add(args).unwrap();
 
             assert_eq!(load_store(home).entry_count(), 1);
@@ -618,7 +618,7 @@ mod tests {
     fn test_integration_remove_entire_cmd_group() {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
-            let args = AddArgs::try_parse_from(&["add", "myapp", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "myapp", "--path", p.as_ref()]).unwrap();
             super::commands::cmd_add(args).unwrap();
             assert_eq!(load_store(home).entry_count(), 1);
 
@@ -632,9 +632,9 @@ mod tests {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
             // Same path in both myapp and _global group
-            let args = AddArgs::try_parse_from(&["add", "myapp", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "myapp", "--path", p.as_ref()]).unwrap();
             super::commands::cmd_add(args).unwrap();
-            let args = AddArgs::try_parse_from(&["add", "_global", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref()]).unwrap();
             super::commands::cmd_add(args).unwrap();
             assert_eq!(load_store(home).entry_count(), 2);
 
@@ -652,7 +652,7 @@ mod tests {
     fn test_integration_remove_multi_path_atomic_failure() {
         with_isolated_home(|_home, mp| {
             let p = mp.to_string_lossy();
-            let args = AddArgs::try_parse_from(&["add", "_global", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref()]).unwrap();
             super::commands::cmd_add(args).unwrap();
 
             // One path exists, one doesn't → should fail atomically
@@ -682,9 +682,9 @@ mod tests {
     fn test_integration_add_to_both_global_and_cmd() {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
-            let args = AddArgs::try_parse_from(&["add", "_global", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref()]).unwrap();
             super::commands::cmd_add(args).unwrap();
-            let args = AddArgs::try_parse_from(&["add", "myapp", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "myapp", "--path", p.as_ref()]).unwrap();
             super::commands::cmd_add(args).unwrap();
 
             let store = load_store(home);
@@ -699,7 +699,7 @@ mod tests {
     fn test_integration_add_missing_cmd_fails() {
         with_isolated_home(|_home, mp| {
             let p = mp.to_string_lossy();
-            let args = AddArgs::try_parse_from(&["add", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "--path", p.as_ref()]).unwrap();
             let result = super::commands::cmd_add(args);
             assert!(result.is_err(), "missing cmd should fail");
             let err = result.unwrap_err().to_string();
@@ -711,7 +711,7 @@ mod tests {
     fn test_integration_add_fsmon_cmd_fails() {
         with_isolated_home(|_home, mp| {
             let p = mp.to_string_lossy();
-            let args = AddArgs::try_parse_from(&["add", "fsmon", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "fsmon", "--path", p.as_ref()]).unwrap();
             let result = super::commands::cmd_add(args);
             assert!(result.is_err(), "fsmon cmd should fail");
         });
@@ -723,12 +723,12 @@ mod tests {
             let p = mp.to_string_lossy();
             // Add first
             let args =
-                AddArgs::try_parse_from(&["add", "_global", "--path", p.as_ref(), "-r"]).unwrap();
+                AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref(), "-r"]).unwrap();
             super::commands::cmd_add(args).unwrap();
             assert_eq!(load_store(home).entry_count(), 1);
 
             // Add same path+cmd again with different flags (no -r)
-            let args = AddArgs::try_parse_from(&["add", "_global", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref()]).unwrap();
             super::commands::cmd_add(args).unwrap();
 
             let store = load_store(home);
@@ -747,7 +747,7 @@ mod tests {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
             let args =
-                AddArgs::try_parse_from(&["add", "_global", "--path", p.as_ref(), "-s", ">1MB"])
+                AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref(), "-s", ">1MB"])
                     .unwrap();
             super::commands::cmd_add(args).unwrap();
 
@@ -774,7 +774,7 @@ mod tests {
         with_isolated_home(|_home, mp| {
             let p = mp.to_string_lossy();
             // Add path under _global
-            let args = AddArgs::try_parse_from(&["add", "_global", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref()]).unwrap();
             super::commands::cmd_add(args).unwrap();
 
             // Try to remove same path from wrong cmd group
@@ -801,11 +801,11 @@ mod tests {
         with_isolated_home(|home, mp| {
             let p = mp.to_string_lossy();
             // Add same path under two cmds
-            let args = AddArgs::try_parse_from(&["add", "_global", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref()]).unwrap();
             super::commands::cmd_add(args).unwrap();
-            let args = AddArgs::try_parse_from(&["add", "app_a", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "app_a", "--path", p.as_ref()]).unwrap();
             super::commands::cmd_add(args).unwrap();
-            let args = AddArgs::try_parse_from(&["add", "app_b", "--path", p.as_ref()]).unwrap();
+            let args = AddArgs::try_parse_from(["add", "app_b", "--path", p.as_ref()]).unwrap();
             super::commands::cmd_add(args).unwrap();
             assert_eq!(load_store(home).entry_count(), 3);
 
@@ -882,7 +882,7 @@ mod tests {
 
     #[test]
     fn test_integration_clean_and_query_round_trip() {
-        with_isolated_home(|home, mp| {
+        with_isolated_home(|home, _mp| {
             // Write a mock log file for _global
             use std::io::Write;
             let log_dir = {

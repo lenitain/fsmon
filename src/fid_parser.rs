@@ -490,27 +490,31 @@ mod tests {
 
     #[test]
     fn test_default_event_mask_contents() {
-        assert!(DEFAULT_EVENT_MASK & FAN_CLOSE_WRITE != 0);
-        assert!(DEFAULT_EVENT_MASK & FAN_ATTRIB != 0);
-        assert!(DEFAULT_EVENT_MASK & FAN_CREATE != 0);
-        assert!(DEFAULT_EVENT_MASK & FAN_DELETE != 0);
-        assert!(DEFAULT_EVENT_MASK & FAN_DELETE_SELF != 0);
-        assert!(DEFAULT_EVENT_MASK & FAN_MOVED_FROM != 0);
-        assert!(DEFAULT_EVENT_MASK & FAN_MOVED_TO != 0);
-        assert!(DEFAULT_EVENT_MASK & FAN_MOVE_SELF != 0);
-        assert!(DEFAULT_EVENT_MASK & FAN_EVENT_ON_CHILD != 0);
-        assert!(DEFAULT_EVENT_MASK & FAN_ONDIR != 0);
-        // Should NOT include (FS_ERROR only works with FS marks)
-        assert!(DEFAULT_EVENT_MASK & FAN_FS_ERROR == 0);
-        assert!(DEFAULT_EVENT_MASK & FAN_ACCESS == 0);
-        assert!(DEFAULT_EVENT_MASK & FAN_OPEN == 0);
+        const _: () = {
+            assert!(DEFAULT_EVENT_MASK & FAN_CLOSE_WRITE != 0);
+            assert!(DEFAULT_EVENT_MASK & FAN_ATTRIB != 0);
+            assert!(DEFAULT_EVENT_MASK & FAN_CREATE != 0);
+            assert!(DEFAULT_EVENT_MASK & FAN_DELETE != 0);
+            assert!(DEFAULT_EVENT_MASK & FAN_DELETE_SELF != 0);
+            assert!(DEFAULT_EVENT_MASK & FAN_MOVED_FROM != 0);
+            assert!(DEFAULT_EVENT_MASK & FAN_MOVED_TO != 0);
+            assert!(DEFAULT_EVENT_MASK & FAN_MOVE_SELF != 0);
+            assert!(DEFAULT_EVENT_MASK & FAN_EVENT_ON_CHILD != 0);
+            assert!(DEFAULT_EVENT_MASK & FAN_ONDIR != 0);
+            // Should NOT include (FS_ERROR only works with FS marks)
+            assert!(DEFAULT_EVENT_MASK & FAN_FS_ERROR == 0);
+            assert!(DEFAULT_EVENT_MASK & FAN_ACCESS == 0);
+            assert!(DEFAULT_EVENT_MASK & FAN_OPEN == 0);
+        };
     }
 
     // ---- constant values ----
 
     #[test]
     fn test_constants_are_positive() {
-        assert!(FILE_SIZE_CACHE_CAP > 0, "FILE_SIZE_CACHE_CAP should be > 0");
-        assert!(DEFAULT_EVENT_MASK > 0, "DEFAULT_EVENT_MASK should be > 0");
+        const _: () = {
+            assert!(FILE_SIZE_CACHE_CAP > 0, "FILE_SIZE_CACHE_CAP should be > 0");
+            assert!(DEFAULT_EVENT_MASK > 0, "DEFAULT_EVENT_MASK should be > 0");
+        };
     }
 }
