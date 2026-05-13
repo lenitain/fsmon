@@ -9,9 +9,9 @@
 //! 2. Fork events: parent→child relationship (no cmd yet)
 //! 3. Exec events: update cmd for the child
 
-use std::sync::Arc;
+use std::time::Duration;
 
-use dashmap::DashMap;
+use moka::sync::Cache;
 use proc_connector::{NetlinkMessageIter, ProcConnector, ProcEvent};
 
 use crate::utils::uid_to_username;
@@ -27,14 +27,30 @@ pub struct ProcInfo {
     pub tgid: u32,
 }
 
-/// Shared PID → ProcInfo cache (thread-safe).
-pub type ProcCache = Arc<DashMap<u32, ProcInfo>>;
+/// Capacity for process info cache.
+/// Covers typical active PID ranges with headroom.
+const PROC_CACHE_CAP: u64 = 65536;
+
+/// TTL for process info entries. Exited processes are evicted after this time.
+const PROC_CACHE_TTL_SECS: u64 = 600;
+
+/// Capacity for process tree cache.
+const PID_TREE_CAP: u64 = 65536;
+
+/// TTL for process tree entries.
+const PID_TREE_TTL_SECS: u64 = 600;
+
+/// Shared PID → ProcInfo cache (thread-safe, bounded, TTL-based eviction).
+pub type ProcCache = Cache<u32, ProcInfo>;
 
 pub fn new_cache() -> ProcCache {
-    Arc::new(DashMap::new())
+    Cache::builder()
+        .max_capacity(PROC_CACHE_CAP)
+        .time_to_live(Duration::from_secs(PROC_CACHE_TTL_SECS))
+        .build()
 }
 
-// ---- PidTree (new) ----
+// ---- PidTree ----
 
 /// A node in the process tree. cmd starts empty (from Fork) and fills on Exec.
 #[derive(Clone, Debug)]
@@ -43,11 +59,14 @@ pub struct PidNode {
     pub cmd: String,
 }
 
-/// Shared process tree: PID → parent PID + cmd.
-pub type PidTree = Arc<DashMap<u32, PidNode>>;
+/// Shared process tree: PID → parent PID + cmd (bounded, TTL-based eviction).
+pub type PidTree = Cache<u32, PidNode>;
 
 pub fn new_pid_tree() -> PidTree {
-    Arc::new(DashMap::new())
+    Cache::builder()
+        .max_capacity(PID_TREE_CAP)
+        .time_to_live(Duration::from_secs(PID_TREE_TTL_SECS))
+        .build()
 }
 
 /// Snapshot all existing processes from /proc on daemon start.
@@ -265,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_proc_cache_insert_and_get() {
-        let cache: ProcCache = Arc::new(DashMap::new());
+        let cache = new_cache();
         cache.insert(
             12345,
             ProcInfo {
@@ -283,7 +302,7 @@ mod tests {
 
     #[test]
     fn test_is_descendant() {
-        let tree: PidTree = Arc::new(DashMap::new());
+        let tree = new_pid_tree();
         tree.insert(
             1,
             PidNode {
@@ -322,7 +341,7 @@ mod tests {
 
     #[test]
     fn test_is_descendant_unknown_pid() {
-        let tree: PidTree = Arc::new(DashMap::new());
+        let tree = new_pid_tree();
         tree.insert(
             1,
             PidNode {
@@ -335,8 +354,8 @@ mod tests {
 
     #[test]
     fn test_build_chain_from_tree() {
-        let tree: PidTree = Arc::new(DashMap::new());
-        let cache: ProcCache = Arc::new(DashMap::new());
+        let tree = new_pid_tree();
+        let cache = new_cache();
         tree.insert(
             1,
             PidNode {
@@ -411,8 +430,8 @@ mod tests {
 
     #[test]
     fn test_build_chain_single() {
-        let tree: PidTree = Arc::new(DashMap::new());
-        let cache: ProcCache = Arc::new(DashMap::new());
+        let tree = new_pid_tree();
+        let cache = new_cache();
         tree.insert(
             1,
             PidNode {
@@ -437,7 +456,7 @@ mod tests {
     #[test]
     fn test_snapshot_pid1() {
         // PID 1 always exists on Linux
-        let tree: PidTree = Arc::new(DashMap::new());
+        let tree = new_pid_tree();
         snapshot_process_tree(&tree);
         assert!(tree.contains_key(&1), "PID 1 should exist after snapshot");
         if let Some(node) = tree.get(&1) {
