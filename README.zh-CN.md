@@ -176,14 +176,14 @@ sudo crontab -e
 启动 fsmon 守护进程 — 需要 `sudo` 以使用 fanotify。
 
 ```
-sudo fsmon daemon                    前台启动守护进程
-sudo fsmon daemon &                  后台启动守护进程
-sudo fsmon daemon --debug            启用调试输出（事件匹配 + 缓存指标）
-sudo fsmon daemon --cache-dir-cap N  目录句柄缓存容量（默认 100000）
-sudo fsmon daemon --cache-dir-ttl N  目录句柄缓存 TTL（秒，默认 3600）
+sudo fsmon daemon                     前台启动守护进程
+sudo fsmon daemon &                   后台启动守护进程
+sudo fsmon daemon --debug             启用调试输出（事件匹配 + 缓存指标）
+sudo fsmon daemon --cache-dir-cap N   目录句柄缓存容量（默认 100000）
+sudo fsmon daemon --cache-dir-ttl N   目录句柄缓存 TTL（秒，默认 3600）
 sudo fsmon daemon --cache-file-size N 文件大小缓存容量（默认 10000）
-sudo fsmon daemon --cache-proc-ttl N 进程缓存 TTL（秒，默认 600）
-sudo fsmon daemon --buffer-size N    Fanotify 读取缓冲区（字节，默认 32768）
+sudo fsmon daemon --cache-proc-ttl N  进程缓存 TTL（秒，默认 600）
+sudo fsmon daemon --buffer-size N     Fanotify 读取缓冲区（字节，默认 32768）
 ```
 
 ### add
@@ -194,9 +194,9 @@ sudo fsmon daemon --buffer-size N    Fanotify 读取缓冲区（字节，默认 
 fsmon add nginx --path /var/www/myapp -r          追踪 nginx 在 /myapp（递归）
 fsmon add nginx --path /var/www/myapp             追踪 nginx 在 /myapp（非递归）
 fsmon add _global --path /home -r                 监控 /home 所有事件（全局）
-fsmon add _global --path /home --types MODIFY --types CREATE   只监控 MODIFY 和 CREATE
-fsmon add _global --path /home --types all                全部 14 种事件
-fsmon add _global --path /home --size '>=1MB'             只记录 >=1MB 的文件变更
+fsmon add _global --path /home --types MODIFY     只监控 MODIFY 和 CREATE
+fsmon add _global --path /home --types all        全部 14 种事件
+fsmon add _global --path /home --size '>=1MB'     只记录 >=1MB 的文件变更
 ```
 
 **模式：**
@@ -215,9 +215,9 @@ fsmon add _global --path /home --size '>=1MB'             只记录 >=1MB 的文
 移除一个或多个监控路径。不需要 sudo。
 
 ```
-fsmon remove _global           移除整个全局 cmd 组
-fsmon remove nginx             移除整个 nginx cmd 组
-fsmon remove nginx --path /home  从 nginx 组移除 /home
+fsmon remove _global               移除整个全局 cmd 组
+fsmon remove nginx                 移除整个 nginx cmd 组
+fsmon remove nginx --path /home    从 nginx 组移除 /home
 fsmon remove _global --path /home  从全局组移除 /home
 ```
 
@@ -236,13 +236,13 @@ fsmon monitored                显示所有监控路径组
 查询历史事件日志。输出 JSONL — 管道给 `jq` 过滤。
 
 ```
-fsmon query _global             查询全局日志
-fsmon query nginx               只查 nginx 日志
-fsmon query _global -t '>1h'    过去 1 小时内的事件
+fsmon query _global                    查询全局日志
+fsmon query nginx                      只查 nginx 日志
+fsmon query _global -t '>1h'           过去 1 小时内的事件
 fsmon query _global -t '>=2026-05-01'  从指定绝对时间
-fsmon query _global -t '<30m'   30 分钟前至今的事件
-fsmon query _global -t '>1h' -t '<now'  时间范围（起止时间）
-fsmon query _global --path /tmp  按路径前缀过滤事件
+fsmon query _global -t '<30m'          30 分钟前至今的事件
+fsmon query _global -t '>1h' -t '<now' 时间范围（起止时间）
+fsmon query _global --path /tmp        按路径前缀过滤事件
 ```
 
 配合 `jq` 的示例：
@@ -265,10 +265,10 @@ fsmon query _global | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path
 清理指定 cmd 组的日志文件。默认值来自 `fsmon.toml`：`keep_days=30`，`size=>=1GB`。
 
 ```bash
-fsmon clean _global              清理全局日志（默认值）
-fsmon clean nginx --time '>7d'   保留最近 7 天的 nginx 事件
+fsmon clean _global                  清理全局日志（默认值）
+fsmon clean nginx --time '>7d'       保留最近 7 天的 nginx 事件
 fsmon clean nginx --size '>=500MB'   nginx 日志大小限制
-fsmon clean _global --dry-run    预览模式，不实际删除
+fsmon clean _global --dry-run        预览模式，不实际删除
 ```
 
 优先级：CLI 参数 > fsmon.toml > 代码默认值（keep_days=30, size=>=1GB）
@@ -449,7 +449,7 @@ src/
 │       ├── monitored.rs        CLI monitored：JSONL 输出
 │       ├── query.rs            CLI query：时间过滤、执行查询
 │       ├── clean.rs            CLI clean：解析器委托
-│       ├── init_cd.rs          CLI init、cd
+│       └── init_cd.rs          CLI init、cd
 │
 ├── lib.rs             FileEvent、EventType、DaemonLock（flock 单例）
 ├── clean.rs           日志清理引擎：时间/大小修剪、尾偏移

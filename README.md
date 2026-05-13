@@ -199,9 +199,9 @@ Add a path (optionally with process tracking) to the monitoring list. No sudo ne
 fsmon add nginx --path /var/www/myapp -r          Track nginx on /myapp recursively
 fsmon add nginx --path /var/www/myapp             Track nginx on /myapp (non-recursive)
 fsmon add _global --path /home -r                 Monitor all events on /home (global)
-fsmon add _global --path /home --types MODIFY --types CREATE  Filter by event types
-fsmon add _global --path /home --types all                     All 14 event types
-fsmon add _global --path /home --size '>=1MB'                  Minimum file size filter
+fsmon add _global --path /home --types MODIFY     Filter by event types
+fsmon add _global --path /home --types all        All 14 event types
+fsmon add _global --path /home --size '>=1MB'     Minimum file size filter
 ```
 
 **Modes:**
@@ -220,9 +220,9 @@ fsmon add _global --path /home --size '>=1MB'                  Minimum file size
 Remove one or more paths from the monitoring list. No sudo needed.
 
 ```
-fsmon remove _global            Remove entire global cmd group
-fsmon remove nginx              Remove entire nginx cmd group
-fsmon remove nginx --path /home  Remove /home from nginx group
+fsmon remove _global               Remove entire global cmd group
+fsmon remove nginx                 Remove entire nginx cmd group
+fsmon remove nginx --path /home    Remove /home from nginx group
 fsmon remove _global --path /home  Remove /home from global group
 ```
 
@@ -241,13 +241,13 @@ Each line is a JSON object with `cmd` and `paths` fields. Pipe to `jq` for filte
 Query historical events from log files. Output is JSONL — pipe to `jq` for filtering.
 
 ```
-fsmon query _global              Query global log
-fsmon query nginx                Query nginx log only
-fsmon query _global -t '>1h'     Events from last hour
+fsmon query _global                    Query global log
+fsmon query nginx                      Query nginx log only
+fsmon query _global -t '>1h'           Events from last hour
 fsmon query _global -t '>=2026-05-01'  From absolute time
-fsmon query _global -t '<30m'    Events until 30 minutes ago
-fsmon query _global -t '>1h' -t '<now'  Time range (since + until)
-fsmon query _global --path /tmp  Filter events by path prefix
+fsmon query _global -t '<30m'          Events until 30 minutes ago
+fsmon query _global -t '>1h' -t '<now' Time range (since + until)
+fsmon query _global --path /tmp        Filter events by path prefix
 ```
 
 Examples with `jq`:
@@ -270,10 +270,10 @@ fsmon query _global | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path
 Clean log files for a specific cmd group. Defaults from `fsmon.toml`: `keep_days=30`, `size==>=1GB`.
 
 ```bash
-fsmon clean _global              Clean global log (defaults)
-fsmon clean nginx --time '>7d'  Keep last 7 days of nginx events
+fsmon clean _global                 Clean global log (defaults)
+fsmon clean nginx --time '>7d'      Keep last 7 days of nginx events
 fsmon clean nginx --size '>=500MB'  Size limit for nginx log
-fsmon clean _global --dry-run    Preview without deleting
+fsmon clean _global --dry-run       Preview without deleting
 ```
 
 Priority: CLI arg > fsmon.toml > code default (keep_days=30, size=>=1GB)
@@ -456,7 +456,7 @@ src/
 │       ├── monitored.rs        CLI monitored: JSONL output
 │       ├── query.rs            CLI query: time filter, execute query
 │       ├── clean.rs            CLI clean: parser delegation
-│       ├── init_cd.rs          CLI init, cd
+│       └── init_cd.rs          CLI init, cd
 │
 ├── lib.rs             FileEvent, EventType, DaemonLock (flock singleton)
 ├── clean.rs           Log cleanup engine: time/size trim, tail-offset
