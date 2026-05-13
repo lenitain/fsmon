@@ -44,11 +44,32 @@ pub const PID_TREE_TTL_SECS: u64 = 600;
 /// Shared PID → ProcInfo cache (thread-safe, bounded, TTL-based eviction).
 pub type ProcCache = Cache<u32, ProcInfo>;
 
+/// Create a new ProcCache with the configured capacity and TTL.
 pub fn new_cache() -> ProcCache {
+    new_cache_with(CacheParams::default())
+}
+
+/// Create a ProcCache with explicit capacity and TTL overrides.
+pub fn new_cache_with(params: CacheParams) -> ProcCache {
     Cache::builder()
-        .max_capacity(PROC_CACHE_CAP)
-        .time_to_live(Duration::from_secs(PROC_CACHE_TTL_SECS))
+        .max_capacity(params.capacity)
+        .time_to_live(Duration::from_secs(params.ttl_secs))
         .build()
+}
+
+/// Parameters for process caches (ProcCache and PidTree).
+pub struct CacheParams {
+    pub capacity: u64,
+    pub ttl_secs: u64,
+}
+
+impl Default for CacheParams {
+    fn default() -> Self {
+        Self {
+            capacity: PROC_CACHE_CAP,
+            ttl_secs: PROC_CACHE_TTL_SECS,
+        }
+    }
 }
 
 // ---- PidTree ----
@@ -64,10 +85,16 @@ pub struct PidNode {
 /// Shared process tree: PID → parent PID + cmd (bounded, TTL-based eviction).
 pub type PidTree = Cache<u32, PidNode>;
 
+/// Create a new PidTree with the configured capacity and TTL.
 pub fn new_pid_tree() -> PidTree {
+    new_pid_tree_with(CacheParams::default())
+}
+
+/// Create a PidTree with explicit capacity and TTL overrides.
+pub fn new_pid_tree_with(params: CacheParams) -> PidTree {
     Cache::builder()
-        .max_capacity(PID_TREE_CAP)
-        .time_to_live(Duration::from_secs(PID_TREE_TTL_SECS))
+        .max_capacity(params.capacity)
+        .time_to_live(Duration::from_secs(params.ttl_secs))
         .build()
 }
 

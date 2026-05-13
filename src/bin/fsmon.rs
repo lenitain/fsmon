@@ -24,6 +24,30 @@ pub enum Commands {
         /// Enable debug output (event matching, routing decisions)
         #[arg(short, long)]
         debug: bool,
+
+        /// Directory handle cache capacity (default: 100000).
+        /// Lower on memory-constrained systems; raise for large trees.
+        #[arg(long, value_name = "N")]
+        cache_dir_cap: Option<u64>,
+
+        /// Directory handle cache TTL in seconds (default: 3600).
+        #[arg(long, value_name = "SECS")]
+        cache_dir_ttl: Option<u64>,
+
+        /// File size cache capacity (default: 10000).
+        /// Raise for high-file-volume workloads.
+        #[arg(long, value_name = "N")]
+        cache_file_size: Option<usize>,
+
+        /// Process cache TTL in seconds (default: 600).
+        /// Applies to both process info and process tree caches.
+        #[arg(long, value_name = "SECS")]
+        cache_proc_ttl: Option<u64>,
+
+        /// Fanotify read buffer size in bytes (default: 32768, min: 4096, max: 1048576).
+        /// Raise for high-throughput event volumes.
+        #[arg(long, value_name = "BYTES")]
+        buffer_size: Option<usize>,
     },
 
     /// Add a path to the monitoring list

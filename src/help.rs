@@ -35,11 +35,14 @@ Use 'fsmon add'/'fsmon remove' to manage paths dynamically without
 restarting the daemon.
 
 Usage:
-  sudo fsmon daemon &       Start daemon in background
-  fsmon add /path           Monitor all events on /path
-  fsmon add openclaw --path /home -r     Track openclaw on /home (recursive)
-  fsmon monitored                       List monitored paths
-  fsmon query -t '>1h'    Query events from last hour
+  sudo fsmon daemon &           Start daemon in background
+  sudo fsmon daemon --debug     Enable debug output (event matching + cache stats)
+  sudo fsmon daemon --cache-dir-cap 200000   Override dir_cache capacity
+  sudo fsmon daemon --cache-proc-ttl 300     Override process cache TTL
+  fsmon add /path               Monitor all events on /path
+  fsmon add openclaw --path /home -r         Track openclaw on /home (recursive)
+  fsmon monitored                           List monitored paths
+  fsmon query -t '>1h'        Query events from last hour
 
 Config:           ~/.config/fsmon/fsmon.toml
 Monitored:          ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)

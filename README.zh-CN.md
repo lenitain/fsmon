@@ -176,8 +176,14 @@ sudo crontab -e
 启动 fsmon 守护进程 — 需要 `sudo` 以使用 fanotify。
 
 ```
-sudo fsmon daemon          前台启动守护进程
-sudo fsmon daemon &        后台启动守护进程
+sudo fsmon daemon                    前台启动守护进程
+sudo fsmon daemon &                  后台启动守护进程
+sudo fsmon daemon --debug            启用调试输出（事件匹配 + 缓存指标）
+sudo fsmon daemon --cache-dir-cap N  目录句柄缓存容量（默认 100000）
+sudo fsmon daemon --cache-dir-ttl N  目录句柄缓存 TTL（秒，默认 3600）
+sudo fsmon daemon --cache-file-size N 文件大小缓存容量（默认 10000）
+sudo fsmon daemon --cache-proc-ttl N 进程缓存 TTL（秒，默认 600）
+sudo fsmon daemon --buffer-size N    Fanotify 读取缓冲区（字节，默认 32768）
 ```
 
 ### add
@@ -324,6 +330,42 @@ size = ">=1GB"
 [socket]
 # daemon 与 CLI 实时通信的 Unix 套接字路径。
 path = "/tmp/fsmon-<UID>.sock"
+
+[cache]
+# 目录句柄缓存容量（默认 100,000，约 15-20MB）。
+# 每条记录将内核文件句柄映射到目录路径。
+# 内存紧张时降低此值；监控大目录树（>10万目录）时提高此值以减少句柄重解析。
+dir_capacity = 100000
+
+# 目录句柄缓存 TTL（秒，默认 3600 = 1 小时）。
+# 较短 TTL 在目录结构频繁变动时更快释放内存；
+# 较长 TTL 在稳定目录上减少句柄重解析。
+dir_ttl_secs = 3600
+
+# 文件大小缓存容量（默认 10,000，约 1MB）。
+# 避免对已知大小的文件反复 stat()。
+# 高文件量工作负载（git checkout、npm install 等）时提高此值。
+file_size_capacity = 10000
+
+# 进程缓存 TTL（秒，默认 600 = 10 分钟）。
+# 同时影响进程信息缓存（PID→命令/用户/PPID/TGID）和
+# 进程树缓存（PID→父进程，用于祖先链追踪）。
+# 较短 TTL 更快清理已退出进程条目；
+# 较长 TTL 减少常驻进程的 /proc 读取。
+proc_ttl_secs = 600
+```
+
+### 覆盖优先级
+```
+CLI 参数（--cache-dir-cap、--cache-dir-ttl、--cache-file-size、--cache-proc-ttl、--buffer-size）
+    > fsmon.toml [cache] 配置段
+        > 代码默认值
+```
+
+CLI 参数优先级最高：
+```bash
+# 启动时覆盖 dir_cache 容量和 fanotify 缓冲区大小
+sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536 &
 ```
 
 ## 事件类型

@@ -181,8 +181,14 @@ sudo crontab -e
 Start the fsmon daemon — requires `sudo` for fanotify.
 
 ```
-sudo fsmon daemon          Start daemon in foreground
-sudo fsmon daemon &        Start daemon in background
+sudo fsmon daemon                     Start daemon in foreground
+sudo fsmon daemon &                   Start daemon in background
+sudo fsmon daemon --debug             Enable debug output (event matching + cache stats)
+sudo fsmon daemon --cache-dir-cap N   Directory handle cache capacity (default: 100000)
+sudo fsmon daemon --cache-dir-ttl N   Directory handle cache TTL in seconds (default: 3600)
+sudo fsmon daemon --cache-file-size N File size cache capacity (default: 10000)
+sudo fsmon daemon --cache-proc-ttl N  Process cache TTL in seconds (default: 600)
+sudo fsmon daemon --buffer-size N     Fanotify read buffer in bytes (default: 32768)
 ```
 
 ### add
@@ -330,6 +336,43 @@ size = ">=1GB"
 [socket]
 # Unix socket path for daemon-CLI live communication.
 path = "/tmp/fsmon-<UID>.sock"
+
+[cache]
+# Directory handle cache capacity (default: 100000, ~15-20MB).
+# Each entry maps a kernel file handle to a directory path.
+# Lower on memory-constrained systems; raise when monitoring
+# large directory trees (>100k dirs) to reduce handle re-resolution.
+dir_capacity = 100000
+
+# Directory handle cache TTL in seconds (default: 3600 = 1 hour).
+# Shorter TTL frees memory faster for volatile directory structures;
+# longer TTL reduces handle re-resolution for stable directories.
+dir_ttl_secs = 3600
+
+# File size cache capacity (default: 10000, ~1MB).
+# Avoids stat() calls for files with known sizes.
+# Raise for high-file-volume workloads (git checkout, npm install).
+file_size_capacity = 10000
+
+# Process cache TTL in seconds (default: 600 = 10 minutes).
+# Applies to both process info cache (PID→cmd/user/ppid/tgid) and
+# process tree cache (PID→parent for ancestor chain tracking).
+# Shorter TTL cleans up zombie process entries faster;
+# longer TTL reduces /proc reads for long-lived processes.
+proc_ttl_secs = 600
+```
+
+### Override priority
+```
+CLI arguments (--cache-dir-cap, --cache-dir-ttl, --cache-file-size, --cache-proc-ttl, --buffer-size)
+    > fsmon.toml [cache] section
+        > code defaults
+```
+
+CLI flags override both config file and defaults:
+```bash
+# Override dir_cache capacity and fanotify buffer size at startup
+sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536 &
 ```
 
 ## Event Types

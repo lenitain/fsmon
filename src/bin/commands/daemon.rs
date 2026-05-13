@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use fsmon::DaemonLock;
-use fsmon::config::Config;
+use fsmon::config::{CacheConfig, CliCacheOverride, Config};
 use fsmon::monitor::Monitor;
 use fsmon::monitored::Monitored;
 use std::fs;
@@ -8,7 +8,10 @@ use std::path::Path;
 
 use super::parse_path_entries;
 
-pub async fn cmd_daemon(debug: bool) -> Result<()> {
+pub async fn cmd_daemon(
+    debug: bool,
+    cli_cache: CliCacheOverride,
+) -> Result<()> {
     // Acquire singleton lock first — only one daemon instance allowed
     let (uid, _gid) = fsmon::config::resolve_uid_gid();
     let _lock = DaemonLock::acquire(uid)?;
@@ -48,6 +51,30 @@ pub async fn cmd_daemon(debug: bool) -> Result<()> {
         chown_path(parent, uid, gid);
     }
 
+    // Merge cache config: CLI > fsmon.toml > code defaults
+    let cache_cfg = cfg
+        .cache
+        .as_ref()
+        .map(|c| c.resolve_with_cli(&cli_cache))
+        .unwrap_or_else(|| {
+            let empty = CacheConfig {
+                dir_capacity: None,
+                dir_ttl_secs: None,
+                file_size_capacity: None,
+                proc_ttl_secs: None,
+            };
+            empty.resolve_with_cli(&cli_cache)
+        });
+
+    if debug {
+        eprintln!("[debug] --- cache configuration ---");
+        eprintln!("[debug]   dir_capacity:       {}", cache_cfg.dir_capacity);
+        eprintln!("[debug]   dir_ttl_secs:       {}", cache_cfg.dir_ttl_secs);
+        eprintln!("[debug]   file_size_capacity: {}", cache_cfg.file_size_capacity);
+        eprintln!("[debug]   proc_ttl_secs:      {}", cache_cfg.proc_ttl_secs);
+        eprintln!("[debug]   buffer_size:        {}", cache_cfg.buffer_size);
+    }
+
     let paths_and_options = parse_path_entries(&store.flatten())?;
 
     let store_path = cfg.monitored.path.clone();
@@ -55,9 +82,10 @@ pub async fn cmd_daemon(debug: bool) -> Result<()> {
         paths_and_options,
         Some(cfg.logging.path.clone()),
         Some(store_path),
-        None,
+        Some(cache_cfg.buffer_size),
         Some(socket_listener),
         debug,
+        Some(cache_cfg),
     )?;
 
     if !store.is_empty() {

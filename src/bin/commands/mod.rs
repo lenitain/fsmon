@@ -25,7 +25,23 @@ pub use remove::cmd_remove;
 pub fn run(command: crate::Commands) -> Result<()> {
     use crate::Commands::*;
     match command {
-        Daemon { debug } => cmd_daemon(debug).await_(),
+        Daemon {
+            debug,
+            cache_dir_cap,
+            cache_dir_ttl,
+            cache_file_size,
+            cache_proc_ttl,
+            buffer_size,
+        } => {
+            let cli_cache = fsmon::config::CliCacheOverride {
+                dir_capacity: cache_dir_cap,
+                dir_ttl_secs: cache_dir_ttl,
+                file_size_capacity: cache_file_size,
+                proc_ttl_secs: cache_proc_ttl,
+                buffer_size,
+            };
+            cmd_daemon(debug, cli_cache).await_()
+        }
         Add(args) => cmd_add(args),
         Remove { cmd, path } => cmd_remove(cmd, path),
         Monitored => cmd_monitored(),

@@ -22,9 +22,10 @@ use tokio::signal::unix::{SignalKind, signal};
 
 use moka::sync::Cache;
 
+use crate::config::ResolvedCacheConfig;
 use crate::dir_cache;
 use crate::fid_parser::{
-    DIR_CACHE_CAP, DIR_CACHE_TTL_SECS, FILE_SIZE_CACHE_CAP, FanFd, FsGroup, chown_to_user,
+    DIR_CACHE_CAP, FanFd, FsGroup, chown_to_user,
     mark_directory, mark_recursive, mask_to_event_types, path_mask_from_options,
     read_fid_events_cached,
 };
@@ -32,7 +33,7 @@ use crate::filters::{self, PathOptions};
 use crate::monitored::Monitored;
 use crate::monitored::PathEntry;
 use crate::proc_cache::{
-    self, PidTree, ProcCache, build_chain, is_descendant, new_pid_tree,
+    self, PidTree, ProcCache, build_chain, is_descendant,
     snapshot_process_tree, PROC_CACHE_CAP, PID_TREE_CAP,
 };
 use crate::socket::{SocketCmd, SocketResp};
@@ -71,11 +72,14 @@ pub struct Monitor {
     /// PID of the fsmon daemon itself — events from this PID (or its children)
     /// are discarded to prevent self-triggering feedback loops.
     daemon_pid: u32,
+    /// Resolved cache configuration (capacity, TTL, buffer size).
+    cache_config: ResolvedCacheConfig,
     /// Enable debug output
     debug: bool,
 }
 
 impl Monitor {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         paths_and_options: Vec<(PathBuf, PathOptions)>,
         log_dir: Option<PathBuf>,
@@ -83,8 +87,10 @@ impl Monitor {
         buffer_size: Option<usize>,
         socket_listener: Option<tokio::net::UnixListener>,
         debug: bool,
+        cache_config: Option<ResolvedCacheConfig>,
     ) -> Result<Self> {
-        let buffer_size = buffer_size.unwrap_or(4096 * 8); // Default 32KB
+        let cache_config = cache_config.unwrap_or_default();
+        let buffer_size = buffer_size.unwrap_or(cache_config.buffer_size);
 
         if buffer_size < 4096 {
             bail!("buffer_size must be at least 4096 bytes (4KB)");
@@ -138,17 +144,20 @@ impl Monitor {
             monitored_path,
             proc_cache: None,
             pid_tree: None,
-            file_size_cache: LruCache::new(NonZeroUsize::new(FILE_SIZE_CACHE_CAP).unwrap()),
+            file_size_cache: LruCache::new(
+                NonZeroUsize::new(cache_config.file_size_capacity).unwrap()
+            ),
             buffer_size,
 
+            dir_cache: Cache::builder()
+                .max_capacity(cache_config.dir_capacity)
+                .time_to_live(Duration::from_secs(cache_config.dir_ttl_secs))
+                .build(),
+            cache_config,
             socket_listener,
             debug,
             fs_groups: Vec::new(),
             path_to_group: HashMap::new(),
-            dir_cache: Cache::builder()
-                .max_capacity(DIR_CACHE_CAP)
-                .time_to_live(Duration::from_secs(DIR_CACHE_TTL_SECS))
-                .build(),
             event_tx: None,
             shared_dir_cache: None,
             pending_paths: Vec::new(),
@@ -245,9 +254,17 @@ impl Monitor {
         // Create proc connector (event-driven, non-blocking).
         // The fd is polled via AsyncFd in the main event loop below.
         let proc_conn = proc_cache::try_create_connector();
-        let proc_cache = proc_cache::new_cache();
+        let proc_params = proc_cache::CacheParams {
+            capacity: proc_cache::PROC_CACHE_CAP,
+            ttl_secs: self.cache_config.proc_ttl_secs,
+        };
+        let proc_cache = proc_cache::new_cache_with(proc_params);
         self.proc_cache = Some(proc_cache.clone());
-        let pid_tree = new_pid_tree();
+        let tree_params = proc_cache::CacheParams {
+            capacity: proc_cache::PID_TREE_CAP,
+            ttl_secs: self.cache_config.proc_ttl_secs,
+        };
+        let pid_tree = proc_cache::new_pid_tree_with(tree_params);
         snapshot_process_tree(&pid_tree);
         self.pid_tree = Some(pid_tree.clone());
 
@@ -1908,6 +1925,7 @@ mod tests {
             None,
             None,
             false,
+            None,
         )
         .unwrap()
     }
@@ -2025,6 +2043,7 @@ mod tests {
             Some(1024),
             None,
             false,
+            None,
         );
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("at least 4096"));
@@ -2036,6 +2055,7 @@ mod tests {
             Some(2 * 1024 * 1024),
             None,
             false,
+            None,
         );
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("not exceed"));
@@ -2047,13 +2067,14 @@ mod tests {
             Some(65536),
             None,
             false,
+            None,
         );
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_add_path_and_remove_path() {
-        let mut m = Monitor::new(vec![], None, None, None, None, false).unwrap();
+        let mut m = Monitor::new(vec![], None, None, None, None, false, None).unwrap();
 
         let entry = PathEntry {
             cmd: None,

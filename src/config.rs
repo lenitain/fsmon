@@ -18,6 +18,7 @@ pub struct Config {
     pub monitored: MonitoredConfig,
     pub logging: LoggingConfig,
     pub socket: SocketConfig,
+    pub cache: Option<CacheConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +39,82 @@ pub struct LoggingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SocketConfig {
     pub path: PathBuf,
+}
+
+/// Cache configuration (optional — missing fields use code defaults).
+///
+/// Priority: CLI args > fsmon.toml > code defaults.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheConfig {
+    /// Directory handle cache capacity (default: 100,000).
+    /// Each entry ≈ 150-200 bytes. Lower this on memory-constrained systems,
+    /// raise it when monitoring large directory trees (>100k dirs).
+    pub dir_capacity: Option<u64>,
+    /// Directory handle cache TTL in seconds (default: 3600).
+    /// Shorter TTL frees memory faster for volatile directory structures,
+    /// longer TTL reduces handle re-resolution for stable directories.
+    pub dir_ttl_secs: Option<u64>,
+    /// File size cache capacity (default: 10,000).
+    /// Each entry ≈ 80-120 bytes. Raise for high-file-volume workloads.
+    pub file_size_capacity: Option<usize>,
+    /// Process cache TTL in seconds (default: 600).
+    /// Applies to both proc_cache and pid_tree. Shorter TTL cleans up
+    /// zombie process entries faster; longer TTL reduces /proc reads.
+    pub proc_ttl_secs: Option<u64>,
+}
+
+/// Resolved cache configuration with all defaults filled in.
+#[derive(Debug, Clone)]
+pub struct ResolvedCacheConfig {
+    pub dir_capacity: u64,
+    pub dir_ttl_secs: u64,
+    pub file_size_capacity: usize,
+    pub proc_ttl_secs: u64,
+    pub buffer_size: usize,
+}
+
+impl Default for ResolvedCacheConfig {
+    fn default() -> Self {
+        Self {
+            dir_capacity: crate::fid_parser::DIR_CACHE_CAP,
+            dir_ttl_secs: crate::fid_parser::DIR_CACHE_TTL_SECS,
+            file_size_capacity: crate::fid_parser::FILE_SIZE_CACHE_CAP,
+            proc_ttl_secs: crate::proc_cache::PROC_CACHE_TTL_SECS,
+            buffer_size: 4096 * 8, // 32KB — default from Monitor::new()
+        }
+    }
+}
+
+impl CacheConfig {
+    /// Merge: explicit values from this config override defaults,
+    /// then CLI overrides override config values.
+    pub fn resolve_with_cli(
+        &self,
+        cli: &CliCacheOverride,
+    ) -> ResolvedCacheConfig {
+        let mut r = ResolvedCacheConfig::default();
+        if let Some(v) = self.dir_capacity { r.dir_capacity = v; }
+        if let Some(v) = self.dir_ttl_secs { r.dir_ttl_secs = v; }
+        if let Some(v) = self.file_size_capacity { r.file_size_capacity = v; }
+        if let Some(v) = self.proc_ttl_secs { r.proc_ttl_secs = v; }
+        // Apply CLI overrides (highest priority)
+        if let Some(v) = cli.dir_capacity { r.dir_capacity = v; }
+        if let Some(v) = cli.dir_ttl_secs { r.dir_ttl_secs = v; }
+        if let Some(v) = cli.file_size_capacity { r.file_size_capacity = v; }
+        if let Some(v) = cli.proc_ttl_secs { r.proc_ttl_secs = v; }
+        if let Some(v) = cli.buffer_size { r.buffer_size = v; }
+        r
+    }
+}
+
+/// CLI-level cache overrides (highest priority in the merge chain).
+#[derive(Debug, Clone, Default)]
+pub struct CliCacheOverride {
+    pub dir_capacity: Option<u64>,
+    pub dir_ttl_secs: Option<u64>,
+    pub file_size_capacity: Option<usize>,
+    pub proc_ttl_secs: Option<u64>,
+    pub buffer_size: Option<usize>,
 }
 
 // ---- Helpers ----
@@ -153,6 +230,7 @@ impl Default for Config {
             socket: SocketConfig {
                 path: PathBuf::from("/tmp/fsmon-<UID>.sock"),
             },
+            cache: None,
         }
     }
 }
@@ -507,5 +585,106 @@ path = "/tmp/test.sock"
             expand_tilde(Path::new("/absolute/path"), "/home/user"),
             PathBuf::from("/absolute/path")
         );
+    }
+
+    #[test]
+    fn test_cache_config_defaults() {
+        let r = ResolvedCacheConfig::default();
+        assert_eq!(r.dir_capacity, crate::fid_parser::DIR_CACHE_CAP);
+        assert_eq!(r.dir_ttl_secs, crate::fid_parser::DIR_CACHE_TTL_SECS);
+        assert_eq!(r.file_size_capacity, crate::fid_parser::FILE_SIZE_CACHE_CAP);
+        assert_eq!(r.proc_ttl_secs, crate::proc_cache::PROC_CACHE_TTL_SECS);
+        assert_eq!(r.buffer_size, 4096 * 8);
+    }
+
+    #[test]
+    fn test_cache_config_resolve_with_cli_override() {
+        // Config empty, CLI overrides → CLI values win
+        let cfg = CacheConfig {
+            dir_capacity: None,
+            dir_ttl_secs: None,
+            file_size_capacity: None,
+            proc_ttl_secs: None,
+        };
+        let cli = CliCacheOverride {
+            dir_capacity: Some(50000),
+            dir_ttl_secs: Some(7200),
+            file_size_capacity: Some(5000),
+            proc_ttl_secs: Some(300),
+            buffer_size: Some(65536),
+        };
+        let r = cfg.resolve_with_cli(&cli);
+        assert_eq!(r.dir_capacity, 50000);
+        assert_eq!(r.dir_ttl_secs, 7200);
+        assert_eq!(r.file_size_capacity, 5000);
+        assert_eq!(r.proc_ttl_secs, 300);
+        assert_eq!(r.buffer_size, 65536);
+    }
+
+    #[test]
+    fn test_cache_config_resolve_config_over_default() {
+        // Config has values, CLI empty → config values win
+        let cfg = CacheConfig {
+            dir_capacity: Some(200000),
+            dir_ttl_secs: None,
+            file_size_capacity: Some(20000),
+            proc_ttl_secs: None,
+        };
+        let cli = CliCacheOverride::default();
+        let r = cfg.resolve_with_cli(&cli);
+        assert_eq!(r.dir_capacity, 200000);
+        assert_eq!(r.dir_ttl_secs, crate::fid_parser::DIR_CACHE_TTL_SECS);
+        assert_eq!(r.file_size_capacity, 20000);
+        assert_eq!(r.proc_ttl_secs, crate::proc_cache::PROC_CACHE_TTL_SECS);
+    }
+
+    #[test]
+    fn test_cache_config_cli_highest_priority() {
+        // Both config and CLI have values → CLI wins
+        let cfg = CacheConfig {
+            dir_capacity: Some(50000),
+            dir_ttl_secs: Some(100),
+            file_size_capacity: Some(500),
+            proc_ttl_secs: Some(50),
+        };
+        let cli = CliCacheOverride {
+            dir_capacity: Some(99999),
+            dir_ttl_secs: None,
+            file_size_capacity: Some(999),
+            proc_ttl_secs: None,
+            buffer_size: None,
+        };
+        let r = cfg.resolve_with_cli(&cli);
+        assert_eq!(r.dir_capacity, 99999);    // CLI wins
+        assert_eq!(r.dir_ttl_secs, 100);       // Config (CLI didn't set)
+        assert_eq!(r.file_size_capacity, 999); // CLI wins
+        assert_eq!(r.proc_ttl_secs, 50);       // Config (CLI didn't set)
+    }
+
+    #[test]
+    fn test_cache_config_toml_parsing() {
+        // Verify that the TOML config can be parsed with [cache] section
+        let toml_str = r#"
+[monitored]
+path = "/tmp/test.jsonl"
+
+[logging]
+path = "/tmp/logs"
+
+[socket]
+path = "/tmp/sock"
+
+[cache]
+dir_capacity = 123456
+dir_ttl_secs = 7200
+file_size_capacity = 5000
+proc_ttl_secs = 300
+"#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        let cache = cfg.cache.expect("cache section should be parsed");
+        assert_eq!(cache.dir_capacity, Some(123456));
+        assert_eq!(cache.dir_ttl_secs, Some(7200));
+        assert_eq!(cache.file_size_capacity, Some(5000));
+        assert_eq!(cache.proc_ttl_secs, Some(300));
     }
 }
