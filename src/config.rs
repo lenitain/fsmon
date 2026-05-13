@@ -61,6 +61,9 @@ pub struct CacheConfig {
     /// Applies to both proc_cache and pid_tree. Shorter TTL cleans up
     /// zombie process entries faster; longer TTL reduces /proc reads.
     pub proc_ttl_secs: Option<u64>,
+    /// Interval in seconds between periodic cache stats log output in debug
+    /// mode (default: 60). Set to 0 to disable periodic cache stats.
+    pub stats_interval_secs: Option<u64>,
 }
 
 /// Resolved cache configuration with all defaults filled in.
@@ -71,6 +74,7 @@ pub struct ResolvedCacheConfig {
     pub file_size_capacity: usize,
     pub proc_ttl_secs: u64,
     pub buffer_size: usize,
+    pub stats_interval_secs: u64,
 }
 
 impl Default for ResolvedCacheConfig {
@@ -81,6 +85,7 @@ impl Default for ResolvedCacheConfig {
             file_size_capacity: crate::fid_parser::FILE_SIZE_CACHE_CAP,
             proc_ttl_secs: crate::proc_cache::PROC_CACHE_TTL_SECS,
             buffer_size: 4096 * 8, // 32KB — default from Monitor::new()
+            stats_interval_secs: 60,
         }
     }
 }
@@ -97,11 +102,13 @@ impl CacheConfig {
         if let Some(v) = self.dir_ttl_secs { r.dir_ttl_secs = v; }
         if let Some(v) = self.file_size_capacity { r.file_size_capacity = v; }
         if let Some(v) = self.proc_ttl_secs { r.proc_ttl_secs = v; }
+        if let Some(v) = self.stats_interval_secs { r.stats_interval_secs = v; }
         // Apply CLI overrides (highest priority)
         if let Some(v) = cli.dir_capacity { r.dir_capacity = v; }
         if let Some(v) = cli.dir_ttl_secs { r.dir_ttl_secs = v; }
         if let Some(v) = cli.file_size_capacity { r.file_size_capacity = v; }
         if let Some(v) = cli.proc_ttl_secs { r.proc_ttl_secs = v; }
+        if let Some(v) = cli.stats_interval_secs { r.stats_interval_secs = v; }
         if let Some(v) = cli.buffer_size { r.buffer_size = v; }
         r
     }
@@ -114,6 +121,7 @@ pub struct CliCacheOverride {
     pub dir_ttl_secs: Option<u64>,
     pub file_size_capacity: Option<usize>,
     pub proc_ttl_secs: Option<u64>,
+    pub stats_interval_secs: Option<u64>,
     pub buffer_size: Option<usize>,
 }
 
@@ -595,6 +603,7 @@ path = "/tmp/test.sock"
         assert_eq!(r.file_size_capacity, crate::fid_parser::FILE_SIZE_CACHE_CAP);
         assert_eq!(r.proc_ttl_secs, crate::proc_cache::PROC_CACHE_TTL_SECS);
         assert_eq!(r.buffer_size, 4096 * 8);
+        assert_eq!(r.stats_interval_secs, 60);
     }
 
     #[test]
@@ -605,12 +614,14 @@ path = "/tmp/test.sock"
             dir_ttl_secs: None,
             file_size_capacity: None,
             proc_ttl_secs: None,
+            stats_interval_secs: None,
         };
         let cli = CliCacheOverride {
             dir_capacity: Some(50000),
             dir_ttl_secs: Some(7200),
             file_size_capacity: Some(5000),
             proc_ttl_secs: Some(300),
+            stats_interval_secs: Some(30),
             buffer_size: Some(65536),
         };
         let r = cfg.resolve_with_cli(&cli);
@@ -618,6 +629,7 @@ path = "/tmp/test.sock"
         assert_eq!(r.dir_ttl_secs, 7200);
         assert_eq!(r.file_size_capacity, 5000);
         assert_eq!(r.proc_ttl_secs, 300);
+        assert_eq!(r.stats_interval_secs, 30);
         assert_eq!(r.buffer_size, 65536);
     }
 
@@ -629,6 +641,7 @@ path = "/tmp/test.sock"
             dir_ttl_secs: None,
             file_size_capacity: Some(20000),
             proc_ttl_secs: None,
+            stats_interval_secs: None,
         };
         let cli = CliCacheOverride::default();
         let r = cfg.resolve_with_cli(&cli);
@@ -646,12 +659,14 @@ path = "/tmp/test.sock"
             dir_ttl_secs: Some(100),
             file_size_capacity: Some(500),
             proc_ttl_secs: Some(50),
+            stats_interval_secs: None,
         };
         let cli = CliCacheOverride {
             dir_capacity: Some(99999),
             dir_ttl_secs: None,
             file_size_capacity: Some(999),
             proc_ttl_secs: None,
+            stats_interval_secs: Some(120),
             buffer_size: None,
         };
         let r = cfg.resolve_with_cli(&cli);

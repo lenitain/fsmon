@@ -743,8 +743,9 @@ impl Monitor {
                                     eprintln!("[WARNING] Failed to remove deleted path '{}': {e}", path.display());
                                 }
                                 for opts in all_opts {
-                                    // Periodic cache stats (every 60s in debug mode)
-                        if self.debug && last_cache_stats.elapsed() >= std::time::Duration::from_secs(60) {
+                                    // Periodic cache stats (configurable interval, 0 = disabled)
+                        if self.debug && self.cache_config.stats_interval_secs > 0
+                            && last_cache_stats.elapsed() >= std::time::Duration::from_secs(self.cache_config.stats_interval_secs) {
                             eprintln!("[debug] --- cache stats ---");
                             eprintln!(
                                 "[debug]   dir_cache:        {}/{} entries",

@@ -44,6 +44,11 @@ pub enum Commands {
         #[arg(long, value_name = "SECS")]
         cache_proc_ttl: Option<u64>,
 
+        /// Cache stats log interval in seconds in debug mode (default: 60).
+        /// Set to 0 to disable periodic cache stats.
+        #[arg(long, value_name = "SECS")]
+        cache_stats_interval: Option<u64>,
+
         /// Fanotify read buffer size in bytes (default: 32768, min: 4096, max: 1048576).
         /// Raise for high-throughput event volumes.
         #[arg(long, value_name = "BYTES")]

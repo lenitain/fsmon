@@ -187,8 +187,9 @@ sudo fsmon daemon --debug             # Enable debug output (event matching + ca
 sudo fsmon daemon --cache-dir-cap N   # Directory handle cache capacity (default: 100000)
 sudo fsmon daemon --cache-dir-ttl N   # Directory handle cache TTL in seconds (default: 3600)
 sudo fsmon daemon --cache-file-size N # File size cache capacity (default: 10000)
-sudo fsmon daemon --cache-proc-ttl N  # Process cache TTL in seconds (default: 600)
-sudo fsmon daemon --buffer-size N     # Fanotify read buffer in bytes (default: 32768)
+sudo fsmon daemon --cache-proc-ttl N          # Process cache TTL in seconds (default: 600)
+sudo fsmon daemon --cache-stats-interval N    # Cache stats log interval in debug mode (default: 60, 0=off)
+sudo fsmon daemon --buffer-size N             # Fanotify read buffer in bytes (default: 32768)
 ```
 
 ### add
@@ -360,11 +361,15 @@ file_size_capacity = 10000
 # Shorter TTL cleans up zombie process entries faster;
 # longer TTL reduces /proc reads for long-lived processes.
 proc_ttl_secs = 600
+
+# Cache stats log interval in seconds in debug mode (default: 60).
+# Set to 0 to disable periodic cache stats output.
+stats_interval_secs = 60
 ```
 
 ### Override priority
 ```
-CLI arguments (--cache-dir-cap, --cache-dir-ttl, --cache-file-size, --cache-proc-ttl, --buffer-size)
+CLI arguments (--cache-dir-cap, --cache-dir-ttl, --cache-file-size, --cache-proc-ttl, --cache-stats-interval, --buffer-size)
     > fsmon.toml [cache] section
         > code defaults
 ```

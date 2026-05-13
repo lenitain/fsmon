@@ -62,6 +62,7 @@ pub async fn cmd_daemon(
                 dir_ttl_secs: None,
                 file_size_capacity: None,
                 proc_ttl_secs: None,
+                stats_interval_secs: None,
             };
             empty.resolve_with_cli(&cli_cache)
         });
@@ -72,6 +73,7 @@ pub async fn cmd_daemon(
         eprintln!("[debug]   dir_ttl_secs:       {}", cache_cfg.dir_ttl_secs);
         eprintln!("[debug]   file_size_capacity: {}", cache_cfg.file_size_capacity);
         eprintln!("[debug]   proc_ttl_secs:      {}", cache_cfg.proc_ttl_secs);
+        eprintln!("[debug]   stats_interval_secs: {}", cache_cfg.stats_interval_secs);
         eprintln!("[debug]   buffer_size:        {}", cache_cfg.buffer_size);
     }
 
