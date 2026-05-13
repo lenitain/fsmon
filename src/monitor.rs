@@ -32,7 +32,7 @@ use crate::filters::{self, PathOptions};
 use crate::monitored::Monitored;
 use crate::monitored::PathEntry;
 use crate::proc_cache::{
-    self, PidTree, ProcCache, ProcInfo, build_chain, is_descendant, new_pid_tree,
+    self, PidTree, ProcCache, build_chain, is_descendant, new_pid_tree,
     snapshot_process_tree,
 };
 use crate::socket::{SocketCmd, SocketResp};
@@ -52,7 +52,6 @@ pub struct Monitor {
     proc_cache: Option<ProcCache>,
     pid_tree: Option<PidTree>,
     file_size_cache: LruCache<PathBuf, u64>,
-    pid_cache: LruCache<u32, ProcInfo>,
     buffer_size: usize,
     socket_listener: Option<tokio::net::UnixListener>,
     /// One `FsGroup` per unique filesystem (fan_fd + mount_fd dedup'd)
@@ -140,7 +139,6 @@ impl Monitor {
             proc_cache: None,
             pid_tree: None,
             file_size_cache: LruCache::new(NonZeroUsize::new(FILE_SIZE_CACHE_CAP).unwrap()),
-            pid_cache: LruCache::new(NonZeroUsize::new(4096).unwrap()),
             buffer_size,
 
             socket_listener,
@@ -886,15 +884,7 @@ impl Monitor {
         opts: &PathOptions,
     ) -> FileEvent {
         let pid = raw.pid.unsigned_abs();
-        let info = if let Some(info) = self.pid_cache.get(&pid) {
-            info.clone()
-        } else {
-            let info = get_process_info_by_pid(pid, &raw.path, self.proc_cache.as_ref());
-            if info.cmd != "unknown" || info.user != "unknown" {
-                self.pid_cache.put(pid, info.clone());
-            }
-            info
-        };
+        let info = get_process_info_by_pid(pid, &raw.path, self.proc_cache.as_ref());
 
         let file_size = match event_type {
             EventType::Create | EventType::Modify | EventType::CloseWrite => {
