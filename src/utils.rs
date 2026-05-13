@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 pub use sizefilter::{SizeFilter, SizeOp, format_size, parse_size, parse_size_filter};
 pub use timefilter::{TimeFilter, TimeOp, format_datetime, parse_time, parse_time_filter};
 
-use crate::proc_cache::{ProcCache, ProcInfo};
+use crate::proc_cache::{ProcCache, ProcInfo, read_proc_start_time_ns};
 
 /// Get process info by PID (from fanotify event)
 /// Checks proc connector cache first (for short-lived processes),
@@ -20,7 +20,13 @@ pub fn get_process_info_by_pid(
     if let Some(cache) = proc_cache
         && let Some(info) = cache.get(&pid)
     {
-        return info.clone();
+        // Verify the process hasn't been reincarnated with a reused PID.
+        let cached_start = info.start_time_ns;
+        let current_start = read_proc_start_time_ns(pid);
+        if cached_start == current_start || current_start == 0 {
+            return info.clone();
+        }
+        // PID was reused! Fall through to /proc fallback.
     }
 
     // Fallback to reading /proc directly (for long-lived processes)
@@ -31,11 +37,13 @@ pub fn get_process_info_by_pid(
         let fallback_user = read_file_owner(file_path).unwrap_or_else(|| "unknown".to_string());
         (fallback_user, 0u32, 0u32)
     });
+    let start_time_ns = read_proc_start_time_ns(pid);
     ProcInfo {
         cmd,
         user,
         ppid,
         tgid,
+        start_time_ns,
     }
 }
 

@@ -25,6 +25,7 @@ pub struct ProcInfo {
     pub user: String,
     pub ppid: u32,
     pub tgid: u32,
+    pub start_time_ns: u64,
 }
 
 /// Capacity for process info cache.
@@ -57,6 +58,7 @@ pub fn new_cache() -> ProcCache {
 pub struct PidNode {
     pub ppid: u32,
     pub cmd: String,
+    pub start_time_ns: u64,
 }
 
 /// Shared process tree: PID → parent PID + cmd (bounded, TTL-based eviction).
@@ -99,8 +101,39 @@ pub fn snapshot_process_tree(tree: &PidTree) {
                 cmd = val.trim().to_string();
             }
         }
-        tree.insert(pid, PidNode { ppid, cmd });
+        tree.insert(pid, PidNode { ppid, cmd, start_time_ns: 0 });
     }
+}
+
+pub fn read_proc_start_time_ns(pid: u32) -> u64 {
+    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+    let after_comm = match stat.rfind(") ") {
+        Some(pos) => pos + 2,
+        None => return 0,
+    };
+    let mut rest = &stat[after_comm..];
+    for _ in 0..19 {
+        if let Some(pos) = rest.find(' ') {
+            rest = &rest[pos + 1..];
+        } else {
+            return 0;
+        }
+    }
+    let starttime_jiffies: u64 = match rest.split_whitespace().next() {
+        Some(s) => s.parse().unwrap_or(0),
+        None => return 0,
+    };
+    if starttime_jiffies == 0 {
+        return 0;
+    }
+    let clk_tck = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    if clk_tck <= 0 {
+        return 0;
+    }
+    (starttime_jiffies as u128 * 1_000_000_000 / clk_tck as u128) as u64
 }
 
 /// Check if `pid` is a descendant of any process whose cmd == `target_cmd`.
@@ -208,7 +241,7 @@ pub fn handle_proc_events(cache: &ProcCache, tree: &PidTree, data: &[u8], n: usi
     let mut processed = false;
     for msg in NetlinkMessageIter::new(data, n) {
         match msg {
-            Ok(Some(ProcEvent::Exec { pid, .. })) => {
+            Ok(Some(ProcEvent::Exec { pid, timestamp_ns, .. })) => {
                 let cmd = std::fs::read_to_string(format!("/proc/{}/comm", pid))
                     .ok()
                     .map(|s| s.trim().to_string())
@@ -224,17 +257,26 @@ pub fn handle_proc_events(cache: &ProcCache, tree: &PidTree, data: &[u8], n: usi
                         user,
                         ppid,
                         tgid,
+                        start_time_ns: timestamp_ns,
                     },
                 );
 
                 // Also update PidTree with the resolved cmd/ppid
-                tree.insert(pid, PidNode { ppid, cmd });
+                tree.insert(
+                    pid,
+                    PidNode {
+                        ppid,
+                        cmd,
+                        start_time_ns: timestamp_ns,
+                    },
+                );
 
                 processed = true;
             }
             Ok(Some(ProcEvent::Fork {
                 child_pid,
                 parent_pid,
+                timestamp_ns,
                 ..
             })) => {
                 // Pre-populate tree: we know the parent but not cmd yet
@@ -243,6 +285,7 @@ pub fn handle_proc_events(cache: &ProcCache, tree: &PidTree, data: &[u8], n: usi
                     PidNode {
                         ppid: parent_pid,
                         cmd: String::new(),
+                        start_time_ns: timestamp_ns,
                     },
                 );
                 processed = true;
@@ -300,6 +343,7 @@ mod tests {
                 user: "testuser".into(),
                 ppid: 1,
                 tgid: 12345,
+            start_time_ns: 0,
             },
         );
         let info = cache.get(&12345).unwrap();
@@ -316,6 +360,7 @@ mod tests {
             PidNode {
                 ppid: 0,
                 cmd: "systemd".into(),
+            start_time_ns: 0,
             },
         );
         tree.insert(
@@ -323,6 +368,7 @@ mod tests {
             PidNode {
                 ppid: 1,
                 cmd: "openclaw".into(),
+            start_time_ns: 0,
             },
         );
         tree.insert(
@@ -330,6 +376,7 @@ mod tests {
             PidNode {
                 ppid: 100,
                 cmd: "sh".into(),
+            start_time_ns: 0,
             },
         );
         tree.insert(
@@ -337,6 +384,7 @@ mod tests {
             PidNode {
                 ppid: 101,
                 cmd: String::new(),
+            start_time_ns: 0,
             },
         ); // Fork, no Exec yet
 
@@ -355,6 +403,7 @@ mod tests {
             PidNode {
                 ppid: 0,
                 cmd: "systemd".into(),
+            start_time_ns: 0,
             },
         );
         assert!(!is_descendant(&tree, 99999, "systemd"));
@@ -364,9 +413,9 @@ mod tests {
     fn test_is_descendant_cycle() {
         // Complex cycle: A→B→C→A. is_descendant must not infinite-loop.
         let tree = new_pid_tree();
-        tree.insert(1, PidNode { ppid: 2, cmd: "a".into() });
-        tree.insert(2, PidNode { ppid: 3, cmd: "b".into() });
-        tree.insert(3, PidNode { ppid: 1, cmd: "c".into() });
+        tree.insert(1, PidNode { ppid: 2, cmd: "a".into(), start_time_ns: 0 });
+        tree.insert(2, PidNode { ppid: 3, cmd: "b".into(), start_time_ns: 0 });
+        tree.insert(3, PidNode { ppid: 1, cmd: "c".into(), start_time_ns: 0 });
         // Should detect cycle and return false (no matching cmd)
         assert!(!is_descendant(&tree, 1, "nginx"));
     }
@@ -376,12 +425,12 @@ mod tests {
         // Complex cycle: 1→2→3→1. build_chain must not infinite-loop.
         let tree = new_pid_tree();
         let cache = new_cache();
-        tree.insert(1, PidNode { ppid: 2, cmd: "a".into() });
-        tree.insert(2, PidNode { ppid: 3, cmd: "b".into() });
-        tree.insert(3, PidNode { ppid: 1, cmd: "c".into() });
-        cache.insert(1, ProcInfo { cmd: "a".into(), user: "u".into(), ppid: 2, tgid: 1 });
-        cache.insert(2, ProcInfo { cmd: "b".into(), user: "u".into(), ppid: 3, tgid: 2 });
-        cache.insert(3, ProcInfo { cmd: "c".into(), user: "u".into(), ppid: 1, tgid: 3 });
+        tree.insert(1, PidNode { ppid: 2, cmd: "a".into(), start_time_ns: 0 });
+        tree.insert(2, PidNode { ppid: 3, cmd: "b".into(), start_time_ns: 0 });
+        tree.insert(3, PidNode { ppid: 1, cmd: "c".into(), start_time_ns: 0 });
+        cache.insert(1, ProcInfo { cmd: "a".into(), user: "u".into(), ppid: 2, tgid: 1, start_time_ns: 0 });
+        cache.insert(2, ProcInfo { cmd: "b".into(), user: "u".into(), ppid: 3, tgid: 2, start_time_ns: 0 });
+        cache.insert(3, ProcInfo { cmd: "c".into(), user: "u".into(), ppid: 1, tgid: 3, start_time_ns: 0 });
         let chain = build_chain(&tree, &cache, 1);
         // Should produce partial chain without infinite loop
         assert!(!chain.is_empty());
@@ -397,6 +446,7 @@ mod tests {
             PidNode {
                 ppid: 0,
                 cmd: "systemd".into(),
+            start_time_ns: 0,
             },
         );
         cache.insert(
@@ -406,6 +456,7 @@ mod tests {
                 user: "root".into(),
                 ppid: 0,
                 tgid: 1,
+            start_time_ns: 0,
             },
         );
         tree.insert(
@@ -413,6 +464,7 @@ mod tests {
             PidNode {
                 ppid: 1,
                 cmd: "openclaw".into(),
+            start_time_ns: 0,
             },
         );
         cache.insert(
@@ -422,6 +474,7 @@ mod tests {
                 user: "root".into(),
                 ppid: 1,
                 tgid: 100,
+            start_time_ns: 0,
             },
         );
         tree.insert(
@@ -429,6 +482,7 @@ mod tests {
             PidNode {
                 ppid: 100,
                 cmd: "sh".into(),
+            start_time_ns: 0,
             },
         );
         cache.insert(
@@ -438,6 +492,7 @@ mod tests {
                 user: "root".into(),
                 ppid: 100,
                 tgid: 101,
+            start_time_ns: 0,
             },
         );
         tree.insert(
@@ -445,6 +500,7 @@ mod tests {
             PidNode {
                 ppid: 101,
                 cmd: "touch".into(),
+            start_time_ns: 0,
             },
         );
         cache.insert(
@@ -454,6 +510,7 @@ mod tests {
                 user: "root".into(),
                 ppid: 101,
                 tgid: 102,
+            start_time_ns: 0,
             },
         );
 
@@ -473,6 +530,7 @@ mod tests {
             PidNode {
                 ppid: 0,
                 cmd: "systemd".into(),
+            start_time_ns: 0,
             },
         );
         cache.insert(
@@ -482,6 +540,7 @@ mod tests {
                 user: "root".into(),
                 ppid: 0,
                 tgid: 1,
+            start_time_ns: 0,
             },
         );
 
