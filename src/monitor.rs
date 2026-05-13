@@ -128,6 +128,20 @@ impl Monitor {
                     );
                 }
             }
+            // Reject cmd=fsmon: daemon's own events are excluded by PID filter,
+            // so --cmd fsmon would never match anything. This check mirrors the
+            // validation in add.rs to prevent silent misconfiguration via direct
+            // jsonl edits.
+            if let Some(ref cmd) = opts.cmd {
+                if cmd == "fsmon" {
+                    bail!(
+                        "Cannot monitor 'fsmon' process: fsmon daemon's own events \
+                         are excluded from monitoring.\n\
+                         Tip: use a different process name, or omit the process \
+                         name to capture all events."
+                    );
+                }
+            }
             // Same path under multiple cmd groups → fanotify dedup by path only
             if seen.insert(resolved.clone()) {
                 paths.push(resolved.clone());
@@ -1264,6 +1278,17 @@ impl Monitor {
                 Some(c.to_string())
             }
         });
+        // Reject cmd=fsmon: daemon's own events are excluded by PID filter.
+        // This mirrors the validation in Monitor::new() for runtime socket adds.
+        if cmd.as_deref() == Some("fsmon") {
+            bail!(
+                "Cannot monitor 'fsmon' process: fsmon daemon's own events \
+                 are excluded from monitoring.\n\
+                 Tip: use a different process name, or omit the process \
+                 name to capture all events."
+            );
+        }
+
         let opts = PathOptions {
             size_filter,
             event_types,
@@ -2031,6 +2056,35 @@ mod tests {
         cache.put(PathBuf::from("/e"), 500);
         assert!(cache.get(&PathBuf::from("/c")).is_none());
         assert_eq!(cache.get(&PathBuf::from("/b")), Some(&200));
+    }
+
+    #[test]
+    fn test_reject_cmd_fsmon_at_startup() {
+        let opts = PathOptions {
+            size_filter: None,
+            event_types: None,
+            recursive: true,
+            cmd: Some("fsmon".to_string()),
+        };
+        let result = Monitor::new(
+            vec![(PathBuf::from("/tmp"), opts)],
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        assert!(
+            result.is_err(),
+            "Monitor::new() should reject cmd=fsmon"
+        );
+        let err = result.err().unwrap().to_string();
+        assert!(
+            err.contains("Cannot monitor 'fsmon' process"),
+            "Error should mention fsmon rejection, got: {}",
+            err
+        );
     }
 
     #[test]
