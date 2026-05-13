@@ -176,12 +176,12 @@ sudo crontab -e
 启动 fsmon 守护进程 — 需要 `sudo` 以使用 fanotify。
 
 ```
-sudo fsmon daemon                     # 前台启动守护进程
-sudo fsmon daemon &                   # 后台启动守护进程
-sudo fsmon daemon --debug             # 启用调试输出（事件匹配 + 缓存指标）
-sudo fsmon daemon --cache-dir-cap N   # 目录句柄缓存容量（默认 100000）
-sudo fsmon daemon --cache-dir-ttl N   # 目录句柄缓存 TTL（秒，默认 3600）
-sudo fsmon daemon --cache-file-size N # 文件大小缓存容量（默认 10000）
+sudo fsmon daemon                             # 前台启动守护进程
+sudo fsmon daemon &                           # 后台启动守护进程
+sudo fsmon daemon --debug                     # 启用调试输出（事件匹配 + 缓存指标）
+sudo fsmon daemon --cache-dir-cap N           # 目录句柄缓存容量（默认 100000）
+sudo fsmon daemon --cache-dir-ttl N           # 目录句柄缓存 TTL（秒，默认 3600）
+sudo fsmon daemon --cache-file-size N         # 文件大小缓存容量（默认 10000）
 sudo fsmon daemon --cache-proc-ttl N          # 进程缓存 TTL（秒，默认 600）
 sudo fsmon daemon --cache-stats-interval N    # 调试模式缓存统计间隔（秒，默认 60，0=关闭）
 sudo fsmon daemon --buffer-size N             # Fanotify 读取缓冲区（字节，默认 32768）

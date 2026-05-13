@@ -181,12 +181,12 @@ sudo crontab -e
 Start the fsmon daemon — requires `sudo` for fanotify.
 
 ```
-sudo fsmon daemon                     # Start daemon in foreground
-sudo fsmon daemon &                   # Start daemon in background
-sudo fsmon daemon --debug             # Enable debug output (event matching + cache stats)
-sudo fsmon daemon --cache-dir-cap N   # Directory handle cache capacity (default: 100000)
-sudo fsmon daemon --cache-dir-ttl N   # Directory handle cache TTL in seconds (default: 3600)
-sudo fsmon daemon --cache-file-size N # File size cache capacity (default: 10000)
+sudo fsmon daemon                             # Start daemon in foreground
+sudo fsmon daemon &                           # Start daemon in background
+sudo fsmon daemon --debug                     # Enable debug output (event matching + cache stats)
+sudo fsmon daemon --cache-dir-cap N           # Directory handle cache capacity (default: 100000)
+sudo fsmon daemon --cache-dir-ttl N           # Directory handle cache TTL in seconds (default: 3600)
+sudo fsmon daemon --cache-file-size N         # File size cache capacity (default: 10000)
 sudo fsmon daemon --cache-proc-ttl N          # Process cache TTL in seconds (default: 600)
 sudo fsmon daemon --cache-stats-interval N    # Cache stats log interval in debug mode (default: 60, 0=off)
 sudo fsmon daemon --buffer-size N             # Fanotify read buffer in bytes (default: 32768)
