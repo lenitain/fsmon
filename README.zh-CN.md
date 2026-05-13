@@ -176,14 +176,15 @@ sudo crontab -e
 启动 fsmon 守护进程 — 需要 `sudo` 以使用 fanotify。
 
 ```
-sudo fsmon daemon                     # 前台启动守护进程
-sudo fsmon daemon &                   # 后台启动守护进程
-sudo fsmon daemon --debug             # 启用调试输出（事件匹配 + 缓存指标）
-sudo fsmon daemon --cache-dir-cap N   # 目录句柄缓存容量（默认 100000）
-sudo fsmon daemon --cache-dir-ttl N   # 目录句柄缓存 TTL（秒，默认 3600）
-sudo fsmon daemon --cache-file-size N # 文件大小缓存容量（默认 10000）
-sudo fsmon daemon --cache-proc-ttl N  # 进程缓存 TTL（秒，默认 600）
-sudo fsmon daemon --buffer-size N     # Fanotify 读取缓冲区（字节，默认 32768）
+sudo fsmon daemon                             # 前台启动守护进程
+sudo fsmon daemon &                           # 后台启动守护进程
+sudo fsmon daemon --debug                     # 启用调试输出（事件匹配 + 缓存指标）
+sudo fsmon daemon --cache-dir-cap N           # 目录句柄缓存容量（默认 100000）
+sudo fsmon daemon --cache-dir-ttl N           # 目录句柄缓存 TTL（秒，默认 3600）
+sudo fsmon daemon --cache-file-size N         # 文件大小缓存容量（默认 10000）
+sudo fsmon daemon --cache-proc-ttl N          # 进程缓存 TTL（秒，默认 600）
+sudo fsmon daemon --cache-stats-interval N    # 调试模式缓存统计间隔（秒，默认 60，0=关闭）
+sudo fsmon daemon --buffer-size N             # Fanotify 读取缓冲区（字节，默认 32768）
 ```
 
 ### add
@@ -353,11 +354,15 @@ file_size_capacity = 10000
 # 较短 TTL 更快清理已退出进程条目；
 # 较长 TTL 减少常驻进程的 /proc 读取。
 proc_ttl_secs = 600
+
+# 调试模式下缓存统计日志间隔（秒，默认 60）。
+# 设为 0 可禁用周期性缓存统计输出。
+stats_interval_secs = 60
 ```
 
 ### 覆盖优先级
 ```
-CLI 参数（--cache-dir-cap、--cache-dir-ttl、--cache-file-size、--cache-proc-ttl、--buffer-size）
+CLI 参数（--cache-dir-cap、--cache-dir-ttl、--cache-file-size、--cache-proc-ttl、--cache-stats-interval、--buffer-size）
     > fsmon.toml [cache] 配置段
         > 代码默认值
 ```

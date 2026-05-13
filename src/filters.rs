@@ -300,6 +300,7 @@ mod tests {
 
     // ---- matching_path ----
 
+    #[allow(dead_code)]
     fn make_entries() -> Vec<(PathBuf, PathOptions)> {
         vec![
             (
@@ -612,6 +613,6 @@ mod tests {
     #[test]
     fn test_resolve_recursion_check_with_tilde() {
         let result = resolve_recursion_check(Path::new("~/some_random_dir_xyz789"));
-        assert!(result.as_os_str().len() > 0);
+        assert!(!result.as_os_str().is_empty());
     }
 }

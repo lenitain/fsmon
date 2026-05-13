@@ -25,16 +25,15 @@ use moka::sync::Cache;
 use crate::config::ResolvedCacheConfig;
 use crate::dir_cache;
 use crate::fid_parser::{
-    DIR_CACHE_CAP, FanFd, FsGroup, chown_to_user,
-    mark_directory, mark_recursive, mask_to_event_types, path_mask_from_options,
-    read_fid_events_cached,
+    DIR_CACHE_CAP, FanFd, FsGroup, chown_to_user, mark_directory, mark_recursive,
+    mask_to_event_types, path_mask_from_options, read_fid_events_cached,
 };
 use crate::filters::{self, PathOptions};
 use crate::monitored::Monitored;
 use crate::monitored::PathEntry;
 use crate::proc_cache::{
-    self, PidTree, ProcCache, build_chain, is_descendant,
-    snapshot_process_tree, PROC_CACHE_CAP, PID_TREE_CAP,
+    self, PID_TREE_CAP, PROC_CACHE_CAP, PidTree, ProcCache, build_chain, is_descendant,
+    snapshot_process_tree,
 };
 use crate::socket::{SocketCmd, SocketResp};
 use crate::utils::{format_size, get_process_info_by_pid, parse_size_filter};
@@ -128,6 +127,16 @@ impl Monitor {
                     );
                 }
             }
+            // Reject cmd=fsmon: daemon's own events are excluded by PID filter,
+            // so --cmd fsmon would never match anything. This check mirrors the
+            // validation in add.rs to prevent silent misconfiguration via direct
+            // jsonl edits.
+            if opts.cmd.as_deref() == Some("fsmon") {
+                bail!(
+                    "Cannot monitor 'fsmon' process: fsmon daemon's own events \
+                    are excluded from monitoring."
+                );
+            }
             // Same path under multiple cmd groups → fanotify dedup by path only
             if seen.insert(resolved.clone()) {
                 paths.push(resolved.clone());
@@ -145,7 +154,7 @@ impl Monitor {
             proc_cache: None,
             pid_tree: None,
             file_size_cache: LruCache::new(
-                NonZeroUsize::new(cache_config.file_size_capacity).unwrap()
+                NonZeroUsize::new(cache_config.file_size_capacity).unwrap(),
             ),
             buffer_size,
 
@@ -659,8 +668,7 @@ impl Monitor {
                             break;
                         }
                     };
-                    let events =
-                        read_fid_events_cached(afd.get_ref(), &mfds, &dc, &mut buf);
+                    let events = read_fid_events_cached(afd.get_ref(), &mfds, &dc, &mut buf);
                     if !events.is_empty() && tx.send(events).is_err() {
                         break;
                     }
@@ -743,8 +751,9 @@ impl Monitor {
                                     eprintln!("[WARNING] Failed to remove deleted path '{}': {e}", path.display());
                                 }
                                 for opts in all_opts {
-                                    // Periodic cache stats (every 60s in debug mode)
-                        if self.debug && last_cache_stats.elapsed() >= std::time::Duration::from_secs(60) {
+                                    // Periodic cache stats (configurable interval, 0 = disabled)
+                        if self.debug && self.cache_config.stats_interval_secs > 0
+                            && last_cache_stats.elapsed() >= std::time::Duration::from_secs(self.cache_config.stats_interval_secs) {
                             eprintln!("[debug] --- cache stats ---");
                             eprintln!(
                                 "[debug]   dir_cache:        {}/{} entries",
@@ -1263,6 +1272,15 @@ impl Monitor {
                 Some(c.to_string())
             }
         });
+        // Reject cmd=fsmon: daemon's own events are excluded by PID filter.
+        // This mirrors the validation in Monitor::new() for runtime socket adds.
+        if cmd.as_deref() == Some("fsmon") {
+            bail!(
+                "Cannot monitor 'fsmon' process: fsmon daemon's own events \
+                 are excluded from monitoring."
+            );
+        }
+
         let opts = PathOptions {
             size_filter,
             event_types,
@@ -2033,6 +2051,32 @@ mod tests {
     }
 
     #[test]
+    fn test_reject_cmd_fsmon_at_startup() {
+        let opts = PathOptions {
+            size_filter: None,
+            event_types: None,
+            recursive: true,
+            cmd: Some("fsmon".to_string()),
+        };
+        let result = Monitor::new(
+            vec![(PathBuf::from("/tmp"), opts)],
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        assert!(result.is_err(), "Monitor::new() should reject cmd=fsmon");
+        let err = result.err().unwrap().to_string();
+        assert!(
+            err.contains("Cannot monitor 'fsmon' process"),
+            "Error should mention fsmon rejection, got: {}",
+            err
+        );
+    }
+
+    #[test]
     fn test_monitor_buffer_size_validation() {
         let opts = options(None, None, false);
 
@@ -2236,10 +2280,10 @@ mod tests {
             let mut buf = vec![0u8; 4096];
             let start = std::time::Instant::now();
             while start.elapsed() < std::time::Duration::from_millis(200) {
-                if let Ok(events) = fanotify_fid::read::read_fid_events(&fd, &[], &mut buf, None) {
-                    if !events.is_empty() {
-                        counter_clone.fetch_add(events.len(), Ordering::SeqCst);
-                    }
+                if let Ok(events) = fanotify_fid::read::read_fid_events(&fd, &[], &mut buf, None)
+                    && !events.is_empty()
+                {
+                    counter_clone.fetch_add(events.len(), Ordering::SeqCst);
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
