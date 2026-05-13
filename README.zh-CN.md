@@ -176,14 +176,14 @@ sudo crontab -e
 启动 fsmon 守护进程 — 需要 `sudo` 以使用 fanotify。
 
 ```
-sudo fsmon daemon                     前台启动守护进程
-sudo fsmon daemon &                   后台启动守护进程
-sudo fsmon daemon --debug             启用调试输出（事件匹配 + 缓存指标）
-sudo fsmon daemon --cache-dir-cap N   目录句柄缓存容量（默认 100000）
-sudo fsmon daemon --cache-dir-ttl N   目录句柄缓存 TTL（秒，默认 3600）
-sudo fsmon daemon --cache-file-size N 文件大小缓存容量（默认 10000）
-sudo fsmon daemon --cache-proc-ttl N  进程缓存 TTL（秒，默认 600）
-sudo fsmon daemon --buffer-size N     Fanotify 读取缓冲区（字节，默认 32768）
+sudo fsmon daemon                     # 前台启动守护进程
+sudo fsmon daemon &                   # 后台启动守护进程
+sudo fsmon daemon --debug             # 启用调试输出（事件匹配 + 缓存指标）
+sudo fsmon daemon --cache-dir-cap N   # 目录句柄缓存容量（默认 100000）
+sudo fsmon daemon --cache-dir-ttl N   # 目录句柄缓存 TTL（秒，默认 3600）
+sudo fsmon daemon --cache-file-size N # 文件大小缓存容量（默认 10000）
+sudo fsmon daemon --cache-proc-ttl N  # 进程缓存 TTL（秒，默认 600）
+sudo fsmon daemon --buffer-size N     # Fanotify 读取缓冲区（字节，默认 32768）
 ```
 
 ### add
@@ -413,18 +413,18 @@ sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536 &
 
 ```
 Linux 内核 (fanotify FID 模式)
-    → 原始 FID 事件推入内核队列
+    → 原始  # FID 事件推入内核队列
     → tokio 异步读取事件
-    → fid_parser: 解析路径（两遍 + DashMap 目录句柄缓存）
+    → fid_parser: 解析路径（两遍 +  # DashMap 目录句柄缓存）
     → 过滤器: 事件类型、大小、递归/非递归范围
     → （如果指定了 <CMD>）进程树检查：
       → 不在追踪树中 → 立即丢弃（零 /proc 读取）
       → 在追踪树中 → 构建祖先链 → 追加到事件
-    → 写入 JSONL → per-cmd 日志文件（<cmd>_log.jsonl）
+    → 写入  # JSONL → per-cmd 日志文件（<cmd>_log.jsonl）
 
 进程树（proc connector）:
     Fork/Exec/Exit 事件来自 netlink connector 套接字
-    → DashMap: pid → {cmd, ppid, user, tgid, start_time}
+    →  # DashMap: pid → {cmd, ppid, user, tgid, start_time}
     守护进程启动时：/proc/*/stat 快照种子填充已有进程
     is_descendant(pid, "openclaw") → O(depth) DashMap 查找
 
@@ -432,7 +432,7 @@ Linux 内核 (fanotify FID 模式)
     tail -f *.jsonl | jq 'select(...)'
 
 清理:
-    fsmon clean → 解析 JSONL，应用时间/大小过滤器，截断
+    fsmon clean → 解析  # JSONL，应用时间/大小过滤器，截断
 ```
 
 ### 源码结构
@@ -440,28 +440,28 @@ Linux 内核 (fanotify FID 模式)
 ```
 src/
 ├── bin/
-│   ├── fsmon.rs                CLI 入口：main()、参数结构体、参数测试
+│   ├── fsmon.rs                 # CLI 入口：main()、参数结构体、参数测试
 │   └── commands/
 │       ├── mod.rs              run() 分发、parse_path_entries 辅助
 │       ├── daemon.rs           守护进程：加载存储、Monitor::new()、run()
-│       ├── add.rs              CLI add：路径规范化、存储 + 套接字
-│       ├── remove.rs           CLI remove：存储 + 套接字
-│       ├── monitored.rs        CLI monitored：JSONL 输出
-│       ├── query.rs            CLI query：时间过滤、执行查询
-│       ├── clean.rs            CLI clean：解析器委托
-│       └── init_cd.rs          CLI init、cd
+│       ├── add.rs               # CLI add：路径规范化、存储 + 套接字
+│       ├── remove.rs            # CLI remove：存储 + 套接字
+│       ├── monitored.rs         # CLI monitored：JSONL 输出
+│       ├── query.rs             # CLI query：时间过滤、执行查询
+│       ├── clean.rs             # CLI clean：解析器委托
+│       └── init_cd.rs           # CLI init、cd
 │
-├── lib.rs             FileEvent、EventType、DaemonLock（flock 单例）
+├── lib.rs              # FileEvent、EventType、DaemonLock（flock 单例）
 ├── clean.rs           日志清理引擎：时间/大小修剪、尾偏移
-├── config.rs          TOML 配置、SUDO_UID home 解析
+├── config.rs           # TOML 配置、SUDO_UID home 解析
 ├── monitored.rs       监控路径数据库（JSONL 存储）
-├── monitor.rs         Fanotify 循环、套接字处理器、add/remove/events
-├── fid_parser.rs      FID 事件解析、两遍路径恢复
-├── filters.rs         PathOptions、事件/大小过滤、路径匹配
+├── monitor.rs          # Fanotify 循环、套接字处理器、add/remove/events
+├── fid_parser.rs       # FID 事件解析、两遍路径恢复
+├── filters.rs          # PathOptions、事件/大小过滤、路径匹配
 ├── dir_cache.rs       目录句柄缓存（DashMap + HandleKey）
-├── proc_cache.rs      Netlink proc connector：Fork/Exec/Exit、build_chain
-├── query.rs           对已排序 JSONL 进行二分查找日志查询
-├── socket.rs          Unix 套接字协议（TOML 请求/响应）
+├── proc_cache.rs       # Netlink proc connector：Fork/Exec/Exit、build_chain
+├── query.rs           对已排序  # JSONL 进行二分查找日志查询
+├── socket.rs           # Unix 套接字协议（TOML 请求/响应）
 ├── utils.rs           大小/时间解析、进程信息查找、chown
 └── help.rs            帮助文本常量
 ```
