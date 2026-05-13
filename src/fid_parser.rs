@@ -96,71 +96,126 @@ pub fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
 }
 
 /// Read and parse FID events, using a moka cache for path recovery.
+///
+/// # Design
+///
+/// Path recovery uses a **three-tier priority chain**:
+///   1. Local `handle_map` — batch-internal knowledge propagation
+///   2. Persistent `dir_cache` — cross-batch knowledge (e.g. events from
+///      previous reads that cached directory handles)
+///   3. `resolve_file_handle` — direct syscall fallback
+///
+/// The tiers are ordered by freshness: local map is per-batch and always
+/// up-to-date for the current read cycle; the persistent cache may be stale
+/// but covers handles seen in previous cycles; the syscall always reflects
+/// current filesystem state but fails for deleted objects.
+///
+/// # Why not just use the persistent cache for everything?
+///
+/// Previously, `dir_cache` was both updated and read within the same loop,
+/// serving as both the cross-batch store AND the within-batch coordination
+/// channel.  This broke down when `rm -rf DIR` deletes a directory and all
+/// contents in one process: ALL events arrive in a single `read()`.  The
+/// directory handle in child events is stale (ESTALE), and there was no
+/// prior event to seed the cache.
+///
+/// The fix separates concerns:
+/// - The **local `handle_map`** is built from resolved events in this batch.
+///   If event A resolves path="/dir/file" via DFID_NAME, its `self_handle`
+///   (the directory handle) is added to the local map.  Event B inside the
+///   same directory finds it through the local map.  No persistent cache
+///   needed for within-batch coordination.
+/// - The **persistent `dir_cache`** only serves as long-term memory across
+///   read cycles.  It is updated AFTER the local resolve loop completes.
 pub fn read_fid_events_cached(
     fan_fd: &OwnedFd,
     mount_fds: &[OwnedFd],
     dir_cache: &Cache<HandleKey, PathBuf>,
     buf: &mut Vec<u8>,
 ) -> Vec<FidEvent> {
-    // Delegate raw read + parse to fanotify-fid (no cache = first pass only)
+    // Phase 0: raw read + parse (fanotify-fid resolves paths via open_by_handle_at)
     let mut events = match fanotify_fid::read::read_fid_events(fan_fd, mount_fds, buf, None) {
         Ok(e) => e,
         Err(_) => return vec![],
     };
 
-    // Second-pass: moka cache recovery (multiple passes for nested deletions).
-    // Inlined instead of using fanotify_fid::resolve_with_cache because that
-    // takes &HashMap — copying the entire cache on every event is too expensive.
-    for _ in 0..10 {
-        // Update cache from successfully-resolved events
-        for ev in events.iter() {
-            if ev.path.as_os_str().is_empty() {
-                continue;
-            }
-            if let Some(ref key) = ev.self_handle {
-                dir_cache.get_with(key.clone(), || ev.path.clone());
-            }
-            if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
-                let dir_path = if !filename.is_empty() {
-                    ev.path.parent().map(|p| p.to_path_buf())
-                } else {
-                    Some(ev.path.clone())
-                };
-                if let Some(dp) = dir_path {
-                    dir_cache.get_with(key.clone(), || dp);
-                }
-            }
+    // ---- Phase 1: seed local handle_map from resolved events ----
+    // Collect all handle→path knowledge from events whose paths resolved
+    // directly via open_by_handle_at in the parse phase.
+    let mut handle_map: std::collections::HashMap<Vec<u8>, PathBuf> =
+        std::collections::HashMap::new();
+    for ev in events.iter() {
+        if ev.path.as_os_str().is_empty() {
+            continue;
         }
+        // self_handle → full path of the object itself
+        if let Some(ref key) = ev.self_handle {
+            handle_map.entry(key.clone()).or_insert_with(|| ev.path.clone());
+        }
+        // dfid_name_handle → parent directory path
+        if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
+            let parent = if filename.is_empty() {
+                ev.path.clone()
+            } else if let Some(p) = ev.path.parent() {
+                p.to_path_buf()
+            } else {
+                continue;
+            };
+            handle_map.entry(key.clone()).or_insert(parent);
+        }
+    }
 
-        // Try to recover empty paths from cache (direct moka lookup, no copy)
+    // ---- Phase 2: propagate knowledge until convergence ----
+    // Each newly-resolved event may carry additional handles that help
+    // resolve other events in the same batch (e.g. nested directory deletion).
+    //
+    // Priority chain per unresolved event:
+    //   1. local handle_map (fresh batch-internal knowledge)
+    //   2. persistent dir_cache (cross-batch memory)
+    //   3. resolve_file_handle (syscall, fails for deleted objects)
+    loop {
         let mut made_progress = false;
+
         for ev in events.iter_mut() {
             if !ev.path.as_os_str().is_empty() {
                 continue;
             }
 
+            // Try dfid_name_handle → parent directory path
             if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
-                let dir_path = dir_cache.get(key).or_else(|| {
-                    // Cache miss: try direct handle resolution for first CREATE event
-                    resolve_file_handle(mount_fds, key.as_slice())
-                });
+                let dir_path = handle_map
+                    .get(key)
+                    .cloned()
+                    .or_else(|| dir_cache.get(key))
+                    .or_else(|| resolve_file_handle(mount_fds, key.as_slice()));
+
                 if let Some(ref dp) = dir_path {
-                    dir_cache.insert(key.clone(), dp.clone());
                     ev.path = if filename.is_empty() {
                         dp.clone()
                     } else {
                         dp.join(filename)
                     };
+                    // Newly resolved → extract its handles for other events
+                    if let Some(ref sk) = ev.self_handle {
+                        handle_map.entry(sk.clone()).or_insert_with(|| ev.path.clone());
+                    }
                     made_progress = true;
                 }
             }
 
+            // Try self_handle (only if dfid_name didn't resolve)
             if ev.path.as_os_str().is_empty()
                 && let Some(ref key) = ev.self_handle
-                && let Some(cached_path) = dir_cache.get(key)
             {
-                ev.path = cached_path;
-                made_progress = true;
+                // Check same three-tier chain
+                if let Some(path) = handle_map
+                    .get(key)
+                    .cloned()
+                    .or_else(|| dir_cache.get(key))
+                {
+                    ev.path = path;
+                    made_progress = true;
+                }
             }
         }
 
@@ -168,6 +223,28 @@ pub fn read_fid_events_cached(
             break;
         }
     }
+
+    // ---- Phase 3: update persistent cache (side effect, not used by resolve) ----
+    // Write resolved handles back so future read cycles benefit.
+    for ev in events.iter() {
+        if ev.path.as_os_str().is_empty() {
+            continue;
+        }
+        if let Some(ref key) = ev.self_handle {
+            dir_cache.get_with(key.clone(), || ev.path.clone());
+        }
+        if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
+            let parent = if filename.is_empty() {
+                Some(ev.path.clone())
+            } else {
+                ev.path.parent().map(|p| p.to_path_buf())
+            };
+            if let Some(dp) = parent {
+                dir_cache.get_with(key.clone(), || dp);
+            }
+        }
+    }
+
     events
 }
 
