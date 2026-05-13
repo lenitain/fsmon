@@ -373,8 +373,6 @@ When `<CMD>` was specified on add and the event matches: `chain` is also include
 
 The `chain` format: `pid|cmd|user` per entry, `;`-separated from the event process up to PID 1 (root).
 
-Old logs without `ppid`/`tgid`/`chain` are backward compatible — missing fields default to `0` or `""`.
-
 ## Architecture
 
 ```
@@ -406,7 +404,7 @@ Clean:
 ```
 src/
 ├── bin/
-│   ├── fsmon.rs               CLI entry: main(), argument structs, arg tests
+│   ├── fsmon.rs                CLI entry: main(), argument structs, arg tests
 │   └── commands/
 │       ├── mod.rs              run() dispatch, parse_path_entries helper
 │       ├── daemon.rs           Daemon: load store, Monitor::new(), run()
@@ -416,11 +414,11 @@ src/
 │       ├── query.rs            CLI query: time filter, execute query
 │       ├── clean.rs            CLI clean: parser delegation
 │       ├── init_cd.rs          CLI init, cd
-
+│
 ├── lib.rs             FileEvent, EventType, DaemonLock (flock singleton)
 ├── clean.rs           Log cleanup engine: time/size trim, tail-offset
 ├── config.rs          TOML config, SUDO_UID home resolution
-├── monitored.rs         Monitored paths database (JSONL store)
+├── monitored.rs       Monitored paths database (JSONL store)
 ├── monitor.rs         Fanotify loop, socket handler, add/remove/events
 ├── fid_parser.rs      FID event parsing, two-pass path recovery
 ├── filters.rs         PathOptions, event/size filters, path matching
