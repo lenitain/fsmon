@@ -87,9 +87,9 @@ Now trigger some real file changes:
 # Terminal 2: simulate real usage
 echo "<h1>Hello</h1>" > /var/www/myapp/index.html      # nginx writes a file
 sleep 2
-rm /var/www/myapp/index.html                              # file gets deleted
+rm /var/www/myapp/index.html                           # file gets deleted
 sleep 2
-vim /var/www/myapp/config.json                            # vim edits config
+vim /var/www/myapp/config.json                         # vim edits config
 ```
 
 Look at what fsmon captured:
@@ -196,11 +196,11 @@ sudo fsmon daemon --buffer-size N     # Fanotify read buffer in bytes (default: 
 Add a path (optionally with process tracking) to the monitoring list. No sudo needed.
 
 ```
-fsmon add nginx --path /var/www/myapp -r  # Track nginx on /myapp recursively
-fsmon add nginx --path /var/www/myapp  # Track nginx on /myapp (non-recursive)
-fsmon add _global --path /home -r  # Monitor all events on /home (global)
+fsmon add nginx --path /var/www/myapp -r       # Track nginx on /myapp recursively
+fsmon add nginx --path /var/www/myapp          # Track nginx on /myapp (non-recursive)
+fsmon add _global --path /home -r              # Monitor all events on /home (global)
 fsmon add _global --path /home --types MODIFY  # Filter by event types
-fsmon add _global --path /home --types all  # All 14 event types
+fsmon add _global --path /home --types all     # All 14 event types
 fsmon add _global --path /home --size '>=1MB'  # Minimum file size filter
 ```
 
@@ -220,9 +220,9 @@ fsmon add _global --path /home --size '>=1MB'  # Minimum file size filter
 Remove one or more paths from the monitoring list. No sudo needed.
 
 ```
-fsmon remove _global  # Remove entire global cmd group
-fsmon remove nginx  # Remove entire nginx cmd group
-fsmon remove nginx --path /home  # Remove /home from nginx group
+fsmon remove _global               # Remove entire global cmd group
+fsmon remove nginx                 # Remove entire nginx cmd group
+fsmon remove nginx --path /home    # Remove /home from nginx group
 fsmon remove _global --path /home  # Remove /home from global group
 ```
 
@@ -241,13 +241,13 @@ Each line is a JSON object with `cmd` and `paths` fields. Pipe to `jq` for filte
 Query historical events from log files. Output is JSONL — pipe to `jq` for filtering.
 
 ```
-fsmon query _global  # Query global log
-fsmon query nginx  # Query nginx log only
-fsmon query _global -t '>1h'  # Events from last hour
-fsmon query _global -t '>=2026-05-01'  # From absolute time
-fsmon query _global -t '<30m'  # Events until 30 minutes ago
+fsmon query _global                     # Query global log
+fsmon query nginx                       # Query nginx log only
+fsmon query _global -t '>1h'            # Events from last hour
+fsmon query _global -t '>=2026-05-01'   # From absolute time
+fsmon query _global -t '<30m'           # Events until 30 minutes ago
 fsmon query _global -t '>1h' -t '<now'  # Time range (since + until)
-fsmon query _global --path /tmp  # Filter events by path prefix
+fsmon query _global --path /tmp         # Filter events by path prefix
 ```
 
 Examples with `jq`:
@@ -269,11 +269,11 @@ fsmon query _global | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path
 
 Clean log files for a specific cmd group. Defaults from `fsmon.toml`: `keep_days=30`, `size==>=1GB`.
 
-```bash
-fsmon clean _global  # Clean global log (defaults)
-fsmon clean nginx --time '>7d'  # Keep last 7 days of nginx events
+```
+fsmon clean _global                 # Clean global log (defaults)
+fsmon clean nginx --time '>7d'      # Keep last 7 days of nginx events
 fsmon clean nginx --size '>=500MB'  # Size limit for nginx log
-fsmon clean _global --dry-run  # Preview without deleting
+fsmon clean _global --dry-run       # Preview without deleting
 ```
 
 Priority: CLI arg > fsmon.toml > code default (keep_days=30, size=>=1GB)
@@ -449,25 +449,25 @@ src/
 ├── bin/
 │   ├── fsmon.rs                 # CLI entry: main(), argument structs, arg tests
 │   └── commands/
-│       ├── mod.rs              run() dispatch, parse_path_entries helper
-│       ├── daemon.rs           Daemon: load store,  # Monitor::new(), run()
+│       ├── mod.rs               # run() dispatch, parse_path_entries helper
+│       ├── daemon.rs            # Daemon: load store,  # Monitor::new(), run()
 │       ├── add.rs               # CLI add: path normalization, store + socket
 │       ├── remove.rs            # CLI remove: store + socket
-│       ├── monitored.rs        CLI monitored:  # JSONL output
+│       ├── monitored.rs         # CLI monitored:  # JSONL output
 │       ├── query.rs             # CLI query: time filter, execute query
 │       ├── clean.rs             # CLI clean: parser delegation
 │       └── init_cd.rs           # CLI init, cd
 │
-├── lib.rs             FileEvent, EventType,  # DaemonLock (flock singleton)
+├── lib.rs              # FileEvent, EventType,  # DaemonLock (flock singleton)
 ├── clean.rs            # Log cleanup engine: time/size trim, tail-offset
-├── config.rs          TOML config,  # SUDO_UID home resolution
+├── config.rs           # TOML config,  # SUDO_UID home resolution
 ├── monitored.rs        # Monitored paths database (JSONL store)
 ├── monitor.rs          # Fanotify loop, socket handler, add/remove/events
 ├── fid_parser.rs       # FID event parsing, two-pass path recovery
 ├── filters.rs          # PathOptions, event/size filters, path matching
-├── dir_cache.rs       Directory handle cache (DashMap + HandleKey)
-├── proc_cache.rs      Netlink proc connector:  # Fork/Exec/Exit, build_chain
-├── query.rs           Binary-search log query on sorted JSONL
+├── dir_cache.rs        # Directory handle cache (DashMap + HandleKey)
+├── proc_cache.rs       # hNetlink proc connector:  # Fork/Exec/Exit, build_chain
+├── query.rs            # Binary-search log query on sorted JSONL
 ├── socket.rs           # Unix socket protocol (TOML req/resp)
 ├── utils.rs            # Size/time parsing, process info lookup, chown
 └── help.rs             # Help text constants
