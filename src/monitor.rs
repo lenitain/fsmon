@@ -678,6 +678,7 @@ impl Monitor {
             }
         });
         let mut proc_buf = vec![0u8; 65536];
+        let mut last_cache_stats = std::time::Instant::now();
 
         loop {
             tokio::select! {
@@ -725,7 +726,32 @@ impl Monitor {
                                     eprintln!("[WARNING] Failed to remove deleted path '{}': {e}", path.display());
                                 }
                                 for opts in all_opts {
-                                    self.pending_paths.push((
+                                    // Periodic cache stats (every 60s in debug mode)
+                        if self.debug && last_cache_stats.elapsed() >= std::time::Duration::from_secs(60) {
+                            eprintln!("[debug] --- cache stats ---");
+                            eprintln!(
+                                "[debug]   dir_cache:        {}/{} entries",
+                                dir_cache.entry_count(),
+                                DIR_CACHE_CAP
+                            );
+                            eprintln!(
+                                "[debug]   proc_cache:       {}/{} entries",
+                                proc_cache.entry_count(),
+                                PROC_CACHE_CAP
+                            );
+                            eprintln!(
+                                "[debug]   pid_tree:         {}/{} entries",
+                                pid_tree.entry_count(),
+                                PID_TREE_CAP
+                            );
+                            eprintln!(
+                                "[debug]   file_size_cache:  {}/{} entries",
+                                self.file_size_cache.len(),
+                                self.file_size_cache.cap()
+                            );
+                            last_cache_stats = std::time::Instant::now();
+                        }
+                        self.pending_paths.push((
                                         path.clone(),
                                         PathEntry {
                                             path: path.clone(),
