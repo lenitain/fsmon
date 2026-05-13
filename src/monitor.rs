@@ -33,7 +33,7 @@ use crate::monitored::Monitored;
 use crate::monitored::PathEntry;
 use crate::proc_cache::{
     self, PidTree, ProcCache, build_chain, is_descendant, new_pid_tree,
-    snapshot_process_tree,
+    snapshot_process_tree, PROC_CACHE_CAP, PID_TREE_CAP,
 };
 use crate::socket::{SocketCmd, SocketResp};
 use crate::utils::{format_size, get_process_info_by_pid, parse_size_filter};
@@ -532,6 +532,33 @@ impl Monitor {
                     o.recursive
                 );
             }
+        }
+        if self.debug {
+            eprintln!("[debug] --- cache stats ---");
+            eprintln!(
+                "[debug]   dir_cache:        {}/{} entries",
+                self.dir_cache.entry_count(),
+                DIR_CACHE_CAP
+            );
+            if let Some(ref c) = self.proc_cache {
+                eprintln!(
+                    "[debug]   proc_cache:       {}/{} entries",
+                    c.entry_count(),
+                    PROC_CACHE_CAP
+                );
+            }
+            if let Some(ref t) = self.pid_tree {
+                eprintln!(
+                    "[debug]   pid_tree:         {}/{} entries",
+                    t.entry_count(),
+                    PID_TREE_CAP
+                );
+            }
+            eprintln!(
+                "[debug]   file_size_cache:  {}/{} entries",
+                self.file_size_cache.len(),
+                self.file_size_cache.cap()
+            );
         }
         if !self.pending_paths.is_empty() {
             println!("Pending paths (waiting for directory creation):");

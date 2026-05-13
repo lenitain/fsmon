@@ -30,16 +30,16 @@ pub struct ProcInfo {
 
 /// Capacity for process info cache.
 /// Covers typical active PID ranges with headroom.
-const PROC_CACHE_CAP: u64 = 65536;
+pub const PROC_CACHE_CAP: u64 = 65536;
 
 /// TTL for process info entries. Exited processes are evicted after this time.
-const PROC_CACHE_TTL_SECS: u64 = 600;
+pub const PROC_CACHE_TTL_SECS: u64 = 600;
 
 /// Capacity for process tree cache.
-const PID_TREE_CAP: u64 = 65536;
+pub const PID_TREE_CAP: u64 = 65536;
 
 /// TTL for process tree entries.
-const PID_TREE_TTL_SECS: u64 = 600;
+pub const PID_TREE_TTL_SECS: u64 = 600;
 
 /// Shared PID → ProcInfo cache (thread-safe, bounded, TTL-based eviction).
 pub type ProcCache = Cache<u32, ProcInfo>;
