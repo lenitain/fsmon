@@ -556,7 +556,22 @@ mod tests {
         assert!(tree.contains_key(&1), "PID 1 should exist after snapshot");
         if let Some(node) = tree.get(&1) {
             assert!(!node.cmd.is_empty(), "PID 1 should have a cmd");
-            assert_eq!(node.ppid, 0, "PID 1's ppid should be 0");
+            assert_eq!(node.ppid, 0, "PID 1\'s ppid should be 0");
         }
+    }
+
+    #[test]
+    fn test_read_proc_start_time_ns_pid1() {
+        // PID 1 always exists on Linux — should have a non-zero start time.
+        let ns = read_proc_start_time_ns(1);
+        assert!(ns > 0, "PID 1 start_time_ns should be > 0, got {ns}");
+    }
+
+    #[test]
+    fn test_read_proc_start_time_ns_nonexistent() {
+        // A non-existent PID should return 0.
+        // Use PID 0x7FFFFFFF (max valid PID on most systems is lower).
+        let ns = read_proc_start_time_ns(0x7FFFFFFF);
+        assert_eq!(ns, 0, "non-existent PID should return 0, got {ns}");
     }
 }
