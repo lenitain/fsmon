@@ -104,10 +104,14 @@ pub fn snapshot_process_tree(tree: &PidTree) {
 }
 
 /// Check if `pid` is a descendant of any process whose cmd == `target_cmd`.
-/// Walks up the tree via ppid until hitting root (pid=1, pid=0, or self-loop).
+/// Walks up the tree via ppid until hitting root (pid=1, pid=0, self-loop, or cycle).
 pub fn is_descendant(tree: &PidTree, pid: u32, target_cmd: &str) -> bool {
     let mut current = pid;
+    let mut visited = std::collections::HashSet::new();
     while let Some(node) = tree.get(&current) {
+        if !visited.insert(current) {
+            break; // cycle detected
+        }
         if node.cmd == target_cmd {
             return true;
         }
@@ -125,6 +129,7 @@ pub fn is_descendant(tree: &PidTree, pid: u32, target_cmd: &str) -> bool {
 pub fn build_chain(tree: &PidTree, cache: &ProcCache, pid: u32) -> String {
     let mut parts: Vec<String> = Vec::new();
     let mut current = pid;
+    let mut visited = std::collections::HashSet::new();
     loop {
         // Try tree first for ppid, then cache for user
         let (ppid, cmd, user) = if let Some(node) = tree.get(&current) {
@@ -167,6 +172,9 @@ pub fn build_chain(tree: &PidTree, cache: &ProcCache, pid: u32) -> String {
         parts.push(format!("{}|{}|{}", current, cmd, user));
         if ppid == 0 || current == ppid {
             break;
+        }
+        if !visited.insert(current) {
+            break; // cycle detected
         }
         current = ppid;
     }
@@ -350,6 +358,34 @@ mod tests {
             },
         );
         assert!(!is_descendant(&tree, 99999, "systemd"));
+    }
+
+    #[test]
+    fn test_is_descendant_cycle() {
+        // Complex cycle: A→B→C→A. is_descendant must not infinite-loop.
+        let tree = new_pid_tree();
+        tree.insert(1, PidNode { ppid: 2, cmd: "a".into() });
+        tree.insert(2, PidNode { ppid: 3, cmd: "b".into() });
+        tree.insert(3, PidNode { ppid: 1, cmd: "c".into() });
+        // Should detect cycle and return false (no matching cmd)
+        assert!(!is_descendant(&tree, 1, "nginx"));
+    }
+
+    #[test]
+    fn test_build_chain_cycle() {
+        // Complex cycle: 1→2→3→1. build_chain must not infinite-loop.
+        let tree = new_pid_tree();
+        let cache = new_cache();
+        tree.insert(1, PidNode { ppid: 2, cmd: "a".into() });
+        tree.insert(2, PidNode { ppid: 3, cmd: "b".into() });
+        tree.insert(3, PidNode { ppid: 1, cmd: "c".into() });
+        cache.insert(1, ProcInfo { cmd: "a".into(), user: "u".into(), ppid: 2, tgid: 1 });
+        cache.insert(2, ProcInfo { cmd: "b".into(), user: "u".into(), ppid: 3, tgid: 2 });
+        cache.insert(3, ProcInfo { cmd: "c".into(), user: "u".into(), ppid: 1, tgid: 3 });
+        let chain = build_chain(&tree, &cache, 1);
+        // Should produce partial chain without infinite loop
+        assert!(!chain.is_empty());
+        assert!(chain.starts_with("1|"));
     }
 
     #[test]
