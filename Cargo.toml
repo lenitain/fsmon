@@ -31,6 +31,7 @@ chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 dashmap = "5.5"
+moka = { version = "0.12", features = ["sync"] }
 procfs = "0.16"
 libc = "0.2"
 proc-connector = "0.1" 

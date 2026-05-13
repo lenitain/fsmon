@@ -1,7 +1,7 @@
 use crate::EventType;
 use crate::filters::PathOptions;
 use anyhow::{Context, Result};
-use dashmap::DashMap;
+use moka::sync::Cache;
 use fanotify_fid::consts::{
     AT_FDCWD, FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE,
     FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_FS_ERROR, FAN_MARK_ADD, FAN_MODIFY, FAN_MOVE_SELF,
@@ -95,11 +95,11 @@ pub fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
         .collect()
 }
 
-/// Read and parse FID events, using a `DashMap`-based cache for path recovery.
-pub fn read_fid_events_dashmap(
+/// Read and parse FID events, using a moka cache for path recovery.
+pub fn read_fid_events_cached(
     fan_fd: &OwnedFd,
     mount_fds: &[OwnedFd],
-    dir_cache: &DashMap<HandleKey, PathBuf>,
+    dir_cache: &Cache<HandleKey, PathBuf>,
     buf: &mut Vec<u8>,
 ) -> Vec<FidEvent> {
     // Delegate raw read + parse to fanotify-fid (no cache = first pass only)
@@ -108,9 +108,9 @@ pub fn read_fid_events_dashmap(
         Err(_) => return vec![],
     };
 
-    // Second-pass: DashMap-based cache recovery (multiple passes for nested deletions).
+    // Second-pass: moka cache recovery (multiple passes for nested deletions).
     // Inlined instead of using fanotify_fid::resolve_with_cache because that
-    // takes &HashMap — copying the entire DashMap on every event is too expensive.
+    // takes &HashMap — copying the entire cache on every event is too expensive.
     for _ in 0..10 {
         // Update cache from successfully-resolved events
         for ev in events.iter() {
@@ -118,9 +118,7 @@ pub fn read_fid_events_dashmap(
                 continue;
             }
             if let Some(ref key) = ev.self_handle {
-                dir_cache
-                    .entry(key.clone())
-                    .or_insert_with(|| ev.path.clone());
+                dir_cache.get_with(key.clone(), || ev.path.clone());
             }
             if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
                 let dir_path = if !filename.is_empty() {
@@ -129,12 +127,12 @@ pub fn read_fid_events_dashmap(
                     Some(ev.path.clone())
                 };
                 if let Some(dp) = dir_path {
-                    dir_cache.entry(key.clone()).or_insert(dp);
+                    dir_cache.get_with(key.clone(), || dp);
                 }
             }
         }
 
-        // Try to recover empty paths from cache (direct DashMap lookup, no copy)
+        // Try to recover empty paths from cache (direct moka lookup, no copy)
         let mut made_progress = false;
         for ev in events.iter_mut() {
             if !ev.path.as_os_str().is_empty() {
@@ -142,7 +140,7 @@ pub fn read_fid_events_dashmap(
             }
 
             if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
-                let dir_path = dir_cache.get(key).map(|p| p.clone()).or_else(|| {
+                let dir_path = dir_cache.get(key).or_else(|| {
                     // Cache miss: try direct handle resolution for first CREATE event
                     resolve_file_handle(mount_fds, key.as_slice())
                 });
@@ -161,7 +159,7 @@ pub fn read_fid_events_dashmap(
                 && let Some(ref key) = ev.self_handle
                 && let Some(cached_path) = dir_cache.get(key)
             {
-                ev.path = cached_path.clone();
+                ev.path = cached_path;
                 made_progress = true;
             }
         }
@@ -174,6 +172,16 @@ pub fn read_fid_events_dashmap(
 }
 
 // ---- Constants ----
+
+/// Capacity for the moka directory handle cache (path→handle key reverse lookup).
+/// 100k covers ~10s of thousands of directories with room to spare.
+/// moka uses W-TinyLFU eviction when this limit is reached.
+pub const DIR_CACHE_CAP: u64 = 100_000;
+
+/// TTL for directory handle cache entries.
+/// After 1 hour of no access, entries are automatically evicted.
+/// This prevents stale entries when directories are deleted/renamed.
+pub const DIR_CACHE_TTL_SECS: u64 = 3600;
 
 pub const FILE_SIZE_CACHE_CAP: usize = 10_000;
 

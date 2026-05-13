@@ -1,6 +1,5 @@
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
-use dashmap::DashMap;
 use fanotify_fid::consts::{
     AT_FDCWD, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_MARK_ADD, FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE,
     FAN_NONBLOCK, FAN_Q_OVERFLOW, FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
@@ -14,16 +13,20 @@ use std::num::NonZeroUsize;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use lru::LruCache;
 use tokio::io::unix::AsyncFd;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::signal::unix::{SignalKind, signal};
 
+use moka::sync::Cache;
+
 use crate::dir_cache;
 use crate::fid_parser::{
-    FILE_SIZE_CACHE_CAP, FanFd, FsGroup, chown_to_user, mark_directory, mark_recursive,
-    mask_to_event_types, path_mask_from_options, read_fid_events_dashmap,
+    DIR_CACHE_CAP, DIR_CACHE_TTL_SECS, FILE_SIZE_CACHE_CAP, FanFd, FsGroup, chown_to_user,
+    mark_directory, mark_recursive, mask_to_event_types, path_mask_from_options,
+    read_fid_events_cached,
 };
 use crate::filters::{self, PathOptions};
 use crate::monitored::Monitored;
@@ -56,10 +59,10 @@ pub struct Monitor {
     fs_groups: Vec<FsGroup>,
     /// Maps monitored path → index in fs_groups for fast lookup in remove_path
     path_to_group: HashMap<PathBuf, usize>,
-    dir_cache: DashMap<fanotify_fid::types::HandleKey, PathBuf>,
+    dir_cache: Cache<fanotify_fid::types::HandleKey, PathBuf>,
     /// Shared state for spawning reader tasks during live-add (set in run())
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<FidEvent>>>,
-    shared_dir_cache: Option<Arc<DashMap<fanotify_fid::types::HandleKey, PathBuf>>>,
+    shared_dir_cache: Option<Cache<fanotify_fid::types::HandleKey, PathBuf>>,
     /// Paths that didn't exist at add/startup time, retried on directory creation
     pending_paths: Vec<(PathBuf, PathEntry)>,
     /// inotify instance watching parent dirs of pending paths
@@ -144,7 +147,10 @@ impl Monitor {
             debug,
             fs_groups: Vec::new(),
             path_to_group: HashMap::new(),
-            dir_cache: DashMap::new(),
+            dir_cache: Cache::builder()
+                .max_capacity(DIR_CACHE_CAP)
+                .time_to_live(Duration::from_secs(DIR_CACHE_TTL_SECS))
+                .build(),
             event_tx: None,
             shared_dir_cache: None,
             pending_paths: Vec::new(),
@@ -557,12 +563,12 @@ impl Monitor {
         // Spawn one reader task per FsGroup (one per filesystem).
         // Events are sent through an unbounded mpsc channel to the main loop.
         let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<FidEvent>>();
-        let dir_cache = Arc::new(std::mem::take(&mut self.dir_cache));
+        let dir_cache = self.dir_cache.clone();
         let buf_size = self.buffer_size;
 
         // Shared state for live-add (add_path may need to spawn reader tasks)
         self.event_tx = Some(event_tx.clone());
-        self.shared_dir_cache = Some(Arc::clone(&dir_cache));
+        self.shared_dir_cache = Some(dir_cache.clone());
 
         for gi in 0..self.fs_groups.len() {
             // Duplicate both fds so reader task owns independent copies
@@ -591,7 +597,7 @@ impl Monitor {
             };
             let mfds = Arc::new(vec![owned_mount_fd]);
             let tx = event_tx.clone();
-            let dc = Arc::clone(&dir_cache);
+            let dc = dir_cache.clone();
             let raw_fd = owned_fan_fd.as_raw_fd();
             tokio::spawn(async move {
                 let afd = match AsyncFd::new(owned_fan_fd) {
@@ -612,7 +618,7 @@ impl Monitor {
                         }
                     };
                     let events =
-                        read_fid_events_dashmap(afd.get_ref(), &mfds, dc.as_ref(), &mut buf);
+                        read_fid_events_cached(afd.get_ref(), &mfds, &dc, &mut buf);
                     if !events.is_empty() && tx.send(events).is_err() {
                         break;
                     }
@@ -986,8 +992,8 @@ impl Monitor {
                 return;
             }
         };
-        let dc = match self.shared_dir_cache.as_ref() {
-            Some(d) => Arc::clone(d),
+        let dc = match &self.shared_dir_cache {
+            Some(d) => d.clone(),
             None => {
                 eprintln!("[ERROR] Cannot spawn reader: shared_dir_cache not initialized");
                 return;
@@ -1041,7 +1047,7 @@ impl Monitor {
                         break;
                     }
                 };
-                let events = read_fid_events_dashmap(afd.get_ref(), &mfds, dc.as_ref(), &mut buf);
+                let events = read_fid_events_cached(afd.get_ref(), &mfds, &dc, &mut buf);
                 if !events.is_empty() && tx.send(events).is_err() {
                     break;
                 }
@@ -1340,9 +1346,9 @@ impl Monitor {
             && let Some(ref cache) = self.shared_dir_cache
         {
             if recursive {
-                dir_cache::cache_recursive(cache.as_ref(), &canonical);
+                dir_cache::cache_recursive(cache, &canonical);
             } else {
-                dir_cache::cache_dir_handle(cache.as_ref(), &canonical);
+                dir_cache::cache_dir_handle(cache, &canonical);
             }
         }
 
