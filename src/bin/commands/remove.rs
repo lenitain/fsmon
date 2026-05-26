@@ -8,6 +8,12 @@ pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
 
+    // Resolve relative paths to absolute (shared helper)
+    let paths: Vec<PathBuf> = paths
+        .into_iter()
+        .map(|p| super::resolve_path_arg(&p))
+        .collect();
+
     let mut store = Monitored::load(&cfg.monitored.path)?;
 
     // CMD is required. Use '_global' for global monitoring.
@@ -24,6 +30,7 @@ pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
             if !store.remove_cmd_group(Some(cmd_str)) {
                 bail!("Cmd group '{}' not found", cmd_str);
             }
+            eprintln!("Entry removed: [{}]", cmd_str);
         }
         // fsmon remove bash --path /a --path /b → remove from that cmd group
         ps => {
@@ -37,6 +44,7 @@ pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
             for p in ps {
                 if store.remove_entry(p, Some(cmd_str)) {
                     removed_any = true;
+                    eprintln!("Entry removed: {}", p.display());
                 }
             }
             if !removed_any {
@@ -46,7 +54,6 @@ pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
     }
 
     store.save(&cfg.monitored.path)?;
-    eprintln!("Entry removed");
 
     // Try live update via socket (non-fatal if fails)
     let socket_path = cfg.socket.path.clone();
@@ -60,6 +67,7 @@ pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
                 types: None,
                 size: None,
                 track_cmd: Some(cmd_str.to_string()),
+                local_time: None,
             },
         )
         .is_err()

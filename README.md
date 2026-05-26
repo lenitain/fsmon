@@ -4,7 +4,7 @@
 
 <h3 align="center">Real-time Linux filesystem change monitoring with process attribution.</h3>
 
-🌍 **Select Language | 选择语言**
+🌍 **选择语言 | Language**
 - [English](./README.md)
 - [简体中文](./README.zh-CN.md)
 
@@ -198,15 +198,32 @@ Start the fsmon daemon — requires `sudo` for fanotify.
 sudo fsmon daemon                             # Start daemon in foreground
 sudo fsmon daemon &                           # Start daemon in background
 sudo fsmon daemon --debug                     # Enable debug output (event matching + cache stats)
-sudo fsmon daemon --channel-capacity N        # Event channel capacity (default: unbounded)
 sudo fsmon daemon --disk-min-free 10%         # Warn when disk space drops below threshold
-sudo fsmon daemon --cache-dir-cap N           # Directory handle cache capacity (default: 100000)
-sudo fsmon daemon --cache-dir-ttl N           # Directory handle cache TTL in seconds (default: 3600)
-sudo fsmon daemon --cache-file-size N         # File size cache capacity (default: 10000)
-sudo fsmon daemon --cache-proc-ttl N          # Process cache TTL in seconds (default: 600)
-sudo fsmon daemon --cache-stats-interval N    # Cache stats log interval in debug mode (default: 60, 0=off)
-sudo fsmon daemon --buffer-size N             # Fanotify read buffer in bytes (default: 32768)
+sudo fsmon daemon --sync-interval 5           # fdatasync log files every 5s
+sudo fsmon daemon --metrics-listen 127.0.0.1:9845  # With Prometheus endpoint
+sudo fsmon daemon --local-time                # Use local timezone in timestamps
+sudo fsmon daemon --buffer-size 65536         # Fanotify read buffer (default: 32768)
+sudo fsmon daemon --channel-capacity 1024     # Event channel bound (default: unbounded)
+sudo fsmon daemon --subscribe-buf 8192        # Subscribe broadcast buffer (default: 4096)
+sudo fsmon daemon --cache-dir-cap 200000      # Dir handle cache capacity (default: 100000)
+sudo fsmon daemon --cache-dir-ttl 7200        # Dir handle cache TTL (default: 3600secs)
+sudo fsmon daemon --cache-file-size 20000     # File size cache capacity (default: 10000)
+sudo fsmon daemon --cache-proc-ttl 1200       # Process cache TTL (default: 600secs)
+sudo fsmon daemon --cache-stats-interval 0    # Disable periodic cache stats (default: 60secs)
 ```
+
+**Output modes:**
+
+| Mode | Protocol | Default | Purpose |
+|------|----------|---------|---------|
+| File | JSONL to `~/.local/state/fsmon/` | ✅ on (config-only) | Persistent storage, query/clean tools |
+| Push | Unix socket subscribe (JSONL stream) | ✅ always available | Real-time: Kafka, S3, webhook, Elasticsearch |
+| Pull | Socket `metrics` command (Prometheus text) | ✅ always available | Monitoring: Prometheus, Grafana |
+| Pull TCP | HTTP `/metrics` endpoint | ❌ opt-in via `--metrics-listen` | Direct Prometheus scrape |
+
+Configure file output via `[logging].path` in config (enabled by default).
+
+See `extensions/` for example scripts organized by data exit point.
 
 ### add
 
@@ -252,6 +269,25 @@ fsmon monitored  # Show all monitored path groups
 ```
 
 Each line is a JSON object with `cmd` and `paths` fields. Pipe to `jq` for filtering.
+
+### changes
+
+Show the most recent event per path — a deduplicated summary. Same filters as `query`,
+but only the latest event for each unique path is shown, sorted by time descending.
+
+```
+fsmon changes _global -t '>1h'          # What changed in the last hour?
+fsmon changes _global -t '>2026-05-01'    # Since a specific date
+fsmon changes _global --path /var/www     # Filter by path prefix
+```
+
+### health
+
+Query daemon health status from the running daemon via Unix socket.
+
+```
+fsmon health
+```
 
 ### query
 
@@ -312,8 +348,9 @@ find ~/.local/state/fsmon/ -name '*.jsonl' -mtime +30 -delete
 
 ### init
 
-Initialize fsmon data directories. Creates log dir and monitored data dir.
-Does NOT write a config file — `fsmon init` creates a fully-commented reference config; defaults apply without modifications.
+Create the config file at `~/.config/fsmon/fsmon.toml` with all settings commented
+(defaults apply). Does NOT create log or monitored directories — those are created
+on first use by `fsmon add` (monitored) and `fsmon daemon` / `fsmon cd` (logs).
 
 ```
 fsmon init
@@ -321,79 +358,59 @@ fsmon init
 
 ### cd
 
-Open a subshell in the log directory. Type `exit` to return:
+Open a subshell in the monitored store or log directory.
 
 ```
-fsmon cd
-ls _global_log.jsonl
+fsmon cd -l    # Open subshell in log directory (~/.local/state/fsmon)
+fsmon cd -m    # Open subshell in monitored store directory (~/.local/share/fsmon)
 ```
+
+Type `exit` to return to the original directory.
 
 ## Configuration
 
-Config file is optional — `fsmon init` creates a fully-commented reference config; defaults apply without modifications.
+Config file is optional — `fsmon init` creates a reference config; defaults apply without modifications. The generated config has `[logging]` active (file output on).
 
 ```toml
-# fsmon configuration file
-#
-# Infrastructure paths for fsmon. Monitored paths are added via
-# 'fsmon add' / 'fsmon remove' and persisted in [monitored].path.
-# All paths support ~ expansion. <UID> is replaced with the numeric UID at runtime.
+# ~/.config/fsmon/fsmon.toml
 
 [monitored]
-# Path to the auto-monitored monitored paths database.
 path = "~/.local/share/fsmon/monitored.jsonl"
 
 [logging]
-# Path to the event log directory (per-cmd *_log.jsonl files).
+#   File output is on by default (remove this section to disable).
 path = "~/.local/state/fsmon"
-# Defaults for 'fsmon clean' (no auto-clean; use cron/timer).
 keep_days = 30
 size = ">=1GB"
+disk_min_free = "10%"           # Warn when free space drops below threshold
+sync_interval_secs = 5          # fdatasync every N secs (0 or omit = disabled)
+local_time = false              # Use local timezone in timestamps
 
 [socket]
-# Unix socket path for daemon-CLI live communication.
 path = "/tmp/fsmon-<UID>.sock"
 
 [cache]
-# Directory handle cache capacity (default: 100000, ~15-20MB).
-# Each entry maps a kernel file handle to a directory path.
-# Lower on memory-constrained systems; raise when monitoring
-# large directory trees (>100k dirs) to reduce handle re-resolution.
 dir_capacity = 100000
-
-# Directory handle cache TTL in seconds (default: 3600 = 1 hour).
-# Shorter TTL frees memory faster for volatile directory structures;
-# longer TTL reduces handle re-resolution for stable directories.
 dir_ttl_secs = 3600
-
-# File size cache capacity (default: 10000, ~1MB).
-# Avoids stat() calls for files with known sizes.
-# Raise for high-file-volume workloads (git checkout, npm install).
 file_size_capacity = 10000
-
-# Process cache TTL in seconds (default: 600 = 10 minutes).
-# Applies to both process info cache (PID→cmd/user/ppid/tgid) and
-# process tree cache (PID→parent for ancestor chain tracking).
-# Shorter TTL cleans up zombie process entries faster;
-# longer TTL reduces /proc reads for long-lived processes.
 proc_ttl_secs = 600
-
-# Cache stats log interval in seconds in debug mode (default: 60).
-# Set to 0 to disable periodic cache stats output.
 stats_interval_secs = 60
+buffer_size = 32768             # Fanotify read buffer (min 4096, max 1048576)
+channel_capacity = 1024         # Event channel bound (omit = unbounded)
+subscribe_buf = 4096            # Broadcast buffer for subscribe consumers
+
+[metrics]
+listen = "127.0.0.1:9845"       # TCP HTTP /metrics (omit/comment-out = disabled)
 ```
 
 ### Override priority
 ```
-CLI arguments (--channel-capacity, --disk-min-free, --cache-dir-cap, --cache-dir-ttl, --cache-file-size, --cache-proc-ttl, --cache-stats-interval, --buffer-size)
-    > fsmon.toml [cache] section
-        > code defaults
+CLI args > fsmon.toml > code defaults
 ```
 
 CLI flags override both config file and defaults:
 ```bash
-# Override dir_cache capacity and fanotify buffer size at startup
-sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536 &
+sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536 --metrics-listen 127.0.0.1:9845
 ```
 
 ## Event Types
@@ -477,22 +494,74 @@ src/
 │       ├── monitored.rs         # CLI monitored:  # JSONL output
 │       ├── query.rs             # CLI query: time filter, execute query
 │       ├── clean.rs             # CLI clean: parser delegation
+│       ├── changes.rs           # CLI changes: deduplicated per-path event summary
+│       ├── health.rs            # CLI health: daemon status query
 │       └── init_cd.rs           # CLI init, cd
 │
-├── lib.rs              # FileEvent, EventType,  # DaemonLock (flock singleton)
+├── lib.rs              # FileEvent, EventType, DaemonLock (flock singleton)
 ├── clean.rs            # Log cleanup engine: time/size trim, tail-offset
-├── config.rs           # TOML config,  # SUDO_UID home resolution
+├── config.rs           # TOML config, SUDO_UID home resolution
+├── metrics.rs          # Prometheus metrics registry (AtomicU64 counters)
 ├── monitored.rs        # Monitored paths database (JSONL store)
-├── monitor.rs          # Fanotify loop, socket handler, add/remove/events
+├── monitor/            # Fanotify event loop (split into 9 submodules)
+│   ├── mod.rs          #   Monitor struct + main event loop
+│   ├── channel.rs      #   EventSender / EventReceiver types
+│   ├── events.rs       #   Event batch processing, matching, building
+│   ├── file_writer.rs  #   FileLogWriter task (broadcast subscriber)
+│   ├── filtering.rs    #   Path scope checks, output filtering
+│   ├── live_path.rs    #   Dynamic add/remove, inotify pending paths
+│   ├── reader.rs       #   Fanotify fd reader task + restart logic
+│   └── socket_handler.rs # Subscribe handler, subscriber task, health
 ├── fid_parser.rs       # FID event parsing, two-pass path recovery
 ├── filters.rs          # PathOptions, event/size filters, path matching
-├── dir_cache.rs        # Directory handle cache (DashMap + HandleKey)
-├── proc_cache.rs       # hNetlink proc connector:  # Fork/Exec/Exit, build_chain
+├── dir_cache.rs        # Directory handle cache (moka + HandleKey)
+├── proc_cache.rs       # Netlink proc connector: Fork/Exec/Exit, build_chain
 ├── query.rs            # Binary-search log query on sorted JSONL
 ├── socket.rs           # Unix socket protocol (TOML req/resp)
 ├── utils.rs            # Size/time parsing, process info lookup, chown
 └── help.rs             # Help text constants
 ```
+
+## Integrations (`extensions/`)
+
+**All extension scripts are examples — not production-ready. Adapt before deploying.**
+
+See `extensions/README.md` for the full directory structure and quick navigation.
+
+### ① JSONL Log Files — `extensions/jsonl-logs/`
+
+| Script | Target consumer |
+|--------|----------------|
+| `fsmon-log-tail.py` | grep, aggregate, replay on-disk JSONL files |
+
+### ② Subscribe Stream — `extensions/subscribe-stream/`
+
+| Script | Target consumer |
+|--------|----------------|
+| `fsmon-subscribe-demo.py` | Terminal preview |
+| `fsmon-webhook.py` | HTTP webhook (Slack, Discord, custom server) |
+| `fsmon-kafka.py` | Kafka topic |
+| `fsmon-to-s3.py` | S3 / MinIO batch archive |
+| `fsmon-to-es.py` | Elasticsearch + Kibana |
+| `fsmon-to-influxdb.py` | InfluxDB / Telegraf |
+| `fsmon-custom-format.py` | CSV, TSV, syslog, Loki/Grafana, JSON |
+
+### ③ Socket Admin — `extensions/socket-admin/`
+
+| Script | Target consumer |
+|--------|----------------|
+| `fsmon-admin.py` | Programmatic add/remove/list/health |
+
+### ④ HTTP Metrics — `extensions/http-metrics/`
+
+| File | Target consumer |
+|------|----------------|
+| `fsmon-metrics.py` | Cron, systemd timer, Telegraf exec, Nagios check, manual pull |
+| `prometheus.yml` | Prometheus scrape config + 4 alerting rules |
+| `fsmon-grafana.json` | Grafana dashboard (import JSON, 8 panels) |
+| — | VictoriaMetrics, Thanos, Alertmanager, Grafana Agent, OpenTelemetry Collector |
+
+All Prometheus-compatible systems can scrape the TCP `/metrics` endpoint directly.
 
 ## License
 

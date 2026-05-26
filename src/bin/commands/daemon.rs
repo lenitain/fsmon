@@ -13,6 +13,8 @@ pub async fn cmd_daemon(
     cli_cache: CliCacheOverride,
     disk_min_free: Option<String>,
     sync_interval: Option<u64>,
+    local_time: bool,
+    metrics_listen: Option<String>,
 ) -> Result<()> {
     // Acquire singleton lock first — only one daemon instance allowed
     let (uid, _gid) = fsmon::config::resolve_uid_gid();
@@ -26,8 +28,25 @@ pub async fn cmd_daemon(
         "  Monitored path database:  {}",
         cfg.monitored.path.display()
     );
-    eprintln!("  Event logs:     {}", cfg.logging.path.display());
+    // Log path comes purely from config
+    let log_path = cfg.logging.path.clone();
+    if let Some(ref p) = log_path {
+        eprintln!("  Event logs:     {}", p.display());
+    } else {
+        eprintln!("  Event logs:     disabled (path not configured)");
+    }
     eprintln!("  Command socket: {}", cfg.socket.path.display());
+
+    // Merge metrics_listen: CLI > config > disabled
+    let metrics_listen = metrics_listen
+        .or_else(|| cfg.metrics.as_ref().and_then(|m| m.listen.clone()));
+    if let Some(ref addr) = metrics_listen {
+        if !addr.is_empty() {
+            eprintln!("  Metrics TCP:    http://{}/metrics", addr);
+        }
+    } else {
+        eprintln!("  Metrics TCP:    disabled");
+    }
 
     let store = Monitored::load(&cfg.monitored.path)?;
 
@@ -66,6 +85,7 @@ pub async fn cmd_daemon(
                 proc_ttl_secs: None,
                 stats_interval_secs: None,
                 channel_capacity: None,
+                subscribe_buf: None,
             };
             empty.resolve_with_cli(&cli_cache)
         });
@@ -105,9 +125,14 @@ pub async fn cmd_daemon(
     }
 
     let store_path = cfg.monitored.path.clone();
+    let subscribe_buf = cache_cfg.subscribe_buf;
+    let log_dir = log_path;
+    if debug {
+        eprintln!("[DEBUG]   local logging:      {}", if log_dir.is_some() { "enabled" } else { "disabled" });
+    }
     let mut monitor = Monitor::new(
         paths_and_options,
-        Some(cfg.logging.path.clone()),
+        log_dir,
         Some(store_path),
         Some(cache_cfg.buffer_size),
         Some(socket_listener),
@@ -115,6 +140,9 @@ pub async fn cmd_daemon(
         Some(cache_cfg),
         disk_min_free,
         sync_interval,
+        Some(subscribe_buf),
+        local_time || cfg.logging.local_time.unwrap_or(false),
+        metrics_listen.filter(|a| !a.is_empty()),
     )?;
 
     if !store.is_empty() {

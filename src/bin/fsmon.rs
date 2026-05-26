@@ -61,6 +61,13 @@ pub enum Commands {
         #[arg(long, value_name = "N")]
         channel_capacity: Option<usize>,
 
+        /// Subscribe event stream buffer capacity (default: 4096).
+        /// Number of events the broadcast channel can buffer for slow
+        /// subscribers before dropping oldest. Raise for high-throughput
+        /// workloads with many concurrent subscribers.
+        #[arg(long, value_name = "N")]
+        subscribe_buf: Option<usize>,
+
         /// Minimum free disk space before warning (e.g. "10%", "5GB").
         /// Default: no check. Only applies to the log directory filesystem.
         #[arg(long, value_name = "THRESHOLD")]
@@ -72,6 +79,18 @@ pub enum Commands {
         /// ~10-50ms disk I/O per interval. Recommended: 5.
         #[arg(long, value_name = "SECS")]
         sync_interval: Option<u64>,
+
+        /// Use local time instead of UTC in event timestamps.
+        /// When set, timestamps show local timezone offset (e.g. +08:00)
+        /// instead of Z suffix.
+        #[arg(long)]
+        local_time: bool,
+
+        /// TCP address for Prometheus HTTP /metrics endpoint.
+        /// e.g. "127.0.0.1:9845". Omit to disable TCP (socket metrics
+        /// command remains available). Takes precedence over config.
+        #[arg(long, value_name = "ADDRESS")]
+        metrics_listen: Option<String>,
     },
 
     /// Add a path to the monitoring list
@@ -81,10 +100,10 @@ pub enum Commands {
     /// Remove one or more paths from the monitoring list
     #[command(about = help::about(HelpTopic::Remove), long_about = help::long_about(HelpTopic::Remove))]
     Remove {
-        /// Process name scope (positional). Without --path, removes the entire cmd group.
+        /// Cmd group to remove (positional). Use '_global' for global monitoring.
         #[arg(value_name = "CMD")]
         cmd: Option<String>,
-        /// Path(s) to remove from the cmd group (repeatable). Without cmd, operates on the null group.
+        /// Path(s) to remove from the cmd group (repeatable).
         #[arg(long, value_name = "PATH")]
         path: Vec<PathBuf>,
     },
@@ -114,9 +133,16 @@ pub enum Commands {
         service: bool,
     },
 
-    /// Print the log directory path
+    /// Open a subshell in the monitored path or log directory
     #[command(about = help::about(HelpTopic::Cd), long_about = help::long_about(HelpTopic::Cd))]
-    Cd,
+    Cd {
+        /// cd to the monitored store directory
+        #[arg(short = 'm', long, conflicts_with = "logging", required_unless_present = "logging")]
+        monitored: bool,
+        /// cd to the log directory (same as old `fsmon cd`)
+        #[arg(short = 'l', long, conflicts_with = "monitored", required_unless_present = "monitored")]
+        logging: bool,
+    },
 
     /// Query daemon health status from the running daemon
     #[command(about = "Query daemon health status")]
@@ -129,7 +155,7 @@ pub enum Commands {
 
 #[derive(Parser)]
 pub struct AddArgs {
-    /// Process name to track (process tree + ancestry chain). Positional argument.
+    /// Process name to track (positional). Use '_global' for global monitoring.
     #[arg(value_name = "CMD")]
     pub cmd: Option<String>,
 
@@ -152,7 +178,7 @@ pub struct AddArgs {
 
 #[derive(Parser)]
 pub struct QueryArgs {
-    /// Cmd group to query (positional). Omit to query all cmd groups.
+    /// Cmd group to query (positional). Use '_global' for global events.
     #[arg(value_name = "CMD")]
     pub cmd: Option<String>,
     /// Path prefix filter(s) applied to event.path. Repeatable.
@@ -165,7 +191,7 @@ pub struct QueryArgs {
 
 #[derive(Parser)]
 pub struct ChangesArgs {
-    /// Cmd group to query (positional). Omit to query all cmd groups.
+    /// Cmd group to query (positional). Use '_global' for global events.
     #[arg(value_name = "CMD")]
     pub cmd: Option<String>,
     /// Path prefix filter(s) applied to event.path. Repeatable.
@@ -1022,8 +1048,10 @@ mod tests {
             use std::io::Write;
             let log_dir = {
                 let mut cfg = fsmon::config::Config::load().unwrap();
+                // Set log path explicitly for test (default is None now)
+                cfg.logging.path = Some(std::path::PathBuf::from("~/.local/state/fsmon"));
                 cfg.resolve_paths().unwrap();
-                cfg.logging.path
+                cfg.logging.path.unwrap()
             };
             fs::create_dir_all(&log_dir).unwrap();
             let log_path = log_dir.join(fsmon::utils::cmd_to_log_name("_global"));
@@ -1058,5 +1086,43 @@ mod tests {
 
             let _ = fs::remove_dir_all(home);
         });
+    }
+
+    // ---- Cd CLI parsing ----
+
+    #[test]
+    fn test_cd_logging() {
+        let cli = Cli::try_parse_from(["fsmon", "cd", "-l"]).unwrap();
+        match cli.command {
+            Commands::Cd { monitored, logging } => {
+                assert!(!monitored);
+                assert!(logging);
+            }
+            _ => panic!("expected Cd"),
+        };
+    }
+
+    #[test]
+    fn test_cd_monitored() {
+        let cli = Cli::try_parse_from(["fsmon", "cd", "-m"]).unwrap();
+        match cli.command {
+            Commands::Cd { monitored, logging } => {
+                assert!(monitored);
+                assert!(!logging);
+            }
+            _ => panic!("expected Cd"),
+        };
+    }
+
+    #[test]
+    fn test_cd_no_args_error() {
+        let result = Cli::try_parse_from(["fsmon", "cd"]);
+        assert!(result.is_err(), "cd with no args should error");
+    }
+
+    #[test]
+    fn test_cd_both_args_error() {
+        let result = Cli::try_parse_from(["fsmon", "cd", "-m", "-l"]);
+        assert!(result.is_err(), "cd with both -m and -l should error");
     }
 }

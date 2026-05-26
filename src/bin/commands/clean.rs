@@ -41,7 +41,7 @@ pub async fn cmd_clean(args: CleanArgs) -> Result<()> {
         .transpose()?;
 
     clean_logs(
-        &cfg.logging.path,
+        &cfg.logging.path.clone().unwrap_or_default(),
         cmd,
         Some(time_filter),
         max_size_filter,

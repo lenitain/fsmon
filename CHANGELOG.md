@@ -5,6 +5,165 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-29
+
+### Added
+
+- **`fsmon cd` flags**: `-m`/`--monitored` and `-l`/`--logging` flags to
+  cd directly to the monitored store or logging directory. `-m` auto-creates
+  the monitored directory and an empty store on first use.
+- **Unified broadcast event stream**: all events flow through a single
+  `tokio::sync::broadcast` channel inside the daemon. File writing, subscribe,
+  and metrics all consume from the same stream — no duplicated work, consistent
+  ordering, zero-copy cloning.
+- **Subscribe protocol** (`cmd = "subscribe"`): real-time event streaming over the
+  Unix socket. Subscribers receive JSONL events as they happen. Supports per-connection
+  filters (`track_cmd`, `types`, `local_time`). See `extensions/subscribe-stream/`.
+- **Prometheus metrics endpoint**: dual-transport design — always available via Unix
+  socket (`cmd = "metrics"`), plus an optional TCP HTTP listener
+  (`--metrics-listen 127.0.0.1:9845`). Returns standard Prometheus text format.
+  Counters: `fsmon_events_total{event_type,cmd}`. Gauges: `fsmon_subscribers`,
+  `fsmon_monitored_paths`, `fsmon_reader_groups`, `fsmon_pending_paths`,
+  `fsmon_disk_buffer_events`. Configurable via `--subscribe-buf` (default 4096).
+- **Local time support**: `--local-time` CLI flag and `logging.local_time` config
+  option. When enabled, all timestamps in JSONL output use local timezone offset
+  (e.g. `+08:00`) instead of UTC `Z`. Per-subscriber override via subscribe command.
+  Field order is preserved identically to UTC mode.
+- **Integration examples** (`extensions/`): 10 Python scripts organized by the
+  4 data exit points, all with detailed quick-start / wire-protocol / bridge-to
+  documentation:
+  - `jsonl-logs/fsmon-log-tail.py` — tail, grep, aggregate on-disk JSONL files
+  - `subscribe-stream/fsmon-subscribe-demo.py` — minimal subscribe consumer
+  - `subscribe-stream/fsmon-webhook.py` — HTTP webhook bridge (Slack, Discord, etc.)
+  - `subscribe-stream/fsmon-kafka.py` — Apache Kafka producer
+  - `subscribe-stream/fsmon-to-es.py` — Elasticsearch bulk indexing
+  - `subscribe-stream/fsmon-to-influxdb.py` — InfluxDB line protocol
+  - `subscribe-stream/fsmon-to-s3.py` — S3 batch archiver
+  - `subscribe-stream/fsmon-custom-format.py` — CSV, TSV, syslog, Loki, JSON output
+  - `socket-admin/fsmon-admin.py` — programmatic add/remove/list/health
+  - `http-metrics/fsmon-metrics.py` — pull metrics via socket
+  - `http-metrics/prometheus.yml` — Prometheus scrape config + 4 alerting rules
+  - `http-metrics/fsmon-grafana.json` — Grafana dashboard (8 panels)
+- **Atomic metrics counters**: `MetricsRegistry` with lock-free `AtomicU64` counters
+  and labeled `CounterVec` — zero overhead on the hot path.
+- **Subscribe protocol integration tests**: end-to-end wire format test with TOML
+  command parsing, JSONL event streaming, and cmd/type filter verification.
+- **TCP /metrics integration tests**: HTTP 200, Content-Type, Connection: close,
+  Content-Length matching, empty registry, and labeled counter output.
+- **TESTING.md**: manual test procedures for all output channels.
+
+### Changed
+
+- **FileLogWriter decoupled**: log writing moved from `process_event_batch` hot path
+  to a standalone `FileLogWriter` task. It subscribes to the broadcast stream
+  just like any other consumer — file I/O no longer blocks event processing.
+- **File logging on by default**: the default `[logging].path` is
+  `~/.local/state/fsmon`. Set to `""` (empty) or remove the `[logging]` section to disable.
+  Log path is config-only; no CLI flag to toggle.
+- **`--log-path` removed**: log path is now config-only (`logging.path` in fsmon.toml).
+  Removed from all CLI flags, help text, and documentation.
+- **Generated config restructured**: `fsmon init` output has three active sections —
+  `[monitored]`, `[logging]`, `[socket]` — with CLI availability annotations.
+- **Monitor module split**: `monitor.rs` (3153 lines) decomposed into 9 focused
+  submodules: `channel`, `events`, `file_writer`, `filtering`, `live_path`,
+  `reader`, `socket_handler`, `tests`, `mod`. Each ~100–400 lines.
+- **`src/help/` removed**: inline `changes.md` help text, removing the separate
+  help module directory.
+- **Internationalization cleanup**: all Chinese text removed from source code,
+  comments, and docs (except `README.zh-CN.md`). Codebase is now English-only.
+- **Extensions reorganized**: moved from flat `extensions/*.py` to 4 subdirectories
+  matching the 4 data exit points. All scripts updated with path references,
+  enriched docstrings, and consistent `EXAMPLE ONLY` disclaimer.
+- **to_jsonl_string_local**: preserves exact struct field order (same as UTC mode),
+  only replacing the timestamp value inline.
+- **Deferred event publish**: `process_event_batch` no longer sends events
+  directly to the broadcast channel. It returns `Vec<PendingEvent>`, and the
+  event loop handles the two-phase drain→build→drain→patch→publish pipeline.
+  This closes the race window between fanotify and proc connector events
+  without locks, sleeping, or callback indirection.
+
+### Fixed
+
+- **`fsmon cd` fallback**: when `path` is `None`, falls back to
+  `~/.local/state/fsmon` instead of panicking.
+- **`fsmon add` directory creation**: only `fsmon add` auto-creates the
+  monitored store directory; `fsmon init` never creates log directories.
+- **Config template**: added missing `local_time` field to the default
+  commented configuration template.
+- **Stale `--log-path` references**: purged from all code, docs, help text,
+  and README.
+- **Process attribution regression**: snapshot-produced `start_time_ns` was
+  hardcoded to `0`, causing the PID reuse check to reject ALL pre-existing
+  process cache entries as "reused" — every event from those processes fell
+  through to the `/proc` fallback, and for short-lived processes (`rm`,
+  `touch`) that had already exited, the fallback also failed, resulting in
+  `cmd="unknown"` / `user="unknown"` across all events. Fixed by reading the
+  real `start_time_ns` from `/proc/{pid}/stat` during the snapshot.
+- **Race between fanotify and proc connector**: fanotify DELETE events and
+  proc connector Exec events arrive through independent kernel subsystems
+  with no ordering guarantee. A short-lived process's fanotify event could
+  be processed before its Exec event populated the caches. Fixed with a
+  **two-phase publish pipeline**: build events → drain proc events a second
+  time (typically ~200ns, almost always `WouldBlock`) → resolve any
+  remaining `unknown` fields from now-populated caches → publish to broadcast.
+  This eliminates the race at the architecture level rather than patching
+  events after they're emitted.
+- **Monitored directory deletion recovery**: When a monitored directory is
+  deleted (`rm -rf`) and later recreated (`mkdir`), the daemon now detects
+  both transitions and re-establishes monitoring on the new inode.
+  inotify `DELETE_SELF` is the primary trigger (fanotify `FAN_DELETE_SELF`
+  is unreliable in FID mode). After deletion, a temporary fanotify inode
+  mark is placed on the nearest existing ancestor directory to capture events
+  during the recreate window. `check_pending()` retries path re-monitoring
+  when the directory reappears. Steady-state overhead is zero (fast-path
+  returns immediately when nothing is pending).
+- **Recursive monitoring post-startup gap**: new subdirectories created under
+  recursively-monitored paths after daemon startup are now detected via
+  inotify and automatically get fanotify inode marks. Previously only
+  subdirectories existing at startup were monitored.
+- **`rm -rf` recursive delete event preservation**: child file events are no
+  longer lost during recursive directory removal. Handle propagation across
+  event batches resolves paths from sibling subdirectory deletions.
+- **`(deleted)` suffix stripping**: paths resolved via `resolve_file_handle`
+  with trailing ` (deleted)` marker now have the suffix stripped from *all*
+  path components, fixing display for deeply nested deleted paths.
+- **Fanotify edge-triggered epoll draining**: reader tasks drain all queued
+  events per edge notification using `retain_ready()`, preventing event loss
+  when multiple events arrive between epoll wakeups.
+- **`remove_path` PathOptions ordering**: `PathOptions` are now saved *before*
+  the `retain` call in `remove_path`, ensuring correct fanotify mark teardown
+  even when the same path has entries across multiple cmd groups.
+- **`fsmon add/remove` path resolution**: relative paths now resolve to
+  absolute before storage in the monitored database.
+- **`fsmon cd -m`**: always goes to the store directory root, not the first
+  monitored path. Auto-creates directory + empty store on first use.
+- **`check_pending` fast path**: when no paths are pending and no temporary
+  marks exist, the function returns immediately (2 `is_empty()` checks)
+  instead of re-adding all inotify watches (N syscalls).
+
+### Removed
+
+- **Watchdog filesystem mark**: removed the lightweight `FAN_DELETE |
+  FAN_MOVED_FROM` filesystem mark that was added alongside every inode mark
+  as a fallback for deletion detection. The inotify `DELETE_SELF` mechanism
+  is now the sole and reliable primary detector. This simplifies `add_mark`
+  from ~80 lines of directory-tree-walking fs mark fallback logic to ~20
+  lines of inode mark only, and removes the `FsGroup.is_fs_mark` field and
+  all associated branching in 7 call sites.
+
+### Architecture
+
+The 0.4.0 daemon exposes **4 data exit points**, all consuming from a single
+broadcast event stream:
+
+```
+fanotify → event_stream_tx (broadcast)
+              ├── FileLogWriter  → JSONL disk files       (exit ①)
+              ├── subscribe      → Unix socket stream      (exit ②)
+              ├── socket admin   → add/remove/list/health  (exit ③)
+              └── metrics        → Prometheus text         (exit ④)
+```
+
 ## [0.3.4] - 2026-05-26
 
 ### Added

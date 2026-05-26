@@ -8,6 +8,7 @@ use fanotify_fid::consts::{
     FAN_MOVED_FROM, FAN_MOVED_TO, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC,
 };
 use fanotify_fid::handle::resolve_file_handle;
+use libc;
 use fanotify_fid::prelude::*;
 use fanotify_fid::types::{FidEvent, HandleKey};
 use std::ffi::CString;
@@ -33,7 +34,6 @@ impl AsRawFd for FanFd {
 /// One fanotify fd + one directory fd per filesystem, shared by all paths on it.
 pub struct FsGroup {
     pub dev_id: u64,
-    pub is_fs_mark: bool,
     pub fan_fd: OwnedFd,
     pub mount_fd: OwnedFd,
     pub ref_count: usize,
@@ -95,6 +95,25 @@ pub fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
         .collect()
 }
 
+/// Strip the " (deleted)" suffix that the kernel appends to paths resolved
+/// via `open_by_handle_at` + `readlink(/proc/self/fd/N)` for deleted-but-
+/// not-yet-reclaimed files and directories.
+///
+/// When a file inside a deleted directory is resolved, the kernel appends
+/// " (deleted)" to the intermediate directory component (e.g.
+/// `/dir (deleted)/file.txt`), not just at the end.  Strip every occurrence.
+pub(crate) fn strip_deleted_suffix(path: &Path) -> PathBuf {
+    if path.as_os_str().is_empty() {
+        return PathBuf::new();
+    }
+    let clean = path.to_string_lossy();
+    // Replace ALL occurrences, not just the trailing one.
+    // The kernel convention uses " (deleted)" exclusively for disconnected
+    // dentries, so a real file-system name never contains this pattern.
+    let cleaned = clean.replace(" (deleted)", "");
+    PathBuf::from(cleaned)
+}
+
 /// Read and parse FID events, using a moka cache for path recovery.
 ///
 /// # Design
@@ -136,8 +155,20 @@ pub fn read_fid_events_cached(
     // Phase 0: raw read + parse (fanotify-fid resolves paths via open_by_handle_at)
     let mut events = match fanotify_fid::read::read_fid_events(fan_fd, mount_fds, buf, None) {
         Ok(e) => e,
-        Err(_) => return vec![],
+        Err(FanotifyError::Read(code)) if code == libc::EAGAIN => {
+            // Non-blocking fd, no events available — normal.
+            return vec![];
+        }
+        Err(err) => {
+            eprintln!("[WARNING] fanotify read error on fd {}: {err}", fan_fd.as_raw_fd());
+            return vec![];
+        }
     };
+
+    // ---- Phase 0.5: strip " (deleted)" from Phase 0 resolved paths ----
+    for ev in events.iter_mut() {
+        ev.path = strip_deleted_suffix(&ev.path);
+    }
 
     // ---- Phase 1: seed local handle_map from resolved events ----
     // Collect all handle→path knowledge from events whose paths resolved
@@ -190,10 +221,17 @@ pub fn read_fid_events_cached(
                     .or_else(|| resolve_file_handle(mount_fds, key.as_slice()));
 
                 if let Some(ref dp) = dir_path {
-                    ev.path = if filename.is_empty() {
-                        dp.clone()
+                    // Strip " (deleted)" suffix from resolve_file_handle paths
+                    let clean = dp.to_string_lossy();
+                    let parent = if let Some(stripped) = clean.strip_suffix(" (deleted)") {
+                        PathBuf::from(stripped)
                     } else {
-                        dp.join(filename)
+                        dp.clone()
+                    };
+                    ev.path = if filename.is_empty() {
+                        parent
+                    } else {
+                        parent.join(filename)
                     };
                     // Newly resolved → extract its handles for other events
                     if let Some(ref sk) = ev.self_handle {
@@ -207,13 +245,28 @@ pub fn read_fid_events_cached(
             if ev.path.as_os_str().is_empty()
                 && let Some(ref key) = ev.self_handle
             {
-                // Check same three-tier chain
+                // Check same three-tier chain (add resolve_file_handle as
+                // third tier — same as dfid_name path, but for events
+                // without a parent reference, e.g. DELETE_SELF on dirs).
                 if let Some(path) = handle_map
                     .get(key)
                     .cloned()
                     .or_else(|| dir_cache.get(key))
+                    .or_else(|| resolve_file_handle(mount_fds, key.as_slice()).map(|p| {
+                        let clean = p.to_string_lossy();
+                        if let Some(stripped) = clean.strip_suffix(" (deleted)") {
+                            PathBuf::from(stripped)
+                        } else {
+                            p
+                        }
+                    }))
                 {
                     ev.path = path;
+                    // Newly resolved → seed handle_map so child events can
+                    // find this directory via their dfid_name_handle
+                    if let Some(ref sk) = ev.self_handle {
+                        handle_map.entry(sk.clone()).or_insert_with(|| ev.path.clone());
+                    }
                     made_progress = true;
                 }
             }
@@ -516,5 +569,51 @@ mod tests {
             assert!(FILE_SIZE_CACHE_CAP > 0, "FILE_SIZE_CACHE_CAP should be > 0");
             assert!(DEFAULT_EVENT_MASK > 0, "DEFAULT_EVENT_MASK should be > 0");
         };
+    }
+
+    // ---- strip_deleted_suffix ----
+
+    #[test]
+    fn test_strip_deleted_suffix_basic() {
+        let p = PathBuf::from("/home/user/dir (deleted)");
+        assert_eq!(
+            strip_deleted_suffix(&p),
+            PathBuf::from("/home/user/dir")
+        );
+    }
+
+    #[test]
+    fn test_strip_deleted_suffix_no_change() {
+        let p = PathBuf::from("/home/user/dir");
+        assert_eq!(strip_deleted_suffix(&p), p);
+    }
+
+    #[test]
+    fn test_strip_deleted_suffix_empty() {
+        let p = PathBuf::new();
+        assert_eq!(strip_deleted_suffix(&p), PathBuf::new());
+    }
+
+    #[test]
+    fn test_strip_deleted_suffix_mid_component() {
+        // " (deleted)" anywhere in the path is stripped.
+        let p = PathBuf::from("/home (deleted)/user/dir");
+        assert_eq!(strip_deleted_suffix(&p), PathBuf::from("/home/user/dir"));
+    }
+
+    #[test]
+    fn test_strip_deleted_suffix_nested_join() {
+        // Parent resolved with (deleted), joined with child filename.
+        let parent = PathBuf::from("/home/user/dir (deleted)");
+        let dirty = parent.join("file.txt");
+        assert_eq!(
+            dirty,
+            PathBuf::from("/home/user/dir (deleted)/file.txt")
+        );
+        // Now strip_deleted_suffix handles embedded occurrences too.
+        assert_eq!(
+            strip_deleted_suffix(&dirty),
+            PathBuf::from("/home/user/dir/file.txt")
+        );
     }
 }

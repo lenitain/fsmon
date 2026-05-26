@@ -16,7 +16,7 @@ pub const fn about(topic: HelpTopic) -> &'static str {
         HelpTopic::Root => "Lightweight high-performance file change tracking tool",
         HelpTopic::Daemon => "Run the fsmon daemon (requires sudo for fanotify)",
         HelpTopic::Init => "Initialize log and monitored data directories",
-        HelpTopic::Cd => "Open a subshell in the log directory",
+        HelpTopic::Cd => "Open a subshell in the monitored path or log directory",
         HelpTopic::Add => "Add a path to the monitoring list",
         HelpTopic::Remove => "Remove one or more paths from the monitoring list",
         HelpTopic::Monitored => "List all monitored paths with their configuration",
@@ -39,13 +39,17 @@ restarting the daemon.
 Usage:
   sudo fsmon daemon &                     Start daemon in background
   sudo fsmon daemon --debug               Enable debug output
-  sudo fsmon daemon --channel-capacity 1024   Event channel cap (default: unbounded)
   sudo fsmon daemon --disk-min-free 10%       Warn when disk < 10% free
+  sudo fsmon daemon --sync-interval 5         fdatasync log files every 5s
+  sudo fsmon daemon --metrics-listen 127.0.0.1:9845  With Prometheus endpoint
+  sudo fsmon daemon --local-time              Use local timezone in timestamps
+  sudo fsmon daemon --buffer-size 65536       Fanotify read buffer
+  sudo fsmon daemon --channel-capacity 1024   Event channel cap (default: unbounded)
+  sudo fsmon daemon --subscribe-buf 8192      Subscribe broadcast buffer
   sudo fsmon daemon --cache-dir-cap 200000    Override dir_cache capacity
-  fsmon add /path                       Monitor all events on /path
-  fsmon add openclaw --path /home -r    Track openclaw on /home (recursive)
-  fsmon monitored                       List monitored paths
-  fsmon query -t '>1h'                  Query events from last hour
+  fsmon add openclaw --path /home -r          Track openclaw on /home (recursive)
+  fsmon monitored                             List monitored paths
+  fsmon query _global -t '>1h'             Events from last hour
 
 For systemd integration:
   sudo fsmon init --service             Install systemd service (auto-start on crash)
@@ -58,12 +62,14 @@ Log dir:          ~/.local/state/fsmon/ (configurable via [logging].path)
 Socket:           /tmp/fsmon-<UID>.sock (configurable via [socket].path)"#
         }
         HelpTopic::Init => {
-            r#"Initialize fsmon data directories (chezmoi-style).
+            r#"Create the config file only (chezmoi-style).
 
 Creates:
-  ~/.local/state/fsmon/     Event log storage
-  ~/.local/share/fsmon/     Monitored paths database
-  ~/.config/fsmon/fsmon.toml  Reference config (all commented, defaults apply)
+  ~/.config/fsmon/fsmon.toml  Reference config (defaults apply without modification)
+
+Directories are created on first use:
+  - Monitored dir: by 'fsmon add' on first run
+  - Log dir: by 'fsmon daemon' or 'fsmon cd -l' on first run
 
 With --service, also installs a systemd service for automatic crash recovery:
   sudo fsmon init --service
@@ -72,14 +78,14 @@ Examples:
   fsmon init"#
         }
         HelpTopic::Cd => {
-            r#"Open a subshell in the log directory.
+            r#"Open a subshell in the monitored path or log directory.
 
-Spawns a new shell (using $SHELL, fallback /bin/sh) inside the
-log directory. Type 'exit' to return to the original directory.
+Spawns a new shell (using $SHELL, fallback /bin/sh).
+Type 'exit' to return to the original directory.
 
 Examples:
-  fsmon cd                       Enter log directory in subshell
-  fsmon cd && ls                 List log files, then exit"#
+  fsmon cd -l                     Enter log directory in subshell
+  fsmon cd -m                     Enter monitored store directory"#
         }
         HelpTopic::Add => {
             r#"Add a path or process to the monitoring list.
@@ -96,7 +102,7 @@ ARGS:
   <CMD>   Process name to track (process tree + ancestry chain).
           Enables process tree tracking: fork/exec children are auto-included.
           When specified, matching events include a `chain` field.
-          Omit to monitor all events on a path (path-only mode).
+          Use '_global' to monitor all events on a path (no process tracking).
 
 Options:
   --path <PATH>           Filesystem path to monitor
@@ -106,11 +112,11 @@ Options:
                           e.g. >1MB, >=500KB, <100MB, =0
 Examples:
   fsmon add openclaw --path /home -r           Track openclaw on /home (recursive)
-  fsmon add nginx                              Track nginx globally (process-only)
-  fsmon add --path /home -r                    Monitor /home recursively (path-only)
-  fsmon add --path /home --types MODIFY --types CREATE  Filter by event types
-  fsmon add --path /home --types all                   All 14 event types
-  fsmon add --path /home -s '>=1MB'                    Minimum file size change"#
+  fsmon add _global --path /home -r            Monitor /home (all processes)
+  fsmon add nginx --path /var/log/nginx        Track nginx on /var/log/nginx
+  fsmon add _global --path /home --types MODIFY --types CREATE  Filter by event types
+  fsmon add _global --path /home --types all                   All 14 event types
+  fsmon add _global --path /home -s '>=1MB'                    Minimum file size change"#
         }
         HelpTopic::Remove => {
             r#"Remove one or more paths from the monitoring list.
@@ -123,16 +129,16 @@ USAGE:
   fsmon remove [CMD] [--path <PATH>...]
 
 ARGS:
-  <CMD>   Cmd group to remove (positional). Omit for null cmd group.
+  <CMD>   Cmd group to remove (positional). Use '_global' for global monitoring.
 
 Options:
   --path <PATH>    Path(s) to remove from the cmd group (repeatable)
 
 Examples:
-  fsmon remove                       Remove all paths from null cmd group
+  fsmon remove _global               Remove entire global cmd group
   fsmon remove openclaw              Remove the entire openclaw cmd group
   fsmon remove openclaw --path /a    Remove /a from openclaw group
-  fsmon remove --path /a --path /b   Remove /a, /b from null cmd group (atomic)"#
+  fsmon remove _global --path /a --path /b  Remove /a, /b from global group (atomic)"#
         }
         HelpTopic::Monitored => {
             r#"List all monitored paths with their configuration.
@@ -152,7 +158,7 @@ USAGE:
   fsmon query [CMD] [OPTIONS]
 
 ARGS:
-  <CMD>   Cmd group to query (positional). Omit to query all cmd groups.
+  <CMD>   Cmd group to query (positional). Use '_global' for global events.
           Log files are named by cmd: `{cmd}_log.jsonl` or `_global_log.jsonl`.
 
 Options:
@@ -169,11 +175,11 @@ Alternatively, query the log files directly with standard Unix tools:
 (Note: native fsmon query uses binary search and is significantly faster on large logs)
 
 Examples:
-  fsmon query                        All events from all cmd groups
+  fsmon query _global                All global events
   fsmon query openclaw               Events from openclaw cmd group
-  fsmon query --path /home           Events under /home (all cmd groups)
+  fsmon query _global --path /home   Global events under /home
   fsmon query nginx --path /var/www  Nginx events under /var/www
-  fsmon query -t '>1h'               Events from last hour"#
+  fsmon query _global -t '>1h'       Events from last hour"#
         }
         HelpTopic::Clean => {
             r#"Clean a log file for a specific cmd group, retain by time or size.
@@ -205,7 +211,32 @@ Examples:
   fsmon clean nginx --dry-run        Preview nginx log cleaning"#
         }
         HelpTopic::Changes => {
-            include_str!("help/changes.md")
+            r#"Show the most recent event per path — a deduplicated summary of file changes.
+
+Output is JSONL (same format as `query`), but with duplicate paths collapsed:
+only the latest event for each unique path is shown, sorted by time descending.
+
+This is the easiest way to answer "what files changed since last deploy?"
+
+USAGE:
+  fsmon changes [CMD] [OPTIONS]
+
+ARGS:
+  <CMD>   Cmd group to query (positional). Use '_global' for global events.
+
+Options:
+  -p, --path        Path prefix filter(s). Repeatable.
+  -t, --time        Time filter with operator (repeatable).
+                    >1h  — events newer than 1 hour ago
+                    <2026-05-01 — events before a date
+                    Combine both for a range: -t '>1h' -t '<now'
+
+Examples:
+  fsmon changes _global                Latest event per path in global log
+  fsmon changes nginx -t '>1h'        Latest nginx file changes in last hour
+  fsmon changes _global -p /etc -t '>24h'  What changed in /etc since yesterday
+  fsmon changes _global -t '>2026-05-25 08:00'  What changed since last deploy
+  fsmon changes _global | wc -l          Count of changed files"#
         }
     }
 }
@@ -214,12 +245,14 @@ pub const fn after_help() -> &'static str {
     r#"Use 'fsmon <COMMAND> --help' for detailed help
 
 Setup (no sudo needed):
-  fsmon init                        Create log, monitored directories and config
+  fsmon init                        Create config file (directories created on first use)
   sudo fsmon init --service         Also install systemd service (auto-start on crash)
-  fsmon cd                          Open subshell in log directory
+  fsmon cd -l                       Open subshell in log directory
+  fsmon cd -m                       Open subshell in monitored store directory
 
 Daemon (requires sudo):
   sudo fsmon daemon &               Start daemon in background
+  sudo fsmon daemon --metrics-listen 127.0.0.1:9845  With Prometheus endpoint
   sudo systemctl start fsmon        Start via systemd (if installed)
   sudo systemctl stop fsmon         Stop via systemd
   journalctl -u fsmon -f           View daemon logs via systemd
@@ -227,23 +260,27 @@ Daemon (requires sudo):
 
 Management (no sudo needed):
   fsmon add openclaw --path /home -r   Track openclaw on /home (recursive)
-  fsmon add /path -r                Monitor path (recursive, default 8 types)
-  fsmon remove                      Remove entire null cmd group
-  fsmon remove openclaw            Remove entire openclaw cmd group
+  fsmon add _global --path /home       Monitor /home (all processes)
+  fsmon remove _global                 Remove entire global cmd group
+  fsmon remove openclaw              Remove entire openclaw cmd group
   fsmon monitored                   List monitored paths
 
 Query (stdout JSONL, pipe to jq):
-  fsmon query -t '>1h'             Events from last hour
-  fsmon query | jq 'select(.cmd == "nginx")'  Custom filter
-  cat ~/.local/state/fsmon/*_log.jsonl | jq ...  Or direct pipe (slower)
+  fsmon query _global -t '>1h'             Events from last hour
+  fsmon query _global | jq 'select(.cmd == "nginx")'  Custom filter
 
 Clean (config defaults: keep_days=30, size=>=1GB):
   fsmon clean _global               Clean global log (keep >30d)
   fsmon clean openclaw -t '>7d'    Keep last 7 days of openclaw
   fsmon clean nginx --dry-run       Preview nginx log cleaning
-  tail -500 ...                     Or direct Unix tools (slower)
 
-Config:  ~/.config/fsmon/fsmon.toml (created by fsmon init, all-commented — defaults apply)
+Config:  ~/.config/fsmon/fsmon.toml (created by fsmon init, defaults apply without modification)
 Monitor: ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
-Logs:    ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].path)"#
+Logs:    ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].path)
+
+4 data exit points:
+  ① JSONL log files (on by default, configurable via [logging].path)
+  ② Unix socket subscribe — real-time JSONL stream (extensions/subscribe-stream/)
+  ③ Unix socket admin — add/remove/list/health (extensions/socket-admin/)
+  ④ HTTP /metrics — Prometheus scrape (opt-in via --metrics-listen)"#
 }

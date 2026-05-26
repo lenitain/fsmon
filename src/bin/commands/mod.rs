@@ -38,8 +38,11 @@ pub fn run(command: crate::Commands) -> Result<()> {
             cache_stats_interval,
             buffer_size,
             channel_capacity,
+            subscribe_buf,
             disk_min_free,
             sync_interval,
+            local_time,
+            metrics_listen,
         } => {
             let cli_cache = fsmon::config::CliCacheOverride {
                 dir_capacity: cache_dir_cap,
@@ -49,8 +52,9 @@ pub fn run(command: crate::Commands) -> Result<()> {
                 stats_interval_secs: cache_stats_interval,
                 buffer_size,
                 channel_capacity,
+                subscribe_buf,
             };
-            cmd_daemon(debug, cli_cache, disk_min_free, sync_interval).await_()
+            cmd_daemon(debug, cli_cache, disk_min_free, sync_interval, local_time, metrics_listen).await_()
         }
         Add(args) => cmd_add(args),
         Remove { cmd, path } => cmd_remove(cmd, path),
@@ -59,7 +63,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
         Changes(args) => cmd_changes(args).await_(),
         Clean(args) => cmd_clean(args).await_(),
         Init { service } => cmd_init(service),
-        Cd => cmd_cd(),
+        Cd { monitored, .. } => cmd_cd(monitored),
         Health => cmd_health(),
         ListMonitoredPaths => cmd_list_monitored_paths(),
     }
@@ -122,4 +126,26 @@ pub fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
         recursive: entry.recursive.unwrap_or(false),
         cmd,
     })
+}
+
+/// Resolve a user-provided path to absolute.
+/// Tilde expansion → path clean → canonicalize if exists,
+/// otherwise join relative paths with cwd.
+pub fn resolve_path_arg(raw: &std::path::Path) -> std::path::PathBuf {
+    use path_clean::PathClean;
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+    let expanded = fsmon::config::expand_tilde(raw, &home);
+    let cleaned = expanded.clean();
+    match cleaned.canonicalize() {
+        Ok(c) => c,
+        Err(_) => {
+            if cleaned.is_relative() {
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(&cleaned))
+                    .unwrap_or(cleaned)
+            } else {
+                cleaned
+            }
+        }
+    }
 }

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, ensure};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 
 pub fn cmd_init(service: bool) -> Result<()> {
@@ -99,19 +99,41 @@ fn install_service() -> Result<()> {
     Ok(())
 }
 
-pub fn cmd_cd() -> Result<()> {
+pub fn cmd_cd(monitored: bool) -> Result<()> {
     let mut cfg = fsmon::config::Config::load()?;
     cfg.resolve_paths()?;
-    let dir = cfg.logging.path.clone();
+
+    let dir = if monitored {
+        // cd to the monitored store directory (where monitored.jsonl lives).
+        // Mirror of -l which cds to the log directory.
+        let store_file = cfg.monitored.path.clone();
+        let store_dir = store_file
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| store_file.clone());
+        store_dir
+    } else {
+        // -l: cd to log directory (identical to old `fsmon cd`)
+        let mut cfg = fsmon::config::Config::load()?;
+        cfg.resolve_paths()?;
+        cfg.logging.path.unwrap_or_else(|| {
+            let home = fsmon::config::guess_home();
+            PathBuf::from(format!("{}/.local/state/fsmon", home))
+        })
+    };
 
     if !dir.exists() {
-        eprintln!("Log directory does not exist yet. Run 'fsmon init' first.");
-        process::exit(1);
+        std::fs::create_dir_all(&dir).with_context(|| {
+            format!("Failed to create directory: {}", dir.display())
+        })?;
+        fsmon::config::chown_to_original_user(&dir);
+        eprintln!("Created directory: {}", dir.display());
     }
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
 
-    eprintln!("Entering fsmon log directory (type 'exit' to return)...");
+    let label = if monitored { "monitored path" } else { "log" };
+    eprintln!("Entering fsmon {} directory (type 'exit' to return)...", label);
     eprintln!("  {}", dir.display());
     eprintln!();
 

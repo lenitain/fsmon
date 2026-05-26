@@ -2,7 +2,6 @@ use anyhow::{Result, bail};
 use fsmon::config::Config;
 use fsmon::monitored::{CMD_GLOBAL, Monitored, PathEntry};
 use fsmon::socket::{self, SocketCmd};
-use path_clean::PathClean;
 use std::path::PathBuf;
 
 use crate::AddArgs;
@@ -10,6 +9,7 @@ use crate::AddArgs;
 pub fn cmd_add(args: AddArgs) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
+    Config::ensure_monitored_dir()?;
 
     // CMD is required. Use '_global' for global monitoring.
     let process_name = args.cmd.as_deref().ok_or_else(|| {
@@ -42,43 +42,31 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             bail!("Invalid path: contains null byte");
         }
 
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-        let expanded = fsmon::config::expand_tilde(raw_path, &home);
-        let cleaned = expanded.clean();
+        let resolved = super::resolve_path_arg(raw_path);
+        let exists = resolved.exists();
+        if !exists {
+            eprintln!("[Note] path does not exist yet — will start monitoring when created.");
+        }
 
-        let resolved = match cleaned.canonicalize() {
-            Ok(c) => c,
-            Err(_) => {
-                if cleaned.components().count() == 0 {
-                    bail!(
-                        "Invalid path (empty after normalization): {}",
-                        raw_path.display()
-                    );
-                }
-                eprintln!("[Note] path does not exist yet — will start monitoring when created.");
-                cleaned
+        if let Some(ref log_path) = cfg.logging.path {
+            let log_dir_canon = log_path
+                .canonicalize()
+                .unwrap_or_else(|_| log_path.clone());
+            if args.recursive && log_dir_canon.starts_with(&resolved) || log_dir_canon == resolved {
+                bail!(
+                    "Cannot monitor '{}': {}\n\
+                     Tip: use a path outside the log directory, or use a different logging.path",
+                    raw_path.display(),
+                    if log_dir_canon == resolved {
+                        "this path is the log directory itself".to_string()
+                    } else {
+                        format!(
+                            "log directory '{}' is inside this path",
+                            log_path.display()
+                        )
+                    }
+                );
             }
-        };
-
-        let log_dir_canon = cfg
-            .logging
-            .path
-            .canonicalize()
-            .unwrap_or_else(|_| cfg.logging.path.clone());
-        if args.recursive && log_dir_canon.starts_with(&resolved) || log_dir_canon == resolved {
-            bail!(
-                "Cannot monitor '{}': {}\n\
-                 Tip: use a path outside the log directory, or use a different logging.path",
-                raw_path.display(),
-                if log_dir_canon == resolved {
-                    "this path is the log directory itself".to_string()
-                } else {
-                    format!(
-                        "log directory '{}' is inside this path",
-                        cfg.logging.path.display()
-                    )
-                }
-            );
         }
         Some(resolved)
     } else {
@@ -173,12 +161,13 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             types,
             size: size_val,
             track_cmd: process_name,
+            local_time: None,
         },
     );
 
     match result {
         Ok(resp) if resp.ok => {
-            println!("Entry added into monitored");
+            println!("Entry added: {}", entry.path.display());
         }
         Ok(resp) => {
             if resp.error_kind == Some(fsmon::socket::ErrorKind::Permanent) {
@@ -187,12 +176,12 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
                 store.save(&cfg.monitored.path)?;
                 eprintln!("Error: {}", resp.error.unwrap_or_default());
             } else {
-                println!("Entry added into monitored");
+                println!("Entry added: {}", entry.path.display());
                 eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
             }
         }
         Err(_) => {
-            println!("Entry added into monitored");
+            println!("Entry added: {}", entry.path.display());
             eprintln!("Daemon is not running — will be monitored after daemon restart.");
         }
     }
