@@ -32,37 +32,75 @@ fsmon diff _global --since '2026-05-25 08:00' --until 'now'
 
 ## P2 中型改进（需要投入，但收益明显）
 
-### 事件去重/合并 (`--coalesce`)
+### 事件去重/合并 (`--coalesce`) ❌ 已废弃
 
-单个操作（如 `echo "hello" > file.txt`）产生 3 个 fanotify 事件：CREATE → MODIFY → CLOSE_WRITE。用 `(pid, path)` 做 key，固定时间窗口（~100ms）内合并为一个带事件列表 + 持续时间的记录。
+原方案：用 moka Cache + 100ms 时间窗口将 CREATE+MODIFY+CLOSE_WRITE 合并为一条记录。
 
-- 可用 `moka::Cache` 做（项目已有依赖），在 `process_event_batch` 末尾加 flush timer
-- 高频写入场景下日志量可减少 60-70%
-- 作为**可选**功能（`--coalesce`），默认不开启，保持兼容
+废弃理由：
+- flush timer 方案有硬伤：`process_event_batch` 是同步调用，batch 间有任意长间隔，不配独立定时器任务则事件无限期滞留在缓存中
+- SIGKILL 时整组事件丢失，比不 coalesce 更糟
+- 双日志格式使下游工具（query/diff/changes）复杂度翻倍
+- 用户直接用 `--type CLOSE_WRITE` 即可达到类似效果，零代码变更
 
 ### `fanotify_mark` 中消除不必要的堆分配(finished)
 
 `path.as_ref().as_bytes().to_vec()` 每次都分配新 Vec。可用 `CString::new` 或 `OsStr::as_encoded_bytes()`（Rust 1.74+）避免。mark 操作不频繁，但作为 crates.io 公共 API，零开销是承诺。
 
-### HandleCache 的脏数据问题
+### HandleCache 的脏数据问题 ❌ 不处理
 
-moka TTL 淘汰被删除目录的 handle entry 但无通知。Phase 1 本地 `handle_map` 会走 `resolve_file_handle` 回退，不影响正确性，但浪费空间。未来可考虑把 HandleCache trait 化，让用户自由选择后端。
+已删除目录的 handle→path 映射在 dir_cache 中残留，直到 TTL 淘汰。
+
+正确性不受影响：Phase 1 本地 `handle_map` + `resolve_file_handle` 兜底。
+
+潜在修复（如确有必要）：
+```rust
+// process_event_batch 的 is_canonical_root 分支
+if let Some(ref key) = raw.self_handle {
+    self.dir_cache.invalidate(key);
+}
+```
+
+不处理理由：脏 entry 约 5% cache 浪费（~600KB 量级），对 daemon 可忽略。改和不改用户感知不到差异。
+
+——用户可以通过 CLI flag 自行控制：`--cache-dir-cap` 调容量、`--cache-dir-ttl` 调淘汰速度。
 
 ---
 
 ## P3 架构级（如果做大）
 
-### 日志格式 trait 化
+### Unix socket 实时事件订阅
 
-`FileEvent` 硬编码 JSONL 序列化。如果团队用 protobuf / Avro 做日志管道，就得 fork 项目。
+当前事件只能写到 JSONL 文件供事后查询。无法实时消费。
 
-```rust
-pub trait EventSink {
-    fn write(&mut self, event: &FileEvent) -> Result<()>;
-}
+方案：新增 `subscribe` socket endpoint，保持长连接，持续推送 JSONL 事件流。
+
+```bash
+# 外部进程（任意语言）：
+echo 'subscribe' | nc -U /tmp/fsmon-1000.sock
+# ← 持续收到 JSONL 行，直到连接断开
 ```
 
-~20 行抽象，让"接 Kafka / S3 / protobuf 输出"成为可能，且不影响默认 JSONL 路径。不急着做，但架构上预留位置。
+优势：
+- 不引入 protobuf/Avro/Prometheus 等任何依赖
+- 外部进程用任何语言写 adapter（~10 行 Python/Go/Rust）
+- fsmon 只负责 JSONL 输出，格式转换是 adapter 的事
+- 不 fork，不改 fsmon 代码
+
+代价：
+- 当前 socket 是 request-response 模式（加 cmd，收 resp，断连）
+- 需要改成长连接 + subscriber 列表 + broadcast 推送
+- 需要处理背压（慢 subscriber 是否 drop？）
+- 需要 cleanup 断连 subscriber
+
+优先级：低。等有真实需求（有人要在 fsmon 上接 Kafka）再动手。
+
+### 日志格式 trait 化 ❌ 已废弃
+
+原方案：`trait EventSink` + impl 切换输出格式。
+
+废弃理由：
+- fsmon 是二进制工具，trait 化后用户仍需 fork 才能加新 impl，没有解决任何实际问题
+- 真正需要的不是 Rust 抽象，而是外部进程能消费的实时事件流（见上方 socket subscribe 方案）
 
 ### fanotify-fid 支持 io-uring
 
