@@ -2046,11 +2046,24 @@ impl Monitor {
         }
 
         let is_new = !log_path.exists();
-        match OpenOptions::new()
+        // Retry once on ENOENT: recreate log directory if it was deleted at runtime
+        let open_result = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&log_path)
-        {
+            .or_else(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    let _ = fs::create_dir_all(log_dir);
+                    OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&log_path)
+                } else {
+                    Err(e)
+                }
+            });
+
+        match open_result {
             Ok(file) => {
                 // Chown new log files to the original user
                 if is_new {
@@ -2102,11 +2115,22 @@ impl Monitor {
         let mut remaining = std::collections::VecDeque::new();
         while let Some((event, cmd_name)) = self.disk_buf.pop_front() {
             let log_path = log_dir.join(crate::utils::cmd_to_log_name(&cmd_name));
-            match OpenOptions::new()
+            let open_result = OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&log_path)
-            {
+                .or_else(|e| {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        let _ = fs::create_dir_all(&log_dir);
+                        OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&log_path)
+                    } else {
+                        Err(e)
+                    }
+                });
+            match open_result {
                 Ok(file) => {
                     let mut file = std::io::BufWriter::new(file);
                     use std::io::Write;
