@@ -142,10 +142,10 @@ pub struct Monitor {
     /// Log file sync interval. None = disabled.
     sync_interval: Option<std::time::Duration>,
 
-    /// Unified event stream: broadcast channel for subscribe consumers.
-    event_stream_tx: Option<tokio::sync::broadcast::Sender<FileEvent>>,
-    /// File writer channel: reliable mpsc sender for JSONL persistence.
-    file_writer_tx: Option<tokio::sync::mpsc::UnboundedSender<(FileEvent, String)>>,
+    /// Unified event stream: broadcast channel for all consumers.
+    /// Carries (FileEvent, cmd_name) — cmd_name is for file routing.
+    /// Subscribe tasks extract FileEvent, file writer uses both.
+    event_stream_tx: Option<tokio::sync::broadcast::Sender<(FileEvent, String)>>,
 }
 
 impl Monitor {
@@ -258,10 +258,9 @@ impl Monitor {
             sync_interval,
             event_stream_tx: {
                 let cap = subscribe_buf.unwrap_or(4096).max(1);
-                let (tx, _) = tokio::sync::broadcast::channel(cap);
+                let (tx, _) = tokio::sync::broadcast::channel::<(FileEvent, String)>(cap);
                 Some(tx)
             },
-            file_writer_tx: None,
         };
         if debug {
             eprintln!(
@@ -730,18 +729,18 @@ impl Monitor {
             self.spawn_fd_reader(gi);
         }
 
-        // Spawn file writer task if log directory is configured.
-        // Consumes events from an mpsc channel and writes to JSONL files.
-        let (file_writer_tx, file_writer_rx) = tokio::sync::mpsc::unbounded_channel();
-        self.file_writer_tx = Some(file_writer_tx);
+        // Spawn file writer task — subscribes to broadcast like any consumer.
         let fw_log_dir = self.log_dir.clone();
         let fw_sync = self.sync_interval;
         let fw_debug = self.debug;
         if let Some(fw_log_dir) = fw_log_dir {
-            tokio::spawn(async move {
-                let fw = FileLogWriter::new(fw_log_dir, fw_sync, fw_debug);
-                fw.run(file_writer_rx).await;
-            });
+            if let Some(ref tx) = self.event_stream_tx {
+                let fw_rx = tx.subscribe();
+                tokio::spawn(async move {
+                    let fw = FileLogWriter::new(fw_log_dir, fw_sync, fw_debug);
+                    fw.run(fw_rx).await;
+                });
+            }
         }
 
         let mut sigterm =
@@ -934,8 +933,8 @@ impl Monitor {
         }
 
         println!("\nStopping file trace monitor...");
-        // Drop file writer tx → file writer task drains remaining events and syncs
-        drop(self.file_writer_tx.take());
+        // Drop event stream tx → all receivers get Closed → tasks drain + exit
+        drop(self.event_stream_tx.take());
         // event_rx drops here → channel closed → reader tasks exit on next event
         // OS cleans up all fds on process exit
         Ok(())
@@ -1042,14 +1041,11 @@ impl Monitor {
                             let cmd = opts.cmd.as_deref().unwrap_or("global");
                             eprintln!("[DEBUG]   -> {}_log.jsonl", cmd);
                         }
-                        // 推送到文件写入通道（可靠 mpsc，不丢事件）
-                        if let Some(ref tx) = self.file_writer_tx {
+                        // 推送到统一事件流（broadcast）
+                        // 所有消费者（文件写入、subscribe）都从此接收
+                        if let Some(ref tx) = self.event_stream_tx {
                             let cmd_name = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
                             let _ = tx.send((event.clone(), cmd_name.to_string()));
-                        }
-                        // 推送到统一事件流（broadcast），subscribe 订阅者从此接收
-                        if let Some(ref tx) = self.event_stream_tx {
-                            let _ = tx.send(event.clone());
                         }
                     }
                 }
@@ -2139,7 +2135,7 @@ fn chains_contain(chain: &str, cmd_name: &str) -> bool {
 /// Stream events from a broadcast receiver to a subscriber socket.
 async fn subscriber_task(
     mut writer: tokio::net::unix::OwnedWriteHalf,
-    mut rx: tokio::sync::broadcast::Receiver<FileEvent>,
+    mut rx: tokio::sync::broadcast::Receiver<(FileEvent, String)>,
     track_cmd: Option<String>,
     type_filter: Option<Vec<EventType>>,
 ) {
@@ -2159,7 +2155,7 @@ async fn subscriber_task(
     // 2. Stream events
     loop {
         match rx.recv().await {
-            Ok(event) => {
+            Ok((event, _cmd_name)) => {
                 // Optional filter by cmd group
                 if let Some(ref wanted) = track_cmd {
                     if event.chain.is_empty() || !chains_contain(&event.chain, wanted) {
@@ -2222,17 +2218,30 @@ impl FileLogWriter {
     }
 
     /// Run the file writer event loop.
-    async fn run(mut self, mut rx: tokio::sync::mpsc::UnboundedReceiver<(FileEvent, String)>) {
+    async fn run(
+        mut self,
+        mut rx: tokio::sync::broadcast::Receiver<(FileEvent, String)>,
+    ) {
         use tokio::time::interval;
 
         let mut sync_timer = self.sync_interval.map(|d| interval(d));
 
         loop {
             tokio::select! {
-                Some((event, cmd_name)) = rx.recv() => {
-                    if let Err(e) = self.write_event(&event, &cmd_name) {
-                        if self.debug {
-                            eprintln!("[DEBUG] FileLogWriter write error: {}", e);
+                result = rx.recv() => {
+                    match result {
+                        Ok((event, cmd_name)) => {
+                            if let Err(e) = self.write_event(&event, &cmd_name) {
+                                if self.debug {
+                                    eprintln!("[DEBUG] FileLogWriter write error: {}", e);
+                                }
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            eprintln!("[WARNING] FileLogWriter dropped {} events (disk too slow)", n);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            break;
                         }
                     }
                 }
@@ -2244,14 +2253,9 @@ impl FileLogWriter {
                 } => {
                     self.sync_dirty_logs();
                 }
-                else => break, // channel closed
             }
         }
 
-        // Drain remaining events
-        while let Ok((event, cmd_name)) = rx.try_recv() {
-            let _ = self.write_event(&event, &cmd_name);
-        }
         self.sync_dirty_logs();
     }
 
