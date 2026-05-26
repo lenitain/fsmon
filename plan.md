@@ -8,6 +8,7 @@
 - [x] **SIGTERM 排空 event channel** — 关闭时 `try_recv` 耗尽 channel 中已排队事件后再退出
 - [x] **Bounded channel + 事件降级** — 默认 unbounded，可选 `--channel-capacity N` / `cache.channel_capacity` 启用 bounded，reader task 满时自然阻塞，fanotify overflow 兜底
 - [x] **`health` socket 命令** — `fsmon health` 通过 Unix socket 获取 daemon 健康状态（uptime、reader 存活/重启数、channel type、路径数）
+- [x] **磁盘空间预检 + 运行时缓冲** — 可配置阈值（CLI/TOML），启动时 `statvfs` 检查，写入失败自动切内存缓冲（最多 10K 条），每 10s 重试刷盘。运行时目录被删自动重建 + chown
 
 ---
 
@@ -33,23 +34,6 @@ WatchdogSec=30s
 Restart=always
 RestartSec=5
 ```
-
-### 5. 磁盘空间预检
-
-**配置方式**（三条优先级）：
-| 来源 | 示例 |
-|------|------|
-| CLI | `sudo fsmon daemon --disk-min-free 10%` |
-| `fsmon.toml` | `[logging]` 下 `disk_min_free = "10%"` |
-| 默认 | 无行为，不检查 |
-
-**启动时**：可用空间低于阈值 → `[WARNING]`。
-
-**运行时**：写入失败后标记 "磁盘不健康"，切换事件到内存环形缓冲（最多 10_000 条），定期重试写入，恢复后刷入。
-
-支持格式：`10%`（百分比）、`1GB`（绝对字节）。
-
----
 
 ## P3 — 可观测性
 
@@ -94,7 +78,6 @@ uptime_secs
 
 ```
 P2-4 Systemd watchdog      ← 可选，需用户自行配置 systemd service
-P2-5 磁盘空间预检          ← 独立，可随时做
 P3-6 Metrics               ← 可独立实现
 P3-7 Backlog 告警          ← 依赖已实现的 bounded channel
 ```
