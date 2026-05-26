@@ -93,7 +93,7 @@ pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResp> {
     let stream = UnixStream::connect(socket_path).with_context(|| {
         format!(
             "Failed to connect to fsmon daemon at {}. Is the daemon running? \
-             Start it with: sudo systemctl start fsmon",
+             Start it with: sudo fsmon daemon",
             socket_path.display()
         )
     })?;
