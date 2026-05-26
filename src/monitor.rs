@@ -85,6 +85,10 @@ impl EventReceiver {
 struct ReaderState {
     restart_count: u32,
     last_restart: std::time::Instant,
+    /// Set when restart_reader gives up (backoff exhausted within window).
+    /// Reset when spawn_fd_reader attempts a new spawn (even if it later fails).
+    /// Used by health() for reliable alive/dead reporting.
+    gave_up: bool,
 }
 
 const MAX_RESTARTS: u32 = 3;
@@ -1175,6 +1179,7 @@ impl Monitor {
         if let Some(state) = self.reader_states.get_mut(group_idx).and_then(|s| s.as_mut()) {
             state.restart_count += 1;
             state.last_restart = std::time::Instant::now();
+            state.gave_up = false;
         } else {
             // Ensure reader_states is large enough
             if group_idx >= self.reader_states.len() {
@@ -1183,6 +1188,7 @@ impl Monitor {
             self.reader_states[group_idx] = Some(ReaderState {
                 restart_count: 1,
                 last_restart: std::time::Instant::now(),
+                gave_up: false,
             });
         }
     }
@@ -1208,6 +1214,11 @@ impl Monitor {
                     MAX_RESTARTS,
                     BACKOFF_WINDOW.as_secs(),
                 );
+                // Mark gave_up so health() reports accurate alive/dead status.
+                // This will be reset when spawn_fd_reader is called again.
+                if let Some(s) = self.reader_states.get_mut(group_idx).and_then(|s| s.as_mut()) {
+                    s.gave_up = true;
+                }
                 return;
             }
         }
@@ -1648,9 +1659,9 @@ impl Monitor {
             .map(|(i, g)| {
                 let state = self.reader_states.get(i).and_then(|s| s.as_ref());
                 let alive = state.is_some_and(|s| {
-                    let in_window =
-                        s.last_restart.elapsed() < BACKOFF_WINDOW;
-                    s.restart_count < MAX_RESTARTS || !in_window
+                    // Only dead when restart_reader explicitly gave up.
+                    // gave_up is reset when spawn_fd_reader attempts recovery.
+                    !s.gave_up
                 });
                 let restarts = state.map(|s| s.restart_count).unwrap_or(0);
                 ReaderHealth {
