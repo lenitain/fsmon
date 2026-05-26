@@ -6,7 +6,7 @@ use fanotify_fid::consts::{
 };
 use fanotify_fid::prelude::*;
 use fanotify_fid::types::FidEvent;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, OpenOptions};
 use std::num::NonZeroUsize;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -139,21 +139,13 @@ pub struct Monitor {
     started_at: std::time::Instant,
     /// Raw disk-min-free threshold string (e.g. "10%", "5GB"). None = no check.
     disk_min_free: Option<String>,
-    /// Ring buffer for events when disk is full.
-    disk_buf: std::collections::VecDeque<(FileEvent, String)>,
-    /// Whether the log directory filesystem appears healthy.
-    disk_healthy: bool,
-    /// Timestamp of last disk health check, to rate-limit statvfs calls.
-    last_disk_check: std::time::Instant,
     /// Log file sync interval. None = disabled.
     sync_interval: Option<std::time::Duration>,
-    /// Set of log file paths written since last sync (dirty).
-    dirty_logs: std::collections::HashSet<PathBuf>,
 
-    /// Unified event stream: broadcast channel for all event consumers.
-    /// File writing is one consumer (inline in process_event_batch).
-    /// Subscribe connections are another consumer (through broadcast receivers).
+    /// Unified event stream: broadcast channel for subscribe consumers.
     event_stream_tx: Option<tokio::sync::broadcast::Sender<FileEvent>>,
+    /// File writer channel: reliable mpsc sender for JSONL persistence.
+    file_writer_tx: Option<tokio::sync::mpsc::UnboundedSender<(FileEvent, String)>>,
 }
 
 impl Monitor {
@@ -263,16 +255,13 @@ impl Monitor {
             reader_states: Vec::new(),
             started_at: std::time::Instant::now(),
             disk_min_free,
-            disk_buf: std::collections::VecDeque::with_capacity(10_000),
-            disk_healthy: true,
-            last_disk_check: std::time::Instant::now(),
             sync_interval,
-            dirty_logs: std::collections::HashSet::new(),
             event_stream_tx: {
                 let cap = subscribe_buf.unwrap_or(4096).max(1);
                 let (tx, _) = tokio::sync::broadcast::channel(cap);
                 Some(tx)
             },
+            file_writer_tx: None,
         };
         if debug {
             eprintln!(
@@ -741,6 +730,20 @@ impl Monitor {
             self.spawn_fd_reader(gi);
         }
 
+        // Spawn file writer task if log directory is configured.
+        // Consumes events from an mpsc channel and writes to JSONL files.
+        let (file_writer_tx, file_writer_rx) = tokio::sync::mpsc::unbounded_channel();
+        self.file_writer_tx = Some(file_writer_tx);
+        let fw_log_dir = self.log_dir.clone();
+        let fw_sync = self.sync_interval;
+        let fw_debug = self.debug;
+        if let Some(fw_log_dir) = fw_log_dir {
+            tokio::spawn(async move {
+                let fw = FileLogWriter::new(fw_log_dir, fw_sync, fw_debug);
+                fw.run(file_writer_rx).await;
+            });
+        }
+
         let mut sigterm =
             signal(SignalKind::terminate()).context("failed to create SIGTERM signal handler")?;
         let mut sighup =
@@ -780,9 +783,6 @@ impl Monitor {
         // running under a Type=notify systemd service).
         notify_sd_ready();
 
-        // Sync interval timer (if enabled)
-        let mut sync_timer = self.sync_interval.map(tokio::time::interval);
-
         loop {
             tokio::select! {
                 Some(events) = event_rx.recv() => {
@@ -821,14 +821,12 @@ impl Monitor {
                     while let Ok(events) = event_rx.try_recv() {
                         self.process_event_batch(&events);
                     }
-                    self.sync_dirty_logs();
                     break;
                 }
                 _ = sigterm.recv() => {
                     while let Ok(events) = event_rx.try_recv() {
                         self.process_event_batch(&events);
                     }
-                    self.sync_dirty_logs();
                     break;
                 }
                 _ = sighup.recv() => {
@@ -836,17 +834,7 @@ impl Monitor {
                         eprintln!("Config reload error: {e}");
                     }
                 }
-                _ = async {
-                    match sync_timer.as_mut() {
-                        Some(timer) => timer.tick().await,
-                        None => std::future::pending().await,
-                    }
-                } => {
-                    self.sync_dirty_logs();
-                    if self.debug {
-                        eprintln!("[DEBUG] fdatasync completed");
-                    }
-                }
+
                 proc_readable = async {
                     match proc_afd.as_ref() {
                         Some(afd) => afd.readable().await,
@@ -946,6 +934,8 @@ impl Monitor {
         }
 
         println!("\nStopping file trace monitor...");
+        // Drop file writer tx → file writer task drains remaining events and syncs
+        drop(self.file_writer_tx.take());
         // event_rx drops here → channel closed → reader tasks exit on next event
         // OS cleans up all fds on process exit
         Ok(())
@@ -1052,10 +1042,12 @@ impl Monitor {
                             let cmd = opts.cmd.as_deref().unwrap_or("global");
                             eprintln!("[DEBUG]   -> {}_log.jsonl", cmd);
                         }
-                        if let Err(e) = self.write_event_for_opts(&event, opts) {
-                            eprintln!("[ERROR] Failed to write event: {}", e);
+                        // 推送到文件写入通道（可靠 mpsc，不丢事件）
+                        if let Some(ref tx) = self.file_writer_tx {
+                            let cmd_name = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
+                            let _ = tx.send((event.clone(), cmd_name.to_string()));
                         }
-                        // 推送到统一事件流（broadcast），订阅者从此接收
+                        // 推送到统一事件流（broadcast），subscribe 订阅者从此接收
                         if let Some(ref tx) = self.event_stream_tx {
                             let _ = tx.send(event.clone());
                         }
@@ -2093,185 +2085,6 @@ impl Monitor {
         filters::matching_path(&self.paths, &self.canonical_paths, path)
     }
 
-    /// Write an event to a specific opts' cmd log (for multi-cmd support).
-    fn write_event_for_opts(&mut self, event: &FileEvent, opts: &PathOptions) -> std::io::Result<()> {
-        let log_dir = match self.log_dir.clone() {
-            Some(d) => d,
-            None => return Ok(()),
-        };
-        let cmd_name = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
-        self.write_raw_event(event, &log_dir, cmd_name)
-    }
-
-    /// Low-level: write an event to `{log_dir}/{cmd}_log.jsonl`.
-    /// On disk full, buffers the event and falls back to retry later.
-    fn write_raw_event(
-        &mut self,
-        event: &FileEvent,
-        log_dir: &Path,
-        cmd_name: &str,
-    ) -> std::io::Result<()> {
-        let log_path = log_dir.join(crate::utils::cmd_to_log_name(cmd_name));
-        if self.debug {
-            eprintln!(
-                "[DEBUG] write_event: path={} event={:?} type={:?} -> {}",
-                event.path.display(),
-                event.event_type,
-                event.cmd,
-                log_path.file_name().unwrap_or_default().to_string_lossy()
-            );
-        }
-
-        // Try to flush buffer if disk was previously unhealthy
-        if !self.disk_healthy
-            && self.last_disk_check.elapsed() >= std::time::Duration::from_secs(10)
-        {
-            self.flush_disk_buf();
-        }
-
-        let is_new = !log_path.exists();
-        // Retry once on ENOENT: recreate log directory if it was deleted at runtime
-        let open_result = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-            .or_else(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    let _ = fs::create_dir_all(log_dir);
-                    // Chown the recreated directory so the original user
-                    // can rm/clean their own logs without sudo
-                    let _ = crate::fid_parser::chown_to_user(log_dir);
-                    OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&log_path)
-                } else {
-                    Err(e)
-                }
-            });
-
-        match open_result {
-            Ok(file) => {
-                // Chown new log files to the original user
-                if is_new {
-                    match chown_to_user(&log_path) {
-                        Ok(true) => {}
-                        Ok(false) => {}
-                        Err(e) => {
-                            eprintln!(
-                                "[WARNING] Could not chown log file '{}': {}",
-                                log_path.display(),
-                                e
-                            );
-                        }
-                    }
-                }
-                let mut file = std::io::BufWriter::new(file);
-                use std::io::Write;
-                writeln!(file, "{}", event.to_jsonl_string())?;
-                // Track dirty log for periodic fdatasync
-                if self.sync_interval.is_some() {
-                    self.dirty_logs.insert(log_path);
-                }
-                self.disk_healthy = true;
-                Ok(())
-            }
-            Err(e) => {
-                // Disk might be full — buffer the event
-                self.disk_healthy = false;
-                self.last_disk_check = std::time::Instant::now();
-                if self.disk_buf.len() < 10_000 {
-                    self.disk_buf.push_back((
-                        event.clone(),
-                        cmd_name.to_string(),
-                    ));
-                }
-                // Return the error so the caller knows, but don't crash
-                Err(e)
-            }
-        }
-    }
-
-    /// Try to flush buffered events to disk.
-    fn flush_disk_buf(&mut self) {
-        if self.disk_buf.is_empty() {
-            self.disk_healthy = true;
-            return;
-        }
-        let log_dir = match self.log_dir.as_ref() {
-            Some(d) => d.clone(),
-            None => return,
-        };
-
-        let mut remaining = std::collections::VecDeque::new();
-        while let Some((event, cmd_name)) = self.disk_buf.pop_front() {
-            let log_path = log_dir.join(crate::utils::cmd_to_log_name(&cmd_name));
-            let open_result = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_path)
-                .or_else(|e| {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        let _ = fs::create_dir_all(&log_dir);
-                        let _ = crate::fid_parser::chown_to_user(&log_dir);
-                        OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(&log_path)
-                    } else {
-                        Err(e)
-                    }
-                });
-            match open_result {
-                Ok(file) => {
-                    let mut file = std::io::BufWriter::new(file);
-                    use std::io::Write;
-                    if writeln!(file, "{}", event.to_jsonl_string()).is_err() {
-                        remaining.push_back((event, cmd_name));
-                    }
-                }
-                Err(_) => {
-                    remaining.push_back((event, cmd_name));
-                }
-            }
-        }
-        self.disk_buf = remaining;
-        self.disk_healthy = self.disk_buf.is_empty();
-        self.last_disk_check = std::time::Instant::now();
-    }
-
-    /// Sync all dirty log files to disk via fdatasync.
-    /// Called periodically (sync_interval) and on graceful shutdown.
-    fn sync_dirty_logs(&mut self) {
-        if self.dirty_logs.is_empty() {
-            return;
-        }
-        let paths: Vec<PathBuf> = self.dirty_logs.drain().collect();
-        for path in &paths {
-            match std::fs::OpenOptions::new().write(true).open(path) {
-                Ok(file) => {
-                    if let Err(e) = file.sync_data() {
-                        eprintln!(
-                            "[WARNING] fdatasync failed for '{}': {}",
-                            path.display(),
-                            e
-                        );
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    // Log file was cleaned/deleted — skip
-                }
-                Err(e) => {
-                    eprintln!(
-                        "[WARNING] Could not open '{}' for sync: {}",
-                        path.display(),
-                        e
-                    );
-                }
-            }
-        }
-    }
-
     #[cfg(test)]
     fn is_path_in_scope(&self, path: &Path) -> bool {
         filters::is_path_in_scope(
@@ -2379,6 +2192,212 @@ async fn subscriber_task(
         }
     }
     // writer drops → connection closes
+}
+
+// ---- FileLogWriter: unified event stream consumer for disk persistence ----
+
+/// Async file writer consuming events from a channel and writing to JSONL files.
+/// Runs as a tokio task. Handles disk-full buffering, fdatasync, and ENOENT retry.
+struct FileLogWriter {
+    log_dir: PathBuf,
+    disk_buf: VecDeque<(FileEvent, String)>,
+    disk_healthy: bool,
+    last_disk_check: std::time::Instant,
+    dirty_logs: HashSet<PathBuf>,
+    sync_interval: Option<Duration>,
+    debug: bool,
+}
+
+impl FileLogWriter {
+    fn new(log_dir: PathBuf, sync_interval: Option<Duration>, debug: bool) -> Self {
+        Self {
+            log_dir,
+            disk_buf: VecDeque::with_capacity(10_000),
+            disk_healthy: true,
+            last_disk_check: std::time::Instant::now(),
+            dirty_logs: HashSet::new(),
+            sync_interval,
+            debug,
+        }
+    }
+
+    /// Run the file writer event loop.
+    async fn run(mut self, mut rx: tokio::sync::mpsc::UnboundedReceiver<(FileEvent, String)>) {
+        use tokio::time::interval;
+
+        let mut sync_timer = self.sync_interval.map(|d| interval(d));
+
+        loop {
+            tokio::select! {
+                Some((event, cmd_name)) = rx.recv() => {
+                    if let Err(e) = self.write_event(&event, &cmd_name) {
+                        if self.debug {
+                            eprintln!("[DEBUG] FileLogWriter write error: {}", e);
+                        }
+                    }
+                }
+                _ = async {
+                    match sync_timer.as_mut() {
+                        Some(timer) => timer.tick().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    self.sync_dirty_logs();
+                }
+                else => break, // channel closed
+            }
+        }
+
+        // Drain remaining events
+        while let Ok((event, cmd_name)) = rx.try_recv() {
+            let _ = self.write_event(&event, &cmd_name);
+        }
+        self.sync_dirty_logs();
+    }
+
+    /// Write an event to the appropriate JSONL log file.
+    /// Returns Ok(()) even if disk is full (event is buffered for retry).
+    fn write_event(&mut self, event: &FileEvent, cmd_name: &str) -> std::io::Result<()> {
+        let log_path = self.log_dir.join(crate::utils::cmd_to_log_name(cmd_name));
+
+        // Try to flush buffer if disk was previously unhealthy
+        if !self.disk_healthy
+            && self.last_disk_check.elapsed() >= std::time::Duration::from_secs(10)
+        {
+            self.flush_disk_buf();
+        }
+
+        let is_new = !log_path.exists();
+        // Retry once on ENOENT: recreate log directory if deleted at runtime
+        let open_result = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .or_else(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    let _ = fs::create_dir_all(&self.log_dir);
+                    let _ = crate::fid_parser::chown_to_user(&self.log_dir);
+                    OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&log_path)
+                } else {
+                    Err(e)
+                }
+            });
+
+        match open_result {
+            Ok(file) => {
+                // Chown new log files to the original user
+                if is_new {
+                    match crate::fid_parser::chown_to_user(&log_path) {
+                        Ok(true) => {}
+                        Ok(false) => {}
+                        Err(e) => {
+                            eprintln!(
+                                "[WARNING] Could not chown log file '{}': {}",
+                                log_path.display(),
+                                e
+                            );
+                        }
+                    }
+                }
+                let mut file = std::io::BufWriter::new(file);
+                use std::io::Write;
+                writeln!(file, "{}", event.to_jsonl_string())?;
+                // Track dirty log for periodic fdatasync
+                if self.sync_interval.is_some() {
+                    self.dirty_logs.insert(log_path);
+                }
+                self.disk_healthy = true;
+                Ok(())
+            }
+            Err(e) => {
+                // Disk might be full — buffer the event
+                self.disk_healthy = false;
+                self.last_disk_check = std::time::Instant::now();
+                if self.disk_buf.len() < 10_000 {
+                    self.disk_buf
+                        .push_back((event.clone(), cmd_name.to_string()));
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Try to flush buffered events to disk.
+    fn flush_disk_buf(&mut self) {
+        if self.disk_buf.is_empty() {
+            self.disk_healthy = true;
+            return;
+        }
+
+        let mut remaining = VecDeque::new();
+        while let Some((event, cmd_name)) = self.disk_buf.pop_front() {
+            let log_path = self.log_dir.join(crate::utils::cmd_to_log_name(&cmd_name));
+            let open_result = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+                .or_else(|e| {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        let _ = fs::create_dir_all(&self.log_dir);
+                        let _ = crate::fid_parser::chown_to_user(&self.log_dir);
+                        OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&log_path)
+                    } else {
+                        Err(e)
+                    }
+                });
+            match open_result {
+                Ok(file) => {
+                    let mut file = std::io::BufWriter::new(file);
+                    use std::io::Write;
+                    if writeln!(file, "{}", event.to_jsonl_string()).is_err() {
+                        remaining.push_back((event, cmd_name));
+                    }
+                }
+                Err(_) => {
+                    remaining.push_back((event, cmd_name));
+                }
+            }
+        }
+        self.disk_buf = remaining;
+        self.disk_healthy = self.disk_buf.is_empty();
+        self.last_disk_check = std::time::Instant::now();
+    }
+
+    /// Sync all dirty log files to disk via fdatasync.
+    fn sync_dirty_logs(&mut self) {
+        if self.dirty_logs.is_empty() {
+            return;
+        }
+        let paths: Vec<PathBuf> = self.dirty_logs.drain().collect();
+        for path in &paths {
+            match std::fs::OpenOptions::new().write(true).open(path) {
+                Ok(file) => {
+                    if let Err(e) = file.sync_data() {
+                        eprintln!(
+                            "[WARNING] fdatasync failed for '{}': {}",
+                            path.display(),
+                            e
+                        );
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    eprintln!(
+                        "[WARNING] Could not open '{}' for sync: {}",
+                        path.display(),
+                        e
+                    );
+                }
+            }
+        }
+    }
+
 }
 
 /// Send READY=1 to systemd via sd_notify protocol.
