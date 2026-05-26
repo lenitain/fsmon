@@ -5,23 +5,7 @@
 - [x] **Reader task 崩溃恢复** — 死亡通知 + 自动重启 + 退避（3次/60s）
 - [x] **PID 回收去重** — `start_time_ns` 校验，已在 `get_process_info_by_pid` 中实现
 - [x] **日志标签规范** — `[debug]` → `[DEBUG]`，与 `[ERROR]`/`[WARNING]`/`[INFO]` 统一
-
----
-
-## P0 — 关闭流程完善
-
-### 1. SIGTERM 排空 event channel
-
-当前收到 SIGTERM 后直接 break，`event_rx` 中已取出但未处理的事件被丢弃。
-
-**实现**：
-```
-loop 退出前：
-  while let Ok(events) = event_rx.try_recv() {
-      process_events(events);
-  }
-```
-成本 ~10 行，零副作用。
+- [x] **SIGTERM 排空 event channel** — 关闭时 `try_recv` 耗尽 channel 中已排队事件后再退出
 
 ---
 
@@ -152,7 +136,6 @@ uptime_secs
 ## 执行顺序
 
 ```
-P0-1 SIGTERM 排空         ← 先做，零争议
 P1-2 Bounded channel 降级  ← 核心收益
 P1-3 health 命令           ← 为 P2-4 铺路
 P2-4 Systemd watchdog      ← 依赖 P1-3 验证存活

@@ -704,141 +704,29 @@ impl Monitor {
                             }
                         }
                     }
-                    for raw in &events {
-                        if raw.mask & FAN_Q_OVERFLOW != 0 {
-                            eprintln!("[WARNING] fanotify queue overflow - some events may have been lost");
-                            continue;
-                        }
-
-                        let event_types = mask_to_event_types(raw.mask);
-                        let matched_path = self.matching_path(&raw.path).cloned();
-
-                        // If a monitored directory was deleted, move to pending_paths
-                        let is_delete_self = event_types.contains(&EventType::DeleteSelf)
-                            || event_types.contains(&EventType::MovedFrom);
-                        let is_canonical_root = is_delete_self
-                            && self.canonical_paths.iter().any(|cp| cp == &raw.path);
-                        if is_canonical_root {
-                            if self.debug {
-                                eprintln!("[DEBUG] monitored directory deleted: {}", raw.path.display());
-                            }
-                            if let Some(ref path) = matched_path {
-                                // Preserve ALL cmd groups before removing
-                                let all_opts: Vec<PathOptions> = self.opts_for_path(path).into_iter().cloned().collect();
-                                if let Err(e) = self.remove_path(path, None) {
-                                    eprintln!("[WARNING] Failed to remove deleted path '{}': {e}", path.display());
-                                }
-                                for opts in all_opts {
-                                    // Periodic cache stats (configurable interval, 0 = disabled)
-                        if self.debug && self.cache_config.stats_interval_secs > 0
-                            && last_cache_stats.elapsed() >= std::time::Duration::from_secs(self.cache_config.stats_interval_secs) {
-                            eprintln!("[DEBUG] --- cache stats ---");
-                            eprintln!(
-                                "[DEBUG]   dir_cache:        {}/{} entries",
-                                dir_cache.entry_count(),
-                                DIR_CACHE_CAP
-                            );
-                            eprintln!(
-                                "[DEBUG]   proc_cache:       {}/{} entries",
-                                proc_cache.entry_count(),
-                                PROC_CACHE_CAP
-                            );
-                            eprintln!(
-                                "[DEBUG]   pid_tree:         {}/{} entries",
-                                pid_tree.entry_count(),
-                                PID_TREE_CAP
-                            );
-                            eprintln!(
-                                "[DEBUG]   file_size_cache:  {}/{} entries",
-                                self.file_size_cache.len(),
-                                self.file_size_cache.cap()
-                            );
-                            last_cache_stats = std::time::Instant::now();
-                        }
-                        self.pending_paths.push((
-                                        path.clone(),
-                                        PathEntry {
-                                            path: path.clone(),
-                                            recursive: Some(opts.recursive),
-                                            types: opts.event_types.as_ref().map(
-                                                |v| v.iter().map(|t| t.to_string()).collect()
-                                            ),
-                                            size: opts.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes))),
-                                            cmd: opts.cmd,
-                                        },
-                                    ));
-                                }
-                                self.setup_inotify_watches();
-                            }
-                            continue;
-                        }
-
-                        let event_pid = raw.pid.unsigned_abs();
-
-                        // Exclude fsmon daemon's own events to prevent self-triggering.
-                        // All tokio worker threads share TGID == main PID, so a single
-                        // PID check covers all cases (no fork needed currently).
-                        if event_pid == self.daemon_pid {
-                            if self.debug {
-                                eprintln!("[DEBUG] skip daemon self-event (pid={})", event_pid);
-                            }
-                            continue;
-                        }
-
-                        // Match event against ALL cmd groups for this path
-                        let matching_entries = self.matching_opts_for_event(&raw.path);
-                        if self.debug && matching_entries.is_empty() {
-                            eprintln!("[DEBUG] event on {} (pid={}): no matching entries",
-                                raw.path.display(), event_pid);
-                        }
-                        for (_monitored_path, opts) in &matching_entries {
-                            // Check process tree filter
-                            let cmd_match = if let Some(ref cmd_name) = opts.cmd {
-                                let matched = self.pid_tree.as_ref()
-                                    .map(|tree| is_descendant(tree, event_pid, cmd_name))
-                                    .unwrap_or(false);
-                                if self.debug {
-                                    eprintln!("[DEBUG]   check cmd=\"{}\" pid={}: {}",
-                                        cmd_name, event_pid, if matched { "MATCH" } else { "SKIP" });
-                                }
-                                matched
-                            } else {
-                                if self.debug {
-                                    eprintln!("[DEBUG]   check cmd=global pid={}: MATCH", event_pid);
-                                }
-                                true
-                            };
-                            if !cmd_match {
-                                continue;
-                            }
-
-                            for event_type in &event_types {
-                                let event = self.build_file_event_for_opts(raw, *event_type, opts);
-
-                                if !self.is_path_in_scope_for_opts(&event.path, opts) {
-                                    if self.debug {
-                                        eprintln!("[DEBUG]   -> out of scope for this opts");
-                                    }
-                                    continue;
-                                }
-
-                                if self.should_output_for_opts(&event, opts) {
-                                    if self.debug {
-                                        let cmd = opts.cmd.as_deref().unwrap_or("global");
-                                        eprintln!("[DEBUG]   -> {}_log.jsonl", cmd);
-                                    }
-                                    if let Err(e) = self.write_event_for_opts(&event, opts) {
-                                        eprintln!("[ERROR] Failed to write event: {}", e);
-                                    }
-                                }
-                            }
-                        }
+                    self.process_event_batch(&events);
+                    // Periodic cache stats
+                    if self.debug && self.cache_config.stats_interval_secs > 0
+                        && last_cache_stats.elapsed() >= std::time::Duration::from_secs(self.cache_config.stats_interval_secs)
+                    {
+                        eprintln!("[DEBUG] --- cache stats ---");
+                        eprintln!("[DEBUG]   dir_cache:        {}/{} entries", dir_cache.entry_count(), DIR_CACHE_CAP);
+                        eprintln!("[DEBUG]   proc_cache:       {}/{} entries", proc_cache.entry_count(), PROC_CACHE_CAP);
+                        eprintln!("[DEBUG]   pid_tree:         {}/{} entries", pid_tree.entry_count(), PID_TREE_CAP);
+                        eprintln!("[DEBUG]   file_size_cache:  {}/{} entries", self.file_size_cache.len(), self.file_size_cache.cap());
+                        last_cache_stats = std::time::Instant::now();
                     }
                 }
                 _ = tokio::signal::ctrl_c() => {
+                    while let Ok(events) = event_rx.try_recv() {
+                        self.process_event_batch(&events);
+                    }
                     break;
                 }
                 _ = sigterm.recv() => {
+                    while let Ok(events) = event_rx.try_recv() {
+                        self.process_event_batch(&events);
+                    }
                     break;
                 }
                 _ = sighup.recv() => {
@@ -934,6 +822,116 @@ impl Monitor {
         // event_rx drops here → channel closed → reader tasks exit on next event
         // OS cleans up all fds on process exit
         Ok(())
+    }
+
+    /// Process a batch of fanotify events: match paths, filter, build FileEvents, write logs.
+    /// Called from both the main event loop and the shutdown drain path.
+    fn process_event_batch(
+        &mut self,
+        events: &[FidEvent],
+    ) {
+        for raw in events {
+            if raw.mask & FAN_Q_OVERFLOW != 0 {
+                eprintln!("[WARNING] fanotify queue overflow - some events may have been lost");
+                continue;
+            }
+
+            let event_types = mask_to_event_types(raw.mask);
+            let matched_path = self.matching_path(&raw.path).cloned();
+
+            // If a monitored directory was deleted, move to pending_paths
+            let is_delete_self = event_types.contains(&EventType::DeleteSelf)
+                || event_types.contains(&EventType::MovedFrom);
+            let is_canonical_root = is_delete_self
+                && self.canonical_paths.iter().any(|cp| cp == &raw.path);
+            if is_canonical_root {
+                if self.debug {
+                    eprintln!("[DEBUG] monitored directory deleted: {}", raw.path.display());
+                }
+                if let Some(ref path) = matched_path {
+                    // Preserve ALL cmd groups before removing
+                    let all_opts: Vec<PathOptions> = self.opts_for_path(path).into_iter().cloned().collect();
+                    if let Err(e) = self.remove_path(path, None) {
+                        eprintln!("[WARNING] Failed to remove deleted path '{}': {e}", path.display());
+                    }
+                    for opts in all_opts {
+                        self.pending_paths.push((
+                            path.clone(),
+                            PathEntry {
+                                path: path.clone(),
+                                recursive: Some(opts.recursive),
+                                types: opts.event_types.as_ref().map(
+                                    |v| v.iter().map(|t| t.to_string()).collect()
+                                ),
+                                size: opts.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes))),
+                                cmd: opts.cmd,
+                            },
+                        ));
+                    }
+                    self.setup_inotify_watches();
+                }
+                continue;
+            }
+
+            let event_pid = raw.pid.unsigned_abs();
+
+            // Exclude fsmon daemon's own events to prevent self-triggering.
+            if event_pid == self.daemon_pid {
+                if self.debug {
+                    eprintln!("[DEBUG] skip daemon self-event (pid={})", event_pid);
+                }
+                continue;
+            }
+
+            // Match event against ALL cmd groups for this path
+            let matching_entries = self.matching_opts_for_event(&raw.path);
+            if self.debug && matching_entries.is_empty() {
+                eprintln!("[DEBUG] event on {} (pid={}): no matching entries",
+                    raw.path.display(), event_pid);
+            }
+            for (_monitored_path, opts) in &matching_entries {
+                // Check process tree filter
+                let cmd_match = if let Some(ref cmd_name) = opts.cmd {
+                    let matched = self.pid_tree.as_ref()
+                        .map(|tree| is_descendant(tree, event_pid, cmd_name))
+                        .unwrap_or(false);
+                    if self.debug {
+                        eprintln!("[DEBUG]   check cmd=\"{}\" pid={}: {}",
+                            cmd_name, event_pid, if matched { "MATCH" } else { "SKIP" });
+                    }
+                    matched
+                } else {
+                    if self.debug {
+                        eprintln!("[DEBUG]   check cmd=global pid={}: MATCH", event_pid);
+                    }
+                    true
+                };
+                if !cmd_match {
+                    continue;
+                }
+
+                for event_type in &event_types {
+                    let event = self.build_file_event_for_opts(raw, *event_type, opts);
+
+                    if !self.is_path_in_scope_for_opts(&event.path, opts) {
+                        if self.debug {
+                            eprintln!("[DEBUG]   -> out of scope for this opts");
+                        }
+                        continue;
+                    }
+
+                    if self.should_output_for_opts(&event, opts) {
+                        if self.debug {
+                            let cmd = opts.cmd.as_deref().unwrap_or("global");
+                            eprintln!("[DEBUG]   -> {}_log.jsonl", cmd);
+                        }
+                        if let Err(e) = self.write_event_for_opts(&event, opts) {
+                            eprintln!("[ERROR] Failed to write event: {}", e);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Like `build_file_event` but uses a specific PathOptions for chain building.
