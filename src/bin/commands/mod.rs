@@ -6,6 +6,7 @@ use fsmon::utils::parse_size_filter;
 use std::path::PathBuf;
 
 mod add;
+mod changes;
 mod clean;
 mod daemon;
 mod health;
@@ -20,6 +21,7 @@ pub use daemon::cmd_daemon;
 pub use health::cmd_health;
 pub use init_cd::{cmd_cd, cmd_init};
 pub use monitored::{cmd_list_monitored_paths, cmd_monitored};
+pub use changes::cmd_changes;
 pub use query::cmd_query;
 pub use remove::cmd_remove;
 
@@ -53,6 +55,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
         Remove { cmd, path } => cmd_remove(cmd, path),
         Monitored => cmd_monitored(),
         Query(args) => cmd_query(args).await_(),
+        Changes(args) => cmd_changes(args).await_(),
         Clean(args) => cmd_clean(args).await_(),
         Init { service } => cmd_init(service),
         Cd => cmd_cd(),

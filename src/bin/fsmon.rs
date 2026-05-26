@@ -94,6 +94,10 @@ pub enum Commands {
     #[command(about = help::about(HelpTopic::Clean), long_about = help::long_about(HelpTopic::Clean))]
     Clean(CleanArgs),
 
+    /// Show most recent event per path (deduplicated changes)
+    #[command(about = help::about(HelpTopic::Changes), long_about = help::long_about(HelpTopic::Changes))]
+    Changes(ChangesArgs),
+
     /// Initialize log and monitored data directories.
     /// With --service, also create a systemd service file.
     #[command(about = help::about(HelpTopic::Init), long_about = help::long_about(HelpTopic::Init))]
@@ -141,6 +145,19 @@ pub struct AddArgs {
 
 #[derive(Parser)]
 pub struct QueryArgs {
+    /// Cmd group to query (positional). Omit to query all cmd groups.
+    #[arg(value_name = "CMD")]
+    pub cmd: Option<String>,
+    /// Path prefix filter(s) applied to event.path. Repeatable.
+    #[arg(short, long, value_name = "PATH")]
+    pub path: Vec<PathBuf>,
+    /// Time filter with operator (repeatable: >1h for since, <2026-05-01 for until)
+    #[arg(short, long, value_name = "FILTER")]
+    pub time: Vec<String>,
+}
+
+#[derive(Parser)]
+pub struct ChangesArgs {
     /// Cmd group to query (positional). Omit to query all cmd groups.
     #[arg(value_name = "CMD")]
     pub cmd: Option<String>,
@@ -359,6 +376,68 @@ mod tests {
         let args = QueryArgs::try_parse_from(["query", "-p", "/tmp", "-t", ">1h"]).unwrap();
         assert_eq!(args.path, vec![PathBuf::from("/tmp")]);
         assert_eq!(args.time, vec![">1h".to_string()]);
+    }
+
+    // ---- ChangesArgs CLI parsing ----
+
+    #[test]
+    fn test_changes_default() {
+        let args = ChangesArgs::try_parse_from(["changes", "_global"]).unwrap();
+        assert_eq!(args.cmd, Some("_global".to_string()));
+        assert!(args.path.is_empty());
+        assert!(args.time.is_empty());
+    }
+
+    #[test]
+    fn test_changes_with_time_and_path() {
+        let args = ChangesArgs::try_parse_from([
+            "changes", "nginx", "-p", "/var/www", "-t", ">1h",
+        ])
+        .unwrap();
+        assert_eq!(args.cmd, Some("nginx".to_string()));
+        assert_eq!(args.path, vec![PathBuf::from("/var/www")]);
+        assert_eq!(args.time, vec![">1h".to_string()]);
+    }
+
+    #[test]
+    fn test_changes_path_repeatable() {
+        let args = ChangesArgs::try_parse_from([
+            "changes",
+            "_global",
+            "-p",
+            "/etc",
+            "-p",
+            "/home",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.path,
+            vec![PathBuf::from("/etc"), PathBuf::from("/home")]
+        );
+    }
+
+    #[test]
+    fn test_changes_time_repeatable() {
+        let args = ChangesArgs::try_parse_from([
+            "changes",
+            "_global",
+            "-t",
+            ">1h",
+            "-t",
+            "<now",
+        ])
+        .unwrap();
+        assert_eq!(args.time, vec![">1h".to_string(), "<now".to_string()]);
+    }
+
+    #[test]
+    fn test_changes_no_cmd_no_args() {
+        // No cmd → should fail (handled in handler, not parser)
+        // But parsing should succeed with cmd=None
+        let args = ChangesArgs::try_parse_from(["changes"]).unwrap();
+        assert!(args.cmd.is_none());
+        assert!(args.path.is_empty());
+        assert!(args.time.is_empty());
     }
 
     // ---- CleanArgs CLI parsing ----

@@ -2,7 +2,7 @@
 
 ## P1 小修小补（低代价，高收益）
 
-### 建议 1: `procfs` 依赖的去留
+### 建议 1: `procfs` 依赖的去留(finished)
 
 `Cargo.toml` 里引入了 `procfs = "0.16"`，但 `proc_cache.rs` 和 `utils.rs` 中仍然手动解析 `/proc/{pid}/status`。`procfs::process::Process` 一行就能拿到 ppid / comm / tgid / starttime，比手动解析更可靠（处理了线程名中的空格、字段格式变化等边界）。
 

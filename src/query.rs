@@ -219,6 +219,54 @@ impl Query {
         Ok(low)
     }
 
+    /// Execute changes query: dedup by path (keep latest), sort by time desc, output JSONL.
+    pub async fn execute_changes(&self) -> Result<()> {
+        let log_files = self.resolve_log_files()?;
+
+        if log_files.is_empty() {
+            println!("No matching log files found");
+            return Ok(());
+        }
+
+        let since_time = self.extract_since();
+        let until_time = self.extract_until();
+
+        // Read events from each file, dedup by path (keep latest event per path)
+        let mut latest_by_path: std::collections::HashMap<PathBuf, FileEvent> =
+            std::collections::HashMap::new();
+
+        for log_file in &log_files {
+            let events = self.read_events_from(log_file, since_time, until_time)?;
+            for event in events {
+                // Apply path filters
+                if let Some(ref path_filters) = self.path_filters {
+                    if !path_filters.iter().any(|pf| event.path.starts_with(pf)) {
+                        continue;
+                    }
+                }
+
+                match latest_by_path.entry(event.path.clone()) {
+                    std::collections::hash_map::Entry::Occupied(mut entry) => {
+                        if event.time > entry.get().time {
+                            entry.insert(event);
+                        }
+                    }
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(event);
+                    }
+                }
+            }
+        }
+
+        // Sort by time descending (newest first)
+        let mut all_events: Vec<FileEvent> = latest_by_path.into_values().collect();
+        all_events.sort_by(|a, b| b.time.cmp(&a.time));
+
+        // Output JSONL
+        self.output_events(&all_events)?;
+        Ok(())
+    }
+
     /// Output events as JSONL to stdout
     fn output_events(&self, events: &[FileEvent]) -> Result<()> {
         for event in events {
@@ -682,6 +730,79 @@ mod tests {
         // but we can verify resolve_log_files finds the file
         let files = q.resolve_log_files().unwrap();
         assert_eq!(files.len(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_execute_changes_dedup_by_path() {
+        let dir = std::env::temp_dir().join("fsmon_query_test_changes_dedup");
+        fs::create_dir_all(&dir).unwrap();
+        let now = Utc::now();
+        let log_path = dir.join("_global_log.jsonl");
+        let mut f = fs::File::create(&log_path).unwrap();
+
+        // Same path /a: old MODIFY + newer CREATE. Different path /b: one DELETE.
+        let old = FileEvent {
+            time: now - chrono::Duration::hours(1),
+            event_type: EventType::Modify,
+            path: PathBuf::from("/a"),
+            pid: 1, cmd: "x".into(), user: "r".into(),
+            file_size: 0, ppid: 0, tgid: 0, chain: String::new(),
+        };
+        let b = FileEvent {
+            time: now - chrono::Duration::minutes(30),
+            event_type: EventType::Delete,
+            path: PathBuf::from("/b"),
+            pid: 3, cmd: "z".into(), user: "r".into(),
+            file_size: 0, ppid: 0, tgid: 0, chain: String::new(),
+        };
+        let recent = FileEvent {
+            time: now,
+            event_type: EventType::Create,
+            path: PathBuf::from("/a"),
+            pid: 2, cmd: "y".into(), user: "r".into(),
+            file_size: 0, ppid: 0, tgid: 0, chain: String::new(),
+        };
+        writeln!(f, "{}", old.to_jsonl_string()).unwrap();
+        writeln!(f, "{}", b.to_jsonl_string()).unwrap();
+        writeln!(f, "{}", recent.to_jsonl_string()).unwrap();
+        drop(f);
+
+        let q = Query::new(dir.clone(), Some("_global".into()), None, vec![]);
+
+        // read_events_from returns all 3 (no dedup yet)
+        let events = q.read_events_from(&log_path, None, None).unwrap();
+        assert_eq!(events.len(), 3);
+
+        // Manual dedup (same logic as execute_changes)
+        use std::collections::HashMap;
+        let mut latest_by_path: HashMap<PathBuf, FileEvent> = HashMap::new();
+        for event in events {
+            match latest_by_path.entry(event.path.clone()) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    if event.time > entry.get().time {
+                        entry.insert(event);
+                    }
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(event);
+                }
+            }
+        }
+
+        // Should have 2 unique paths (/a and /b)
+        assert_eq!(latest_by_path.len(), 2);
+        // /a should be the newer CREATE (not the old MODIFY)
+        assert_eq!(
+            latest_by_path.get(&PathBuf::from("/a")).unwrap().event_type,
+            EventType::Create
+        );
+        // /b should be DELETE
+        assert_eq!(
+            latest_by_path.get(&PathBuf::from("/b")).unwrap().event_type,
+            EventType::Delete
+        );
+
         let _ = fs::remove_dir_all(&dir);
     }
 

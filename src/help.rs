@@ -8,6 +8,7 @@ pub enum HelpTopic {
     Monitored,
     Query,
     Clean,
+    Changes,
 }
 
 pub const fn about(topic: HelpTopic) -> &'static str {
@@ -21,6 +22,7 @@ pub const fn about(topic: HelpTopic) -> &'static str {
         HelpTopic::Monitored => "List all monitored paths with their configuration",
         HelpTopic::Query => "Query historical file change events from log files",
         HelpTopic::Clean => "Clean historical log files, retain by time or size",
+        HelpTopic::Changes => "Show the most recent event per path (deduplicated changes)",
     }
 }
 
@@ -201,6 +203,9 @@ Examples:
   fsmon clean _global                Clean global log with defaults (>=30d)
   fsmon clean openclaw -t '>7d'     Keep last 7 days of openclaw events
   fsmon clean nginx --dry-run        Preview nginx log cleaning"#
+        }
+        HelpTopic::Changes => {
+            include_str!("help/changes.md")
         }
     }
 }
