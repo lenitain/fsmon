@@ -344,7 +344,7 @@ impl Monitor {
             ttl_secs: self.cache_config.proc_ttl_secs,
         };
         let pid_tree = proc_cache::new_pid_tree_with(tree_params);
-        snapshot_process_tree(&pid_tree);
+        snapshot_process_tree(&pid_tree, &proc_cache);
         self.pid_tree = Some(pid_tree.clone());
 
         // Compute combined event mask from ALL cmd groups (OR over all entries)

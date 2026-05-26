@@ -99,8 +99,9 @@ pub fn new_pid_tree_with(params: CacheParams) -> PidTree {
 }
 
 /// Snapshot all existing processes from /proc on daemon start.
-/// Reads `/proc/*/status` to seed the tree with current PIDs and their ppid/cmd.
-pub fn snapshot_process_tree(tree: &PidTree) {
+/// Reads `/proc/*/status` to seed the tree with current PIDs and their ppid/cmd,
+/// and populates the process cache with user info for chain building.
+pub fn snapshot_process_tree(tree: &PidTree, cache: &ProcCache) {
     let dir = match std::fs::read_dir("/proc") {
         Ok(d) => d,
         Err(e) => {
@@ -121,14 +122,36 @@ pub fn snapshot_process_tree(tree: &PidTree) {
         };
         let mut ppid = 0u32;
         let mut cmd = String::new();
+        let mut user = String::new();
+        let mut tgid = 0u32;
         for line in status.lines() {
             if let Some(val) = line.strip_prefix("PPid:") {
                 ppid = val.trim().parse().unwrap_or(0);
             } else if let Some(val) = line.strip_prefix("Name:") {
                 cmd = val.trim().to_string();
+            } else if let Some(val) = line.strip_prefix("Uid:") {
+                if let Some(uid_str) = val.split_whitespace().next()
+                    && let Ok(uid) = uid_str.parse::<u32>()
+                {
+                    user = uid_to_username(uid).unwrap_or_else(|| "unknown".to_string());
+                } else {
+                    user = "unknown".to_string();
+                }
+            } else if let Some(val) = line.strip_prefix("Tgid:") {
+                tgid = val.trim().parse().unwrap_or(0);
             }
         }
-        tree.insert(pid, PidNode { ppid, cmd, start_time_ns: 0 });
+        tree.insert(pid, PidNode { ppid, cmd: cmd.clone(), start_time_ns: 0 });
+        cache.insert(
+            pid,
+            ProcInfo {
+                cmd,
+                user,
+                ppid,
+                tgid,
+                start_time_ns: 0,
+            },
+        );
     }
 }
 
@@ -579,12 +602,18 @@ mod tests {
     fn test_snapshot_pid1() {
         // PID 1 always exists on Linux
         let tree = new_pid_tree();
-        snapshot_process_tree(&tree);
+        let cache = new_cache();
+        snapshot_process_tree(&tree, &cache);
         assert!(tree.contains_key(&1), "PID 1 should exist after snapshot");
         if let Some(node) = tree.get(&1) {
             assert!(!node.cmd.is_empty(), "PID 1 should have a cmd");
             assert_eq!(node.ppid, 0, "PID 1\'s ppid should be 0");
         }
+        // ProcCache should also be populated for PID 1
+        assert!(
+            cache.contains_key(&1),
+            "PID 1 should exist in proc cache after snapshot"
+        );
     }
 
     #[test]
