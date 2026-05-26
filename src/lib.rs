@@ -10,7 +10,7 @@ pub mod proc_cache;
 pub mod query;
 pub mod socket;
 pub mod utils;
-pub use utils::{SizeFilter, SizeOp, TimeOp, TimeFilter, parse_size, parse_size_filter, parse_time, parse_time_filter, format_datetime};
+pub use utils::{DiskFreeThreshold, SizeFilter, SizeOp, TimeOp, TimeFilter, format_datetime, parse_disk_min_free, parse_size, parse_size_filter, parse_time, parse_time_filter};
 
 use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};

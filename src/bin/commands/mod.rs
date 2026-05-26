@@ -6,8 +6,10 @@ use fsmon::utils::parse_size_filter;
 use std::path::PathBuf;
 
 mod add;
+mod changes;
 mod clean;
 mod daemon;
+mod health;
 mod init_cd;
 mod monitored;
 mod query;
@@ -16,8 +18,10 @@ mod remove;
 pub use add::cmd_add;
 pub use clean::cmd_clean;
 pub use daemon::cmd_daemon;
+pub use health::cmd_health;
 pub use init_cd::{cmd_cd, cmd_init};
 pub use monitored::{cmd_list_monitored_paths, cmd_monitored};
+pub use changes::cmd_changes;
 pub use query::cmd_query;
 pub use remove::cmd_remove;
 
@@ -33,6 +37,9 @@ pub fn run(command: crate::Commands) -> Result<()> {
             cache_proc_ttl,
             cache_stats_interval,
             buffer_size,
+            channel_capacity,
+            disk_min_free,
+            sync_interval,
         } => {
             let cli_cache = fsmon::config::CliCacheOverride {
                 dir_capacity: cache_dir_cap,
@@ -41,16 +48,19 @@ pub fn run(command: crate::Commands) -> Result<()> {
                 proc_ttl_secs: cache_proc_ttl,
                 stats_interval_secs: cache_stats_interval,
                 buffer_size,
+                channel_capacity,
             };
-            cmd_daemon(debug, cli_cache).await_()
+            cmd_daemon(debug, cli_cache, disk_min_free, sync_interval).await_()
         }
         Add(args) => cmd_add(args),
         Remove { cmd, path } => cmd_remove(cmd, path),
         Monitored => cmd_monitored(),
         Query(args) => cmd_query(args).await_(),
+        Changes(args) => cmd_changes(args).await_(),
         Clean(args) => cmd_clean(args).await_(),
-        Init => cmd_init(),
+        Init { service } => cmd_init(service),
         Cd => cmd_cd(),
+        Health => cmd_health(),
         ListMonitoredPaths => cmd_list_monitored_paths(),
     }
 }

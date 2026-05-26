@@ -11,6 +11,8 @@ use super::parse_path_entries;
 pub async fn cmd_daemon(
     debug: bool,
     cli_cache: CliCacheOverride,
+    disk_min_free: Option<String>,
+    sync_interval: Option<u64>,
 ) -> Result<()> {
     // Acquire singleton lock first — only one daemon instance allowed
     let (uid, _gid) = fsmon::config::resolve_uid_gid();
@@ -63,21 +65,44 @@ pub async fn cmd_daemon(
                 file_size_capacity: None,
                 proc_ttl_secs: None,
                 stats_interval_secs: None,
+                channel_capacity: None,
             };
             empty.resolve_with_cli(&cli_cache)
         });
 
     if debug {
-        eprintln!("[debug] --- cache configuration ---");
-        eprintln!("[debug]   dir_capacity:       {}", cache_cfg.dir_capacity);
-        eprintln!("[debug]   dir_ttl_secs:       {}", cache_cfg.dir_ttl_secs);
-        eprintln!("[debug]   file_size_capacity: {}", cache_cfg.file_size_capacity);
-        eprintln!("[debug]   proc_ttl_secs:      {}", cache_cfg.proc_ttl_secs);
-        eprintln!("[debug]   stats_interval_secs: {}", cache_cfg.stats_interval_secs);
-        eprintln!("[debug]   buffer_size:        {}", cache_cfg.buffer_size);
+        eprintln!("[DEBUG] --- cache configuration ---");
+        eprintln!("[DEBUG]   dir_capacity:       {}", cache_cfg.dir_capacity);
+        eprintln!("[DEBUG]   dir_ttl_secs:       {}", cache_cfg.dir_ttl_secs);
+        eprintln!("[DEBUG]   file_size_capacity: {}", cache_cfg.file_size_capacity);
+        eprintln!("[DEBUG]   proc_ttl_secs:      {}", cache_cfg.proc_ttl_secs);
+        eprintln!("[DEBUG]   stats_interval_secs: {}", cache_cfg.stats_interval_secs);
+        eprintln!("[DEBUG]   buffer_size:        {}", cache_cfg.buffer_size);
+        match cache_cfg.channel_capacity {
+            Some(cap) => eprintln!("[DEBUG]   channel_capacity:   {} (bounded)", cap),
+            None => eprintln!("[DEBUG]   channel_capacity:   unbounded"),
+        }
     }
 
     let paths_and_options = parse_path_entries(&store.flatten())?;
+
+    // Merge disk_min_free: CLI > config > None
+    let disk_min_free = disk_min_free
+        .or_else(|| cfg.logging.disk_min_free.clone());
+
+    // Merge sync_interval: CLI > config > None (disabled)
+    let sync_interval = sync_interval
+        .or(cfg.logging.sync_interval_secs)
+        .filter(|&n| n > 0)
+        .map(std::time::Duration::from_secs);
+
+    if debug {
+        if let Some(d) = sync_interval {
+            eprintln!("[DEBUG]   sync_interval:      {}s", d.as_secs());
+        } else {
+            eprintln!("[DEBUG]   sync_interval:      disabled");
+        }
+    }
 
     let store_path = cfg.monitored.path.clone();
     let mut monitor = Monitor::new(
@@ -88,6 +113,8 @@ pub async fn cmd_daemon(
         Some(socket_listener),
         debug,
         Some(cache_cfg),
+        disk_min_free,
+        sync_interval,
     )?;
 
     if !store.is_empty() {

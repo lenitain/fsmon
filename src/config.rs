@@ -34,6 +34,12 @@ pub struct LoggingConfig {
     /// Maximum size per log file before truncation.
     /// Size limit per log file before truncation.
     pub size: Option<String>,
+    /// Minimum free disk space before warning (e.g. "10%", "5GB").
+    /// None = no check. Only applies to the log directory filesystem.
+    pub disk_min_free: Option<String>,
+    /// Log file sync interval in seconds. 0 or None = disabled.
+    /// When set, fdatasync is called on all dirty log files every N seconds.
+    pub sync_interval_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +70,11 @@ pub struct CacheConfig {
     /// Interval in seconds between periodic cache stats log output in debug
     /// mode (default: 60). Set to 0 to disable periodic cache stats.
     pub stats_interval_secs: Option<u64>,
+    /// Event channel capacity between reader tasks and the main loop.
+    /// Default: unbounded. Set to a finite number (e.g. 1024) to cap
+    /// memory under extreme event storms — reader tasks block when
+    /// the buffer is full, with fanotify overflow as final backstop.
+    pub channel_capacity: Option<usize>,
 }
 
 /// Resolved cache configuration with all defaults filled in.
@@ -75,6 +86,8 @@ pub struct ResolvedCacheConfig {
     pub proc_ttl_secs: u64,
     pub buffer_size: usize,
     pub stats_interval_secs: u64,
+    /// None = unbounded, Some(N) = bounded(N).
+    pub channel_capacity: Option<usize>,
 }
 
 impl Default for ResolvedCacheConfig {
@@ -86,6 +99,7 @@ impl Default for ResolvedCacheConfig {
             proc_ttl_secs: crate::proc_cache::PROC_CACHE_TTL_SECS,
             buffer_size: 4096 * 8, // 32KB — default from Monitor::new()
             stats_interval_secs: 60,
+            channel_capacity: None, // unbounded by default
         }
     }
 }
@@ -103,6 +117,7 @@ impl CacheConfig {
         if let Some(v) = self.file_size_capacity { r.file_size_capacity = v; }
         if let Some(v) = self.proc_ttl_secs { r.proc_ttl_secs = v; }
         if let Some(v) = self.stats_interval_secs { r.stats_interval_secs = v; }
+        if let Some(v) = self.channel_capacity { r.channel_capacity = Some(v); }
         // Apply CLI overrides (highest priority)
         if let Some(v) = cli.dir_capacity { r.dir_capacity = v; }
         if let Some(v) = cli.dir_ttl_secs { r.dir_ttl_secs = v; }
@@ -110,6 +125,7 @@ impl CacheConfig {
         if let Some(v) = cli.proc_ttl_secs { r.proc_ttl_secs = v; }
         if let Some(v) = cli.stats_interval_secs { r.stats_interval_secs = v; }
         if let Some(v) = cli.buffer_size { r.buffer_size = v; }
+        if let Some(v) = cli.channel_capacity { r.channel_capacity = Some(v); }
         r
     }
 }
@@ -123,29 +139,41 @@ pub struct CliCacheOverride {
     pub proc_ttl_secs: Option<u64>,
     pub stats_interval_secs: Option<u64>,
     pub buffer_size: Option<usize>,
+    pub channel_capacity: Option<usize>,
 }
 
 // ---- Helpers ----
 
-/// Resolve the original user's UID and GID:
-/// - If SUDO_UID is set (sudo), look up the passwd entry for that UID
-/// - Otherwise use the current process UID/GID
+/// Resolve the original user's UID and GID, regardless of how fsmon was started:
+/// - `SUDO_UID`/`SUDO_GID` (sudo) — fast path, no syscall
+/// - `$HOME` owner (systemd / any root context with HOME set) — one `stat` call
+/// - Current process UID/GID (normal user, no root) — no syscall
 pub fn resolve_uid_gid() -> (u32, u32) {
-    let uid = if let Ok(uid_str) = std::env::var("SUDO_UID")
+    // 1. SUDO_UID — sudo
+    if let Ok(uid_str) = std::env::var("SUDO_UID")
         && let Ok(uid) = uid_str.parse::<u32>()
     {
-        uid
-    } else {
-        nix::unistd::geteuid().as_raw()
-    };
-    let gid = if let Ok(gid_str) = std::env::var("SUDO_GID")
-        && let Ok(gid) = gid_str.parse::<u32>()
-    {
-        gid
-    } else {
-        nix::unistd::getegid().as_raw()
-    };
-    (uid, gid)
+        let gid = std::env::var("SUDO_GID")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(0);
+        return (uid, gid);
+    }
+
+    // 2. Running as root → use $HOME directory owner
+    //    (works for systemd, sudo without SUDO_UID, or any root-launched context
+    //     where HOME is set to the target user's directory)
+    if nix::unistd::geteuid().is_root() {
+        if let Ok(home) = std::env::var("HOME") {
+            if let Ok(meta) = std::fs::metadata(&home) {
+                use std::os::linux::fs::MetadataExt;
+                return (meta.st_uid(), meta.st_gid());
+            }
+        }
+    }
+
+    // 3. Running as normal user
+    (nix::unistd::geteuid().as_raw(), nix::unistd::getegid().as_raw())
 }
 
 /// Chown a path to the original user (daemon runs as root, files should go to the user).
@@ -164,14 +192,28 @@ pub fn chown_to_original_user(path: &Path) {
 }
 
 /// Resolve the original user's UID:
-/// - If SUDO_UID is set (sudo), use that
-/// - Otherwise use the current process UID
+/// - `SUDO_UID` (sudo)
+/// - `$HOME` owner (systemd / root)
+/// - Current process UID (normal user)
 pub fn resolve_uid() -> u32 {
+    // 1. SUDO_UID — sudo
     if let Ok(uid_str) = std::env::var("SUDO_UID")
         && let Ok(uid) = uid_str.parse::<u32>()
     {
         return uid;
     }
+
+    // 2. Running as root → $HOME owner
+    if nix::unistd::geteuid().is_root() {
+        if let Ok(home) = std::env::var("HOME") {
+            if let Ok(meta) = std::fs::metadata(&home) {
+                use std::os::linux::fs::MetadataExt;
+                return meta.st_uid();
+            }
+        }
+    }
+
+    // 3. Current process UID
     nix::unistd::geteuid().as_raw()
 }
 
@@ -234,6 +276,8 @@ impl Default for Config {
                 path: PathBuf::from("~/.local/state/fsmon"),
                 keep_days: None,
                 size: None,
+                disk_min_free: None,
+                sync_interval_secs: None,
             },
             socket: SocketConfig {
                 path: PathBuf::from("/tmp/fsmon-<UID>.sock"),
@@ -254,7 +298,8 @@ impl Config {
     }
 
     /// Load config from file. Returns default Config if file doesn't exist.
-    /// Errors if the file exists but is invalid — file is never modified.
+    /// Also returns default if file exists but contains only comments (e.g.
+    /// a reference file created by `fsmon init`).
     pub fn load() -> Result<Self> {
         let p = Self::path();
         if !p.exists() {
@@ -262,6 +307,9 @@ impl Config {
         }
         let content = fs::read_to_string(&p)
             .with_context(|| format!("Failed to read config {}", p.display()))?;
+        if is_comment_only(&content) {
+            return Ok(Config::default());
+        }
         match toml::from_str::<Config>(&content) {
             Ok(cfg) => Ok(cfg),
             Err(e) => bail!("Invalid config file at {}: {}", p.display(), e),
@@ -289,7 +337,6 @@ impl Config {
     /// Creates log dir and monitored data dir. Config file is optional.
     pub fn init_dirs() -> Result<()> {
         let config_path = Self::path();
-        let using_defaults = !config_path.exists();
 
         let mut cfg = if config_path.exists() {
             Config::load()?
@@ -304,6 +351,9 @@ impl Config {
             .parent()
             .context("Monitored file path has no parent")?
             .to_path_buf();
+
+        let log_dir_new = !cfg.logging.path.exists();
+        let monitored_dir_new = !monitored_dir.exists();
 
         fs::create_dir_all(&cfg.logging.path).with_context(|| {
             format!(
@@ -322,16 +372,93 @@ impl Config {
         chown_to_original_user(&cfg.logging.path);
         chown_to_original_user(&monitored_dir);
 
-        eprintln!("Created log directory:  {}", cfg.logging.path.display());
-        eprintln!("Created monitored directory: {}", monitored_dir.display());
-        if using_defaults {
-            eprintln!(
-                "(config file is optional \u{2014} defaults apply without {})",
-                config_path.display()
-            );
+        let log_label = if log_dir_new { "Created" } else { "Exists" };
+        eprintln!("{log_label} log directory:  {}", cfg.logging.path.display());
+        let monitored_label = if monitored_dir_new { "Created" } else { "Exists" };
+        eprintln!("{monitored_label} monitored directory: {}", monitored_dir.display());
+
+        // Create the default config file if it doesn't exist
+        if !config_path.exists() {
+            Self::create_default_config(&config_path)?;
+        } else {
+            eprintln!("Exists config:        {}", config_path.display());
         }
         Ok(())
     }
+
+    /// Return the default config as a TOML string with all values commented out.
+    fn default_commented_toml() -> String {
+        r#"# ================================================================
+# fsmon configuration file
+# ================================================================
+#
+# This file is fully commented. fsmon will use all built-in defaults.
+# To override a default, uncomment and modify the relevant line below.
+#
+# Changes take effect on the next daemon start (or SIGHUP reload).
+#
+# Only the sections and keys you need — omit the rest, defaults apply.
+
+# [monitored]
+#   Where the monitored paths database is stored.
+# path = "~/.local/share/fsmon/monitored.jsonl"
+
+# [logging]
+#   Event log files directory.
+# path = "~/.local/state/fsmon"
+#   Auto-clean: keep entries for at most N days.
+# keep_days = 30
+#   Auto-clean: keep log file under this size.
+# size = ">=1GB"
+#   Warn when free disk space drops below this threshold.
+#   Percentage ("10%") or absolute ("5GB"). Default: no check.
+# disk_min_free = "10%"
+#   Log file sync interval in seconds (fdatasync). Default: disabled.
+#   Recommended: 5. Prevents event loss on crash (kill -9, power loss).
+# sync_interval_secs = 5
+
+# [socket]
+#   Unix socket for CLI-to-daemon communication.
+# path = "/tmp/fsmon-<UID>.sock"
+
+# [cache]
+#   Directory handle cache capacity (default: 100000).
+# dir_capacity = 100000
+#   Directory handle cache TTL in seconds (default: 3600).
+# dir_ttl_secs = 3600
+#   File size cache capacity (default: 10000).
+# file_size_capacity = 10000
+#   Process cache TTL in seconds (default: 600).
+# proc_ttl_secs = 600
+#   Cache stats output interval in debug mode (default: 60).
+# stats_interval_secs = 60
+#   Fanotify read buffer size in bytes (default: 32768).
+# buffer_size = 32768
+#   Event channel capacity. Default: unbounded.
+# channel_capacity = 1024
+"#.to_string()
+    }
+
+    /// Write a commented reference config file to the canonical path.
+    /// Creates parent directories if needed.
+    fn create_default_config(path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+            chown_to_original_user(parent);
+        }
+        fs::write(path, Self::default_commented_toml())?;
+        chown_to_original_user(path);
+        eprintln!("Created config:        {}", path.display());
+        Ok(())
+    }
+}
+
+/// Check if a config file contains only comments and whitespace.
+fn is_comment_only(s: &str) -> bool {
+    s.lines().all(|l| {
+        let t = l.trim();
+        t.is_empty() || t.starts_with('#')
+    })
 }
 
 #[cfg(test)]
@@ -416,21 +543,31 @@ path = "/tmp/custom.sock"
     }
 
     #[test]
-    fn test_load_invalid_config_returns_error() {
+    fn test_load_invalid_config_returns_error_for_bad_toml() {
         with_isolated_home(|_| {
             let config_path = Config::path();
             fs::create_dir_all(config_path.parent().unwrap()).unwrap();
-            fs::write(&config_path, "").unwrap();
+            // Write invalid TOML (not comment-only)
+            fs::write(&config_path, "garbage [[[").unwrap();
 
-            // Should error, not silently use defaults
+            // Should error
             assert!(Config::load().is_err());
 
             // File should be untouched
             let content = fs::read_to_string(&config_path).unwrap();
-            assert!(
-                content.trim().is_empty(),
-                "file content should be untouched"
-            );
+            assert_eq!(content.trim(), "garbage [[[");
+        });
+    }
+
+    #[test]
+    fn test_load_empty_file_returns_defaults() {
+        with_isolated_home(|_| {
+            let config_path = Config::path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            // Empty file or comment-only → return defaults (same as no file)
+            fs::write(&config_path, "").unwrap();
+            let cfg = Config::load().unwrap();
+            assert_eq!(cfg.monitored.path.to_string_lossy(), "~/.local/share/fsmon/monitored.jsonl");
         });
     }
 
@@ -496,14 +633,17 @@ path = "/tmp/custom.sock"
 
             let log_dir = home.join(".local/state/fsmon");
             let monitored_dir = home.join(".local/share/fsmon");
-            let config_dir = home.join(".config/fsmon");
+            let config_file = home.join(".config/fsmon/fsmon.toml");
 
             assert!(log_dir.exists(), "log dir should exist");
             assert!(monitored_dir.exists(), "monitored dir should exist");
             assert!(
-                !config_dir.exists(),
-                "config dir should NOT be created by init"
+                config_file.exists(),
+                "config file should be created by init"
             );
+            // Config should load from the new file (comment-only → defaults)
+            let cfg = Config::load().unwrap();
+            assert_eq!(cfg.monitored.path.to_string_lossy(), "~/.local/share/fsmon/monitored.jsonl");
         });
     }
 
@@ -615,6 +755,7 @@ path = "/tmp/test.sock"
             file_size_capacity: None,
             proc_ttl_secs: None,
             stats_interval_secs: None,
+            channel_capacity: None,
         };
         let cli = CliCacheOverride {
             dir_capacity: Some(50000),
@@ -623,6 +764,7 @@ path = "/tmp/test.sock"
             proc_ttl_secs: Some(300),
             stats_interval_secs: Some(30),
             buffer_size: Some(65536),
+            channel_capacity: None,
         };
         let r = cfg.resolve_with_cli(&cli);
         assert_eq!(r.dir_capacity, 50000);
@@ -642,6 +784,7 @@ path = "/tmp/test.sock"
             file_size_capacity: Some(20000),
             proc_ttl_secs: None,
             stats_interval_secs: None,
+            channel_capacity: None,
         };
         let cli = CliCacheOverride::default();
         let r = cfg.resolve_with_cli(&cli);
@@ -660,6 +803,7 @@ path = "/tmp/test.sock"
             file_size_capacity: Some(500),
             proc_ttl_secs: Some(50),
             stats_interval_secs: None,
+            channel_capacity: None,
         };
         let cli = CliCacheOverride {
             dir_capacity: Some(99999),
@@ -668,6 +812,7 @@ path = "/tmp/test.sock"
             proc_ttl_secs: None,
             stats_interval_secs: Some(120),
             buffer_size: None,
+            channel_capacity: None,
         };
         let r = cfg.resolve_with_cli(&cli);
         assert_eq!(r.dir_capacity, 99999);    // CLI wins

@@ -53,6 +53,25 @@ pub enum Commands {
         /// Raise for high-throughput event volumes.
         #[arg(long, value_name = "BYTES")]
         buffer_size: Option<usize>,
+
+        /// Event channel capacity between reader tasks and the main loop.
+        /// Default: unbounded. Set to a finite number (e.g. 1024) to cap
+        /// memory under extreme event storms — reader tasks block when
+        /// the buffer is full, with fanotify overflow as the final backstop.
+        #[arg(long, value_name = "N")]
+        channel_capacity: Option<usize>,
+
+        /// Minimum free disk space before warning (e.g. "10%", "5GB").
+        /// Default: no check. Only applies to the log directory filesystem.
+        #[arg(long, value_name = "THRESHOLD")]
+        disk_min_free: Option<String>,
+
+        /// Log file sync interval in seconds (default: disabled).
+        /// When set to N > 0, calls fdatasync on all dirty log files every N seconds.
+        /// Prevents event loss on crash (kill -9, power loss) at the cost of
+        /// ~10-50ms disk I/O per interval. Recommended: 5.
+        #[arg(long, value_name = "SECS")]
+        sync_interval: Option<u64>,
     },
 
     /// Add a path to the monitoring list
@@ -82,13 +101,26 @@ pub enum Commands {
     #[command(about = help::about(HelpTopic::Clean), long_about = help::long_about(HelpTopic::Clean))]
     Clean(CleanArgs),
 
-    /// Initialize log and monitored data directories
+    /// Show most recent event per path (deduplicated changes)
+    #[command(about = help::about(HelpTopic::Changes), long_about = help::long_about(HelpTopic::Changes))]
+    Changes(ChangesArgs),
+
+    /// Initialize log and monitored data directories.
+    /// With --service, also create a systemd service file.
     #[command(about = help::about(HelpTopic::Init), long_about = help::long_about(HelpTopic::Init))]
-    Init,
+    Init {
+        /// Also create a systemd service file at /etc/systemd/system/fsmon.service
+        #[arg(long)]
+        service: bool,
+    },
 
     /// Print the log directory path
     #[command(about = help::about(HelpTopic::Cd), long_about = help::long_about(HelpTopic::Cd))]
     Cd,
+
+    /// Query daemon health status from the running daemon
+    #[command(about = "Query daemon health status")]
+    Health,
 
     /// List monitored paths (one per line, for shell completion use)
     #[command(hide = true)]
@@ -120,6 +152,19 @@ pub struct AddArgs {
 
 #[derive(Parser)]
 pub struct QueryArgs {
+    /// Cmd group to query (positional). Omit to query all cmd groups.
+    #[arg(value_name = "CMD")]
+    pub cmd: Option<String>,
+    /// Path prefix filter(s) applied to event.path. Repeatable.
+    #[arg(short, long, value_name = "PATH")]
+    pub path: Vec<PathBuf>,
+    /// Time filter with operator (repeatable: >1h for since, <2026-05-01 for until)
+    #[arg(short, long, value_name = "FILTER")]
+    pub time: Vec<String>,
+}
+
+#[derive(Parser)]
+pub struct ChangesArgs {
     /// Cmd group to query (positional). Omit to query all cmd groups.
     #[arg(value_name = "CMD")]
     pub cmd: Option<String>,
@@ -338,6 +383,96 @@ mod tests {
         let args = QueryArgs::try_parse_from(["query", "-p", "/tmp", "-t", ">1h"]).unwrap();
         assert_eq!(args.path, vec![PathBuf::from("/tmp")]);
         assert_eq!(args.time, vec![">1h".to_string()]);
+    }
+
+    // ---- DaemonArgs CLI parsing ----
+
+    #[test]
+    fn test_daemon_sync_interval() {
+        let cli = Cli::try_parse_from(["fsmon", "daemon", "--sync-interval", "5"]).unwrap();
+        match cli.command {
+            Commands::Daemon {
+                sync_interval, ..
+            } => {
+                assert_eq!(sync_interval, Some(5));
+            }
+            _ => panic!("expected Daemon"),
+        }
+    }
+
+    #[test]
+    fn test_daemon_sync_interval_default() {
+        let cli = Cli::try_parse_from(["fsmon", "daemon"]).unwrap();
+        match cli.command {
+            Commands::Daemon {
+                sync_interval, ..
+            } => {
+                assert_eq!(sync_interval, None);
+            }
+            _ => panic!("expected Daemon"),
+        }
+    }
+
+    // ---- ChangesArgs CLI parsing ----
+
+    #[test]
+    fn test_changes_default() {
+        let args = ChangesArgs::try_parse_from(["changes", "_global"]).unwrap();
+        assert_eq!(args.cmd, Some("_global".to_string()));
+        assert!(args.path.is_empty());
+        assert!(args.time.is_empty());
+    }
+
+    #[test]
+    fn test_changes_with_time_and_path() {
+        let args = ChangesArgs::try_parse_from([
+            "changes", "nginx", "-p", "/var/www", "-t", ">1h",
+        ])
+        .unwrap();
+        assert_eq!(args.cmd, Some("nginx".to_string()));
+        assert_eq!(args.path, vec![PathBuf::from("/var/www")]);
+        assert_eq!(args.time, vec![">1h".to_string()]);
+    }
+
+    #[test]
+    fn test_changes_path_repeatable() {
+        let args = ChangesArgs::try_parse_from([
+            "changes",
+            "_global",
+            "-p",
+            "/etc",
+            "-p",
+            "/home",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.path,
+            vec![PathBuf::from("/etc"), PathBuf::from("/home")]
+        );
+    }
+
+    #[test]
+    fn test_changes_time_repeatable() {
+        let args = ChangesArgs::try_parse_from([
+            "changes",
+            "_global",
+            "-t",
+            ">1h",
+            "-t",
+            "<now",
+        ])
+        .unwrap();
+        assert_eq!(args.time, vec![">1h".to_string(), "<now".to_string()]);
+    }
+
+    #[test]
+    fn test_changes_no_cmd_no_args() {
+        // No cmd → should fail (handled in handler, not parser)
+        // But parsing should succeed with cmd=None
+        let args = ChangesArgs::try_parse_from(["changes"]).unwrap();
+        assert!(args.cmd.is_none());
+        assert!(args.path.is_empty());
+        assert!(args.time.is_empty());
     }
 
     // ---- CleanArgs CLI parsing ----
