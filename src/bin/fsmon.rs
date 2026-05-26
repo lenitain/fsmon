@@ -79,6 +79,12 @@ pub enum Commands {
         /// ~10-50ms disk I/O per interval. Recommended: 5.
         #[arg(long, value_name = "SECS")]
         sync_interval: Option<u64>,
+
+        /// Disable local JSONL log file writing.
+        /// No FileLogWriter task, no disk I/O, zero overhead.
+        /// Events still flow through broadcast for subscribe consumers.
+        #[arg(long)]
+        no_log: bool,
     },
 
     /// Add a path to the monitoring list

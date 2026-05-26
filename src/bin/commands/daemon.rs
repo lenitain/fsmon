@@ -13,6 +13,7 @@ pub async fn cmd_daemon(
     cli_cache: CliCacheOverride,
     disk_min_free: Option<String>,
     sync_interval: Option<u64>,
+    no_log: bool,
 ) -> Result<()> {
     // Acquire singleton lock first — only one daemon instance allowed
     let (uid, _gid) = fsmon::config::resolve_uid_gid();
@@ -26,7 +27,12 @@ pub async fn cmd_daemon(
         "  Monitored path database:  {}",
         cfg.monitored.path.display()
     );
-    eprintln!("  Event logs:     {}", cfg.logging.path.display());
+    let logging_enabled = !no_log && cfg.logging.enabled.unwrap_or(true);
+    if logging_enabled {
+        eprintln!("  Event logs:     {}", cfg.logging.path.display());
+    } else {
+        eprintln!("  Event logs:     disabled (broadcast-only)");
+    }
     eprintln!("  Command socket: {}", cfg.socket.path.display());
 
     let store = Monitored::load(&cfg.monitored.path)?;
@@ -107,9 +113,18 @@ pub async fn cmd_daemon(
 
     let store_path = cfg.monitored.path.clone();
     let subscribe_buf = cache_cfg.subscribe_buf;
+    let logging_enabled = !no_log && cfg.logging.enabled.unwrap_or(true);
+    let log_dir = if logging_enabled {
+        Some(cfg.logging.path.clone())
+    } else {
+        None
+    };
+    if debug {
+        eprintln!("[DEBUG]   local logging:      {}", if logging_enabled { "enabled" } else { "disabled" });
+    }
     let mut monitor = Monitor::new(
         paths_and_options,
-        Some(cfg.logging.path.clone()),
+        log_dir,
         Some(store_path),
         Some(cache_cfg.buffer_size),
         Some(socket_listener),

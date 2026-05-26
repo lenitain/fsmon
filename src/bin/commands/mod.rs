@@ -41,6 +41,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
             subscribe_buf,
             disk_min_free,
             sync_interval,
+            no_log,
         } => {
             let cli_cache = fsmon::config::CliCacheOverride {
                 dir_capacity: cache_dir_cap,
@@ -52,7 +53,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
                 channel_capacity,
                 subscribe_buf,
             };
-            cmd_daemon(debug, cli_cache, disk_min_free, sync_interval).await_()
+            cmd_daemon(debug, cli_cache, disk_min_free, sync_interval, no_log).await_()
         }
         Add(args) => cmd_add(args),
         Remove { cmd, path } => cmd_remove(cmd, path),

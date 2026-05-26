@@ -40,6 +40,11 @@ pub struct LoggingConfig {
     /// Log file sync interval in seconds. 0 or None = disabled.
     /// When set, fdatasync is called on all dirty log files every N seconds.
     pub sync_interval_secs: Option<u64>,
+    /// Enable local JSONL log file writing. Default: true.
+    /// Set to false to completely disable file I/O — no FileLogWriter task,
+    /// no disk buffer, zero overhead. Events still flow through broadcast
+    /// for subscribe consumers.
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -289,6 +294,7 @@ impl Default for Config {
                 size: None,
                 disk_min_free: None,
                 sync_interval_secs: None,
+                enabled: None,
             },
             socket: SocketConfig {
                 path: PathBuf::from("/tmp/fsmon-<UID>.sock"),
@@ -427,6 +433,10 @@ impl Config {
 #   Log file sync interval in seconds (fdatasync). Default: disabled.
 #   Recommended: 5. Prevents event loss on crash (kill -9, power loss).
 # sync_interval_secs = 5
+#   Enable local log file writing. Default: true.
+#   Set to false for broadcast-only mode (subscribe consumers only).
+#   Zero overhead when disabled — no FileLogWriter task, no disk I/O.
+# enabled = true
 
 # [socket]
 #   Unix socket for CLI-to-daemon communication.
