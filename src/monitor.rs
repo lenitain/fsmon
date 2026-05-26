@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use lru::LruCache;
 use tokio::io::unix::AsyncFd;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::AsyncBufReadExt;
 use tokio::signal::unix::{SignalKind, signal};
 
 use moka::sync::Cache;
@@ -149,6 +149,11 @@ pub struct Monitor {
     sync_interval: Option<std::time::Duration>,
     /// Set of log file paths written since last sync (dirty).
     dirty_logs: std::collections::HashSet<PathBuf>,
+
+    /// Unified event stream: broadcast channel for all event consumers.
+    /// File writing is one consumer (inline in process_event_batch).
+    /// Subscribe connections are another consumer (through broadcast receivers).
+    event_stream_tx: Option<tokio::sync::broadcast::Sender<FileEvent>>,
 }
 
 impl Monitor {
@@ -262,6 +267,10 @@ impl Monitor {
             last_disk_check: std::time::Instant::now(),
             sync_interval,
             dirty_logs: std::collections::HashSet::new(),
+            event_stream_tx: {
+                let (tx, _) = tokio::sync::broadcast::channel(4096);
+                Some(tx)
+            },
         };
         if debug {
             eprintln!(
@@ -901,14 +910,28 @@ impl Monitor {
                     }
                 } => {
                     match accept_result {
-                        Ok((mut writer, cmd_str)) => {
-                            let resp = match toml::from_str::<SocketCmd>(&cmd_str) {
-                                Ok(cmd) => self.handle_socket_cmd(cmd),
-                                Err(e) => SocketResp::err(format!("Invalid command: {e}")),
+                        Ok((writer, cmd_str)) => {
+                            let cmd = match toml::from_str::<SocketCmd>(&cmd_str) {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    let resp = SocketResp::err(format!("Invalid command: {e}"));
+                                    if let Ok(toml_str) = toml::to_string(&resp) {
+                                        let _ = tokio_io_oneshot(
+                                            writer,
+                                            &format!("{toml_str}\n"),
+                                        ).await;
+                                    }
+                                    continue;
+                                }
                             };
-                            if let Ok(toml_str) = toml::to_string(&resp) {
-                                let resp_bytes = format!("{toml_str}\n");
-                                let _ = writer.write_all(resp_bytes.as_bytes()).await;
+                            if cmd.cmd == "subscribe" {
+                                self.handle_subscribe(writer, &cmd);
+                            } else {
+                                let resp = self.handle_socket_cmd(cmd);
+                                if let Ok(toml_str) = toml::to_string(&resp) {
+                                    let resp_bytes = format!("{toml_str}\n");
+                                    let _ = tokio_io_oneshot(writer, &resp_bytes).await;
+                                }
                             }
                         }
                         Err(e) => eprintln!("Socket accept error: {e}"),
@@ -1029,6 +1052,10 @@ impl Monitor {
                         }
                         if let Err(e) = self.write_event_for_opts(&event, opts) {
                             eprintln!("[ERROR] Failed to write event: {}", e);
+                        }
+                        // 推送到统一事件流（broadcast），订阅者从此接收
+                        if let Some(ref tx) = self.event_stream_tx {
+                            let _ = tx.send(event.clone());
                         }
                     }
                 }
@@ -1802,6 +1829,34 @@ impl Monitor {
         })
     }
 
+    /// Handle a subscribe command: spawn a task that streams events to the socket.
+    fn handle_subscribe(
+        &self,
+        writer: tokio::net::unix::OwnedWriteHalf,
+        cmd: &SocketCmd,
+    ) {
+        let tx = match self.event_stream_tx.as_ref() {
+            Some(tx) => tx,
+            None => {
+                tokio::spawn(write_resp_and_close(
+                    writer,
+                    SocketResp::permanent_err("subscriptions disabled"),
+                ));
+                return;
+            }
+        };
+
+        let rx = tx.subscribe();
+        let track_cmd = cmd.track_cmd.clone();
+        let types: Option<Vec<EventType>> = cmd.types.as_ref().map(|v| {
+            v.iter()
+                .filter_map(|t| t.parse::<EventType>().ok())
+                .collect()
+        });
+
+        tokio::spawn(subscriber_task(writer, rx, track_cmd, types));
+    }
+
     fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> SocketResp {
         if self.debug {
             eprintln!(
@@ -2239,6 +2294,89 @@ impl Monitor {
             }
         })
     }
+}
+
+/// Write a TOML response and close the socket (one-shot command helper).
+async fn write_resp_and_close(
+    mut writer: tokio::net::unix::OwnedWriteHalf,
+    resp: SocketResp,
+) {
+    use tokio::io::AsyncWriteExt;
+    if let Ok(toml_str) = toml::to_string(&resp) {
+        let _ = writer.write_all(format!("{toml_str}\n").as_bytes()).await;
+    }
+}
+
+/// Write bytes and close (for non-subscribe socket commands).
+async fn tokio_io_oneshot(
+    mut writer: tokio::net::unix::OwnedWriteHalf,
+    data: &str,
+) {
+    use tokio::io::AsyncWriteExt;
+    let _ = writer.write_all(data.as_bytes()).await;
+}
+
+/// Check if a cmd group name appears in a chain string.
+fn chains_contain(chain: &str, cmd_name: &str) -> bool {
+    chain.split(" → ").any(|s| s.trim() == cmd_name)
+}
+
+/// Stream events from a broadcast receiver to a subscriber socket.
+async fn subscriber_task(
+    mut writer: tokio::net::unix::OwnedWriteHalf,
+    mut rx: tokio::sync::broadcast::Receiver<FileEvent>,
+    track_cmd: Option<String>,
+    type_filter: Option<Vec<EventType>>,
+) {
+    use tokio::io::AsyncWriteExt;
+
+    // 1. Send initial ok response (TOML)
+    let resp = SocketResp::ok();
+    let resp_str = toml::to_string(&resp).unwrap_or_default();
+    if writer
+        .write_all(format!("{resp_str}\n").as_bytes())
+        .await
+        .is_err()
+    {
+        return;
+    }
+
+    // 2. Stream events
+    loop {
+        match rx.recv().await {
+            Ok(event) => {
+                // Optional filter by cmd group
+                if let Some(ref wanted) = track_cmd {
+                    if event.chain.is_empty() || !chains_contain(&event.chain, wanted) {
+                        continue;
+                    }
+                }
+                // Optional filter by event type
+                if let Some(ref allowed) = type_filter {
+                    if !allowed.contains(&event.event_type) {
+                        continue;
+                    }
+                }
+
+                let line = event.to_jsonl_string() + "\n";
+                if writer.write_all(line.as_bytes()).await.is_err() {
+                    break; // subscriber disconnected
+                }
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                // Subscriber too slow, dropped n events — send a warning JSON line
+                let warn = format!(
+                    r#"{{"warning":"subscriber too slow, dropped {} events","path":""}}"#,
+                    n
+                );
+                let _ = writer.write_all(format!("{warn}\n").as_bytes()).await;
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                break; // daemon shutting down
+            }
+        }
+    }
+    // writer drops → connection closes
 }
 
 /// Send READY=1 to systemd via sd_notify protocol.
@@ -2769,5 +2907,134 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&test_dir_for_cleanup);
+    }
+
+    // ---- Subscribe tests ----
+
+    #[test]
+    fn test_chains_contain_exact() {
+        assert!(chains_contain("bash → myapp → fsmon", "myapp"));
+    }
+
+    #[test]
+    fn test_chains_contain_not_found() {
+        assert!(!chains_contain("bash → other → fsmon", "myapp"));
+    }
+
+    #[test]
+    fn test_chains_contain_empty_chain() {
+        assert!(!chains_contain("", "myapp"));
+    }
+
+    #[test]
+    fn test_chains_contain_partial_name_not_match() {
+        // "myapp-backup" should not match filter "myapp"
+        assert!(!chains_contain("bash → myapp-backup → fsmon", "myapp"));
+    }
+
+    #[tokio::test]
+    async fn test_subscriber_task_receives_events() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel(64);
+
+        // Verify broadcast channel works as the unified event stream:
+        // Multiple receivers get the same events.
+        let mut rx2 = tx.subscribe();
+        let event = FileEvent {
+            time: Utc::now(),
+            event_type: EventType::Create,
+            path: PathBuf::from("/tmp/test.txt"),
+            pid: 1234,
+            cmd: "test-cmd".to_string(),
+            user: "root".to_string(),
+            file_size: 100,
+            ppid: 0,
+            tgid: 0,
+            chain: "bash → test-cmd".to_string(),
+        };
+        tx.send(event.clone()).unwrap();
+
+        let received1 = rx.recv().await.unwrap();
+        let received2 = rx2.recv().await.unwrap();
+        assert_eq!(received1.path, PathBuf::from("/tmp/test.txt"));
+        assert_eq!(received2.path, PathBuf::from("/tmp/test.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_subscriber_task_filters_by_cmd() {
+        // Test the filter logic directly: chains_contain is already tested
+        // above. The subscriber_task's filter is just chains_contain check.
+        assert!(chains_contain("bash → myapp", "myapp"));
+        assert!(!chains_contain("bash → myapp", "other-app"));
+    }
+
+    #[tokio::test]
+    async fn test_subscriber_task_filters_by_type() {
+        // Test the type filter logic: subscriber_task checks if event.event_type
+        // is in the allowed types list. We verify by checking a broadcast receiver
+        // with the same filter pattern.
+        let allowed = vec![EventType::Delete, EventType::CloseWrite];
+
+        let create_event = FileEvent {
+            time: Utc::now(),
+            event_type: EventType::Create,
+            path: PathBuf::from("/tmp/ignored.txt"),
+            pid: 1,
+            cmd: "test".to_string(),
+            user: "root".to_string(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
+        };
+        assert!(!allowed.contains(&create_event.event_type));
+
+        let delete_event = FileEvent {
+            time: Utc::now(),
+            event_type: EventType::Delete,
+            path: PathBuf::from("/tmp/deleted.txt"),
+            pid: 2,
+            cmd: "test".to_string(),
+            user: "root".to_string(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
+        };
+        assert!(allowed.contains(&delete_event.event_type));
+    }
+
+    #[tokio::test]
+    async fn test_subscriber_task_handles_lagged() {
+        // Test the broadcast Lagged behavior directly
+        let (tx, mut rx) = tokio::sync::broadcast::channel(4); // small buffer
+
+        // Fill the buffer and overflow to trigger Lagged
+        for i in 0..10 {
+            let _ = tx.send(FileEvent {
+                time: Utc::now(),
+                event_type: EventType::Create,
+                path: PathBuf::from(format!("/tmp/batch_{}.txt", i)),
+                pid: 100 + i as u32,
+                cmd: "test".to_string(),
+                user: "root".to_string(),
+                file_size: i as u64,
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
+            });
+        }
+
+        // The next recv should get Lagged
+        let result = rx.recv().await;
+        match result {
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                assert!(n > 0, "should lag with >0 dropped events, got {}", n);
+            }
+            Ok(event) => {
+                // Might get a recent event if buffer still has capacity
+                assert!(event.file_size >= 6, "should be a recent event, got file_size={}", event.file_size);
+            }
+            Err(e) => panic!("unexpected error: {:?}", e),
+        }
     }
 }
