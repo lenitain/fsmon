@@ -35,32 +35,6 @@ Restart=always
 RestartSec=5
 ```
 
-## P3 — 可观测性
-
-### 6. Metrics 计数器
-
-不引入 HTTP/端口。通过 socket `health` 命令暴露，或可选写入 jsonl stats 文件。
-
-**最小指标集**：
-```
-events_processed_total (per event_type)
-events_dropped_total
-reader_restarts_total
-channel_depth (gauge)
-cache_hit_rate (dir/proc/file)
-uptime_secs
-```
-
-成本 ~60 行（与 P1-3 共用 response 结构）。
-
-### 7. Channel backlog 告警
-
-`channel_depth` 连续 3 次检查 > 10_000 → `[WARNING] Event backlog: N items`。
-
-成本 ~10 行。
-
----
-
 ## 不适用/不做的
 
 | 项 | 原因 |
@@ -78,8 +52,6 @@ uptime_secs
 
 ```
 P2-4 Systemd watchdog      ← 可选，需用户自行配置 systemd service
-P3-6 Metrics               ← 可独立实现
-P3-7 Backlog 告警          ← 依赖已实现的 bounded channel
 ```
 
 每个 item 独立可测，不互相阻塞。
