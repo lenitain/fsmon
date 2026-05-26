@@ -33,6 +33,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
             cache_proc_ttl,
             cache_stats_interval,
             buffer_size,
+            channel_capacity,
         } => {
             let cli_cache = fsmon::config::CliCacheOverride {
                 dir_capacity: cache_dir_cap,
@@ -41,6 +42,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
                 proc_ttl_secs: cache_proc_ttl,
                 stats_interval_secs: cache_stats_interval,
                 buffer_size,
+                channel_capacity,
             };
             cmd_daemon(debug, cli_cache).await_()
         }

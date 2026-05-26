@@ -53,6 +53,13 @@ pub enum Commands {
         /// Raise for high-throughput event volumes.
         #[arg(long, value_name = "BYTES")]
         buffer_size: Option<usize>,
+
+        /// Event channel capacity between reader tasks and the main loop.
+        /// Default: unbounded. Set to a finite number (e.g. 1024) to cap
+        /// memory under extreme event storms — reader tasks block when
+        /// the buffer is full, with fanotify overflow as the final backstop.
+        #[arg(long, value_name = "N")]
+        channel_capacity: Option<usize>,
     },
 
     /// Add a path to the monitoring list

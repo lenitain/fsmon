@@ -6,23 +6,11 @@
 - [x] **PID 回收去重** — `start_time_ns` 校验，已在 `get_process_info_by_pid` 中实现
 - [x] **日志标签规范** — `[debug]` → `[DEBUG]`，与 `[ERROR]`/`[WARNING]`/`[INFO]` 统一
 - [x] **SIGTERM 排空 event channel** — 关闭时 `try_recv` 耗尽 channel 中已排队事件后再退出
+- [x] **Bounded channel + 事件降级** — 默认 unbounded，可选 `--channel-capacity N` / `cache.channel_capacity` 启用 bounded，reader task 满时自然阻塞，fanotify overflow 兜底
 
 ---
 
 ## P1 — 鲁棒性基础
-
-### 2. Bounded channel + 事件降级
-
-当前 `unbounded_channel`，事件洪峰时内存无限增长 → OOM。
-
-**实现**：
-```
-bounded(100_000)
-事件类型优先级：CREATE/DELETE/MODIFY > MOVE > ATTRIB/CLOSE > ACCESS/OPEN
-满时：丢弃最低优先级事件，累加 dropped 计数器
-```
-
-成本 ~30 行，依赖 P1-6 metrics 暴露 dropped 计数器。
 
 ### 3. `health` socket 命令
 
@@ -136,12 +124,11 @@ uptime_secs
 ## 执行顺序
 
 ```
-P1-2 Bounded channel 降级  ← 核心收益
 P1-3 health 命令           ← 为 P2-4 铺路
 P2-4 Systemd watchdog      ← 依赖 P1-3 验证存活
 P2-5 磁盘空间预检          ← 独立，可随时做
 P3-6 Metrics               ← 扩展 P1-3 响应结构
-P3-7 Backlog 告警          ← 依赖 P1-2 bounded channel
+P3-7 Backlog 告警          ← 依赖已实现的 bounded channel
 ```
 
 每个 item 独立可测，不互相阻塞。

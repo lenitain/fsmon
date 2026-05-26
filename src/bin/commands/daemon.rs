@@ -63,6 +63,7 @@ pub async fn cmd_daemon(
                 file_size_capacity: None,
                 proc_ttl_secs: None,
                 stats_interval_secs: None,
+                channel_capacity: None,
             };
             empty.resolve_with_cli(&cli_cache)
         });
@@ -75,6 +76,10 @@ pub async fn cmd_daemon(
         eprintln!("[DEBUG]   proc_ttl_secs:      {}", cache_cfg.proc_ttl_secs);
         eprintln!("[DEBUG]   stats_interval_secs: {}", cache_cfg.stats_interval_secs);
         eprintln!("[DEBUG]   buffer_size:        {}", cache_cfg.buffer_size);
+        match cache_cfg.channel_capacity {
+            Some(cap) => eprintln!("[DEBUG]   channel_capacity:   {} (bounded)", cap),
+            None => eprintln!("[DEBUG]   channel_capacity:   unbounded"),
+        }
     }
 
     let paths_and_options = parse_path_entries(&store.flatten())?;

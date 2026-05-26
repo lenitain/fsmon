@@ -39,6 +39,45 @@ use crate::socket::{SocketCmd, SocketResp};
 use crate::utils::{format_size, get_process_info_by_pid, parse_size_filter};
 use crate::{EventType, FileEvent};
 
+// ---- Event channel types ----
+
+/// Bounded or unbounded sender for the event channel.
+enum EventSender {
+    Unbounded(tokio::sync::mpsc::UnboundedSender<Vec<FidEvent>>),
+    Bounded(tokio::sync::mpsc::Sender<Vec<FidEvent>>),
+}
+
+impl Clone for EventSender {
+    fn clone(&self) -> Self {
+        match self {
+            EventSender::Unbounded(tx) => EventSender::Unbounded(tx.clone()),
+            EventSender::Bounded(tx) => EventSender::Bounded(tx.clone()),
+        }
+    }
+}
+
+/// Bounded or unbounded receiver for the event channel.
+enum EventReceiver {
+    Unbounded(tokio::sync::mpsc::UnboundedReceiver<Vec<FidEvent>>),
+    Bounded(tokio::sync::mpsc::Receiver<Vec<FidEvent>>),
+}
+
+impl EventReceiver {
+    async fn recv(&mut self) -> Option<Vec<FidEvent>> {
+        match self {
+            EventReceiver::Unbounded(rx) => rx.recv().await,
+            EventReceiver::Bounded(rx) => rx.recv().await,
+        }
+    }
+
+    fn try_recv(&mut self) -> Result<Vec<FidEvent>, tokio::sync::mpsc::error::TryRecvError> {
+        match self {
+            EventReceiver::Unbounded(rx) => rx.try_recv(),
+            EventReceiver::Bounded(rx) => rx.try_recv(),
+        }
+    }
+}
+
 // ---- Reader supervision ----
 
 /// Per-reader-task restart tracking for exponential backoff.
@@ -72,7 +111,7 @@ pub struct Monitor {
     path_to_group: HashMap<PathBuf, usize>,
     dir_cache: Cache<fanotify_fid::types::HandleKey, PathBuf>,
     /// Shared state for spawning reader tasks during live-add (set in run())
-    event_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<FidEvent>>>,
+    event_tx: Option<EventSender>,
     shared_dir_cache: Option<Cache<fanotify_fid::types::HandleKey, PathBuf>>,
     /// Paths that didn't exist at add/startup time, retried on directory creation
     pending_paths: Vec<(PathBuf, PathEntry)>,
@@ -636,12 +675,22 @@ impl Monitor {
         }
 
         // Spawn one reader task per FsGroup (one per filesystem).
-        // Events are sent through an unbounded mpsc channel to the main loop.
-        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<FidEvent>>();
+        // Events are sent through an mpsc channel (bounded or unbounded per config).
+        let (event_tx, mut event_rx) = match self.cache_config.channel_capacity {
+            Some(cap) if cap > 0 => {
+                let (tx, rx) = tokio::sync::mpsc::channel(cap);
+                (EventSender::Bounded(tx), EventReceiver::Bounded(rx))
+            }
+            _ => {
+                // None or 0 → unbounded (default)
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                (EventSender::Unbounded(tx), EventReceiver::Unbounded(rx))
+            }
+        };
         let dir_cache = self.dir_cache.clone();
 
         // Shared state for live-add (add_path may need to spawn reader tasks)
-        self.event_tx = Some(event_tx.clone());
+        self.event_tx = Some(event_tx);
         self.shared_dir_cache = Some(dir_cache.clone());
 
         for gi in 0..self.fs_groups.len() {
@@ -1099,8 +1148,14 @@ impl Monitor {
                     }
                 };
                 let events = read_fid_events_cached(afd.get_ref(), &mfds, &dc, &mut buf);
-                if !events.is_empty() && tx.send(events).is_err() {
-                    break;
+                if !events.is_empty() {
+                    let send_err = match &tx {
+                        EventSender::Unbounded(tx) => tx.send(events).is_err(),
+                        EventSender::Bounded(tx) => tx.send(events).await.is_err(),
+                    };
+                    if send_err {
+                        break;
+                    }
                 }
                 guard.clear_ready();
             }

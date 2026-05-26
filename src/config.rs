@@ -64,6 +64,11 @@ pub struct CacheConfig {
     /// Interval in seconds between periodic cache stats log output in debug
     /// mode (default: 60). Set to 0 to disable periodic cache stats.
     pub stats_interval_secs: Option<u64>,
+    /// Event channel capacity between reader tasks and the main loop.
+    /// Default: unbounded. Set to a finite number (e.g. 1024) to cap
+    /// memory under extreme event storms — reader tasks block when
+    /// the buffer is full, with fanotify overflow as final backstop.
+    pub channel_capacity: Option<usize>,
 }
 
 /// Resolved cache configuration with all defaults filled in.
@@ -75,6 +80,8 @@ pub struct ResolvedCacheConfig {
     pub proc_ttl_secs: u64,
     pub buffer_size: usize,
     pub stats_interval_secs: u64,
+    /// None = unbounded, Some(N) = bounded(N).
+    pub channel_capacity: Option<usize>,
 }
 
 impl Default for ResolvedCacheConfig {
@@ -86,6 +93,7 @@ impl Default for ResolvedCacheConfig {
             proc_ttl_secs: crate::proc_cache::PROC_CACHE_TTL_SECS,
             buffer_size: 4096 * 8, // 32KB — default from Monitor::new()
             stats_interval_secs: 60,
+            channel_capacity: None, // unbounded by default
         }
     }
 }
@@ -103,6 +111,7 @@ impl CacheConfig {
         if let Some(v) = self.file_size_capacity { r.file_size_capacity = v; }
         if let Some(v) = self.proc_ttl_secs { r.proc_ttl_secs = v; }
         if let Some(v) = self.stats_interval_secs { r.stats_interval_secs = v; }
+        if let Some(v) = self.channel_capacity { r.channel_capacity = Some(v); }
         // Apply CLI overrides (highest priority)
         if let Some(v) = cli.dir_capacity { r.dir_capacity = v; }
         if let Some(v) = cli.dir_ttl_secs { r.dir_ttl_secs = v; }
@@ -110,6 +119,7 @@ impl CacheConfig {
         if let Some(v) = cli.proc_ttl_secs { r.proc_ttl_secs = v; }
         if let Some(v) = cli.stats_interval_secs { r.stats_interval_secs = v; }
         if let Some(v) = cli.buffer_size { r.buffer_size = v; }
+        if let Some(v) = cli.channel_capacity { r.channel_capacity = Some(v); }
         r
     }
 }
@@ -123,6 +133,7 @@ pub struct CliCacheOverride {
     pub proc_ttl_secs: Option<u64>,
     pub stats_interval_secs: Option<u64>,
     pub buffer_size: Option<usize>,
+    pub channel_capacity: Option<usize>,
 }
 
 // ---- Helpers ----
@@ -615,6 +626,7 @@ path = "/tmp/test.sock"
             file_size_capacity: None,
             proc_ttl_secs: None,
             stats_interval_secs: None,
+            channel_capacity: None,
         };
         let cli = CliCacheOverride {
             dir_capacity: Some(50000),
@@ -623,6 +635,7 @@ path = "/tmp/test.sock"
             proc_ttl_secs: Some(300),
             stats_interval_secs: Some(30),
             buffer_size: Some(65536),
+            channel_capacity: None,
         };
         let r = cfg.resolve_with_cli(&cli);
         assert_eq!(r.dir_capacity, 50000);
@@ -642,6 +655,7 @@ path = "/tmp/test.sock"
             file_size_capacity: Some(20000),
             proc_ttl_secs: None,
             stats_interval_secs: None,
+            channel_capacity: None,
         };
         let cli = CliCacheOverride::default();
         let r = cfg.resolve_with_cli(&cli);
@@ -660,6 +674,7 @@ path = "/tmp/test.sock"
             file_size_capacity: Some(500),
             proc_ttl_secs: Some(50),
             stats_interval_secs: None,
+            channel_capacity: None,
         };
         let cli = CliCacheOverride {
             dir_capacity: Some(99999),
@@ -668,6 +683,7 @@ path = "/tmp/test.sock"
             proc_ttl_secs: None,
             stats_interval_secs: Some(120),
             buffer_size: None,
+            channel_capacity: None,
         };
         let r = cfg.resolve_with_cli(&cli);
         assert_eq!(r.dir_capacity, 99999);    // CLI wins
