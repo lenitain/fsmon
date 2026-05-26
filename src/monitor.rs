@@ -2668,6 +2668,39 @@ mod tests {
     }
 
     #[test]
+    fn test_fanotify_mark_null_byte_path_no_root() {
+        // Verifies CString::new rejects interior null bytes BEFORE any
+        // syscall. This test does NOT require root — the error is raised
+        // in userspace during path-to-C-string conversion.
+        let mask = FAN_CREATE | FAN_DELETE;
+
+        // Create a path with an interior null byte
+        let bad_path = Path::new("/tmp/ok\0evil");
+
+        // fanotify_mark needs an fd, but the null byte rejection happens
+        // before any syscall. We just need a valid OwnedFd for the param.
+        let dev_null = std::fs::File::open("/dev/null")
+            .expect("/dev/null must exist on Linux");
+        let dummy_fd: std::os::fd::OwnedFd = dev_null.into();
+
+        let result = fanotify_mark(
+            &dummy_fd,
+            FAN_MARK_ADD,
+            mask,
+            AT_FDCWD,
+            bad_path,
+        );
+
+        match result {
+            Err(FanotifyError::Mark(code)) => {
+                assert_eq!(code, libc::EINVAL,
+                    "null byte path should return EINVAL, got errno={}", code);
+            }
+            other => panic!("expected Err(Mark(EINVAL)), got {:?}", other),
+        }
+    }
+
+    #[test]
     #[ignore]
     fn test_monitor_run_captures_events() {
         use std::io::Write;
