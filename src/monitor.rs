@@ -2054,6 +2054,9 @@ impl Monitor {
             .or_else(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
                     let _ = fs::create_dir_all(log_dir);
+                    // Chown the recreated directory so the original user
+                    // can rm/clean their own logs without sudo
+                    let _ = crate::fid_parser::chown_to_user(log_dir);
                     OpenOptions::new()
                         .create(true)
                         .append(true)
@@ -2122,6 +2125,7 @@ impl Monitor {
                 .or_else(|e| {
                     if e.kind() == std::io::ErrorKind::NotFound {
                         let _ = fs::create_dir_all(&log_dir);
+                        let _ = crate::fid_parser::chown_to_user(&log_dir);
                         OpenOptions::new()
                             .create(true)
                             .append(true)
