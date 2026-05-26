@@ -9,7 +9,7 @@
 - **要么用 `procfs` 替代所有手动 `/proc` 解析**，减少代码量并提高健壮性
 - **要么从 Cargo.toml 里删掉 `procfs`**，避免引入但不用增加编译时间
 
-### 建议 2: 日志写入 flush + fsync 策略
+### 建议 2: 日志写入 flush + fsync 策略 (finished)
 
 当前写入走 `BufWriter`，不是每次 flush。如果 daemon 被 `kill -9`（非 SIGTERM），最后几秒的事件可能丢失。在"用 fsmon 找到是谁删了文件"的场景下，威胁模型需要覆盖"监控工具自身被干掉"。
 
