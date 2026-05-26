@@ -197,7 +197,17 @@ pub fn build_chain(tree: &PidTree, cache: &ProcCache, pid: u32) -> String {
                 .get(&current)
                 .map(|info| info.user.clone())
                 .unwrap_or_else(|| "unknown".to_string());
-            (node.ppid, node.cmd.clone(), user)
+            // If PidTree has an empty cmd (Fork without Exec, already exited),
+            // try /proc as fallback — may still fail if process is gone.
+            if node.cmd.is_empty() {
+                let fallback_cmd = std::fs::read_to_string(format!("/proc/{}/comm", current))
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                (node.ppid, fallback_cmd, user)
+            } else {
+                (node.ppid, node.cmd.clone(), user)
+            }
         } else {
             // Fallback to /proc/{pid}/status
             let status = match std::fs::read_to_string(format!("/proc/{}/status", current)) {
@@ -315,6 +325,28 @@ pub fn handle_proc_events(cache: &ProcCache, tree: &PidTree, data: &[u8], n: usi
                         start_time_ns: timestamp_ns,
                     },
                 );
+                // Fork event fires while the child still exists — read its
+                // comm and user immediately. For processes that exec shortly
+                // after, this will be overwritten by the subsequent Exec event.
+                // For short-lived management processes that never exec
+                // (e.g. systemd --user scope/slice workers), this is the
+                // only chance to capture their info.
+                if let Ok(comm) = std::fs::read_to_string(format!("/proc/{child_pid}/comm"))
+                    .map(|s| s.trim().to_string())
+                {
+                    if let Some((user, ppid, _tgid)) = read_proc_info(child_pid) {
+                        cache.insert(
+                            child_pid,
+                            ProcInfo {
+                                cmd: comm.clone(),
+                                user,
+                                ppid,
+                                tgid: child_pid,
+                                start_time_ns: timestamp_ns,
+                            },
+                        );
+                    }
+                }
                 processed = true;
             }
             Ok(Some(ProcEvent::Exit { .. })) => {
