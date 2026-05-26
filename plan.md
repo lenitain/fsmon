@@ -40,9 +40,24 @@ sudo fsmon daemon &
 
 ---
 
-### ① `.service` 文件（无代码改动）
+### ① `sudo fsmon init --service` 自动生成 service 文件
 
-新建 `fsmon.service`：
+不是手动 `cp`，而是 `init` 子命令加 `--service` 标志。
+
+**用法**：
+```bash
+sudo fsmon init --service
+```
+
+**执行流程**：
+1. 创建数据目录（已有 `init` 行为）
+2. 探测二进制路径：`std::env::current_exe()`（获取真实的 fsmon 路径，如 `/usr/local/bin/fsmon`）
+3. 获取原用户 HOME：`SUDO_UID → getpwuid(uid).home`（与现有 `resolve_home()` 一致）
+4. 生成 service 文件内容，写入 `/etc/systemd/system/fsmon.service`
+5. 执行 `systemctl daemon-reload`
+6. 打印提示：`systemctl enable --now fsmon`
+
+**生成的 service 文件模板**：
 
 ```ini
 [Unit]
@@ -51,43 +66,72 @@ Documentation=man:fsmon(1)
 After=local-fs.target
 
 [Service]
-# Type=notify + sd_notify(READY=1) 确保 systemd 直到初始化完成后才认为服务就绪
 Type=notify
-
-# 核心命令
 ExecStart=/usr/local/bin/fsmon daemon
-
-# 进程级自愈 — 崩溃后 5s 自动重启
 Restart=always
 RestartSec=5
-
-# watchdog — 主循环死锁 >30s 则 kill+restart
 WatchdogSec=30
-
-# 将 HOME 指向常规用户目录，才能读到 ~/.config/fsmon/fsmon.toml
-# 如果不设，daemon 作为 root 运行会去读 /root/.config/...（找不到就用默认路径）
-# 用户根据实际情况修改
 Environment=HOME=/home/pilot
-
-# 安全硬化（可选）
-ProtectHome=read-only
-ProtectSystem=strict
-ReadWritePaths=/home/pilot/.local/share/fsmon /home/pilot/.local/state/fsmon /tmp
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-**安装方式**：
-```bash
-sudo cp scripts/fsmon.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now fsmon
+**路径自动推导逻辑**：
+
+```
+binary_path = current_exe()  → "/usr/local/bin/fsmon"
+home_path   = resolve_home(SUDO_UID) → "/home/pilot"
+
+→ 写入 Environment=HOME=/home/pilot
+→ ExecStart=/usr/local/bin/fsmon daemon
 ```
 
-**路径问题**：systemd 下 `SUDO_UID` 不存在。`config.rs` 的 `resolve_uid_gid()` / `guess_home()` 不会走 sudo 分支，最终用 `getpwuid(euid)`，euid=0 → root 家目录。
-- 解法：service 里 `Environment=HOME=/home/pilot` → config.rs 的 `expand_tilde` 正确展开
-- `guess_home()` 检测到 `SUDO_UID` 不存在且 EUID=0 时，已做了 `getpwuid` 回退，不崩
+**因此 `config.rs` 完全不需要改**。service 中的 `Environment=HOME=` 让 `expand_tilde` 正确展开为用户目录。<br>
+如果用户安装到非标准路径，`current_exe()` 返回即正确路径。
+
+**守护进程间关系**：`init --service` 写入的 service 文件中没有任何 `--disk-min-free`、`--channel-capacity` 等参数。<br>
+用户在 `~/.config/fsmon/fsmon.toml` 中配置即可，daemon 启动时会自动加载（已有行为）。
+
+**交互变化**：
+
+```bash
+# 安装
+sudo fsmon init --service
+# → Created log directory: /home/pilot/.local/state/fsmon
+# → Created monitored directory: /home/pilot/.local/share/fsmon
+# → Created systemd service: /etc/systemd/system/fsmon.service
+# → Run: sudo systemctl enable --now fsmon
+
+# 启动
+sudo systemctl start fsmon
+
+# 状态
+sudo systemctl status fsmon
+# ● fsmon.service - fsmon - File System Change Monitor
+#    CGroup: /system.slice/fsmon.service
+#            └─12345 /usr/local/bin/fsmon daemon
+#            ...
+
+# 看日志
+journalctl -u fsmon -f
+
+# 关闭
+sudo systemctl stop fsmon
+
+# 卸载
+sudo systemctl disable --now fsmon
+sudo rm /etc/systemd/system/fsmon.service
+sudo systemctl daemon-reload
+```
+
+**实现改动**：
+
+| 文件 | 改动 |
+|------|------|
+| `src/bin/fsmon.rs` | `Init` 子命令加 `--service` 标志 |
+| `src/bin/commands/init_cd.rs` | `cmd_init` 接受 `service: bool`，新增 `install_service()` 函数 |
+| Cargo.toml | 无新增依赖（纯文件 IO + systemctl 调用） |
 
 **交互变化**：
 ```bash
