@@ -47,7 +47,7 @@ fn install_service() -> Result<()> {
         .to_string();
 
     // Resolve the original user's home directory
-    let (uid, _gid) = fsmon::config::resolve_uid_gid();
+    let uid = fsmon::config::resolve_uid();
     let home = fsmon::config::resolve_home(uid)
         .context("Failed to resolve home directory")?
         .to_string_lossy()
@@ -56,6 +56,12 @@ fn install_service() -> Result<()> {
     let content = service_template(&binary, &home);
 
     let service_path = Path::new("/etc/systemd/system/fsmon.service");
+    if service_path.exists() {
+        eprintln!("Exists systemd service: {}", service_path.display());
+        eprintln!("  (delete it first if you need to regenerate: sudo rm {})", service_path.display());
+        return Ok(());
+    }
+
     fsmon::config::chown_to_original_user(
         service_path
             .parent()

@@ -144,25 +144,36 @@ pub struct CliCacheOverride {
 
 // ---- Helpers ----
 
-/// Resolve the original user's UID and GID:
-/// - If SUDO_UID is set (sudo), look up the passwd entry for that UID
-/// - Otherwise use the current process UID/GID
+/// Resolve the original user's UID and GID, regardless of how fsmon was started:
+/// - `SUDO_UID`/`SUDO_GID` (sudo) — fast path, no syscall
+/// - `$HOME` owner (systemd / any root context with HOME set) — one `stat` call
+/// - Current process UID/GID (normal user, no root) — no syscall
 pub fn resolve_uid_gid() -> (u32, u32) {
-    let uid = if let Ok(uid_str) = std::env::var("SUDO_UID")
+    // 1. SUDO_UID — sudo
+    if let Ok(uid_str) = std::env::var("SUDO_UID")
         && let Ok(uid) = uid_str.parse::<u32>()
     {
-        uid
-    } else {
-        nix::unistd::geteuid().as_raw()
-    };
-    let gid = if let Ok(gid_str) = std::env::var("SUDO_GID")
-        && let Ok(gid) = gid_str.parse::<u32>()
-    {
-        gid
-    } else {
-        nix::unistd::getegid().as_raw()
-    };
-    (uid, gid)
+        let gid = std::env::var("SUDO_GID")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(0);
+        return (uid, gid);
+    }
+
+    // 2. Running as root → use $HOME directory owner
+    //    (works for systemd, sudo without SUDO_UID, or any root-launched context
+    //     where HOME is set to the target user's directory)
+    if nix::unistd::geteuid().is_root() {
+        if let Ok(home) = std::env::var("HOME") {
+            if let Ok(meta) = std::fs::metadata(&home) {
+                use std::os::linux::fs::MetadataExt;
+                return (meta.st_uid(), meta.st_gid());
+            }
+        }
+    }
+
+    // 3. Running as normal user
+    (nix::unistd::geteuid().as_raw(), nix::unistd::getegid().as_raw())
 }
 
 /// Chown a path to the original user (daemon runs as root, files should go to the user).
@@ -181,14 +192,28 @@ pub fn chown_to_original_user(path: &Path) {
 }
 
 /// Resolve the original user's UID:
-/// - If SUDO_UID is set (sudo), use that
-/// - Otherwise use the current process UID
+/// - `SUDO_UID` (sudo)
+/// - `$HOME` owner (systemd / root)
+/// - Current process UID (normal user)
 pub fn resolve_uid() -> u32 {
+    // 1. SUDO_UID — sudo
     if let Ok(uid_str) = std::env::var("SUDO_UID")
         && let Ok(uid) = uid_str.parse::<u32>()
     {
         return uid;
     }
+
+    // 2. Running as root → $HOME owner
+    if nix::unistd::geteuid().is_root() {
+        if let Ok(home) = std::env::var("HOME") {
+            if let Ok(meta) = std::fs::metadata(&home) {
+                use std::os::linux::fs::MetadataExt;
+                return meta.st_uid();
+            }
+        }
+    }
+
+    // 3. Current process UID
     nix::unistd::geteuid().as_raw()
 }
 

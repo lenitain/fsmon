@@ -29,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Removed unused `procfs` dependency from `Cargo.toml` (reduces compilation time).
 
+### Fixed
+
+- **Permissions**: `resolve_uid_gid()` and `resolve_uid()` no longer depend on
+  `SUDO_UID` as the only fallback.  When running as root without `SUDO_UID`
+  (e.g. systemd), they now derive the original user from the owner of `$HOME`.
+  This means log files and directories are correctly owned by the user
+  regardless of how fsmon was started — `sudo`, `systemd`, or any other
+  root-launched context.
+
 ## [0.3.2] - 2026-05-15
 
 ### Added
