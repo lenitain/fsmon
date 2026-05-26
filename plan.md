@@ -66,16 +66,20 @@ Documentation=man:fsmon(1)
 After=local-fs.target
 
 [Service]
-Type=notify
+# 注意：不要用 Type=notify + WatchdogSec，否则需要编译时
+# 启用 --features watchdog（libsystemd 依赖），参见步骤二。
+Type=simple
 ExecStart=/usr/local/bin/fsmon daemon
 Restart=always
 RestartSec=5
-WatchdogSec=30
 Environment=HOME=/home/pilot
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+**为什么不用 `Type=notify` + `WatchdogSec`？**<br>
+当前项目没有 `libsystemd` 依赖，daemon 不会发 `sd_notify(READY=1)`。若写了 `Type=notify`，systemd 会等 READY 超时（90s）后 kill 进程。只写 `Restart=always` 就能获得**崩溃自动重启**这一核心收益，且无需任何代码改动。
 
 **路径自动推导逻辑**：
 
