@@ -758,6 +758,10 @@ impl Monitor {
             tokio::sync::mpsc::unbounded_channel::<usize>().1,
         );
 
+        // Notify systemd that the daemon is ready (only effective when
+        // running under a Type=notify systemd service).
+        notify_sd_ready();
+
         loop {
             tokio::select! {
                 Some(events) = event_rx.recv() => {
@@ -2176,6 +2180,23 @@ impl Monitor {
             }
         })
     }
+}
+
+/// Send READY=1 to systemd via sd_notify protocol.
+/// Reads $NOTIFY_SOCKET from the environment (set by systemd for Type=notify services).
+/// If the env var is not set (e.g. running directly via sudo), this is a no-op.
+fn notify_sd_ready() {
+    use std::os::unix::net::UnixDatagram;
+    let socket_path = match std::env::var("NOTIFY_SOCKET") {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let socket = match UnixDatagram::unbound() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let msg = b"READY=1\n";
+    let _ = socket.send_to(msg, &socket_path);
 }
 
 #[cfg(test)]

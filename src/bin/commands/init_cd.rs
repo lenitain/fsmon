@@ -18,7 +18,7 @@ Documentation=man:fsmon(1)
 After=local-fs.target
 
 [Service]
-Type=simple
+Type=notify
 ExecStart={binary} daemon
 Restart=always
 RestartSec=5

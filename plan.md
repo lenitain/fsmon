@@ -20,7 +20,7 @@
 | 能力 | Redis | fsmon 现状 | 对 fsmon 的价值 | 决策 |
 |------|-------|-----------|----------------|:----:|
 | **崩溃重启** | `Restart=always` | `init --service` 已做 | 进程 panic/kill -9 后自动拉起来，核心收益 | **✅ 已做** |
-| **READY=1 通知** | `Type=notify` + `sd_notify(READY=1)` | 无 | 低成本（~5 行），让 systemd 知道 daemon 何时真的就绪。有效性取决于是否有下游依赖 `After=fsmon.service` | 🟡 **可选** |
+| **READY=1 通知** | `Type=notify` + `sd_notify(READY=1)` | ✅ `notify_sd_ready()` 已实现 | 启动时通过 Unix socket 向 systemd 发 READY=1。零外部依赖，纯标准库。`NOTIFY_SOCKET` 不存在时自动降级 | **✅ 已做** |
 | **WATCHDOG 心跳** | `--supervised systemd` 自带 | 无 | 检测主循环死锁。但 fsmon 是 tokio 事件驱动（`select!`），所有操作都是非阻塞 async，死锁概率极低。复杂度 > 收益 | 🔴 **不做** |
 | **显式 `--supervised` 开关** | 必须加这个参数 | 无此设计 | Redis 用显式开关是因为有 3 种模式（no/upstart/systemd），fsmon 只有 1 种。而且 NOTIFY_SOCKET 不存在时 sd_notify 自动降级，不需要人工开关 | 🔴 **不做** |
 | **安全硬化** | `User=` + `Protect*` + `Private*` | 全 root 运行 | fanotify 需要 `CAP_SYS_ADMIN`，不能降权。`ProtectSystem=full` 阻止写日志，`ProtectHome=true` 阻止读配置 | 🔴 **不能做** |
