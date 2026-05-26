@@ -40,7 +40,7 @@ fsmon diff _global --since '2026-05-25 08:00' --until 'now'
 - 高频写入场景下日志量可减少 60-70%
 - 作为**可选**功能（`--coalesce`），默认不开启，保持兼容
 
-### `fanotify_mark` 中消除不必要的堆分配
+### `fanotify_mark` 中消除不必要的堆分配(finished)
 
 `path.as_ref().as_bytes().to_vec()` 每次都分配新 Vec。可用 `CString::new` 或 `OsStr::as_encoded_bytes()`（Rust 1.74+）避免。mark 操作不频繁，但作为 crates.io 公共 API，零开销是承诺。
 
