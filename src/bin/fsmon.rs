@@ -60,6 +60,11 @@ pub enum Commands {
         /// the buffer is full, with fanotify overflow as the final backstop.
         #[arg(long, value_name = "N")]
         channel_capacity: Option<usize>,
+
+        /// Minimum free disk space before warning (e.g. "10%", "5GB").
+        /// Default: no check. Only applies to the log directory filesystem.
+        #[arg(long, value_name = "THRESHOLD")]
+        disk_min_free: Option<String>,
     },
 
     /// Add a path to the monitoring list

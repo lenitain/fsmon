@@ -34,6 +34,9 @@ pub struct LoggingConfig {
     /// Maximum size per log file before truncation.
     /// Size limit per log file before truncation.
     pub size: Option<String>,
+    /// Minimum free disk space before warning (e.g. "10%", "5GB").
+    /// None = no check. Only applies to the log directory filesystem.
+    pub disk_min_free: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -245,6 +248,7 @@ impl Default for Config {
                 path: PathBuf::from("~/.local/state/fsmon"),
                 keep_days: None,
                 size: None,
+                disk_min_free: None,
             },
             socket: SocketConfig {
                 path: PathBuf::from("/tmp/fsmon-<UID>.sock"),

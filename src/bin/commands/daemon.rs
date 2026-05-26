@@ -11,6 +11,7 @@ use super::parse_path_entries;
 pub async fn cmd_daemon(
     debug: bool,
     cli_cache: CliCacheOverride,
+    disk_min_free: Option<String>,
 ) -> Result<()> {
     // Acquire singleton lock first — only one daemon instance allowed
     let (uid, _gid) = fsmon::config::resolve_uid_gid();
@@ -84,6 +85,10 @@ pub async fn cmd_daemon(
 
     let paths_and_options = parse_path_entries(&store.flatten())?;
 
+    // Merge disk_min_free: CLI > config > None
+    let disk_min_free = disk_min_free
+        .or_else(|| cfg.logging.disk_min_free.clone());
+
     let store_path = cfg.monitored.path.clone();
     let mut monitor = Monitor::new(
         paths_and_options,
@@ -93,6 +98,7 @@ pub async fn cmd_daemon(
         Some(socket_listener),
         debug,
         Some(cache_cfg),
+        disk_min_free,
     )?;
 
     if !store.is_empty() {

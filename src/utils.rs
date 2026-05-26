@@ -7,6 +7,36 @@ pub use timefilter::{TimeFilter, TimeOp, format_datetime, parse_time, parse_time
 
 use crate::proc_cache::{ProcCache, ProcInfo, read_proc_start_time_ns};
 
+/// Threshold for disk space pre-check.
+/// `Percent(pct)` — warn when free space drops below `pct`% of total.
+/// `Bytes(n)`    — warn when free space drops below `n` bytes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DiskFreeThreshold {
+    Percent(f64),
+    Bytes(u64),
+}
+
+/// Parse a `--disk-min-free` style value.
+/// "10%" → DiskFreeThreshold::Percent(10.0)
+/// "5GB" → DiskFreeThreshold::Bytes(5_368_709_120)
+/// "500MB" → DiskFreeThreshold::Bytes(524_288_000)
+pub fn parse_disk_min_free(s: &str) -> Result<DiskFreeThreshold, String> {
+    let s = s.trim();
+    if let Some(pct) = s.strip_suffix('%') {
+        let val: f64 = pct.trim().parse().map_err(|e| format!("invalid percentage '{}': {}", pct, e))?;
+        if val <= 0.0 || val > 100.0 {
+            return Err(format!("percentage must be between 0 and 100, got {}", val));
+        }
+        Ok(DiskFreeThreshold::Percent(val))
+    } else {
+        let bytes = parse_size(s).map_err(|e| format!("invalid size '{}': {}", s, e))?;
+        if bytes <= 0 {
+            return Err("disk-min-free must be positive".to_string());
+        }
+        Ok(DiskFreeThreshold::Bytes(bytes as u64))
+    }
+}
+
 /// Get process info by PID (from fanotify event)
 /// Checks proc connector cache first (for short-lived processes),
 /// then falls back to /proc (for long-lived processes),
@@ -322,5 +352,38 @@ mod tests {
 
         let tf = parse_time_filter(">=1h").unwrap();
         assert!(matches!(tf.op, TimeOp::Ge));
+    }
+
+    #[test]
+    fn test_parse_disk_min_free_percent() {
+        let t = parse_disk_min_free("10%").unwrap();
+        assert_eq!(t, DiskFreeThreshold::Percent(10.0));
+
+        let t = parse_disk_min_free("0.5%").unwrap();
+        assert_eq!(t, DiskFreeThreshold::Percent(0.5));
+    }
+
+    #[test]
+    fn test_parse_disk_min_free_bytes() {
+        let t = parse_disk_min_free("1GB").unwrap();
+        assert_eq!(t, DiskFreeThreshold::Bytes(1_073_741_824));
+
+        let t = parse_disk_min_free("500MB").unwrap();
+        assert_eq!(t, DiskFreeThreshold::Bytes(524_288_000));
+    }
+
+    #[test]
+    fn test_parse_disk_min_free_errors() {
+        assert!(parse_disk_min_free("101%").is_err());
+        assert!(parse_disk_min_free("0%").is_err());
+        assert!(parse_disk_min_free("-1GB").is_err());
+        assert!(parse_disk_min_free("invalid").is_err());
+    }
+
+    #[test]
+    fn test_parse_disk_min_free_invalid_percent_range() {
+        assert!(parse_disk_min_free("150%").is_err(), ">100 should fail");
+        assert!(parse_disk_min_free("-5%").is_err(), "negative should fail");
+        assert!(parse_disk_min_free("0%").is_err(), "0 should fail");
     }
 }

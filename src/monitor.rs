@@ -8,7 +8,6 @@ use fanotify_fid::prelude::*;
 use fanotify_fid::types::FidEvent;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
 use std::num::NonZeroUsize;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
@@ -138,6 +137,14 @@ pub struct Monitor {
     reader_states: Vec<Option<ReaderState>>,
     /// Daemon start time, set in run() for uptime calculation.
     started_at: std::time::Instant,
+    /// Raw disk-min-free threshold string (e.g. "10%", "5GB"). None = no check.
+    disk_min_free: Option<String>,
+    /// Ring buffer for events when disk is full.
+    disk_buf: std::collections::VecDeque<(FileEvent, String)>,
+    /// Whether the log directory filesystem appears healthy.
+    disk_healthy: bool,
+    /// Timestamp of last disk health check, to rate-limit statvfs calls.
+    last_disk_check: std::time::Instant,
 }
 
 impl Monitor {
@@ -150,6 +157,7 @@ impl Monitor {
         socket_listener: Option<tokio::net::UnixListener>,
         debug: bool,
         cache_config: Option<ResolvedCacheConfig>,
+        disk_min_free: Option<String>,
     ) -> Result<Self> {
         let cache_config = cache_config.unwrap_or_default();
         let buffer_size = buffer_size.unwrap_or(cache_config.buffer_size);
@@ -243,6 +251,10 @@ impl Monitor {
             reader_death_tx,
             reader_states: Vec::new(),
             started_at: std::time::Instant::now(),
+            disk_min_free,
+            disk_buf: std::collections::VecDeque::with_capacity(10_000),
+            disk_healthy: true,
+            last_disk_check: std::time::Instant::now(),
         };
         if debug {
             eprintln!(
@@ -599,6 +611,13 @@ impl Monitor {
                         e
                     );
                 }
+            }
+        }
+
+        // Startup disk space check
+        if let Some(ref threshold_str) = self.disk_min_free {
+            if let Some(ref dir) = self.log_dir {
+                Self::check_disk_space(dir, threshold_str);
             }
         }
 
@@ -1648,6 +1667,76 @@ impl Monitor {
         Ok(())
     }
 
+    /// Check disk space for the log directory against the configured threshold.
+    /// Prints a warning if free space is below the threshold.
+    fn check_disk_space(log_dir: &std::path::Path, threshold_str: &str) {
+        let threshold = match crate::utils::parse_disk_min_free(threshold_str) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("[WARNING] Invalid disk-min-free '{}': {}", threshold_str, e);
+                return;
+            }
+        };
+
+        // Get filesystem stats
+        let stat = match nix::sys::statvfs::statvfs(log_dir) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[WARNING] Cannot stat filesystem for '{}': {}", log_dir.display(), e);
+                return;
+            }
+        };
+
+        let block_size = stat.block_size() as u64;
+        let total = stat.blocks() as u64 * block_size;
+        let free = stat.blocks_available() as u64 * block_size;
+
+        if total == 0 {
+            return;
+        }
+
+        let below = match threshold {
+            crate::utils::DiskFreeThreshold::Percent(min_pct) => {
+                let free_pct = (free as f64 / total as f64) * 100.0;
+                if free_pct < min_pct {
+                    eprintln!(
+                        "[WARNING] Low disk space on '{}': {:.1}% free ({}/{}), \
+                         threshold is {}%",
+                        log_dir.display(),
+                        free_pct,
+                        crate::utils::format_size(free as i64),
+                        crate::utils::format_size(total as i64),
+                        min_pct,
+                    );
+                    true
+                } else {
+                    false
+                }
+            }
+            crate::utils::DiskFreeThreshold::Bytes(min_bytes) => {
+                if free < min_bytes {
+                    eprintln!(
+                        "[WARNING] Low disk space on '{}': {} free, threshold is {}",
+                        log_dir.display(),
+                        crate::utils::format_size(free as i64),
+                        crate::utils::format_size(min_bytes as i64),
+                    );
+                    true
+                } else {
+                    false
+                }
+            }
+        };
+
+        if !below {
+            eprintln!(
+                "[INFO] Disk space OK on '{}': {} free",
+                log_dir.display(),
+                crate::utils::format_size(free as i64),
+            );
+        }
+    }
+
     /// Build a health snapshot for the `health` socket command.
     fn health(&self) -> SocketResp {
         use crate::socket::{HealthInfo, ReaderHealth};
@@ -1921,18 +2010,19 @@ impl Monitor {
     }
 
     /// Write an event to a specific opts' cmd log (for multi-cmd support).
-    fn write_event_for_opts(&self, event: &FileEvent, opts: &PathOptions) -> std::io::Result<()> {
-        let log_dir = match self.log_dir.as_ref() {
+    fn write_event_for_opts(&mut self, event: &FileEvent, opts: &PathOptions) -> std::io::Result<()> {
+        let log_dir = match self.log_dir.clone() {
             Some(d) => d,
             None => return Ok(()),
         };
         let cmd_name = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
-        self.write_raw_event(event, log_dir, cmd_name)
+        self.write_raw_event(event, &log_dir, cmd_name)
     }
 
     /// Low-level: write an event to `{log_dir}/{cmd}_log.jsonl`.
+    /// On disk full, buffers the event and falls back to retry later.
     fn write_raw_event(
-        &self,
+        &mut self,
         event: &FileEvent,
         log_dir: &Path,
         cmd_name: &str,
@@ -1947,29 +2037,91 @@ impl Monitor {
                 log_path.file_name().unwrap_or_default().to_string_lossy()
             );
         }
+
+        // Try to flush buffer if disk was previously unhealthy
+        if !self.disk_healthy
+            && self.last_disk_check.elapsed() >= std::time::Duration::from_secs(10)
+        {
+            self.flush_disk_buf();
+        }
+
         let is_new = !log_path.exists();
-        let mut file = OpenOptions::new()
+        match OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&log_path)?;
-        // Chown new log files to the original user so they own everything in their ~
-        if is_new {
-            match chown_to_user(&log_path) {
-                Ok(true) => {}
-                Ok(false) => {
-                    // one-time warning already emitted in run() for the log directory
+            .open(&log_path)
+        {
+            Ok(file) => {
+                // Chown new log files to the original user
+                if is_new {
+                    match chown_to_user(&log_path) {
+                        Ok(true) => {}
+                        Ok(false) => {}
+                        Err(e) => {
+                            eprintln!(
+                                "[WARNING] Could not chown log file '{}': {}",
+                                log_path.display(),
+                                e
+                            );
+                        }
+                    }
                 }
-                Err(e) => {
-                    eprintln!(
-                        "[WARNING] Could not chown log file '{}': {}",
-                        log_path.display(),
-                        e
-                    );
+                let mut file = std::io::BufWriter::new(file);
+                use std::io::Write;
+                writeln!(file, "{}", event.to_jsonl_string())?;
+                self.disk_healthy = true;
+                Ok(())
+            }
+            Err(e) => {
+                // Disk might be full — buffer the event
+                self.disk_healthy = false;
+                self.last_disk_check = std::time::Instant::now();
+                if self.disk_buf.len() < 10_000 {
+                    self.disk_buf.push_back((
+                        event.clone(),
+                        cmd_name.to_string(),
+                    ));
+                }
+                // Return the error so the caller knows, but don't crash
+                Err(e)
+            }
+        }
+    }
+
+    /// Try to flush buffered events to disk.
+    fn flush_disk_buf(&mut self) {
+        if self.disk_buf.is_empty() {
+            self.disk_healthy = true;
+            return;
+        }
+        let log_dir = match self.log_dir.as_ref() {
+            Some(d) => d.clone(),
+            None => return,
+        };
+
+        let mut remaining = std::collections::VecDeque::new();
+        while let Some((event, cmd_name)) = self.disk_buf.pop_front() {
+            let log_path = log_dir.join(crate::utils::cmd_to_log_name(&cmd_name));
+            match OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+            {
+                Ok(file) => {
+                    let mut file = std::io::BufWriter::new(file);
+                    use std::io::Write;
+                    if writeln!(file, "{}", event.to_jsonl_string()).is_err() {
+                        remaining.push_back((event, cmd_name));
+                    }
+                }
+                Err(_) => {
+                    remaining.push_back((event, cmd_name));
                 }
             }
         }
-        writeln!(file, "{}", event.to_jsonl_string())?;
-        Ok(())
+        self.disk_buf = remaining;
+        self.disk_healthy = self.disk_buf.is_empty();
+        self.last_disk_check = std::time::Instant::now();
     }
 
     #[cfg(test)]
@@ -2101,6 +2253,7 @@ mod tests {
             None,
             false,
             None,
+            None,
         )
         .unwrap()
     }
@@ -2223,6 +2376,7 @@ mod tests {
             None,
             false,
             None,
+            None,
         );
         assert!(result.is_err(), "Monitor::new() should reject cmd=fsmon");
         let err = result.err().unwrap().to_string();
@@ -2245,6 +2399,7 @@ mod tests {
             None,
             false,
             None,
+            None,
         );
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("at least 4096"));
@@ -2256,6 +2411,7 @@ mod tests {
             Some(2 * 1024 * 1024),
             None,
             false,
+            None,
             None,
         );
         assert!(result.is_err());
@@ -2269,13 +2425,14 @@ mod tests {
             None,
             false,
             None,
+            None,
         );
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_add_path_and_remove_path() {
-        let mut m = Monitor::new(vec![], None, None, None, None, false, None).unwrap();
+        let mut m = Monitor::new(vec![], None, None, None, None, false, None, None).unwrap();
 
         let entry = PathEntry {
             cmd: None,
