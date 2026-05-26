@@ -1,107 +1,327 @@
-# fsmon 自愈体系完善计划
+# fsmon 实时事件订阅功能
 
-## P1 小修小补（低代价，高收益）
+## 目标
 
-### 建议 1: `procfs` 依赖的去留(finished)
-
-`Cargo.toml` 里引入了 `procfs = "0.16"`，但 `proc_cache.rs` 和 `utils.rs` 中仍然手动解析 `/proc/{pid}/status`。`procfs::process::Process` 一行就能拿到 ppid / comm / tgid / starttime，比手动解析更可靠（处理了线程名中的空格、字段格式变化等边界）。
-
-- **要么用 `procfs` 替代所有手动 `/proc` 解析**，减少代码量并提高健壮性
-- **要么从 Cargo.toml 里删掉 `procfs`**，避免引入但不用增加编译时间
-
-### 建议 2: 日志写入 flush + fsync 策略 (finished)
-
-当前写入走 `BufWriter`，不是每次 flush。如果 daemon 被 `kill -9`（非 SIGTERM），最后几秒的事件可能丢失。在"用 fsmon 找到是谁删了文件"的场景下，威胁模型需要覆盖"监控工具自身被干掉"。
-
-- 加 `--sync-interval N`（默认 5s），每 N 秒对日志文件做一次 `fdatasync`
-- SIGTERM 接收时做最后一次 sync 后再退出
-- 代价：几十毫秒磁盘 IO / 每 5s — 可忽略
-
-### 建议 3: `fsmon diff` 命令(finished)
-
-运维中高频场景："上次部署以后哪些文件被改了？" `fsmon query` 只能按时间和路径过滤，需要用户用 `jq` 写复杂的去重聚合脚本。
+给 fsmon daemon 新增 `subscribe` socket endpoint，外部进程可通过 Unix socket 实时接收 JSONL 事件流，不必轮询日志文件。
 
 ```bash
-# 新命令：按 path 去重，取最后一次更改
-fsmon diff _global --since '2026-05-25 08:00' --until 'now'
+# 外部进程（任意语言）：拿到实时事件
+echo 'subscribe' | nc -U /tmp/fsmon-1000.sock
+# ← 持续收到 JSONL，一行一个 FileEvent
 ```
 
-实现上就是 `query` 的结果按 path dedup 取 `max(time)`，但有了独立子命令用户心智负担小很多。新增功能里 ROI 最高的一个。
+下游用 ~10 行 Python/Go/Rust adapter 就可把事件接 Kafka/S3/Prometheus/Webhook。
 
 ---
 
-## P2 中型改进（需要投入，但收益明显）
+## 架构
 
-### 事件去重/合并 (`--coalesce`) ❌ 已废弃
+```
+fanotify reader tasks
+        │
+        │ (mpsc channel, 不变)
+        ▼
+   main loop ──► process_event_batch ──► write_jsonl (文件, 不变)
+                        │
+                        │ (broadcast channel, 新增)
+                        ▼
+              ┌─────────────────────┐
+              │  ↓          ↓      │
+            sub_1      sub_2    sub_3   (各自独立的 tokio task)
+              │          │        │
+              ▼          ▼        ▼
+           socket     socket   socket  (长连接, JSONL 流)
+```
 
-原方案：用 moka Cache + 100ms 时间窗口将 CREATE+MODIFY+CLOSE_WRITE 合并为一条记录。
+- 主循环的事件处理流程 **不变** — JSONL 文件写入照旧
+- 每处理一个 `FileEvent`，同时向 broadcast channel 发送一份
+- 每个 subscribe 连接对应一个 tokio task，从 broadcast receiver 读事件，写 JSONL 到 socket
+- 订阅者断开 → task 退出 → receiver 自动 drop
+- daemon 关闭 → broadcast sender drop → 所有 receiver 收到 Closed → 所有 task 自动退出
 
-废弃理由：
-- flush timer 方案有硬伤：`process_event_batch` 是同步调用，batch 间有任意长间隔，不配独立定时器任务则事件无限期滞留在缓存中
-- SIGKILL 时整组事件丢失，比不 coalesce 更糟
-- 双日志格式使下游工具（query/diff/changes）复杂度翻倍
-- 用户直接用 `--type CLOSE_WRITE` 即可达到类似效果，零代码变更
+---
 
-### `fanotify_mark` 中消除不必要的堆分配(finished)
+## 协议
 
-`path.as_ref().as_bytes().to_vec()` 每次都分配新 Vec。可用 `CString::new` 或 `OsStr::as_encoded_bytes()`（Rust 1.74+）避免。mark 操作不频繁，但作为 crates.io 公共 API，零开销是承诺。
+### 连接与认证（复用现有 socket）
 
-### HandleCache 的脏数据问题 ❌ 不处理
+```
+TCP-like 流程:
 
-已删除目录的 handle→path 映射在 dir_cache 中残留，直到 TTL 淘汰。
+1. Client 连接 /tmp/fsmon-1000.sock
+2. Client 发送 TOML subscribe 命令（结尾加空行，同现有协议）
+3. Server 返回 TOML SocketResp (ok = true 或 error)
+4. 如 ok，Server 持续发送 JSONL（一行一个 FileEvent）
+5. Client 断连 → 连接关闭；Server 关闭 → 连接关闭
+```
 
-正确性不受影响：Phase 1 本地 `handle_map` + `resolve_file_handle` 兜底。
+subscribe 命令示例：
+```toml
+cmd = "subscribe"
+track_cmd = "myapp"    # 可选：只订阅某个 cmd group，不填 = 全部
+types = ["CLOSE_WRITE", "DELETE"]   # 可选：只订阅某些事件类型，不填 = 全部
+```
 
-潜在修复（如确有必要）：
+复用 `SocketCmd` 的现有字段 `track_cmd` 和 `types`，不需新增字段。
+
+### SocketResp（与现有命令兼容）
+
+subscribe 成功后也返回 `SocketResp`：
+```toml
+ok = true
+```
+之后开始 JSONL 流。
+
+subscribe 失败（如 daemon 未初始化 broadcast channel）：
+```toml
+ok = false
+error = "subscriptions disabled"
+error_kind = "Transient"
+```
+
+---
+
+## 实现步骤
+
+### 步骤 1：Monitor 结构体新增 broadcast sender
+
+**文件**：`src/monitor.rs`
+
 ```rust
-// process_event_batch 的 is_canonical_root 分支
-if let Some(ref key) = raw.self_handle {
-    self.dir_cache.invalidate(key);
+pub struct Monitor {
+    // ... 现有字段不变 ...
+    
+    /// Broadcast channel for subscribe connections.
+    /// Created in run() when socket listener is active.
+    event_broadcast_tx: Option<tokio::sync::broadcast::Sender<FileEvent>>,
 }
 ```
 
-不处理理由：脏 entry 约 5% cache 浪费（~600KB 量级），对 daemon 可忽略。改和不改用户感知不到差异。
+### 步骤 2：Monitor::new() 初始化 broadcast
 
-——用户可以通过 CLI flag 自行控制：`--cache-dir-cap` 调容量、`--cache-dir-ttl` 调淘汰速度。
+默认 capacity：4096（允许 process_event_batch 连续产生数千事件而不丢订阅者）。
+
+可加 CLI flag `--subscribe-buf N` 方便极端场景调大。
+
+```rust
+// Monitor::new()
+let broadcast_cap = 4096;
+let (event_broadcast_tx, _) = tokio::sync::broadcast::channel(broadcast_cap);
+self.event_broadcast_tx = Some(event_broadcast_tx);
+```
+
+> 注意：broadcast channel 的 sender 即使在无 receiver 时也正常工作（`send` 不阻塞，返回 `Err`）
+
+### 步骤 3：process_event_batch 推送事件到 broadcast
+
+在现有 `write_event_for_opts` 之后加一行：
+
+```rust
+// 现有：写 JSONL 文件
+if let Err(e) = self.write_event_for_opts(&event, opts) {
+    eprintln!("[ERROR] Failed to write event: {}", e);
+}
+
+// 新增：推送给订阅者（忽略无订阅者的错误）
+if let Some(ref tx) = self.event_broadcast_tx {
+    let _ = tx.send(event.clone());
+}
+```
+
+`let _` 丢弃 `SendError`。当无 subscriber 时 `send` 返回 `Err(FileEvent)`，忽略即可。
+
+### 步骤 4：SocketCmd 支持 subscribe 命令
+
+**无需修改 SocketCmd 结构体**。只需在 socket handler 里识别 `cmd == "subscribe"`。
+
+### 步骤 5：subscribe 处理逻辑（main loop）
+
+**文件**：`src/monitor.rs`，`run()` 的 `accept_result` 分支
+
+当前逻辑：
+```rust
+accept_result => {
+    Ok((mut writer, cmd_str)) => {
+        let resp = ...;                    // 解析命令，调用 handle_socket_cmd
+        writer.write_all(resp).await;      // 写入 TOML 响应
+        // ← 函数结束，writer drop，连接关闭
+    }
+}
+```
+
+改为：
+```rust
+accept_result => {
+    Ok((writer, cmd_str)) => {
+        let cmd = match toml::from_str::<SocketCmd>(&cmd_str) {
+            Ok(c) => c,
+            Err(e) => {
+                let resp = SocketResp::err(format!("Invalid command: {e}"));
+                let _ = tokio_toml_resp(writer, &resp).await;
+                continue;
+            }
+        };
+        
+        if cmd.cmd == "subscribe" {
+            self.handle_subscribe(writer, &cmd);
+        } else {
+            let resp = self.handle_socket_cmd(cmd);
+            let _ = tokio_toml_resp(writer, &resp).await;
+        }
+    }
+}
+```
+
+### 步骤 6：handle_subscribe 实现
+
+```rust
+fn handle_subscribe(
+    &self,
+    writer: tokio::net::unix::OwnedWriteHalf,
+    cmd: &SocketCmd,
+) {
+    let tx = match self.event_broadcast_tx.as_ref() {
+        Some(tx) => tx,
+        None => {
+            let resp = SocketResp::permanent_err("subscriptions disabled");
+            // 需要在 async context 里写响应，这里 spawn 一个小 task
+            tokio::spawn(write_resp_and_close(writer, resp));
+            return;
+        }
+    };
+
+    let rx = tx.subscribe();
+    let track_cmd = cmd.track_cmd.clone();
+    let types: Option<Vec<EventType>> = cmd.types.as_ref().map(|v| {
+        v.iter().filter_map(|t| t.parse().ok()).collect()
+    });
+
+    tokio::spawn(subscriber_task(writer, rx, track_cmd, types));
+}
+```
+
+### 步骤 7：subscriber_task（核心流逻辑）
+
+```rust
+async fn subscriber_task(
+    mut writer: tokio::net::unix::OwnedWriteHalf,
+    mut rx: tokio::sync::broadcast::Receiver<FileEvent>,
+    track_cmd: Option<String>,
+    type_filter: Option<Vec<EventType>>,
+) {
+    use tokio::io::AsyncWriteExt;
+
+    // 1. 发送初始 ok 响应（TOML）
+    let resp = SocketResp::ok();
+    let resp_str = toml::to_string(&resp).unwrap_or_default();
+    if writer.write_all(format!("{}\n", resp_str).as_bytes()).await.is_err() {
+        return;
+    }
+
+    // 2. 流式发送事件
+    loop {
+        match rx.recv().await {
+            Ok(event) => {
+                // 可选过滤：按 cmd group
+                if let Some(ref wanted) = track_cmd {
+                    if event.chain.is_empty() || !chains_contain(&event.chain, wanted) {
+                        continue;
+                    }
+                }
+                // 可选过滤：按事件类型
+                if let Some(ref allowed) = type_filter {
+                    if !allowed.contains(&event.event_type) {
+                        continue;
+                    }
+                }
+
+                let line = event.to_jsonl_string() + "\n";
+                if writer.write_all(line.as_bytes()).await.is_err() {
+                    break; // 订阅者断连
+                }
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                // 订阅者太慢，丢了 n 条事件 — 发一条警告
+                let warn = format!(
+                    r#"{{"warning":"subscriber too slow, dropped {} events","path":""}}"# + "\n",
+                    n
+                );
+                let _ = writer.write_all(warn.as_bytes()).await;
+                // 继续接收，看看能不能追上来
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                break; // daemon 关闭了
+            }
+        }
+    }
+    // writer drop → 连接关闭
+}
+```
+
+辅助函数（cmd group 匹配）：
+```rust
+fn chains_contain(chain: &str, cmd_name: &str) -> bool {
+    chain.split(" → ").any(|s| s.trim() == cmd_name)
+}
+```
+
+### 步骤 8：CLI 订阅命令（可选，便利性）
+
+新增 `fsmon subscribe` 子命令：
+
+```bash
+fsmon subscribe                    # 订阅全部事件
+fsmon subscribe --cmd myapp         # 订阅 myapp cmd group
+fsmon subscribe --types CLOSE_WRITE,DELETE  # 仅这些类型
+```
+
+**文件**：`src/bin/commands/subscribe.rs` + 注册到 `mod.rs` + `fsmon.rs`
+
+这步是让用户不必手写 `nc`。可选——可以先不加，直接文档里教 `nc`。
 
 ---
 
-## P3 架构级（如果做大）
+## 背压策略
 
-### Unix socket 实时事件订阅
+| 场景 | 行为 |
+|------|------|
+| 订阅者处理能力 ≥ 事件产生速度 | 正常 |
+| 订阅者慢 | broadcast channel buffer 满后**丢弃最老的事件**，receiver 收到 `Lagged(n)`，发一条 JSON 警告到订阅者流 |
+| 订阅者断连 | task 的 `write_all` 失败 → break → task 退出 |
+| 无订阅者 | `tx.send()` 返回 `Err` → 忽略，不影响正常写 JSONL 文件 |
 
-当前事件只能写到 JSONL 文件供事后查询。无法实时消费。
+不做阻塞 backpressure——不能因为一个慢订阅者影响 daemon 的核心事件记录。
 
-方案：新增 `subscribe` socket endpoint，保持长连接，持续推送 JSONL 事件流。
+---
 
-```bash
-# 外部进程（任意语言）：
-echo 'subscribe' | nc -U /tmp/fsmon-1000.sock
-# ← 持续收到 JSONL 行，直到连接断开
-```
+## 文件变更列表
 
-优势：
-- 不引入 protobuf/Avro/Prometheus 等任何依赖
-- 外部进程用任何语言写 adapter（~10 行 Python/Go/Rust）
-- fsmon 只负责 JSONL 输出，格式转换是 adapter 的事
-- 不 fork，不改 fsmon 代码
+| 文件 | 变更 |
+|------|------|
+| `src/monitor.rs` | 加 `event_broadcast_tx` 字段、初始化、`process_event_batch` 推送、main loop 中 handle subscribe、subscriber_task |
+| `src/socket.rs` | 无需变更（SocketCmd 字段已够用） |
+| `src/lib.rs` | 无变更（FileEvent 已由 serde 可序列化） |
+| `src/bin/commands/subscribe.rs` | **可选**：CLI 便利子命令 |
+| `src/bin/commands/mod.rs` | **可选**：注册 subscribe 子命令 |
+| `Cargo.toml` | 无新依赖（只用了 tokio::sync::broadcast） |
+| `plan.md` | 本文件 |
 
-代价：
-- 当前 socket 是 request-response 模式（加 cmd，收 resp，断连）
-- 需要改成长连接 + subscriber 列表 + broadcast 推送
-- 需要处理背压（慢 subscriber 是否 drop？）
-- 需要 cleanup 断连 subscriber
+---
 
-优先级：低。等有真实需求（有人要在 fsmon 上接 Kafka）再动手。
+## 测试计划
 
-### 日志格式 trait 化 ❌ 已废弃
+1. **单元测试**：`subscriber_task` 独立可测试——给它一个 broadcast channel + 内存 writer，验证：
+   - 正常事件流输出
+   - cmd/type 过滤
+   - Lagged 场景（填充 buffer 使其溢出）
+   - Closed 场景（drop sender）
 
-原方案：`trait EventSink` + impl 切换输出格式。
+2. **集成测试**：用 `fsmon subscribe` 连接真实 daemon，发几个事件（`echo hello > /tmp/test`），验证收到 JSONL 行。
 
-废弃理由：
-- fsmon 是二进制工具，trait 化后用户仍需 fork 才能加新 impl，没有解决任何实际问题
-- 真正需要的不是 Rust 抽象，而是外部进程能消费的实时事件流（见上方 socket subscribe 方案）
+---
 
-### fanotify-fid 支持 io-uring
+## 不做的事（明确界限）
 
-Linux 6.0+ 下 fanotify 可配合 io-uring 做异步事件读取。当前 `AsyncFd` 方案在 tokio 下完全正确，但极致低延迟场景（微秒级）io-uring 的 submission queue polling 更优。不急，但 crate README 的 "Future Work" 里提一句让后来者知道这条路被考虑过。
+- ❌ 不做 protobuf/Avro/Kafka 输出 — 那是外部 adapter 的职责
+- ❌ 不做 daemon 侧复杂过滤 DSL — 只支持 cmd group + event types
+- ❌ 不做多路复用（一个连接一个订阅） — 如果真需要多 cmd group 在一条连接上，以后加 `subscribe_cmds: [String]`
