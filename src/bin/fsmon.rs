@@ -65,6 +65,13 @@ pub enum Commands {
         /// Default: no check. Only applies to the log directory filesystem.
         #[arg(long, value_name = "THRESHOLD")]
         disk_min_free: Option<String>,
+
+        /// Log file sync interval in seconds (default: disabled).
+        /// When set to N > 0, calls fdatasync on all dirty log files every N seconds.
+        /// Prevents event loss on crash (kill -9, power loss) at the cost of
+        /// ~10-50ms disk I/O per interval. Recommended: 5.
+        #[arg(long, value_name = "SECS")]
+        sync_interval: Option<u64>,
     },
 
     /// Add a path to the monitoring list
@@ -376,6 +383,34 @@ mod tests {
         let args = QueryArgs::try_parse_from(["query", "-p", "/tmp", "-t", ">1h"]).unwrap();
         assert_eq!(args.path, vec![PathBuf::from("/tmp")]);
         assert_eq!(args.time, vec![">1h".to_string()]);
+    }
+
+    // ---- DaemonArgs CLI parsing ----
+
+    #[test]
+    fn test_daemon_sync_interval() {
+        let cli = Cli::try_parse_from(["fsmon", "daemon", "--sync-interval", "5"]).unwrap();
+        match cli.command {
+            Commands::Daemon {
+                sync_interval, ..
+            } => {
+                assert_eq!(sync_interval, Some(5));
+            }
+            _ => panic!("expected Daemon"),
+        }
+    }
+
+    #[test]
+    fn test_daemon_sync_interval_default() {
+        let cli = Cli::try_parse_from(["fsmon", "daemon"]).unwrap();
+        match cli.command {
+            Commands::Daemon {
+                sync_interval, ..
+            } => {
+                assert_eq!(sync_interval, None);
+            }
+            _ => panic!("expected Daemon"),
+        }
     }
 
     // ---- ChangesArgs CLI parsing ----

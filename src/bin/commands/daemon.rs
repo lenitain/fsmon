@@ -12,6 +12,7 @@ pub async fn cmd_daemon(
     debug: bool,
     cli_cache: CliCacheOverride,
     disk_min_free: Option<String>,
+    sync_interval: Option<u64>,
 ) -> Result<()> {
     // Acquire singleton lock first — only one daemon instance allowed
     let (uid, _gid) = fsmon::config::resolve_uid_gid();
@@ -89,6 +90,20 @@ pub async fn cmd_daemon(
     let disk_min_free = disk_min_free
         .or_else(|| cfg.logging.disk_min_free.clone());
 
+    // Merge sync_interval: CLI > config > None (disabled)
+    let sync_interval = sync_interval
+        .or(cfg.logging.sync_interval_secs)
+        .filter(|&n| n > 0)
+        .map(std::time::Duration::from_secs);
+
+    if debug {
+        if let Some(d) = sync_interval {
+            eprintln!("[DEBUG]   sync_interval:      {}s", d.as_secs());
+        } else {
+            eprintln!("[DEBUG]   sync_interval:      disabled");
+        }
+    }
+
     let store_path = cfg.monitored.path.clone();
     let mut monitor = Monitor::new(
         paths_and_options,
@@ -99,6 +114,7 @@ pub async fn cmd_daemon(
         debug,
         Some(cache_cfg),
         disk_min_free,
+        sync_interval,
     )?;
 
     if !store.is_empty() {

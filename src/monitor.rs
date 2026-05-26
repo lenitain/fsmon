@@ -145,6 +145,10 @@ pub struct Monitor {
     disk_healthy: bool,
     /// Timestamp of last disk health check, to rate-limit statvfs calls.
     last_disk_check: std::time::Instant,
+    /// Log file sync interval. None = disabled.
+    sync_interval: Option<std::time::Duration>,
+    /// Set of log file paths written since last sync (dirty).
+    dirty_logs: std::collections::HashSet<PathBuf>,
 }
 
 impl Monitor {
@@ -158,6 +162,7 @@ impl Monitor {
         debug: bool,
         cache_config: Option<ResolvedCacheConfig>,
         disk_min_free: Option<String>,
+        sync_interval: Option<std::time::Duration>,
     ) -> Result<Self> {
         let cache_config = cache_config.unwrap_or_default();
         let buffer_size = buffer_size.unwrap_or(cache_config.buffer_size);
@@ -255,6 +260,8 @@ impl Monitor {
             disk_buf: std::collections::VecDeque::with_capacity(10_000),
             disk_healthy: true,
             last_disk_check: std::time::Instant::now(),
+            sync_interval,
+            dirty_logs: std::collections::HashSet::new(),
         };
         if debug {
             eprintln!(
@@ -762,6 +769,9 @@ impl Monitor {
         // running under a Type=notify systemd service).
         notify_sd_ready();
 
+        // Sync interval timer (if enabled)
+        let mut sync_timer = self.sync_interval.map(tokio::time::interval);
+
         loop {
             tokio::select! {
                 Some(events) = event_rx.recv() => {
@@ -800,17 +810,30 @@ impl Monitor {
                     while let Ok(events) = event_rx.try_recv() {
                         self.process_event_batch(&events);
                     }
+                    self.sync_dirty_logs();
                     break;
                 }
                 _ = sigterm.recv() => {
                     while let Ok(events) = event_rx.try_recv() {
                         self.process_event_batch(&events);
                     }
+                    self.sync_dirty_logs();
                     break;
                 }
                 _ = sighup.recv() => {
                     if let Err(e) = self.reload_config() {
                         eprintln!("Config reload error: {e}");
+                    }
+                }
+                _ = async {
+                    match sync_timer.as_mut() {
+                        Some(timer) => timer.tick().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    self.sync_dirty_logs();
+                    if self.debug {
+                        eprintln!("[DEBUG] fdatasync completed");
                     }
                 }
                 proc_readable = async {
@@ -2089,6 +2112,10 @@ impl Monitor {
                 let mut file = std::io::BufWriter::new(file);
                 use std::io::Write;
                 writeln!(file, "{}", event.to_jsonl_string())?;
+                // Track dirty log for periodic fdatasync
+                if self.sync_interval.is_some() {
+                    self.dirty_logs.insert(log_path);
+                }
                 self.disk_healthy = true;
                 Ok(())
             }
@@ -2154,6 +2181,38 @@ impl Monitor {
         self.disk_buf = remaining;
         self.disk_healthy = self.disk_buf.is_empty();
         self.last_disk_check = std::time::Instant::now();
+    }
+
+    /// Sync all dirty log files to disk via fdatasync.
+    /// Called periodically (sync_interval) and on graceful shutdown.
+    fn sync_dirty_logs(&mut self) {
+        if self.dirty_logs.is_empty() {
+            return;
+        }
+        let paths: Vec<PathBuf> = self.dirty_logs.drain().collect();
+        for path in &paths {
+            match std::fs::OpenOptions::new().write(true).open(path) {
+                Ok(file) => {
+                    if let Err(e) = file.sync_data() {
+                        eprintln!(
+                            "[WARNING] fdatasync failed for '{}': {}",
+                            path.display(),
+                            e
+                        );
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // Log file was cleaned/deleted — skip
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[WARNING] Could not open '{}' for sync: {}",
+                        path.display(),
+                        e
+                    );
+                }
+            }
+        }
     }
 
     #[cfg(test)]
@@ -2303,6 +2362,7 @@ mod tests {
             false,
             None,
             None,
+            None,
         )
         .unwrap()
     }
@@ -2426,6 +2486,7 @@ mod tests {
             false,
             None,
             None,
+            None,
         );
         assert!(result.is_err(), "Monitor::new() should reject cmd=fsmon");
         let err = result.err().unwrap().to_string();
@@ -2449,6 +2510,7 @@ mod tests {
             false,
             None,
             None,
+            None,
         );
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("at least 4096"));
@@ -2460,6 +2522,7 @@ mod tests {
             Some(2 * 1024 * 1024),
             None,
             false,
+            None,
             None,
             None,
         );
@@ -2475,13 +2538,14 @@ mod tests {
             false,
             None,
             None,
+            None,
         );
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_add_path_and_remove_path() {
-        let mut m = Monitor::new(vec![], None, None, None, None, false, None, None).unwrap();
+        let mut m = Monitor::new(vec![], None, None, None, None, false, None, None, None).unwrap();
 
         let entry = PathEntry {
             cmd: None,

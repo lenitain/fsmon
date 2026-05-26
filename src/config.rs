@@ -37,6 +37,9 @@ pub struct LoggingConfig {
     /// Minimum free disk space before warning (e.g. "10%", "5GB").
     /// None = no check. Only applies to the log directory filesystem.
     pub disk_min_free: Option<String>,
+    /// Log file sync interval in seconds. 0 or None = disabled.
+    /// When set, fdatasync is called on all dirty log files every N seconds.
+    pub sync_interval_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,6 +252,7 @@ impl Default for Config {
                 keep_days: None,
                 size: None,
                 disk_min_free: None,
+                sync_interval_secs: None,
             },
             socket: SocketConfig {
                 path: PathBuf::from("/tmp/fsmon-<UID>.sock"),
@@ -384,6 +388,9 @@ impl Config {
 #   Warn when free disk space drops below this threshold.
 #   Percentage ("10%") or absolute ("5GB"). Default: no check.
 # disk_min_free = "10%"
+#   Log file sync interval in seconds (fdatasync). Default: disabled.
+#   Recommended: 5. Prevents event loss on crash (kill -9, power loss).
+# sync_interval_secs = 5
 
 # [socket]
 #   Unix socket for CLI-to-daemon communication.
