@@ -14,6 +14,7 @@ pub fn cmd_health() -> Result<()> {
         types: None,
         size: None,
         track_cmd: None,
+        local_time: None,
     };
 
     let resp = socket::send_cmd(&socket_path, &cmd)?;

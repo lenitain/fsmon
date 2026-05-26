@@ -45,6 +45,10 @@ pub struct LoggingConfig {
     /// no disk buffer, zero overhead. Events still flow through broadcast
     /// for subscribe consumers.
     pub enabled: Option<bool>,
+    /// Use local time instead of UTC in event timestamps. Default: false.
+    /// When true, timestamps in JSONL output are converted to local timezone
+    /// (e.g. "2026-05-27T07:12:50+08:00" instead of "2026-05-26T23:12:50Z").
+    pub local_time: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -295,6 +299,7 @@ impl Default for Config {
                 disk_min_free: None,
                 sync_interval_secs: None,
                 enabled: None,
+                local_time: None,
             },
             socket: SocketConfig {
                 path: PathBuf::from("/tmp/fsmon-<UID>.sock"),

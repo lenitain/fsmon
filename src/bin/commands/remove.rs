@@ -60,6 +60,7 @@ pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
                 types: None,
                 size: None,
                 track_cmd: Some(cmd_str.to_string()),
+                local_time: None,
             },
         )
         .is_err()

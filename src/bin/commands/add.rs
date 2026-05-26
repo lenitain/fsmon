@@ -173,6 +173,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             types,
             size: size_val,
             track_cmd: process_name,
+            local_time: None,
         },
     );
 

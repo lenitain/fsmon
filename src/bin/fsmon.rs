@@ -85,6 +85,12 @@ pub enum Commands {
         /// Events still flow through broadcast for subscribe consumers.
         #[arg(long)]
         no_log: bool,
+
+        /// Use local time instead of UTC in event timestamps.
+        /// When set, timestamps show local timezone offset (e.g. +08:00)
+        /// instead of Z suffix.
+        #[arg(long)]
+        local_time: bool,
     },
 
     /// Add a path to the monitoring list

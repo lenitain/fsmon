@@ -184,8 +184,24 @@ pub struct FileEvent {
 
 impl FileEvent {
     /// Serialize to a single JSON line (for log storage / pipe output)
+    /// Timestamp is in UTC (ISO 8601 with Z suffix).
     pub fn to_jsonl_string(&self) -> String {
         serde_json::to_string(self).expect("FileEvent serialization should not fail")
+    }
+
+    /// Serialize to JSONL with timestamp converted to local time.
+    /// Uses chrono::Local for the conversion. The Z suffix is replaced
+    /// with the local offset (e.g. +08:00).
+    pub fn to_jsonl_string_local(&self) -> String {
+        use chrono::TimeZone;
+        let local_time = chrono::Local
+            .from_utc_datetime(&self.time.naive_utc())
+            .to_rfc3339();
+        // Serialize everything except time normally, then inject local time
+        let mut json: serde_json::Value =
+            serde_json::to_value(self).expect("FileEvent serialization");
+        json["time"] = serde_json::Value::String(local_time);
+        serde_json::to_string(&json).expect("re-serialization should not fail")
     }
 
     /// Deserialize from a single JSON line

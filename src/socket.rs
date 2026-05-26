@@ -25,6 +25,9 @@ pub struct SocketCmd {
     pub size: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub track_cmd: Option<String>,
+    /// Use local time instead of UTC in event timestamps.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_time: Option<bool>,
 }
 
 /// Health info for a single reader task (index-aligned with FsGroup).

@@ -146,6 +146,8 @@ pub struct Monitor {
     /// Carries (FileEvent, cmd_name) — cmd_name is for file routing.
     /// Subscribe tasks extract FileEvent, file writer uses both.
     event_stream_tx: Option<tokio::sync::broadcast::Sender<(FileEvent, String)>>,
+    /// Use local time instead of UTC in timestamp serialization.
+    local_time: bool,
 }
 
 impl Monitor {
@@ -161,6 +163,7 @@ impl Monitor {
         disk_min_free: Option<String>,
         sync_interval: Option<std::time::Duration>,
         subscribe_buf: Option<usize>,
+        local_time: bool,
     ) -> Result<Self> {
         let cache_config = cache_config.unwrap_or_default();
         let buffer_size = buffer_size.unwrap_or(cache_config.buffer_size);
@@ -261,6 +264,7 @@ impl Monitor {
                 let (tx, _) = tokio::sync::broadcast::channel::<(FileEvent, String)>(cap);
                 Some(tx)
             },
+            local_time,
         };
         if debug {
             eprintln!(
@@ -733,11 +737,12 @@ impl Monitor {
         let fw_log_dir = self.log_dir.clone();
         let fw_sync = self.sync_interval;
         let fw_debug = self.debug;
+        let fw_local = self.local_time;
         if let Some(fw_log_dir) = fw_log_dir {
             if let Some(ref tx) = self.event_stream_tx {
                 let fw_rx = tx.subscribe();
                 tokio::spawn(async move {
-                    let fw = FileLogWriter::new(fw_log_dir, fw_sync, fw_debug);
+                    let fw = FileLogWriter::new(fw_log_dir, fw_sync, fw_debug, fw_local);
                     fw.run(fw_rx).await;
                 });
             }
@@ -1844,7 +1849,10 @@ impl Monitor {
                 .collect()
         });
 
-        tokio::spawn(subscriber_task(writer, rx, track_cmd, types));
+        // Subscriber can override local_time per-connection.
+        // If not specified, use daemon default.
+        let sub_local = cmd.local_time.unwrap_or(self.local_time);
+        tokio::spawn(subscriber_task(writer, rx, track_cmd, types, sub_local));
     }
 
     fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> SocketResp {
@@ -2138,6 +2146,7 @@ async fn subscriber_task(
     mut rx: tokio::sync::broadcast::Receiver<(FileEvent, String)>,
     track_cmd: Option<String>,
     type_filter: Option<Vec<EventType>>,
+    local_time: bool,
 ) {
     use tokio::io::AsyncWriteExt;
 
@@ -2169,7 +2178,11 @@ async fn subscriber_task(
                     }
                 }
 
-                let line = event.to_jsonl_string() + "\n";
+                let line = if local_time {
+                    event.to_jsonl_string_local() + "\n"
+                } else {
+                    event.to_jsonl_string() + "\n"
+                };
                 if writer.write_all(line.as_bytes()).await.is_err() {
                     break; // subscriber disconnected
                 }
@@ -2202,10 +2215,11 @@ struct FileLogWriter {
     dirty_logs: HashSet<PathBuf>,
     sync_interval: Option<Duration>,
     debug: bool,
+    local_time: bool,
 }
 
 impl FileLogWriter {
-    fn new(log_dir: PathBuf, sync_interval: Option<Duration>, debug: bool) -> Self {
+    fn new(log_dir: PathBuf, sync_interval: Option<Duration>, debug: bool, local_time: bool) -> Self {
         Self {
             log_dir,
             disk_buf: VecDeque::with_capacity(10_000),
@@ -2214,6 +2228,16 @@ impl FileLogWriter {
             dirty_logs: HashSet::new(),
             sync_interval,
             debug,
+            local_time,
+        }
+    }
+
+    /// Select UTC or local time serialization based on config.
+    fn jsonl_string(&self, event: &FileEvent) -> String {
+        if self.local_time {
+            event.to_jsonl_string_local()
+        } else {
+            event.to_jsonl_string()
         }
     }
 
@@ -2308,7 +2332,7 @@ impl FileLogWriter {
                 }
                 let mut file = std::io::BufWriter::new(file);
                 use std::io::Write;
-                writeln!(file, "{}", event.to_jsonl_string())?;
+                writeln!(file, "{}", self.jsonl_string(event))?;
                 // Track dirty log for periodic fdatasync
                 if self.sync_interval.is_some() {
                     self.dirty_logs.insert(log_path);
@@ -2359,7 +2383,7 @@ impl FileLogWriter {
                 Ok(file) => {
                     let mut file = std::io::BufWriter::new(file);
                     use std::io::Write;
-                    if writeln!(file, "{}", event.to_jsonl_string()).is_err() {
+                    if writeln!(file, "{}", self.jsonl_string(&event)).is_err() {
                         remaining.push_back((event, cmd_name));
                     }
                 }
@@ -2527,6 +2551,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         )
         .unwrap()
     }
@@ -2652,6 +2677,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         );
         assert!(result.is_err(), "Monitor::new() should reject cmd=fsmon");
         let err = result.err().unwrap().to_string();
@@ -2677,6 +2703,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         );
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("at least 4096"));
@@ -2692,6 +2719,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         );
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("not exceed"));
@@ -2707,13 +2735,14 @@ mod tests {
             None,
             None,
             None,
+            false,
         );
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_add_path_and_remove_path() {
-        let mut m = Monitor::new(vec![], None, None, None, None, false, None, None, None, None).unwrap();
+        let mut m = Monitor::new(vec![], None, None, None, None, false, None, None, None, None, false).unwrap();
 
         let entry = PathEntry {
             cmd: None,

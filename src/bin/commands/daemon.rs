@@ -14,6 +14,7 @@ pub async fn cmd_daemon(
     disk_min_free: Option<String>,
     sync_interval: Option<u64>,
     no_log: bool,
+    local_time: bool,
 ) -> Result<()> {
     // Acquire singleton lock first — only one daemon instance allowed
     let (uid, _gid) = fsmon::config::resolve_uid_gid();
@@ -133,6 +134,7 @@ pub async fn cmd_daemon(
         disk_min_free,
         sync_interval,
         Some(subscribe_buf),
+        local_time || cfg.logging.local_time.unwrap_or(false),
     )?;
 
     if !store.is_empty() {
