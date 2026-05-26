@@ -35,17 +35,23 @@ Use 'fsmon add'/'fsmon remove' to manage paths dynamically without
 restarting the daemon.
 
 Usage:
-  sudo fsmon daemon &           Start daemon in background
-  sudo fsmon daemon --debug     Enable debug output (event matching + cache stats)
-  sudo fsmon daemon --cache-dir-cap 200000   Override dir_cache capacity
-  sudo fsmon daemon --cache-proc-ttl 300     Override process cache TTL
-  fsmon add /path               Monitor all events on /path
-  fsmon add openclaw --path /home -r         Track openclaw on /home (recursive)
-  fsmon monitored                           List monitored paths
-  fsmon query -t '>1h'        Query events from last hour
+  sudo fsmon daemon &                     Start daemon in background
+  sudo fsmon daemon --debug               Enable debug output
+  sudo fsmon daemon --channel-capacity 1024   Event channel cap (default: unbounded)
+  sudo fsmon daemon --disk-min-free 10%       Warn when disk < 10% free
+  sudo fsmon daemon --cache-dir-cap 200000    Override dir_cache capacity
+  fsmon add /path                       Monitor all events on /path
+  fsmon add openclaw --path /home -r    Track openclaw on /home (recursive)
+  fsmon monitored                       List monitored paths
+  fsmon query -t '>1h'                  Query events from last hour
+
+For systemd integration:
+  sudo fsmon init --service             Install systemd service (auto-start on crash)
+  sudo systemctl start fsmon            Start via systemd
+  journalctl -u fsmon -f               View daemon logs
 
 Config:           ~/.config/fsmon/fsmon.toml
-Monitored:          ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
+Monitored:        ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
 Log dir:          ~/.local/state/fsmon/ (configurable via [logging].path)
 Socket:           /tmp/fsmon-<UID>.sock (configurable via [socket].path)"#
         }
@@ -203,19 +209,23 @@ pub const fn after_help() -> &'static str {
     r#"Use 'fsmon <COMMAND> --help' for detailed help
 
 Setup (no sudo needed):
-  fsmon init                        Create log and monitored directories
+  fsmon init                        Create log, monitored directories and config
+  sudo fsmon init --service         Also install systemd service (auto-start on crash)
   fsmon cd                          Open subshell in log directory
 
 Daemon (requires sudo):
   sudo fsmon daemon &               Start daemon in background
+  sudo systemctl start fsmon        Start via systemd (if installed)
+  sudo systemctl stop fsmon         Stop via systemd
+  journalctl -u fsmon -f           View daemon logs via systemd
   kill %1                           Stop daemon (or Ctrl+C)
 
 Management (no sudo needed):
   fsmon add openclaw --path /home -r   Track openclaw on /home (recursive)
   fsmon add /path -r                Monitor path (recursive, default 8 types)
   fsmon remove                      Remove entire null cmd group
-  fsmon remove openclaw              Remove entire openclaw cmd group
-  fsmon monitored                     List monitored paths
+  fsmon remove openclaw            Remove entire openclaw cmd group
+  fsmon monitored                   List monitored paths
 
 Query (stdout JSONL, pipe to jq):
   fsmon query -t '>1h'             Events from last hour
@@ -228,7 +238,7 @@ Clean (config defaults: keep_days=30, size=>=1GB):
   fsmon clean nginx --dry-run       Preview nginx log cleaning
   tail -500 ...                     Or direct Unix tools (slower)
 
-Config: ~/.config/fsmon/fsmon.toml (optional — defaults without it)
-Monitored: ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
-Logs:   ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].path)"#
+Config:  ~/.config/fsmon/fsmon.toml (created by fsmon init, all-commented — defaults apply)
+Monitor: ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
+Logs:    ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].path)"#
 }

@@ -138,14 +138,18 @@ for f in ~/.local/state/fsmon/*_log.jsonl; do
 done
 
 # Stop the daemon
-kill %1
+kill %1                        # or Ctrl+C (foreground)
+# If managed via systemd:
+sudo systemctl stop fsmon       # Stop
+sudo systemctl status fsmon     # Status
+journalctl -u fsmon -f          # Logs
 ```
 
 ### File Locations
 
 | Purpose | Path | Format |
 |---|---|---|
-| Infrastructure config | `~/.config/fsmon/fsmon.toml` | TOML (optional — defaults without it) |
+| Infrastructure config | `~/.config/fsmon/fsmon.toml` | TOML (created by `fsmon init`, all-commented — defaults apply) |
 | Monitored paths database | `~/.local/share/fsmon/monitored.jsonl` | JSONL (grouped by cmd, paths as map keys) |
 | Event logs | `~/.local/state/fsmon/*_log.jsonl` | JSONL (one event per line) |
 | Unix socket | `/tmp/fsmon-<UID>.sock` | TOML over stream |
@@ -163,8 +167,18 @@ via `SUDO_UID` + `getpwuid_r`, so it writes to `/home/<you>/...` not `/root/...`
 
 ### Auto-start on Boot (Optional)
 
-fsmon does not install a systemd service. The daemon requires sudo (root) for fanotify.
-To start automatically on login:
+### Auto-start on boot (optional — systemd recommended)
+
+Recommended (systemd):
+
+```bash
+sudo fsmon init --service        # Create service file + systemctl daemon-reload
+sudo systemctl enable --now fsmon # Enable auto-start + start now
+sudo systemctl status fsmon       # Check status
+journalctl -u fsmon -f            # View logs
+```
+
+Fallback (crontab, for non-systemd environments):
 
 ```bash
 sudo crontab -e
@@ -184,6 +198,8 @@ Start the fsmon daemon — requires `sudo` for fanotify.
 sudo fsmon daemon                             # Start daemon in foreground
 sudo fsmon daemon &                           # Start daemon in background
 sudo fsmon daemon --debug                     # Enable debug output (event matching + cache stats)
+sudo fsmon daemon --channel-capacity N        # Event channel capacity (default: unbounded)
+sudo fsmon daemon --disk-min-free 10%         # Warn when disk space drops below threshold
 sudo fsmon daemon --cache-dir-cap N           # Directory handle cache capacity (default: 100000)
 sudo fsmon daemon --cache-dir-ttl N           # Directory handle cache TTL in seconds (default: 3600)
 sudo fsmon daemon --cache-file-size N         # File size cache capacity (default: 10000)
@@ -297,7 +313,7 @@ find ~/.local/state/fsmon/ -name '*.jsonl' -mtime +30 -delete
 ### init
 
 Initialize fsmon data directories. Creates log dir and monitored data dir.
-Does NOT write a config file — config is optional, defaults apply without it.
+Does NOT write a config file — `fsmon init` creates a fully-commented reference config; defaults apply without modifications.
 
 ```
 fsmon init
@@ -314,7 +330,7 @@ ls _global_log.jsonl
 
 ## Configuration
 
-Config file is optional — defaults apply without it.
+Config file is optional — `fsmon init` creates a fully-commented reference config; defaults apply without modifications.
 
 ```toml
 # fsmon configuration file
@@ -369,7 +385,7 @@ stats_interval_secs = 60
 
 ### Override priority
 ```
-CLI arguments (--cache-dir-cap, --cache-dir-ttl, --cache-file-size, --cache-proc-ttl, --cache-stats-interval, --buffer-size)
+CLI arguments (--channel-capacity, --disk-min-free, --cache-dir-cap, --cache-dir-ttl, --cache-file-size, --cache-proc-ttl, --cache-stats-interval, --buffer-size)
     > fsmon.toml [cache] section
         > code defaults
 ```
