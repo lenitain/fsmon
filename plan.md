@@ -67,15 +67,3 @@ pub trait EventSink {
 ### fanotify-fid 支持 io-uring
 
 Linux 6.0+ 下 fanotify 可配合 io-uring 做异步事件读取。当前 `AsyncFd` 方案在 tokio 下完全正确，但极致低延迟场景（微秒级）io-uring 的 submission queue polling 更优。不急，但 crate README 的 "Future Work" 里提一句让后来者知道这条路被考虑过。
-
----
-
-## 不应建议的方向
-
-| 方向 | 原因 |
-|------|------|
-| "用 SQLite 存事件" | fsmon 哲学是 Unix 管道 + `jq`，JSONL 是故意选的 |
-| "加 Web Dashboard" | CLI 工具不是平台，`fsmon query | jq` 已给用户一切 |
-| "支持 Windows/macOS" | fanotify 是 Linux 独有的，这是 feature 不是 bug |
-| "换掉 moka 用自己的缓存" | moka 经过大量生产验证，自己写大概率更差 |
-| "支持分布式集群监控" | 单机工具，每台机器的文件系统变更是独立的 |
