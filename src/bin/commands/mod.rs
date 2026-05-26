@@ -38,6 +38,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
             cache_stats_interval,
             buffer_size,
             channel_capacity,
+            subscribe_buf,
             disk_min_free,
             sync_interval,
         } => {
@@ -49,6 +50,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
                 stats_interval_secs: cache_stats_interval,
                 buffer_size,
                 channel_capacity,
+                subscribe_buf,
             };
             cmd_daemon(debug, cli_cache, disk_min_free, sync_interval).await_()
         }

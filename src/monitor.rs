@@ -168,6 +168,7 @@ impl Monitor {
         cache_config: Option<ResolvedCacheConfig>,
         disk_min_free: Option<String>,
         sync_interval: Option<std::time::Duration>,
+        subscribe_buf: Option<usize>,
     ) -> Result<Self> {
         let cache_config = cache_config.unwrap_or_default();
         let buffer_size = buffer_size.unwrap_or(cache_config.buffer_size);
@@ -268,7 +269,8 @@ impl Monitor {
             sync_interval,
             dirty_logs: std::collections::HashSet::new(),
             event_stream_tx: {
-                let (tx, _) = tokio::sync::broadcast::channel(4096);
+                let cap = subscribe_buf.unwrap_or(4096).max(1);
+                let (tx, _) = tokio::sync::broadcast::channel(cap);
                 Some(tx)
             },
         };
@@ -2501,6 +2503,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap()
     }
@@ -2625,6 +2628,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(result.is_err(), "Monitor::new() should reject cmd=fsmon");
         let err = result.err().unwrap().to_string();
@@ -2649,6 +2653,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("at least 4096"));
@@ -2660,6 +2665,7 @@ mod tests {
             Some(2 * 1024 * 1024),
             None,
             false,
+            None,
             None,
             None,
             None,
@@ -2677,13 +2683,14 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_add_path_and_remove_path() {
-        let mut m = Monitor::new(vec![], None, None, None, None, false, None, None, None).unwrap();
+        let mut m = Monitor::new(vec![], None, None, None, None, false, None, None, None, None).unwrap();
 
         let entry = PathEntry {
             cmd: None,

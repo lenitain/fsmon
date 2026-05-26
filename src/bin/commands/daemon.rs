@@ -66,6 +66,7 @@ pub async fn cmd_daemon(
                 proc_ttl_secs: None,
                 stats_interval_secs: None,
                 channel_capacity: None,
+                subscribe_buf: None,
             };
             empty.resolve_with_cli(&cli_cache)
         });
@@ -105,6 +106,7 @@ pub async fn cmd_daemon(
     }
 
     let store_path = cfg.monitored.path.clone();
+    let subscribe_buf = cache_cfg.subscribe_buf;
     let mut monitor = Monitor::new(
         paths_and_options,
         Some(cfg.logging.path.clone()),
@@ -115,6 +117,7 @@ pub async fn cmd_daemon(
         Some(cache_cfg),
         disk_min_free,
         sync_interval,
+        Some(subscribe_buf),
     )?;
 
     if !store.is_empty() {

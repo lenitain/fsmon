@@ -61,6 +61,13 @@ pub enum Commands {
         #[arg(long, value_name = "N")]
         channel_capacity: Option<usize>,
 
+        /// Subscribe event stream buffer capacity (default: 4096).
+        /// Number of events the broadcast channel can buffer for slow
+        /// subscribers before dropping oldest. Raise for high-throughput
+        /// workloads with many concurrent subscribers.
+        #[arg(long, value_name = "N")]
+        subscribe_buf: Option<usize>,
+
         /// Minimum free disk space before warning (e.g. "10%", "5GB").
         /// Default: no check. Only applies to the log directory filesystem.
         #[arg(long, value_name = "THRESHOLD")]

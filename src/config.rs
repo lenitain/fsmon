@@ -75,6 +75,11 @@ pub struct CacheConfig {
     /// memory under extreme event storms — reader tasks block when
     /// the buffer is full, with fanotify overflow as final backstop.
     pub channel_capacity: Option<usize>,
+    /// Subscribe event stream buffer capacity.
+    /// Number of events the broadcast channel can buffer before
+    /// dropping oldest for slow subscribers. Default: 4096.
+    /// Raise for high-throughput workloads with many subscribers.
+    pub subscribe_buf: Option<usize>,
 }
 
 /// Resolved cache configuration with all defaults filled in.
@@ -88,6 +93,8 @@ pub struct ResolvedCacheConfig {
     pub stats_interval_secs: u64,
     /// None = unbounded, Some(N) = bounded(N).
     pub channel_capacity: Option<usize>,
+    /// Subscribe event stream buffer capacity.
+    pub subscribe_buf: usize,
 }
 
 impl Default for ResolvedCacheConfig {
@@ -100,6 +107,7 @@ impl Default for ResolvedCacheConfig {
             buffer_size: 4096 * 8, // 32KB — default from Monitor::new()
             stats_interval_secs: 60,
             channel_capacity: None, // unbounded by default
+            subscribe_buf: 4096,
         }
     }
 }
@@ -126,6 +134,8 @@ impl CacheConfig {
         if let Some(v) = cli.stats_interval_secs { r.stats_interval_secs = v; }
         if let Some(v) = cli.buffer_size { r.buffer_size = v; }
         if let Some(v) = cli.channel_capacity { r.channel_capacity = Some(v); }
+        if let Some(v) = self.subscribe_buf { r.subscribe_buf = v; }
+        if let Some(v) = cli.subscribe_buf { r.subscribe_buf = v; }
         r
     }
 }
@@ -140,6 +150,7 @@ pub struct CliCacheOverride {
     pub stats_interval_secs: Option<u64>,
     pub buffer_size: Option<usize>,
     pub channel_capacity: Option<usize>,
+    pub subscribe_buf: Option<usize>,
 }
 
 // ---- Helpers ----
@@ -436,6 +447,8 @@ impl Config {
 # buffer_size = 32768
 #   Event channel capacity. Default: unbounded.
 # channel_capacity = 1024
+#   Subscribe event stream buffer capacity. Default: 4096.
+# subscribe_buf = 4096
 "#.to_string()
     }
 
@@ -756,6 +769,7 @@ path = "/tmp/test.sock"
             proc_ttl_secs: None,
             stats_interval_secs: None,
             channel_capacity: None,
+            subscribe_buf: None,
         };
         let cli = CliCacheOverride {
             dir_capacity: Some(50000),
@@ -765,6 +779,7 @@ path = "/tmp/test.sock"
             stats_interval_secs: Some(30),
             buffer_size: Some(65536),
             channel_capacity: None,
+            subscribe_buf: None,
         };
         let r = cfg.resolve_with_cli(&cli);
         assert_eq!(r.dir_capacity, 50000);
@@ -785,6 +800,7 @@ path = "/tmp/test.sock"
             proc_ttl_secs: None,
             stats_interval_secs: None,
             channel_capacity: None,
+            subscribe_buf: None,
         };
         let cli = CliCacheOverride::default();
         let r = cfg.resolve_with_cli(&cli);
@@ -804,6 +820,7 @@ path = "/tmp/test.sock"
             proc_ttl_secs: Some(50),
             stats_interval_secs: None,
             channel_capacity: None,
+            subscribe_buf: None,
         };
         let cli = CliCacheOverride {
             dir_capacity: Some(99999),
@@ -813,6 +830,7 @@ path = "/tmp/test.sock"
             stats_interval_secs: Some(120),
             buffer_size: None,
             channel_capacity: None,
+            subscribe_buf: None,
         };
         let r = cfg.resolve_with_cli(&cli);
         assert_eq!(r.dir_capacity, 99999);    // CLI wins
