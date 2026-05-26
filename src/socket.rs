@@ -27,6 +27,25 @@ pub struct SocketCmd {
     pub track_cmd: Option<String>,
 }
 
+/// Health info for a single reader task (index-aligned with FsGroup).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReaderHealth {
+    pub alive: bool,
+    pub restarts: u32,
+    pub fd: i32,
+}
+
+/// Snapshot of daemon health, returned by the `health` socket command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthInfo {
+    pub uptime_secs: u64,
+    pub channel_type: String,
+    pub monitored_paths: usize,
+    pub reader_groups: usize,
+    /// Index-aligned with fs_groups, one entry per reader task.
+    pub readers: Vec<ReaderHealth>,
+}
+
 /// Classifies whether an error is permanent (will persist after daemon restart)
 /// or transient (runtime issue, will work after restart).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -47,6 +66,8 @@ pub struct SocketResp {
     pub error_kind: Option<ErrorKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paths: Option<Vec<PathEntry>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health: Option<HealthInfo>,
 }
 
 impl SocketResp {
@@ -56,6 +77,7 @@ impl SocketResp {
             error: None,
             error_kind: None,
             paths: None,
+            health: None,
         }
     }
 
@@ -65,6 +87,7 @@ impl SocketResp {
             error: Some(msg.into()),
             error_kind: None,
             paths: None,
+            health: None,
         }
     }
 
@@ -74,6 +97,17 @@ impl SocketResp {
             error: Some(msg.into()),
             error_kind: Some(ErrorKind::Permanent),
             paths: None,
+            health: None,
+        }
+    }
+
+    pub fn health(info: HealthInfo) -> Self {
+        SocketResp {
+            ok: true,
+            error: None,
+            error_kind: None,
+            paths: None,
+            health: Some(info),
         }
     }
 }

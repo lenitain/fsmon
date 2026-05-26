@@ -97,6 +97,10 @@ pub enum Commands {
     #[command(about = help::about(HelpTopic::Cd), long_about = help::long_about(HelpTopic::Cd))]
     Cd,
 
+    /// Query daemon health status from the running daemon
+    #[command(about = "Query daemon health status")]
+    Health,
+
     /// List monitored paths (one per line, for shell completion use)
     #[command(hide = true)]
     ListMonitoredPaths,

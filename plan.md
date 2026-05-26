@@ -7,45 +7,9 @@
 - [x] **日志标签规范** — `[debug]` → `[DEBUG]`，与 `[ERROR]`/`[WARNING]`/`[INFO]` 统一
 - [x] **SIGTERM 排空 event channel** — 关闭时 `try_recv` 耗尽 channel 中已排队事件后再退出
 - [x] **Bounded channel + 事件降级** — 默认 unbounded，可选 `--channel-capacity N` / `cache.channel_capacity` 启用 bounded，reader task 满时自然阻塞，fanotify overflow 兜底
+- [x] **`health` socket 命令** — `fsmon health` 通过 Unix socket 获取 daemon 健康状态（uptime、reader 存活/重启数、channel type、路径数）
 
 ---
-
-## P1 — 鲁棒性基础
-
-### 3. `health` socket 命令
-
-通过已有 Unix socket 协议暴露 daemon 健康状态。
-
-**响应字段**：
-```toml
-[fiber]
-ok = true
-uptime_secs = 3600
-
-[readers]
-[reader.0]
-alive = true
-restarts = 2
-
-[reader.1]
-alive = false
-restarts = 3
-
-[channel]
-depth = 42
-dropped_total = 0
-
-[cache]
-dir_entries = 12345
-proc_entries = 987
-```
-
-**收益**：
-- systemd `ExecStartPost` 可以等探活成功
-- 运维脚本可轮询
-- 集成测试可验证 daemon 真正 ready
-
-成本 ~50 行。
 
 ---
 
@@ -125,9 +89,9 @@ uptime_secs
 
 ```
 P1-3 health 命令           ← 为 P2-4 铺路
-P2-4 Systemd watchdog      ← 依赖 P1-3 验证存活
+P2-4 Systemd watchdog      ← 可选，需用户自行配置 systemd service
 P2-5 磁盘空间预检          ← 独立，可随时做
-P3-6 Metrics               ← 扩展 P1-3 响应结构
+P3-6 Metrics               ← 可独立实现
 P3-7 Backlog 告警          ← 依赖已实现的 bounded channel
 ```
 

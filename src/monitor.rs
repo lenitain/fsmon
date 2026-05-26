@@ -132,6 +132,8 @@ pub struct Monitor {
     reader_death_tx: tokio::sync::mpsc::UnboundedSender<usize>,
     /// Per-group restart tracking (index-aligned with fs_groups).
     reader_states: Vec<Option<ReaderState>>,
+    /// Daemon start time, set in run() for uptime calculation.
+    started_at: std::time::Instant,
 }
 
 impl Monitor {
@@ -236,6 +238,7 @@ impl Monitor {
             reader_death_rx,
             reader_death_tx,
             reader_states: Vec::new(),
+            started_at: std::time::Instant::now(),
         };
         if debug {
             eprintln!(
@@ -1634,6 +1637,44 @@ impl Monitor {
         Ok(())
     }
 
+    /// Build a health snapshot for the `health` socket command.
+    fn health(&self) -> SocketResp {
+        use crate::socket::{HealthInfo, ReaderHealth};
+
+        let readers: Vec<ReaderHealth> = self
+            .fs_groups
+            .iter()
+            .enumerate()
+            .map(|(i, g)| {
+                let state = self.reader_states.get(i).and_then(|s| s.as_ref());
+                let alive = state.is_some_and(|s| {
+                    let in_window =
+                        s.last_restart.elapsed() < BACKOFF_WINDOW;
+                    s.restart_count < MAX_RESTARTS || !in_window
+                });
+                let restarts = state.map(|s| s.restart_count).unwrap_or(0);
+                ReaderHealth {
+                    alive,
+                    restarts,
+                    fd: g.fan_fd.as_raw_fd(),
+                }
+            })
+            .collect();
+
+        let channel_type = match self.cache_config.channel_capacity {
+            Some(cap) => format!("bounded({})", cap),
+            None => "unbounded".to_string(),
+        };
+
+        SocketResp::health(HealthInfo {
+            uptime_secs: self.started_at.elapsed().as_secs(),
+            channel_type,
+            monitored_paths: self.monitored_entries.len(),
+            reader_groups: self.fs_groups.len(),
+            readers,
+        })
+    }
+
     fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> SocketResp {
         if self.debug {
             eprintln!(
@@ -1734,7 +1775,11 @@ impl Monitor {
                     error: None,
                     error_kind: None,
                     paths: Some(paths),
+                    health: None,
                 }
+            }
+            "health" => {
+                self.health()
             }
             _ => SocketResp::err(format!("Unknown command: {}", cmd.cmd)),
         }

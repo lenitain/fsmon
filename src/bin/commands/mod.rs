@@ -8,6 +8,7 @@ use std::path::PathBuf;
 mod add;
 mod clean;
 mod daemon;
+mod health;
 mod init_cd;
 mod monitored;
 mod query;
@@ -16,6 +17,7 @@ mod remove;
 pub use add::cmd_add;
 pub use clean::cmd_clean;
 pub use daemon::cmd_daemon;
+pub use health::cmd_health;
 pub use init_cd::{cmd_cd, cmd_init};
 pub use monitored::{cmd_list_monitored_paths, cmd_monitored};
 pub use query::cmd_query;
@@ -53,6 +55,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
         Clean(args) => cmd_clean(args).await_(),
         Init => cmd_init(),
         Cd => cmd_cd(),
+        Health => cmd_health(),
         ListMonitoredPaths => cmd_list_monitored_paths(),
     }
 }
