@@ -63,9 +63,9 @@ proc_entries = 987
 
 ## P2 — 纵深防御
 
-### 4. Systemd watchdog
+### 4. Systemd watchdog（可选，需用户自行配置 systemd service）
 
-主循环死锁时 systemd 自动 kill + restart。
+主循环死锁时 systemd 自动 kill + restart。fsmon 本身不依赖 systemd，此功能仅对将 daemon 托管在 systemd 下的用户可用。
 
 **实现**：
 ```
