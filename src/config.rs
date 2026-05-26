@@ -269,7 +269,8 @@ impl Config {
     }
 
     /// Load config from file. Returns default Config if file doesn't exist.
-    /// Errors if the file exists but is invalid — file is never modified.
+    /// Also returns default if file exists but contains only comments (e.g.
+    /// a reference file created by `fsmon init`).
     pub fn load() -> Result<Self> {
         let p = Self::path();
         if !p.exists() {
@@ -277,6 +278,9 @@ impl Config {
         }
         let content = fs::read_to_string(&p)
             .with_context(|| format!("Failed to read config {}", p.display()))?;
+        if is_comment_only(&content) {
+            return Ok(Config::default());
+        }
         match toml::from_str::<Config>(&content) {
             Ok(cfg) => Ok(cfg),
             Err(e) => bail!("Invalid config file at {}: {}", p.display(), e),
@@ -304,7 +308,6 @@ impl Config {
     /// Creates log dir and monitored data dir. Config file is optional.
     pub fn init_dirs() -> Result<()> {
         let config_path = Self::path();
-        let using_defaults = !config_path.exists();
 
         let mut cfg = if config_path.exists() {
             Config::load()?
@@ -339,14 +342,83 @@ impl Config {
 
         eprintln!("Created log directory:  {}", cfg.logging.path.display());
         eprintln!("Created monitored directory: {}", monitored_dir.display());
-        if using_defaults {
-            eprintln!(
-                "(config file is optional \u{2014} defaults apply without {})",
-                config_path.display()
-            );
+        // Create the default config file if it doesn't exist
+        if !config_path.exists() {
+            Self::create_default_config(&config_path)?;
         }
         Ok(())
     }
+
+    /// Return the default config as a TOML string with all values commented out.
+    fn default_commented_toml() -> String {
+        r#"# ================================================================
+# fsmon configuration file
+# ================================================================
+#
+# This file is fully commented. fsmon will use all built-in defaults.
+# To override a default, uncomment and modify the relevant line below.
+#
+# Changes take effect on the next daemon start (or SIGHUP reload).
+#
+# Only the sections and keys you need — omit the rest, defaults apply.
+
+# [monitored]
+#   Where the monitored paths database is stored.
+# path = "~/.local/share/fsmon/monitored.jsonl"
+
+# [logging]
+#   Event log files directory.
+# path = "~/.local/state/fsmon"
+#   Auto-clean: keep entries for at most N days.
+# keep_days = 30
+#   Auto-clean: keep log file under this size.
+# size = ">=1GB"
+#   Warn when free disk space drops below this threshold.
+#   Percentage ("10%") or absolute ("5GB"). Default: no check.
+# disk_min_free = "10%"
+
+# [socket]
+#   Unix socket for CLI-to-daemon communication.
+# path = "/tmp/fsmon-<UID>.sock"
+
+# [cache]
+#   Directory handle cache capacity (default: 100000).
+# dir_capacity = 100000
+#   Directory handle cache TTL in seconds (default: 3600).
+# dir_ttl_secs = 3600
+#   File size cache capacity (default: 10000).
+# file_size_capacity = 10000
+#   Process cache TTL in seconds (default: 600).
+# proc_ttl_secs = 600
+#   Cache stats output interval in debug mode (default: 60).
+# stats_interval_secs = 60
+#   Fanotify read buffer size in bytes (default: 32768).
+# buffer_size = 32768
+#   Event channel capacity. Default: unbounded.
+# channel_capacity = 1024
+"#.to_string()
+    }
+
+    /// Write a commented reference config file to the canonical path.
+    /// Creates parent directories if needed.
+    fn create_default_config(path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+            chown_to_original_user(parent);
+        }
+        fs::write(path, Self::default_commented_toml())?;
+        chown_to_original_user(path);
+        eprintln!("Created config:        {}", path.display());
+        Ok(())
+    }
+}
+
+/// Check if a config file contains only comments and whitespace.
+fn is_comment_only(s: &str) -> bool {
+    s.lines().all(|l| {
+        let t = l.trim();
+        t.is_empty() || t.starts_with('#')
+    })
 }
 
 #[cfg(test)]
@@ -431,21 +503,31 @@ path = "/tmp/custom.sock"
     }
 
     #[test]
-    fn test_load_invalid_config_returns_error() {
+    fn test_load_invalid_config_returns_error_for_bad_toml() {
         with_isolated_home(|_| {
             let config_path = Config::path();
             fs::create_dir_all(config_path.parent().unwrap()).unwrap();
-            fs::write(&config_path, "").unwrap();
+            // Write invalid TOML (not comment-only)
+            fs::write(&config_path, "garbage [[[").unwrap();
 
-            // Should error, not silently use defaults
+            // Should error
             assert!(Config::load().is_err());
 
             // File should be untouched
             let content = fs::read_to_string(&config_path).unwrap();
-            assert!(
-                content.trim().is_empty(),
-                "file content should be untouched"
-            );
+            assert_eq!(content.trim(), "garbage [[[");
+        });
+    }
+
+    #[test]
+    fn test_load_empty_file_returns_defaults() {
+        with_isolated_home(|_| {
+            let config_path = Config::path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            // Empty file or comment-only → return defaults (same as no file)
+            fs::write(&config_path, "").unwrap();
+            let cfg = Config::load().unwrap();
+            assert_eq!(cfg.monitored.path.to_string_lossy(), "~/.local/share/fsmon/monitored.jsonl");
         });
     }
 
@@ -511,14 +593,17 @@ path = "/tmp/custom.sock"
 
             let log_dir = home.join(".local/state/fsmon");
             let monitored_dir = home.join(".local/share/fsmon");
-            let config_dir = home.join(".config/fsmon");
+            let config_file = home.join(".config/fsmon/fsmon.toml");
 
             assert!(log_dir.exists(), "log dir should exist");
             assert!(monitored_dir.exists(), "monitored dir should exist");
             assert!(
-                !config_dir.exists(),
-                "config dir should NOT be created by init"
+                config_file.exists(),
+                "config file should be created by init"
             );
+            // Config should load from the new file (comment-only → defaults)
+            let cfg = Config::load().unwrap();
+            assert_eq!(cfg.monitored.path.to_string_lossy(), "~/.local/share/fsmon/monitored.jsonl");
         });
     }
 
