@@ -323,6 +323,9 @@ impl Config {
             .context("Monitored file path has no parent")?
             .to_path_buf();
 
+        let log_dir_new = !cfg.logging.path.exists();
+        let monitored_dir_new = !monitored_dir.exists();
+
         fs::create_dir_all(&cfg.logging.path).with_context(|| {
             format!(
                 "Failed to create log directory: {}",
@@ -340,11 +343,16 @@ impl Config {
         chown_to_original_user(&cfg.logging.path);
         chown_to_original_user(&monitored_dir);
 
-        eprintln!("Created log directory:  {}", cfg.logging.path.display());
-        eprintln!("Created monitored directory: {}", monitored_dir.display());
+        let log_label = if log_dir_new { "Created" } else { "Exists" };
+        eprintln!("{log_label} log directory:  {}", cfg.logging.path.display());
+        let monitored_label = if monitored_dir_new { "Created" } else { "Exists" };
+        eprintln!("{monitored_label} monitored directory: {}", monitored_dir.display());
+
         // Create the default config file if it doesn't exist
         if !config_path.exists() {
             Self::create_default_config(&config_path)?;
+        } else {
+            eprintln!("Exists config:        {}", config_path.display());
         }
         Ok(())
     }
