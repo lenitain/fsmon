@@ -68,13 +68,13 @@ pub async fn cmd_daemon(
         });
 
     if debug {
-        eprintln!("[debug] --- cache configuration ---");
-        eprintln!("[debug]   dir_capacity:       {}", cache_cfg.dir_capacity);
-        eprintln!("[debug]   dir_ttl_secs:       {}", cache_cfg.dir_ttl_secs);
-        eprintln!("[debug]   file_size_capacity: {}", cache_cfg.file_size_capacity);
-        eprintln!("[debug]   proc_ttl_secs:      {}", cache_cfg.proc_ttl_secs);
-        eprintln!("[debug]   stats_interval_secs: {}", cache_cfg.stats_interval_secs);
-        eprintln!("[debug]   buffer_size:        {}", cache_cfg.buffer_size);
+        eprintln!("[DEBUG] --- cache configuration ---");
+        eprintln!("[DEBUG]   dir_capacity:       {}", cache_cfg.dir_capacity);
+        eprintln!("[DEBUG]   dir_ttl_secs:       {}", cache_cfg.dir_ttl_secs);
+        eprintln!("[DEBUG]   file_size_capacity: {}", cache_cfg.file_size_capacity);
+        eprintln!("[DEBUG]   proc_ttl_secs:      {}", cache_cfg.proc_ttl_secs);
+        eprintln!("[DEBUG]   stats_interval_secs: {}", cache_cfg.stats_interval_secs);
+        eprintln!("[DEBUG]   buffer_size:        {}", cache_cfg.buffer_size);
     }
 
     let paths_and_options = parse_path_entries(&store.flatten())?;

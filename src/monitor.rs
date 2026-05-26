@@ -39,6 +39,18 @@ use crate::socket::{SocketCmd, SocketResp};
 use crate::utils::{format_size, get_process_info_by_pid, parse_size_filter};
 use crate::{EventType, FileEvent};
 
+// ---- Reader supervision ----
+
+/// Per-reader-task restart tracking for exponential backoff.
+/// Restarts are capped at MAX_RESTARTS within BACKOFF_WINDOW.
+struct ReaderState {
+    restart_count: u32,
+    last_restart: std::time::Instant,
+}
+
+const MAX_RESTARTS: u32 = 3;
+const BACKOFF_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+
 // ---- Monitor ----
 
 pub struct Monitor {
@@ -75,6 +87,12 @@ pub struct Monitor {
     cache_config: ResolvedCacheConfig,
     /// Enable debug output
     debug: bool,
+    /// Death notifications from reader tasks: each sends its group_idx on exit.
+    reader_death_rx: tokio::sync::mpsc::UnboundedReceiver<usize>,
+    /// Cloneable sender for reader tasks to signal death.
+    reader_death_tx: tokio::sync::mpsc::UnboundedSender<usize>,
+    /// Per-group restart tracking (index-aligned with fs_groups).
+    reader_states: Vec<Option<ReaderState>>,
 }
 
 impl Monitor {
@@ -145,6 +163,9 @@ impl Monitor {
             monitored_entries.push((resolved.clone(), opts.clone()));
         }
 
+        let (reader_death_tx, reader_death_rx) =
+            tokio::sync::mpsc::unbounded_channel::<usize>();
+
         let monitor = Self {
             paths,
             canonical_paths: Vec::new(),
@@ -173,24 +194,27 @@ impl Monitor {
             inotify: None,
             _inotify_watches: Vec::new(),
             daemon_pid: std::process::id(),
+            reader_death_rx,
+            reader_death_tx,
+            reader_states: Vec::new(),
         };
         if debug {
             eprintln!(
-                "[debug] Monitor initialized with {} path entries:",
+                "[DEBUG] Monitor initialized with {} path entries:",
                 paths_and_options.len()
             );
             for (i, (p, o)) in paths_and_options.iter().enumerate() {
                 let label = o.cmd.as_deref().unwrap_or("global");
                 eprintln!(
-                    "[debug]   [{}] {} cmd={} recursive={}",
+                    "[DEBUG]   [{}] {} cmd={} recursive={}",
                     i,
                     p.display(),
                     label,
                     o.recursive
                 );
             }
-            eprintln!("[debug] log_dir: {:?}", monitor.log_dir);
-            eprintln!("[debug] buffer_size: {}", buffer_size);
+            eprintln!("[DEBUG] log_dir: {:?}", monitor.log_dir);
+            eprintln!("[DEBUG] buffer_size: {}", buffer_size);
         }
         Ok(monitor)
     }
@@ -284,7 +308,7 @@ impl Monitor {
             .map(|(_, opts)| path_mask_from_options(opts))
             .fold(0, |a, b| a | b);
         if self.debug {
-            eprintln!("[debug] combined fanotify mask: {:#x}", combined_mask);
+            eprintln!("[DEBUG] combined fanotify mask: {:#x}", combined_mask);
         }
 
         // Collect canonical paths — non-existent paths go to pending_paths
@@ -545,13 +569,13 @@ impl Monitor {
         }
         if self.debug {
             eprintln!(
-                "[debug] monitored_entries ({} entries, full list):",
+                "[DEBUG] monitored_entries ({} entries, full list):",
                 self.monitored_entries.len()
             );
             for (i, (p, o)) in self.monitored_entries.iter().enumerate() {
                 let label = o.cmd.as_deref().unwrap_or("global");
                 eprintln!(
-                    "[debug]   [{}] {} cmd={} recursive={}",
+                    "[DEBUG]   [{}] {} cmd={} recursive={}",
                     i,
                     p.display(),
                     label,
@@ -560,28 +584,28 @@ impl Monitor {
             }
         }
         if self.debug {
-            eprintln!("[debug] --- cache stats ---");
+            eprintln!("[DEBUG] --- cache stats ---");
             eprintln!(
-                "[debug]   dir_cache:        {}/{} entries",
+                "[DEBUG]   dir_cache:        {}/{} entries",
                 self.dir_cache.entry_count(),
                 DIR_CACHE_CAP
             );
             if let Some(ref c) = self.proc_cache {
                 eprintln!(
-                    "[debug]   proc_cache:       {}/{} entries",
+                    "[DEBUG]   proc_cache:       {}/{} entries",
                     c.entry_count(),
                     PROC_CACHE_CAP
                 );
             }
             if let Some(ref t) = self.pid_tree {
                 eprintln!(
-                    "[debug]   pid_tree:         {}/{} entries",
+                    "[DEBUG]   pid_tree:         {}/{} entries",
                     t.entry_count(),
                     PID_TREE_CAP
                 );
             }
             eprintln!(
-                "[debug]   file_size_cache:  {}/{} entries",
+                "[DEBUG]   file_size_cache:  {}/{} entries",
                 self.file_size_cache.len(),
                 self.file_size_cache.cap()
             );
@@ -615,66 +639,13 @@ impl Monitor {
         // Events are sent through an unbounded mpsc channel to the main loop.
         let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<FidEvent>>();
         let dir_cache = self.dir_cache.clone();
-        let buf_size = self.buffer_size;
 
         // Shared state for live-add (add_path may need to spawn reader tasks)
         self.event_tx = Some(event_tx.clone());
         self.shared_dir_cache = Some(dir_cache.clone());
 
         for gi in 0..self.fs_groups.len() {
-            // Duplicate both fds so reader task owns independent copies
-            let owned_fan_fd = match Self::dup_fd(&self.fs_groups[gi].fan_fd) {
-                Ok(fd) => fd,
-                Err(e) => {
-                    eprintln!(
-                        "[ERROR] Failed to dup fanotify fd {}: {}",
-                        self.fs_groups[gi].fan_fd.as_raw_fd(),
-                        e
-                    );
-                    continue;
-                }
-            };
-            let owned_mount_fd = match Self::dup_fd(&self.fs_groups[gi].mount_fd) {
-                Ok(fd) => fd,
-                Err(e) => {
-                    eprintln!(
-                        "[ERROR] Failed to dup mount fd {}: {}",
-                        self.fs_groups[gi].mount_fd.as_raw_fd(),
-                        e
-                    );
-                    // owned_fan_fd drops here, closing the dup'd fan fd
-                    continue;
-                }
-            };
-            let mfds = Arc::new(vec![owned_mount_fd]);
-            let tx = event_tx.clone();
-            let dc = dir_cache.clone();
-            let raw_fd = owned_fan_fd.as_raw_fd();
-            tokio::spawn(async move {
-                let afd = match AsyncFd::new(owned_fan_fd) {
-                    Ok(a) => a,
-                    Err(e) => {
-                        eprintln!("[ERROR] AsyncFd for fd {}: {}", raw_fd, e);
-                        return;
-                    }
-                };
-                let mut buf = vec![0u8; buf_size];
-                loop {
-                    let result = afd.readable().await;
-                    let mut guard = match result {
-                        Ok(g) => g,
-                        Err(e) => {
-                            eprintln!("[ERROR] fd {} readable: {}", raw_fd, e);
-                            break;
-                        }
-                    };
-                    let events = read_fid_events_cached(afd.get_ref(), &mfds, &dc, &mut buf);
-                    if !events.is_empty() && tx.send(events).is_err() {
-                        break;
-                    }
-                    guard.clear_ready();
-                }
-            });
+            self.spawn_fd_reader(gi);
         }
 
         let mut sigterm =
@@ -704,6 +675,13 @@ impl Monitor {
         });
         let mut proc_buf = vec![0u8; 65536];
         let mut last_cache_stats = std::time::Instant::now();
+
+        // Move the reader death receiver out of self so tokio::select! can use it.
+        // Reader tasks hold cloned death_tx senders that remain valid.
+        let mut reader_death_rx = std::mem::replace(
+            &mut self.reader_death_rx,
+            tokio::sync::mpsc::unbounded_channel::<usize>().1,
+        );
 
         loop {
             tokio::select! {
@@ -742,7 +720,7 @@ impl Monitor {
                             && self.canonical_paths.iter().any(|cp| cp == &raw.path);
                         if is_canonical_root {
                             if self.debug {
-                                eprintln!("[debug] monitored directory deleted: {}", raw.path.display());
+                                eprintln!("[DEBUG] monitored directory deleted: {}", raw.path.display());
                             }
                             if let Some(ref path) = matched_path {
                                 // Preserve ALL cmd groups before removing
@@ -754,24 +732,24 @@ impl Monitor {
                                     // Periodic cache stats (configurable interval, 0 = disabled)
                         if self.debug && self.cache_config.stats_interval_secs > 0
                             && last_cache_stats.elapsed() >= std::time::Duration::from_secs(self.cache_config.stats_interval_secs) {
-                            eprintln!("[debug] --- cache stats ---");
+                            eprintln!("[DEBUG] --- cache stats ---");
                             eprintln!(
-                                "[debug]   dir_cache:        {}/{} entries",
+                                "[DEBUG]   dir_cache:        {}/{} entries",
                                 dir_cache.entry_count(),
                                 DIR_CACHE_CAP
                             );
                             eprintln!(
-                                "[debug]   proc_cache:       {}/{} entries",
+                                "[DEBUG]   proc_cache:       {}/{} entries",
                                 proc_cache.entry_count(),
                                 PROC_CACHE_CAP
                             );
                             eprintln!(
-                                "[debug]   pid_tree:         {}/{} entries",
+                                "[DEBUG]   pid_tree:         {}/{} entries",
                                 pid_tree.entry_count(),
                                 PID_TREE_CAP
                             );
                             eprintln!(
-                                "[debug]   file_size_cache:  {}/{} entries",
+                                "[DEBUG]   file_size_cache:  {}/{} entries",
                                 self.file_size_cache.len(),
                                 self.file_size_cache.cap()
                             );
@@ -802,7 +780,7 @@ impl Monitor {
                         // PID check covers all cases (no fork needed currently).
                         if event_pid == self.daemon_pid {
                             if self.debug {
-                                eprintln!("[debug] skip daemon self-event (pid={})", event_pid);
+                                eprintln!("[DEBUG] skip daemon self-event (pid={})", event_pid);
                             }
                             continue;
                         }
@@ -810,7 +788,7 @@ impl Monitor {
                         // Match event against ALL cmd groups for this path
                         let matching_entries = self.matching_opts_for_event(&raw.path);
                         if self.debug && matching_entries.is_empty() {
-                            eprintln!("[debug] event on {} (pid={}): no matching entries",
+                            eprintln!("[DEBUG] event on {} (pid={}): no matching entries",
                                 raw.path.display(), event_pid);
                         }
                         for (_monitored_path, opts) in &matching_entries {
@@ -820,13 +798,13 @@ impl Monitor {
                                     .map(|tree| is_descendant(tree, event_pid, cmd_name))
                                     .unwrap_or(false);
                                 if self.debug {
-                                    eprintln!("[debug]   check cmd=\"{}\" pid={}: {}",
+                                    eprintln!("[DEBUG]   check cmd=\"{}\" pid={}: {}",
                                         cmd_name, event_pid, if matched { "MATCH" } else { "SKIP" });
                                 }
                                 matched
                             } else {
                                 if self.debug {
-                                    eprintln!("[debug]   check cmd=global pid={}: MATCH", event_pid);
+                                    eprintln!("[DEBUG]   check cmd=global pid={}: MATCH", event_pid);
                                 }
                                 true
                             };
@@ -839,7 +817,7 @@ impl Monitor {
 
                                 if !self.is_path_in_scope_for_opts(&event.path, opts) {
                                     if self.debug {
-                                        eprintln!("[debug]   -> out of scope for this opts");
+                                        eprintln!("[DEBUG]   -> out of scope for this opts");
                                     }
                                     continue;
                                 }
@@ -847,7 +825,7 @@ impl Monitor {
                                 if self.should_output_for_opts(&event, opts) {
                                     if self.debug {
                                         let cmd = opts.cmd.as_deref().unwrap_or("global");
-                                        eprintln!("[debug]   -> {}_log.jsonl", cmd);
+                                        eprintln!("[DEBUG]   -> {}_log.jsonl", cmd);
                                     }
                                     if let Err(e) = self.write_event_for_opts(&event, opts) {
                                         eprintln!("[ERROR] Failed to write event: {}", e);
@@ -946,6 +924,9 @@ impl Monitor {
                         Err(e) => eprintln!("Socket accept error: {e}"),
                     }
                 }
+                Some(dead_idx) = reader_death_rx.recv() => {
+                    self.restart_reader(dead_idx);
+                }
             }
         }
 
@@ -1021,7 +1002,7 @@ impl Monitor {
     fn matching_opts_for_event(&self, event_path: &Path) -> Vec<(PathBuf, PathOptions)> {
         let mut result = Vec::new();
         if self.debug {
-            eprintln!("[debug] matching path={}", event_path.display());
+            eprintln!("[DEBUG] matching path={}", event_path.display());
         }
         for (monitored_path, opts) in &self.monitored_entries {
             let matches = if opts.recursive {
@@ -1033,7 +1014,7 @@ impl Monitor {
             if self.debug {
                 let label = opts.cmd.as_deref().unwrap_or("global");
                 eprintln!(
-                    "[debug]   check {} (cmd={}, recursive={}): {}",
+                    "[DEBUG]   check {} (cmd={}, recursive={}): {}",
                     monitored_path.display(),
                     label,
                     opts.recursive,
@@ -1045,7 +1026,7 @@ impl Monitor {
             }
         }
         if self.debug && result.is_empty() {
-            eprintln!("[debug]   -> no matching entries");
+            eprintln!("[DEBUG]   -> no matching entries");
         }
         result
     }
@@ -1068,7 +1049,9 @@ impl Monitor {
                 return;
             }
         };
+        let death_tx = self.reader_death_tx.clone();
         let buf_size = self.buffer_size;
+        let debug = self.debug;
         let group = &self.fs_groups[group_idx];
 
         // Duplicate fds so the reader task owns independent copies
@@ -1103,6 +1086,7 @@ impl Monitor {
                 Ok(a) => a,
                 Err(e) => {
                     eprintln!("[ERROR] AsyncFd for fd {}: {}", raw_fd, e);
+                    let _ = death_tx.send(group_idx);
                     return;
                 }
             };
@@ -1122,14 +1106,78 @@ impl Monitor {
                 }
                 guard.clear_ready();
             }
+            if debug {
+                eprintln!(
+                    "[DEBUG] Reader task for group {} (fd {}) exited",
+                    group_idx, raw_fd
+                );
+            }
+            let _ = death_tx.send(group_idx);
         });
+
+        // Track reader state for restart backoff
+        if let Some(state) = self.reader_states.get_mut(group_idx).and_then(|s| s.as_mut()) {
+            state.restart_count += 1;
+            state.last_restart = std::time::Instant::now();
+        } else {
+            // Ensure reader_states is large enough
+            if group_idx >= self.reader_states.len() {
+                self.reader_states.resize_with(group_idx + 1, || None);
+            }
+            self.reader_states[group_idx] = Some(ReaderState {
+                restart_count: 1,
+                last_restart: std::time::Instant::now(),
+            });
+        }
+    }
+
+    /// Restart a reader task that has died.
+    ///
+    /// Applies exponential backoff: up to MAX_RESTARTS within BACKOFF_WINDOW.
+    /// If the backoff limit is exceeded, logs a warning and gives up.
+    /// On success, the dead task's fds are re-duplicated from FsGroup and
+    /// a new reader is spawned.
+    fn restart_reader(&mut self, group_idx: usize) {
+        // Check backoff limits
+        let now = std::time::Instant::now();
+        let state = self.reader_states.get(group_idx).and_then(|s| s.as_ref());
+        if let Some(s) = state {
+            let in_window =
+                now.duration_since(s.last_restart) < BACKOFF_WINDOW;
+            if in_window && s.restart_count >= MAX_RESTARTS {
+                eprintln!(
+                    "[ERROR] Reader task for group {} has crashed {} times in \
+                     the last {}s — giving up. fsmon daemon restart required.",
+                    group_idx,
+                    MAX_RESTARTS,
+                    BACKOFF_WINDOW.as_secs(),
+                );
+                return;
+            }
+        }
+
+        // Verify the FsGroup still exists (may have been removed during shutdown)
+        if group_idx >= self.fs_groups.len() {
+            eprintln!(
+                "[WARNING] Cannot restart reader for group {}: group no longer exists",
+                group_idx
+            );
+            return;
+        }
+
+        let dev_id = self.fs_groups[group_idx].dev_id;
+        eprintln!(
+            "[INFO] Restarting reader task for group {} (dev_id={})...",
+            group_idx, dev_id
+        );
+        self.spawn_fd_reader(group_idx);
     }
 
     pub fn add_path(&mut self, entry: &PathEntry) -> Result<()> {
         if self.debug {
             let cmd = entry.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
             eprintln!(
-                "[debug] add_path: path={} cmd={}",
+                "[DEBUG] add_path: path={} cmd={}",
                 entry.path.display(),
                 cmd
             );
@@ -1140,7 +1188,7 @@ impl Monitor {
         if !is_new_path {
             if self.debug {
                 eprintln!(
-                    "[debug]   path already monitored — adding cmd and updating fanotify mask"
+                    "[DEBUG]   path already monitored — adding cmd and updating fanotify mask"
                 );
             }
             let cmd = entry.cmd.as_deref().and_then(|c| {
@@ -1197,7 +1245,7 @@ impl Monitor {
                     let _ = mark_directory(fan_fd, new_mask, &canonical);
                 }
                 if self.debug {
-                    eprintln!("[debug]   updated fanotify mask to {:#x}", new_mask);
+                    eprintln!("[DEBUG]   updated fanotify mask to {:#x}", new_mask);
                 }
             }
             let cmd_label = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
@@ -1436,7 +1484,7 @@ impl Monitor {
     pub fn remove_path(&mut self, path: &Path, cmd: Option<&str>) -> Result<()> {
         if self.debug {
             let label = cmd.unwrap_or("*");
-            eprintln!("[debug] remove_path: path={} cmd={}", path.display(), label);
+            eprintln!("[DEBUG] remove_path: path={} cmd={}", path.display(), label);
         }
 
         // Remove matching entries from monitored_entries
@@ -1523,7 +1571,7 @@ impl Monitor {
             }
             if self.debug {
                 eprintln!(
-                    "[debug]   updated fanotify mask to {:#x} (other cmd groups remain)",
+                    "[DEBUG]   updated fanotify mask to {:#x} (other cmd groups remain)",
                     new_mask
                 );
             }
@@ -1536,7 +1584,7 @@ impl Monitor {
     fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> SocketResp {
         if self.debug {
             eprintln!(
-                "[debug] socket command: {} path={:?} track_cmd={:?}",
+                "[DEBUG] socket command: {} path={:?} track_cmd={:?}",
                 cmd.cmd, cmd.path, cmd.track_cmd
             );
         }
@@ -1641,7 +1689,7 @@ impl Monitor {
 
     fn reload_config(&mut self) -> Result<()> {
         if self.debug {
-            eprintln!("[debug] reload_config");
+            eprintln!("[DEBUG] reload_config");
         }
         let monitored_path = self
             .monitored_path
@@ -1713,7 +1761,7 @@ impl Monitor {
     fn check_pending(&mut self) {
         if self.debug && !self.pending_paths.is_empty() {
             eprintln!(
-                "[debug] check_pending: {} pending path(s)",
+                "[DEBUG] check_pending: {} pending path(s)",
                 self.pending_paths.len()
             );
         }
@@ -1783,7 +1831,7 @@ impl Monitor {
         let log_path = log_dir.join(crate::utils::cmd_to_log_name(cmd_name));
         if self.debug {
             eprintln!(
-                "[debug] write_event: path={} event={:?} type={:?} -> {}",
+                "[DEBUG] write_event: path={} event={:?} type={:?} -> {}",
                 event.path.display(),
                 event.event_type,
                 event.cmd,
