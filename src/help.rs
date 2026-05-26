@@ -52,13 +52,13 @@ Socket:           /tmp/fsmon-<UID>.sock (configurable via [socket].path)"#
         HelpTopic::Init => {
             r#"Initialize fsmon data directories (chezmoi-style).
 
-Creates the default log directory and monitored data directory.
-Config file at ~/.config/fsmon/fsmon.toml is optional — defaults
-apply without it.
-
-Created:
+Creates:
   ~/.local/state/fsmon/     Event log storage
   ~/.local/share/fsmon/     Monitored paths database
+  ~/.config/fsmon/fsmon.toml  Reference config (all commented, defaults apply)
+
+With --service, also installs a systemd service for automatic crash recovery:
+  sudo fsmon init --service
 
 Examples:
   fsmon init"#

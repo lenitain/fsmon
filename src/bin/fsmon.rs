@@ -94,9 +94,14 @@ pub enum Commands {
     #[command(about = help::about(HelpTopic::Clean), long_about = help::long_about(HelpTopic::Clean))]
     Clean(CleanArgs),
 
-    /// Initialize log and monitored data directories
+    /// Initialize log and monitored data directories.
+    /// With --service, also create a systemd service file.
     #[command(about = help::about(HelpTopic::Init), long_about = help::long_about(HelpTopic::Init))]
-    Init,
+    Init {
+        /// Also create a systemd service file at /etc/systemd/system/fsmon.service
+        #[arg(long)]
+        service: bool,
+    },
 
     /// Print the log directory path
     #[command(about = help::about(HelpTopic::Cd), long_about = help::long_about(HelpTopic::Cd))]
