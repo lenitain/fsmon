@@ -455,6 +455,9 @@ impl Config {
 #   Set to false for broadcast-only mode (subscribe consumers only).
 #   Zero overhead when disabled — no FileLogWriter task, no disk I/O.
 # enabled = true
+#   Use local time instead of UTC in event timestamps. Default: false.
+#   When true, timestamps include local timezone offset (e.g. +08:00).
+# local_time = false
 
 # [socket]
 #   Unix socket for CLI-to-daemon communication.
