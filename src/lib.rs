@@ -191,18 +191,29 @@ impl FileEvent {
     }
 
     /// Serialize to JSONL with timestamp converted to local time.
-    /// Uses chrono::Local for the conversion. The Z suffix is replaced
-    /// with the local offset (e.g. +08:00).
+    /// Preserves the exact field order of the struct (same as to_jsonl_string),
+    /// only replaces the time value with local timezone offset (e.g. +08:00).
     pub fn to_jsonl_string_local(&self) -> String {
         use chrono::TimeZone;
         let local_time = chrono::Local
             .from_utc_datetime(&self.time.naive_utc())
             .to_rfc3339();
-        // Serialize everything except time normally, then inject local time
-        let mut json: serde_json::Value =
-            serde_json::to_value(self).expect("FileEvent serialization");
-        json["time"] = serde_json::Value::String(local_time);
-        serde_json::to_string(&json).expect("re-serialization should not fail")
+        // Serialize normally to preserve struct field order,
+        // then patch only the time value inline.
+        let json = serde_json::to_string(self).expect("FileEvent serialization");
+        // Find "time":"..." and replace the value
+        if let Some(start) = json.find("\"time\":\"") {
+            let val_start = start + 8; // after "time":"
+            if let Some(end) = json[val_start..].find('"') {
+                let val_end = val_start + end;
+                let mut out = String::with_capacity(json.len() + 10);
+                out.push_str(&json[..val_start]);
+                out.push_str(&local_time);
+                out.push_str(&json[val_end..]);
+                return out;
+            }
+        }
+        json
     }
 
     /// Deserialize from a single JSON line
@@ -218,4 +229,39 @@ pub fn parse_log_line_jsonl(line: &str) -> Option<FileEvent> {
         return None;
     }
     FileEvent::from_jsonl_str(trimmed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    #[test]
+    fn test_to_jsonl_string_field_order() {
+        let ev = FileEvent {
+            time: Utc::now(),
+            event_type: EventType::Create,
+            path: std::path::PathBuf::from("/tmp/test.txt"),
+            pid: 1234,
+            cmd: "touch".into(),
+            user: "pilot".into(),
+            file_size: 0,
+            ppid: 100,
+            tgid: 1234,
+            chain: "1234|touch|pilot;100|bash|pilot".into(),
+        };
+
+        let normal = ev.to_jsonl_string();
+        let local = ev.to_jsonl_string_local();
+
+        fn field_names(s: &str) -> Vec<String> {
+            s[1..s.len()-1].split(',')
+                .map(|p| p.split(':').next().unwrap().trim_matches('"').to_string())
+                .collect()
+        }
+        assert_eq!(field_names(&normal), field_names(&local), "field order must be identical");
+
+        assert!(normal.contains("\"time\":\"") && normal.contains("Z\""), "normal uses UTC Z");
+        assert!(local.contains("+"), "local time should have +HH:MM offset, got: {}", &local[..local.len().min(120)]);
+    }
 }
