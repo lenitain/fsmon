@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-fsmon → Webhook / 告警 桥接
+fsmon -> Webhook / Alerting bridge
 
-从 fsmon subscribe 接收实时事件，匹配条件后调 HTTP webhook。
-无需额外依赖（只用标准库）。
+Receives real-time events from fsmon subscribe, matches conditions,
+then calls an HTTP webhook. No external dependencies (stdlib only).
 
-适用场景：
-  - 文件变更实时告警到 Slack / Discord / 飞书 / 钉钉
-  - 异常文件操作触发 CI/CD
-  - 自定义 HTTP 回调
+Use cases:
+  - File change alerts to Slack / Discord / Feishu / DingTalk
+  - Trigger CI/CD on suspicious file operations
+  - Custom HTTP callbacks
 
-用法：
-  # 所有事件都 webhook
+Usage:
+  # Send all events to webhook
   python3 fsmon-webhook.py --webhook http://localhost:8080/alert
 
-  # 只看 nginx 日志变更
+  # Only nginx log changes
   python3 fsmon-webhook.py --track-cmd nginx --types MODIFY,CLOSE_WRITE --webhook http://...
 """
 
@@ -61,7 +61,7 @@ def send_webhook(url: str, event: dict):
     try:
         urllib.request.urlopen(req, timeout=5)
     except Exception as e:
-        print(f"webhook 发送失败: {e}", file=sys.stderr)
+        print(f"webhook send failed: {e}", file=sys.stderr)
 
 
 def format_for_print(ev):
@@ -70,7 +70,7 @@ def format_for_print(ev):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="fsmon → Webhook bridge")
+    parser = argparse.ArgumentParser(description="fsmon -> Webhook bridge")
     parser.add_argument("--socket", default="/tmp/fsmon-1000.sock", help="fsmon daemon socket")
     parser.add_argument("--track-cmd", help="Filter by cmd group")
     parser.add_argument("--types", help="Comma-separated event types")
@@ -78,11 +78,11 @@ def main():
     parser.add_argument("--print", action="store_true", help="Also print events to stdout")
     args = parser.parse_args()
 
-    print(f"监听 {args.socket} → webhook {args.webhook}")
+    print(f"Listening on {args.socket} -> webhook {args.webhook}")
     if args.track_cmd:
-        print(f"  过滤 cmd: {args.track_cmd}")
+        print(f"  cmd filter: {args.track_cmd}")
     if args.types:
-        print(f"  过滤 types: {args.types}")
+        print(f"  type filter: {args.types}")
 
     count = 0
     for ev in subscribe(args.socket, args.track_cmd, args.types):
@@ -91,7 +91,7 @@ def main():
         if args.print:
             print(format_for_print(ev))
         if count % 100 == 0:
-            print(f"[webhook] 已发送 {count} 个事件", flush=True)
+            print(f"[webhook] sent {count} events", flush=True)
 
 
 if __name__ == "__main__":

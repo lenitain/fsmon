@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
-fsmon metrics 命令 — 通过 Unix socket 拉取 Prometheus 格式指标。
+fsmon metrics command — pull Prometheus-format metrics via Unix socket.
 
-这是 pull 模式的 socket 层演示：
-  1. 连 socket
-  2. 发送 TOML metrics 命令
-  3. 读回 Prometheus text format
-  4. 格式化或直接输出
+Demonstrates the pull-mode socket layer:
+  1. Connect to socket
+  2. Send TOML metrics command
+  3. Read back Prometheus text format
+  4. Display as-is or summary
 
-无需配置任何东西，daemon 的 socket metrics 命令始终可用。
+No configuration needed — the socket metrics command is always available.
 
-用法：
-  # 输出 Prometheus 格式（默认）
+Usage:
+  # Output Prometheus format (default)
   python3 fsmon-metrics.py
 
-  # 只显示事件计数
+  # Show summary only
   python3 fsmon-metrics.py --summary
 
-  # 循环拉取（像 Prometheus 每 15s scrape）
+  # Watch mode: pull every N seconds (like Prometheus scrape)
   python3 fsmon-metrics.py --watch 15
 """
 
@@ -44,7 +44,6 @@ def parse_summary(text: str) -> dict:
     for line in text.splitlines():
         line = line.strip()
         if line.startswith("fsmon_events_total{"):
-            # fsmon_events_total{event_type="CREATE",cmd="nginx"} 42
             parts = line.split("}")
             labels = parts[0].replace("fsmon_events_total{", "")
             value = int(parts[1].strip() if len(parts) > 1 else 0)
@@ -75,7 +74,7 @@ def main():
             try:
                 text = pull_metrics(args.socket)
             except Exception as e:
-                print(f"连接失败: {e}", file=sys.stderr)
+                print(f"connection failed: {e}", file=sys.stderr)
                 time.sleep(args.watch)
                 continue
 
@@ -90,18 +89,18 @@ def main():
         try:
             text = pull_metrics(args.socket)
         except Exception as e:
-            print(f"连接失败: {e}", file=sys.stderr)
-            print("daemon 是否已在运行？ sudo fsmon daemon", file=sys.stderr)
+            print(f"connection failed: {e}", file=sys.stderr)
+            print("Is the daemon running? sudo fsmon daemon", file=sys.stderr)
             sys.exit(1)
 
         if args.summary:
             info = parse_summary(text)
-            print(f"订阅者:     {info.get('subscribers', 0)}")
-            print(f"监控路径:   {info.get('monitored_paths', 0)}")
-            print(f"reader 组:  {info.get('reader_groups', 0)}")
-            print(f"待创建路径: {info.get('pending_paths', 0)}")
-            print(f"磁盘缓冲:   {info.get('disk_buf', 0)}")
-            print("\n事件计数:")
+            print(f"Subscribers:       {info.get('subscribers', 0)}")
+            print(f"Monitored paths:   {info.get('monitored_paths', 0)}")
+            print(f"Reader groups:     {info.get('reader_groups', 0)}")
+            print(f"Pending paths:     {info.get('pending_paths', 0)}")
+            print(f"Disk buffer:       {info.get('disk_buf', 0)}")
+            print("\nEvent counts:")
             for k, v in sorted(info.items()):
                 if isinstance(v, int) and k not in {"subscribers", "monitored_paths", "reader_groups", "pending_paths", "disk_buf"}:
                     print(f"  {k:30s} {v}")

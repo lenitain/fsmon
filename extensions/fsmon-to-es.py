@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-fsmon → Elasticsearch 桥接
+fsmon -> Elasticsearch bridge
 
-从 fsmon subscribe 接收实时事件，批量写入 Elasticsearch。
-使用 bulk API，每 5s 或 1000 条 flush 一次。
+Receives real-time events from fsmon subscribe, bulk-indexes to Elasticsearch.
+Uses the bulk API, flushing every 5s or 1000 events.
 
-依赖：
+Dependency:
   pip install elasticsearch
 
-用法：
+Usage:
   python3 fsmon-to-es.py --host localhost:9200 --index fsmon-events
 
-  # 带认证
+  # With authentication
   python3 fsmon-to-es.py --host https://es.example.com:9200 --user admin --pass secret
 """
 
@@ -77,7 +77,7 @@ def to_es_doc(ev: dict) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="fsmon → Elasticsearch bridge")
+    parser = argparse.ArgumentParser(description="fsmon -> Elasticsearch bridge")
     parser.add_argument("--socket", default="/tmp/fsmon-1000.sock")
     parser.add_argument("--track-cmd", help="Filter by cmd group")
     parser.add_argument("--types", help="Comma-separated event types")
@@ -90,20 +90,20 @@ def main():
     args = parser.parse_args()
 
     if not HAS_ES:
-        print("错误: 需要 elasticsearch。安装: pip install elasticsearch", file=sys.stderr)
+        print("Error: elasticsearch required. Install: pip install elasticsearch", file=sys.stderr)
         sys.exit(1)
 
-    # ES 连接
+    # ES connection
     es_kwargs = {"hosts": [args.host]}
     if args.user:
         es_kwargs["basic_auth"] = (args.user, args.pwd or "")
     es = Elasticsearch(**es_kwargs)
 
     if not es.ping():
-        print(f"错误: 无法连接 ES {args.host}", file=sys.stderr)
+        print(f"Error: cannot connect to ES {args.host}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"监听 {args.socket} → ES {args.host}/{args.index}-YYYY.MM.DD")
+    print(f"Listening on {args.socket} -> ES {args.host}/{args.index}-YYYY.MM.DD")
 
     buffer = []
     last_flush = time.time()
@@ -117,7 +117,7 @@ def main():
             if ok:
                 done += 1
         if done > 0:
-            print(f"[es] 已索引 {done} 条", flush=True)
+            print(f"[es] indexed {done} docs", flush=True)
         buffer.clear()
         last_flush = time.time()
 

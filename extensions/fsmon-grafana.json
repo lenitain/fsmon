@@ -1,15 +1,15 @@
 {
-  "__usage_note": "导入 Grafana: + → Import → 粘贴此 JSON → 选择 Prometheus 数据源",
+  "__usage_note": "Import into Grafana: + -> Import -> Paste JSON -> select Prometheus data source",
   "title": "fsmon - File System Monitor",
   "uid": "fsmon-dashboard",
-  "description": "fsmon 文件事件监控大盘 — 需要 Prometheus scrape fsmon daemon",
+  "description": "fsmon file event monitoring dashboard — requires Prometheus scraping fsmon daemon",
   "tags": ["filesystem", "audit", "fsmon"],
   "timezone": "browser",
   "refresh": "15s",
   "panels": [
     {
       "id": 1,
-      "title": "事件速率 (events/sec)",
+      "title": "Event Rate (events/sec)",
       "type": "timeseries",
       "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
       "targets": [
@@ -28,7 +28,7 @@
     },
     {
       "id": 2,
-      "title": "事件总数 (按类型)",
+      "title": "Total Events (by type)",
       "type": "barchart",
       "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
       "targets": [
@@ -44,7 +44,7 @@
     },
     {
       "id": 3,
-      "title": "写入事件比率 (CREATE + MODIFY + CLOSE_WRITE)",
+      "title": "Write Events Rate (CREATE + MODIFY + CLOSE_WRITE)",
       "type": "timeseries",
       "gridPos": {"x": 0, "y": 8, "w": 8, "h": 7},
       "targets": [
@@ -60,7 +60,7 @@
     },
     {
       "id": 4,
-      "title": "删除事件 比率",
+      "title": "Delete Events Rate",
       "type": "timeseries",
       "gridPos": {"x": 8, "y": 8, "w": 8, "h": 7},
       "targets": [
@@ -76,7 +76,7 @@
     },
     {
       "id": 5,
-      "title": "访问事件 比率 (ACCESS + OPEN)",
+      "title": "Access Events Rate (ACCESS + OPEN)",
       "type": "timeseries",
       "gridPos": {"x": 16, "y": 8, "w": 8, "h": 7},
       "targets": [
@@ -92,7 +92,7 @@
     },
     {
       "id": 6,
-      "title": "Daemon 状态",
+      "title": "Daemon Status",
       "type": "stat",
       "gridPos": {"x": 0, "y": 15, "w": 6, "h": 4},
       "targets": [
@@ -106,7 +106,7 @@
     },
     {
       "id": 7,
-      "title": "Daemon 健康",
+      "title": "Daemon Health",
       "type": "timeseries",
       "gridPos": {"x": 6, "y": 15, "w": 9, "h": 4},
       "targets": [
@@ -121,7 +121,7 @@
     },
     {
       "id": 8,
-      "title": "Top 活跃进程",
+      "title": "Top Active Processes",
       "type": "table",
       "gridPos": {"x": 15, "y": 15, "w": 9, "h": 4},
       "targets": [

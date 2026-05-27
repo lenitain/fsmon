@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
-fsmon → Kafka 桥接
+fsmon -> Kafka bridge
 
-从 fsmon subscribe 接收实时事件，转发到 Kafka topic。
+Receives real-time events from fsmon subscribe, forwards to a Kafka topic.
 
-依赖：
+Dependency:
   pip install kafka-python
 
-如果 kafka-python 未安装，脚本会提示安装命令。
+If kafka-python is not installed, the script prints install instructions and exits.
 
-用法：
-  # 所有事件发到 Kafka
+Usage:
+  # All events to Kafka
   python3 fsmon-kafka.py --broker localhost:9092 --topic fsmon-events
 
-  # 只看 nginx 的 CLOSE_WRITE
+  # Only nginx CLOSE_WRITE events
   python3 fsmon-kafka.py --broker localhost:9092 --topic nginx-writes --track-cmd nginx --types CLOSE_WRITE
 
-Prometheus / Grafana 可以读 Kafka 里的 fsmon_events_total counter。
+Prometheus / Grafana can consume the fsmon_events_total counter from Kafka.
 """
 
 import argparse
@@ -62,7 +62,7 @@ def subscribe(socket_path, track_cmd=None, type_filter=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="fsmon → Kafka bridge")
+    parser = argparse.ArgumentParser(description="fsmon -> Kafka bridge")
     parser.add_argument("--socket", default="/tmp/fsmon-1000.sock")
     parser.add_argument("--track-cmd", help="Filter by cmd group")
     parser.add_argument("--types", help="Comma-separated event types")
@@ -71,12 +71,12 @@ def main():
     args = parser.parse_args()
 
     if not HAS_KAFKA:
-        print("错误: 需要 kafka-python。安装: pip install kafka-python", file=sys.stderr)
+        print("Error: kafka-python required. Install: pip install kafka-python", file=sys.stderr)
         sys.exit(1)
 
-    print(f"连接 Kafka: {args.broker} topic={args.topic}")
+    print(f"Connecting to Kafka: {args.broker} topic={args.topic}")
 
-    # 创建 producer
+    # Create producer
     try:
         producer = KafkaProducer(
             bootstrap_servers=args.broker,
@@ -86,23 +86,23 @@ def main():
             retries=3,
         )
     except NoBrokersAvailable:
-        print(f"错误: 无法连接 Kafka broker {args.broker}", file=sys.stderr)
+        print(f"Error: cannot connect to Kafka broker {args.broker}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"监听 {args.socket} → Kafka topic {args.topic}")
+    print(f"Listening on {args.socket} -> Kafka topic {args.topic}")
     if args.track_cmd:
-        print(f"  过滤 cmd: {args.track_cmd}")
+        print(f"  cmd filter: {args.track_cmd}")
     if args.types:
-        print(f"  过滤 types: {args.types}")
+        print(f"  type filter: {args.types}")
 
     count = 0
     for ev in subscribe(args.socket, args.track_cmd, args.types):
-        # 用 cmd+event_type 做 key，同 key 的事件进同一 partition（保持顺序）
+        # Use cmd+event_type as key to keep same-key events in order
         key = f"{ev.get('cmd', '?')}:{ev['event_type']}"
         producer.send(args.topic, value=ev, key=key)
         count += 1
         if count % 1000 == 0:
-            print(f"[kafka] 已发送 {count} 个事件", flush=True)
+            print(f"[kafka] sent {count} events", flush=True)
 
     producer.flush()
     producer.close()

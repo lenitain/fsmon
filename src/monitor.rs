@@ -1072,8 +1072,8 @@ impl Monitor {
                             let cmd = opts.cmd.as_deref().unwrap_or("global");
                             eprintln!("[DEBUG]   -> {}_log.jsonl", cmd);
                         }
-                        // 推送到统一事件流（broadcast）
-                        // 所有消费者（文件写入、subscribe）都从此接收
+                        // Push to unified event stream (broadcast)
+                        // All consumers (file writer, subscribe) receive from here
                         if let Some(ref tx) = self.event_stream_tx {
                             let cmd_name = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
                             let _ = tx.send((event.clone(), cmd_name.to_string()));

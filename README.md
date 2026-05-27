@@ -4,7 +4,7 @@
 
 <h3 align="center">Real-time Linux filesystem change monitoring with process attribution.</h3>
 
-🌍 **Select Language | 选择语言**
+🌍 **Select Language**
 - [English](./README.md)
 - [简体中文](./README.zh-CN.md)
 
@@ -497,7 +497,7 @@ Pre-built scripts for connecting fsmon to external systems. All use the subscrib
 | Script | Target | Dependencies |
 |--------|--------|-------------|
 | `fsmon-subscribe-demo.py` | Terminal preview | None |
-| `fsmon-webhook.py` | HTTP webhook (Slack/Discord/飞书) | None |
+| `fsmon-webhook.py` | HTTP webhook (Slack/Discord/Feishu) | None |
 | `fsmon-metrics.py` | Pull metrics summary/watch | None |
 | `fsmon-custom-format.py` | CSV / TSV / syslog / Loki | None |
 | `fsmon-kafka.py` | Kafka producer | `pip install kafka-python` |

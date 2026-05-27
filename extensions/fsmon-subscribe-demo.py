@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """
-fsmon subscribe 协议示例 — 连接 daemon，接收实时事件流。
+fsmon subscribe protocol demo — connect to daemon, receive real-time event stream.
 
-这是 subscribe 协议的最小演示，展示如何：
-  1. 连 Unix socket
-  2. 发送 TOML subscribe 命令
-  3. 读 TOML 响应
-  4. 持续接收 JSONL 事件
+Minimal demonstration of the subscribe protocol:
+  1. Connect to Unix socket
+  2. Send TOML subscribe command
+  3. Read TOML response
+  4. Continuously receive JSONL events
 
-文件写入是 daemon 内置 FileLogWriter 的职责，不需要外部脚本做。
-如果要自定义输出，用这个脚本的框架接入 Kafka / S3 / webhook 等。
+File writing is handled by the built-in FileLogWriter. No external script needed.
+For custom output, use this framework to integrate with Kafka / S3 / webhook / etc.
 
-用法：
-  # 确保 daemon 已在运行
+Usage:
+  # Ensure daemon is running
   sudo fsmon daemon
 
-  # 查看所有实时事件
+  # Watch all real-time events
   python3 extensions/fsmon-subscribe-demo.py
 
-  # 只看 nginx 的 CLOSE_WRITE 事件
+  # Only watch nginx CLOSE_WRITE events
   python3 extensions/fsmon-subscribe-demo.py --track-cmd nginx --types CLOSE_WRITE
 """
 
@@ -34,7 +34,7 @@ def main():
     parser.add_argument("--types", default=None, help="Comma-separated event types")
     args = parser.parse_args()
 
-    # 构造 TOML 命令
+    # Build TOML command
     lines = ['cmd = "subscribe"']
     if args.track_cmd:
         lines.append(f'track_cmd = "{args.track_cmd}"')
@@ -43,21 +43,21 @@ def main():
         lines.append(f"types = [{types}]")
     payload = "\n".join(lines) + "\n\n"
 
-    # 连 socket
+    # Connect to socket
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.connect(args.socket)
     s.sendall(payload.encode())
 
-    # 读初始 TOML 响应
+    # Read initial TOML response
     reader = s.makefile("r")
     resp = reader.readline()
     if "ok = true" not in resp:
-        print(f"subscribe 失败: {resp.strip()}")
+        print(f"subscribe failed: {resp.strip()}")
         return
 
-    print(f"已连接 {args.socket}，等待事件... (Ctrl+C 退出)")
+    print(f"Connected to {args.socket}, waiting for events... (Ctrl+C to exit)")
 
-    # 持续读 JSONL 事件
+    # Continuously read JSONL events
     for line in reader:
         line = line.strip()
         if not line:

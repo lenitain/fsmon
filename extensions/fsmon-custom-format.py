@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
-fsmon 自定义格式转换
+fsmon custom format converter
 
-从 fsmon subscribe 接收事件，转为任意输出格式。
-内置格式: CSV、TSV、syslog (RFC 5424)、JSON array、Loki/Grafana logfmt。
+Receives events from fsmon subscribe and converts to various output formats.
+Built-in formats: CSV, TSV, syslog (RFC 5424), JSON, Loki/Grafana logfmt.
 
-无外部依赖，只用标准库。
+No external dependencies (stdlib only).
 
-用法：
-  # 输出 CSV
+Usage:
+  # Output CSV
   python3 fsmon-custom-format.py --format csv
 
-  # 输出 syslog 风格
+  # Output syslog style
   python3 fsmon-custom-format.py --format syslog --track-cmd nginx
 
-  # 输出 Loki 兼容的 logfmt
+  # Output Loki-compatible logfmt
   python3 fsmon-custom-format.py --format loki
 
-  # 重定向到文件
+  # Redirect to file
   python3 fsmon-custom-format.py --format csv > events.csv
 """
 
@@ -58,7 +58,7 @@ def subscribe(socket_path, track_cmd=None, type_filter=None):
             pass
 
 
-# ── Format functions ──
+# -- Format functions --
 
 def format_csv(ev):
     """Flat CSV: time,event_type,path,pid,cmd,file_size,chain"""
@@ -92,7 +92,6 @@ def format_syslog(ev):
         ts = datetime.fromisoformat(ev.get("time", ""))
     except Exception:
         ts = datetime.now(timezone.utc)
-    # Map event_type to syslog priority (user-level)
     pri = "14"  # user.info
     if ev.get("event_type") == "DELETE" or ev.get("event_type") == "DELETE_SELF":
         pri = "12"  # user.warning
@@ -105,8 +104,6 @@ def format_syslog(ev):
 
 def format_loki(ev):
     """Grafana Loki logfmt: timestamp {labels} message"""
-    w = io.StringIO()
-    w = sys.stdout  # actually, let me just format it
     labels = {
         "event_type": ev.get("event_type", ""),
         "cmd": ev.get("cmd", ""),
@@ -140,7 +137,7 @@ FORMATTERS = {
 
 
 def main():
-    parser = argparse.ArgumentParser(description="fsmon → custom format converter")
+    parser = argparse.ArgumentParser(description="fsmon -> custom format converter")
     parser.add_argument("--socket", default="/tmp/fsmon-1000.sock")
     parser.add_argument("--track-cmd", help="Filter by cmd group")
     parser.add_argument("--types", help="Comma-separated event types")

@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-fsmon → S3 归档桥接
+fsmon -> S3 archiver bridge
 
-从 fsmon subscribe 接收实时事件，定时批量写入 S3。
-不逐条写 — 分片缓冲后上传（每 60s 或每 10000 条）。
+Receives real-time events from fsmon subscribe, batches them, and uploads
+to S3 periodically. Does not write one-by-one: buffers in memory and flushes
+every 60s or 10000 events.
 
-依赖：
+Dependency:
   pip install boto3
 
-S3 凭据通过环境变量或 ~/.aws/credentials 提供。
+S3 credentials are read from environment variables or ~/.aws/credentials.
 
-用法：
+Usage:
   export AWS_ACCESS_KEY_ID=xxx
   export AWS_SECRET_ACCESS_KEY=xxx
   python3 fsmon-to-s3.py --bucket my-audit-bucket --prefix fsmon/nginx/
@@ -60,7 +61,7 @@ def subscribe(socket_path, track_cmd=None, type_filter=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="fsmon → S3 archiver")
+    parser = argparse.ArgumentParser(description="fsmon -> S3 archiver")
     parser.add_argument("--socket", default="/tmp/fsmon-1000.sock")
     parser.add_argument("--track-cmd", help="Filter by cmd group")
     parser.add_argument("--types", help="Comma-separated event types")
@@ -71,12 +72,12 @@ def main():
     args = parser.parse_args()
 
     if not HAS_S3:
-        print("错误: 需要 boto3。安装: pip install boto3", file=sys.stderr)
+        print("Error: boto3 required. Install: pip install boto3", file=sys.stderr)
         sys.exit(1)
 
     s3 = boto3.client("s3")
     prefix = args.prefix.rstrip("/") + "/"
-    print(f"监听 {args.socket} → S3 s3://{args.bucket}/{prefix}")
+    print(f"Listening on {args.socket} -> S3 s3://{args.bucket}/{prefix}")
 
     buffer = []
     last_flush = time.time()
@@ -90,9 +91,9 @@ def main():
         body = "\n".join(json.dumps(ev) for ev in buffer) + "\n"
         try:
             s3.put_object(Bucket=args.bucket, Key=key, Body=body.encode(), ContentType="application/x-ndjson")
-            print(f"[s3] 上传 {len(buffer)} 个事件 → s3://{args.bucket}/{key}", flush=True)
+            print(f"[s3] uploaded {len(buffer)} events -> s3://{args.bucket}/{key}", flush=True)
         except Exception as e:
-            print(f"[s3] 上传失败: {e}", file=sys.stderr)
+            print(f"[s3] upload failed: {e}", file=sys.stderr)
         buffer.clear()
         last_flush = time.time()
 
