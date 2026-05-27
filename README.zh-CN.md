@@ -191,15 +191,33 @@ sudo crontab -e
 sudo fsmon daemon                             # 前台启动守护进程
 sudo fsmon daemon &                           # 后台启动守护进程
 sudo fsmon daemon --debug                     # 启用调试输出（事件匹配 + 缓存指标）
-sudo fsmon daemon --channel-capacity N        # 事件通道容量（默认：无界）
 sudo fsmon daemon --disk-min-free 10%         # 磁盘空间不足时告警
-sudo fsmon daemon --cache-dir-cap N           # 目录句柄缓存容量（默认 100000）
-sudo fsmon daemon --cache-dir-ttl N           # 目录句柄缓存 TTL（秒，默认 3600）
-sudo fsmon daemon --cache-file-size N         # 文件大小缓存容量（默认 10000）
-sudo fsmon daemon --cache-proc-ttl N          # 进程缓存 TTL（秒，默认 600）
-sudo fsmon daemon --cache-stats-interval N    # 调试模式缓存统计间隔（秒，默认 60，0=关闭）
-sudo fsmon daemon --buffer-size N             # Fanotify 读取缓冲区（字节，默认 32768）
+sudo fsmon daemon --sync-interval 5           # 每 5s fdatasync 日志文件
+sudo fsmon daemon --no-log                    # 禁用本地 JSONL 文件（仅 subscribe）
+sudo fsmon daemon --local-time                # 时间戳使用本地时区
+sudo fsmon daemon --metrics-listen 127.0.0.1:9845  # 启用 Prometheus TCP /metrics
+sudo fsmon daemon --buffer-size 65536         # Fanotify 读取缓冲区（默认 32768）
+sudo fsmon daemon --channel-capacity 1024     # 事件通道上限（默认无界）
+sudo fsmon daemon --subscribe-buf 8192        # Subscribe 广播缓冲（默认 4096）
+sudo fsmon daemon --cache-dir-cap 200000      # 目录句柄缓存容量（默认 100000）
+sudo fsmon daemon --cache-dir-ttl 7200        # 目录句柄缓存 TTL（默认 3600 秒）
+sudo fsmon daemon --cache-file-size 20000     # 文件大小缓存容量（默认 10000）
+sudo fsmon daemon --cache-proc-ttl 1200       # 进程缓存 TTL（默认 600 秒）
+sudo fsmon daemon --cache-stats-interval 0    # 禁用缓存统计输出（默认 60 秒）
 ```
+
+**输出模式：**
+
+| 模式 | 协议 | 默认 | 用途 |
+|------|------|------|------|
+| 文件 | JSONL 写入 `~/.local/state/fsmon/` | ✅ 开启 | 持久存储，供 query/clean 工具使用 |
+| Push | Unix socket subscribe（JSONL 流） | ✅ 始终可用 | 实时：Kafka、S3、webhook、Elasticsearch |
+| Pull | Socket `metrics` 命令（Prometheus text） | ✅ 始终可用 | 监控：Prometheus、Grafana |
+| Pull TCP | HTTP `/metrics` 端点 | ❌ 需 `--metrics-listen` 开启 | Prometheus 直接 scrape |
+
+用 `--no-log` 或 `[logging] enabled = false` 关闭文件输出。Push 和 Pull 不受影响。
+
+参见 `extensions/` 目录中的 Kafka、S3、Elasticsearch、webhook 等集成示例脚本。
 
 ### add
 
@@ -322,69 +340,48 @@ ls _global_log.jsonl
 
 ## 配置
 
-配置文件是可选的 —  `fsmon init` 会创建全注释的参考文件，不修改则使用默认值。
+配置文件是可选的 — `fsmon init` 会创建全注释的参考文件，不修改则使用默认值。
 
 ```toml
-# fsmon 配置文件
-#
-# fsmon 的基础设施路径。监控路径通过
-# 'fsmon add' / 'fsmon remove' 添加并持久化在 [monitored].path 中。
-# 所有路径支持 ~ 展开。<UID> 在运行时替换为数字 UID。
+# ~/.config/fsmon/fsmon.toml
 
 [monitored]
-# 自动持久化的监控路径数据库路径。
 path = "~/.local/share/fsmon/monitored.jsonl"
 
 [logging]
-# 事件日志目录的路径（每个 cmd 的 *_log.jsonl 文件）。
 path = "~/.local/state/fsmon"
-# 'fsmon clean' 的默认值（无自动清理；请使用 cron/timer）。
 keep_days = 30
 size = ">=1GB"
+disk_min_free = "10%"           # 磁盘空闲低于阈值时告警
+sync_interval_secs = 5          # 每 N 秒 fdatasync（0 或不设置 = 禁用）
+enabled = true                  # 设为 false 禁用文件输出
+local_time = false              # 时间戳使用本地时区
 
 [socket]
-# daemon 与 CLI 实时通信的 Unix 套接字路径。
 path = "/tmp/fsmon-<UID>.sock"
 
 [cache]
-# 目录句柄缓存容量（默认 100,000，约 15-20MB）。
-# 每条记录将内核文件句柄映射到目录路径。
-# 内存紧张时降低此值；监控大目录树（>10万目录）时提高此值以减少句柄重解析。
 dir_capacity = 100000
-
-# 目录句柄缓存 TTL（秒，默认 3600 = 1 小时）。
-# 较短 TTL 在目录结构频繁变动时更快释放内存；
-# 较长 TTL 在稳定目录上减少句柄重解析。
 dir_ttl_secs = 3600
-
-# 文件大小缓存容量（默认 10,000，约 1MB）。
-# 避免对已知大小的文件反复 stat()。
-# 高文件量工作负载（git checkout、npm install 等）时提高此值。
 file_size_capacity = 10000
-
-# 进程缓存 TTL（秒，默认 600 = 10 分钟）。
-# 同时影响进程信息缓存（PID→命令/用户/PPID/TGID）和
-# 进程树缓存（PID→父进程，用于祖先链追踪）。
-# 较短 TTL 更快清理已退出进程条目；
-# 较长 TTL 减少常驻进程的 /proc 读取。
 proc_ttl_secs = 600
-
-# 调试模式下缓存统计日志间隔（秒，默认 60）。
-# 设为 0 可禁用周期性缓存统计输出。
 stats_interval_secs = 60
+buffer_size = 32768             # Fanotify 读取缓冲区（最小 4096，最大 1048576）
+channel_capacity = 1024         # 事件通道上限（不设置 = 无界）
+subscribe_buf = 4096            # Subscribe 消费者的广播缓冲
+
+[metrics]
+listen = "127.0.0.1:9845"       # TCP HTTP /metrics（注释掉或不设置 = 禁用）
 ```
 
 ### 覆盖优先级
 ```
-CLI 参数（--channel-capacity、--disk-min-free、--cache-dir-cap、--cache-dir-ttl、--cache-file-size、--cache-proc-ttl、--cache-stats-interval、--buffer-size）
-    > fsmon.toml [cache] 配置段
-        > 代码默认值
+CLI 参数 > fsmon.toml > 代码默认值
 ```
 
 CLI 参数优先级最高：
 ```bash
-# 启动时覆盖 dir_cache 容量和 fanotify 缓冲区大小
-sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536 &
+sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536 --no-log --metrics-listen 127.0.0.1:9845
 ```
 
 ## 事件类型
@@ -483,6 +480,29 @@ src/
 ├── socket.rs           # Unix 套接字协议（TOML 请求/响应）
 ├── utils.rs            # 大小/时间解析、进程信息查找、chown
 └── help.rs             # 帮助文本常量
+```
+
+## 集成 (`extensions/`)
+
+用于将 fsmon 接入外部系统的预构建脚本。均使用 subscribe 套接字。
+
+| 脚本 | 目标 | 依赖 |
+|------|------|------|
+| `fsmon-subscribe-demo.py` | 终端预览 | 无 |
+| `fsmon-webhook.py` | HTTP webhook（Slack/Discord/飞书） | 无 |
+| `fsmon-metrics.py` | Pull metrics 摘要/循环拉取 | 无 |
+| `fsmon-custom-format.py` | CSV / TSV / syslog / Loki | 无 |
+| `fsmon-kafka.py` | Kafka producer | `pip install kafka-python` |
+| `fsmon-to-s3.py` | S3 批量归档 | `pip install boto3` |
+| `fsmon-to-es.py` | Elasticsearch 批量索引 | `pip install elasticsearch` |
+| `fsmon-grafana.json` | Grafana 大盘 | 导入 JSON |
+
+```bash
+# 示例：将事件流接入 webhook
+python3 extensions/fsmon-webhook.py --webhook http://localhost:8080/alert
+
+# 示例：拉取当前 metrics 摘要
+python3 extensions/fsmon-metrics.py --summary
 ```
 
 ## 许可证

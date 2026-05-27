@@ -39,13 +39,18 @@ restarting the daemon.
 Usage:
   sudo fsmon daemon &                     Start daemon in background
   sudo fsmon daemon --debug               Enable debug output
-  sudo fsmon daemon --channel-capacity 1024   Event channel cap (default: unbounded)
   sudo fsmon daemon --disk-min-free 10%       Warn when disk < 10% free
+  sudo fsmon daemon --sync-interval 5         fdatasync log files every 5s
+  sudo fsmon daemon --no-log                  Disable local JSONL file writing
+  sudo fsmon daemon --local-time              Use local timezone in timestamps
+  sudo fsmon daemon --metrics-listen 127.0.0.1:9845  Enable Prometheus TCP /metrics
+  sudo fsmon daemon --buffer-size 65536       Fanotify read buffer
+  sudo fsmon daemon --channel-capacity 1024   Event channel cap (default: unbounded)
+  sudo fsmon daemon --subscribe-buf 8192      Subscribe broadcast buffer
   sudo fsmon daemon --cache-dir-cap 200000    Override dir_cache capacity
-  fsmon add /path                       Monitor all events on /path
-  fsmon add openclaw --path /home -r    Track openclaw on /home (recursive)
-  fsmon monitored                       List monitored paths
-  fsmon query -t '>1h'                  Query events from last hour
+  fsmon add openclaw --path /home -r          Track openclaw on /home (recursive)
+  fsmon monitored                             List monitored paths
+  fsmon query -t '>1h'                        Query events from last hour
 
 For systemd integration:
   sudo fsmon init --service             Install systemd service (auto-start on crash)
@@ -220,6 +225,8 @@ Setup (no sudo needed):
 
 Daemon (requires sudo):
   sudo fsmon daemon &               Start daemon in background
+  sudo fsmon daemon --no-log        Start without local file writing
+  sudo fsmon daemon --metrics-listen 127.0.0.1:9845  With Prometheus endpoint
   sudo systemctl start fsmon        Start via systemd (if installed)
   sudo systemctl stop fsmon         Stop via systemd
   journalctl -u fsmon -f           View daemon logs via systemd
@@ -227,23 +234,29 @@ Daemon (requires sudo):
 
 Management (no sudo needed):
   fsmon add openclaw --path /home -r   Track openclaw on /home (recursive)
-  fsmon add /path -r                Monitor path (recursive, default 8 types)
-  fsmon remove                      Remove entire null cmd group
-  fsmon remove openclaw            Remove entire openclaw cmd group
+  fsmon add _global --path /home       Monitor /home (all processes)
+  fsmon remove _global                 Remove entire global cmd group
+  fsmon remove openclaw              Remove entire openclaw cmd group
   fsmon monitored                   List monitored paths
 
 Query (stdout JSONL, pipe to jq):
   fsmon query -t '>1h'             Events from last hour
-  fsmon query | jq 'select(.cmd == "nginx")'  Custom filter
-  cat ~/.local/state/fsmon/*_log.jsonl | jq ...  Or direct pipe (slower)
+  fsmon query _global | jq 'select(.cmd == "nginx")'  Custom filter
 
 Clean (config defaults: keep_days=30, size=>=1GB):
   fsmon clean _global               Clean global log (keep >30d)
   fsmon clean openclaw -t '>7d'    Keep last 7 days of openclaw
   fsmon clean nginx --dry-run       Preview nginx log cleaning
-  tail -500 ...                     Or direct Unix tools (slower)
 
 Config:  ~/.config/fsmon/fsmon.toml (created by fsmon init, all-commented — defaults apply)
 Monitor: ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
-Logs:    ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].path)"#
+Logs:    ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].path)
+
+Output modes:
+  File:   JSONL log files (disable with --no-log / [logging] enabled = false)
+  Push:   Unix socket subscribe — real-time JSONL stream (integrations in extensions/)
+  Pull:   Socket 'metrics' command — Prometheus text (always available)
+  Pull:   TCP /metrics — Prometheus scrape (opt-in via --metrics-listen)
+
+See extensions/ for Kafka, S3, Elasticsearch, webhook integration scripts."#
 }
