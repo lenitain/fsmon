@@ -492,26 +492,35 @@ src/
 
 ## Integrations (`extensions/`)
 
-Pre-built scripts for connecting fsmon to external systems. All use the subscribe socket.
+**All extension scripts are examples — not production-ready. Adapt before deploying.**
 
-| Script | Target | Dependencies |
-|--------|--------|-------------|
-| `fsmon-subscribe-demo.py` | Terminal preview | None |
-| `fsmon-webhook.py` | HTTP webhook (Slack/Discord/Feishu) | None |
-| `fsmon-metrics.py` | Pull metrics summary/watch | None |
-| `fsmon-custom-format.py` | CSV / TSV / syslog / Loki | None |
-| `fsmon-kafka.py` | Kafka producer | `pip install kafka-python` |
-| `fsmon-to-s3.py` | S3 batch archive | `pip install boto3` |
-| `fsmon-to-es.py` | Elasticsearch bulk index | `pip install elasticsearch` |
-| `fsmon-grafana.json` | Grafana dashboard | Import JSON |
+### Push — Socket Subscribe (real-time JSONL stream)
 
-```bash
-# Example: stream all events to a webhook
-python3 extensions/fsmon-webhook.py --webhook http://localhost:8080/alert
+| Script | Target consumer |
+|--------|----------------|
+| `fsmon-subscribe-demo.py` | Terminal preview |
+| `fsmon-webhook.py` | HTTP webhook (Slack, Discord, custom server) |
+| `fsmon-kafka.py` | Kafka topic |
+| `fsmon-to-s3.py` | S3 / MinIO batch archive |
+| `fsmon-to-es.py` | Elasticsearch + Kibana |
+| `fsmon-to-influxdb.py` | InfluxDB / Telegraf |
+| `fsmon-custom-format.py` | CSV, TSV, syslog, Loki/Grafana, JSON |
 
-# Example: pull current metrics summary
-python3 extensions/fsmon-metrics.py --summary
-```
+### Pull — Socket `metrics` command (one-shot text)
+
+| Script | Target consumer |
+|--------|----------------|
+| `fsmon-metrics.py` | Cron, systemd timer, Telegraf exec, Nagios check, manual |
+
+### Pull — TCP HTTP `/metrics` (Prometheus scrape)
+
+| File | Target consumer |
+|------|----------------|
+| `prometheus.yml` | Prometheus scrape config + alert rule example |
+| `fsmon-grafana.json` | Grafana dashboard (import JSON) |
+| — | VictoriaMetrics, Thanos, Alertmanager, Grafana Agent, OpenTelemetry Collector |
+
+All Prometheus-compatible systems can scrape the TCP `/metrics` endpoint directly.
 
 ## License
 

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """
+EXAMPLE ONLY — NOT FOR PRODUCTION USE.
+Adapt this script to your environment before deploying.
+
 fsmon metrics command — pull Prometheus-format metrics via Unix socket.
 
 Demonstrates the pull-mode socket layer:

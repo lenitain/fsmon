@@ -1,5 +1,5 @@
 {
-  "__usage_note": "Import into Grafana: + -> Import -> Paste JSON -> select Prometheus data source",
+  "__usage_note": "EXAMPLE ONLY — NOT FOR PRODUCTION. Import into Grafana: + -> Import -> Paste JSON -> select Prometheus data source",
   "title": "fsmon - File System Monitor",
   "uid": "fsmon-dashboard",
   "description": "fsmon file event monitoring dashboard — requires Prometheus scraping fsmon daemon",

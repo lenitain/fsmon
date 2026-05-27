@@ -484,26 +484,35 @@ src/
 
 ## 集成 (`extensions/`)
 
-用于将 fsmon 接入外部系统的预构建脚本。均使用 subscribe 套接字。
+**所有扩展脚本均为示例 — 非生产就绪，部署前请自行适配。**
 
-| 脚本 | 目标 | 依赖 |
-|------|------|------|
-| `fsmon-subscribe-demo.py` | 终端预览 | 无 |
-| `fsmon-webhook.py` | HTTP webhook（Slack/Discord/飞书） | 无 |
-| `fsmon-metrics.py` | Pull metrics 摘要/循环拉取 | 无 |
-| `fsmon-custom-format.py` | CSV / TSV / syslog / Loki | 无 |
-| `fsmon-kafka.py` | Kafka producer | `pip install kafka-python` |
-| `fsmon-to-s3.py` | S3 批量归档 | `pip install boto3` |
-| `fsmon-to-es.py` | Elasticsearch 批量索引 | `pip install elasticsearch` |
-| `fsmon-grafana.json` | Grafana 大盘 | 导入 JSON |
+### Push — Socket Subscribe（实时 JSONL 流）
 
-```bash
-# 示例：将事件流接入 webhook
-python3 extensions/fsmon-webhook.py --webhook http://localhost:8080/alert
+| 脚本 | 目标消费者 |
+|------|----------|
+| `fsmon-subscribe-demo.py` | 终端预览 |
+| `fsmon-webhook.py` | HTTP webhook（Slack、Discord、自定义服务器） |
+| `fsmon-kafka.py` | Kafka topic |
+| `fsmon-to-s3.py` | S3 / MinIO 批量归档 |
+| `fsmon-to-es.py` | Elasticsearch + Kibana |
+| `fsmon-to-influxdb.py` | InfluxDB / Telegraf |
+| `fsmon-custom-format.py` | CSV、TSV、syslog、Loki/Grafana、JSON |
 
-# 示例：拉取当前 metrics 摘要
-python3 extensions/fsmon-metrics.py --summary
-```
+### Pull — Socket `metrics` 命令（一次性文本）
+
+| 脚本 | 目标消费者 |
+|------|----------|
+| `fsmon-metrics.py` | Cron、systemd timer、Telegraf exec、Nagios check、手动查看 |
+
+### Pull — TCP HTTP `/metrics`（Prometheus scrape）
+
+| 文件 | 目标消费者 |
+|------|----------|
+| `prometheus.yml` | Prometheus scrape 配置 + 告警规则示例 |
+| `fsmon-grafana.json` | Grafana 大盘（导入 JSON） |
+| — | VictoriaMetrics、Thanos、Alertmanager、Grafana Agent、OpenTelemetry Collector |
+
+所有兼容 Prometheus 的系统均可直接 scrape TCP `/metrics` 端点。
 
 ## 许可证
 

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """
+EXAMPLE ONLY — NOT FOR PRODUCTION USE.
+Adapt this script to your environment before deploying.
+
 fsmon -> S3 archiver bridge
 
 Receives real-time events from fsmon subscribe, batches them, and uploads

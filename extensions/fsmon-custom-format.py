@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """
+EXAMPLE ONLY — NOT FOR PRODUCTION USE.
+Adapt this script to your environment before deploying.
+
 fsmon custom format converter
 
 Receives events from fsmon subscribe and converts to various output formats.

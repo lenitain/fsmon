@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """
+EXAMPLE ONLY — NOT FOR PRODUCTION USE.
+Adapt this script to your environment before deploying.
+
 fsmon -> Elasticsearch bridge
 
 Receives real-time events from fsmon subscribe, bulk-indexes to Elasticsearch.

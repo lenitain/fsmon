@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """
+EXAMPLE ONLY — NOT FOR PRODUCTION USE.
+Adapt this script to your environment before deploying.
+
 fsmon subscribe protocol demo — connect to daemon, receive real-time event stream.
 
 Minimal demonstration of the subscribe protocol:
