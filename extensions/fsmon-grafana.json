@@ -1,0 +1,141 @@
+{
+  "__usage_note": "导入 Grafana: + → Import → 粘贴此 JSON → 选择 Prometheus 数据源",
+  "title": "fsmon - File System Monitor",
+  "uid": "fsmon-dashboard",
+  "description": "fsmon 文件事件监控大盘 — 需要 Prometheus scrape fsmon daemon",
+  "tags": ["filesystem", "audit", "fsmon"],
+  "timezone": "browser",
+  "refresh": "15s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "事件速率 (events/sec)",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "rate(fsmon_events_total[1m])",
+          "legendFormat": "{{event_type}} / {{cmd}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 1}
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "事件总数 (按类型)",
+      "type": "barchart",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum by(event_type) (fsmon_events_total)",
+          "legendFormat": "{{event_type}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "color": {"mode": "palette-classic"}}
+      }
+    },
+    {
+      "id": 3,
+      "title": "写入事件比率 (CREATE + MODIFY + CLOSE_WRITE)",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 8, "w": 8, "h": 7},
+      "targets": [
+        {
+          "expr": "rate(fsmon_events_total{event_type=~\"CREATE|MODIFY|CLOSE_WRITE\"}[1m])",
+          "legendFormat": "{{event_type}} / {{cmd}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "reqps"}
+      }
+    },
+    {
+      "id": 4,
+      "title": "删除事件 比率",
+      "type": "timeseries",
+      "gridPos": {"x": 8, "y": 8, "w": 8, "h": 7},
+      "targets": [
+        {
+          "expr": "rate(fsmon_events_total{event_type=~\"DELETE|DELETE_SELF|MOVE.*\"}[1m])",
+          "legendFormat": "{{event_type}} / {{cmd}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "reqps"}
+      }
+    },
+    {
+      "id": 5,
+      "title": "访问事件 比率 (ACCESS + OPEN)",
+      "type": "timeseries",
+      "gridPos": {"x": 16, "y": 8, "w": 8, "h": 7},
+      "targets": [
+        {
+          "expr": "rate(fsmon_events_total{event_type=~\"ACCESS|OPEN\"}[1m])",
+          "legendFormat": "{{event_type}} / {{cmd}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "reqps"}
+      }
+    },
+    {
+      "id": 6,
+      "title": "Daemon 状态",
+      "type": "stat",
+      "gridPos": {"x": 0, "y": 15, "w": 6, "h": 4},
+      "targets": [
+        {"expr": "fsmon_subscribers", "legendFormat": "subscribers", "refId": "A"},
+        {"expr": "fsmon_monitored_paths", "legendFormat": "paths", "refId": "B"},
+        {"expr": "fsmon_reader_groups", "legendFormat": "reader groups", "refId": "C"}
+      ],
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}
+      }
+    },
+    {
+      "id": 7,
+      "title": "Daemon 健康",
+      "type": "timeseries",
+      "gridPos": {"x": 6, "y": 15, "w": 9, "h": 4},
+      "targets": [
+        {"expr": "fsmon_subscribers", "legendFormat": "subscribers", "refId": "A"},
+        {"expr": "fsmon_monitored_paths", "legendFormat": "monitored paths", "refId": "B"},
+        {"expr": "fsmon_pending_paths", "legendFormat": "pending paths", "refId": "C"},
+        {"expr": "fsmon_disk_buffer_events", "legendFormat": "disk buffer", "refId": "D"}
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "custom": {"drawStyle": "line", "fillOpacity": 10}}
+      }
+    },
+    {
+      "id": 8,
+      "title": "Top 活跃进程",
+      "type": "table",
+      "gridPos": {"x": 15, "y": 15, "w": 9, "h": 4},
+      "targets": [
+        {
+          "expr": "topk(10, sum by(cmd) (rate(fsmon_events_total[5m])))",
+          "legendFormat": "{{cmd}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "reqps"}
+      }
+    }
+  ],
+  "schemaVersion": 38,
+  "version": 1
+}
