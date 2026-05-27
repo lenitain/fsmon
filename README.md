@@ -4,7 +4,7 @@
 
 <h3 align="center">Real-time Linux filesystem change monitoring with process attribution.</h3>
 
-🌍 **Select Language**
+🌍 **选择语言 | Language**
 - [English](./README.md)
 - [简体中文](./README.zh-CN.md)
 
