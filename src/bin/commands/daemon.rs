@@ -15,6 +15,7 @@ pub async fn cmd_daemon(
     sync_interval: Option<u64>,
     no_log: bool,
     local_time: bool,
+    metrics_listen: Option<String>,
 ) -> Result<()> {
     // Acquire singleton lock first — only one daemon instance allowed
     let (uid, _gid) = fsmon::config::resolve_uid_gid();
@@ -35,6 +36,17 @@ pub async fn cmd_daemon(
         eprintln!("  Event logs:     disabled (broadcast-only)");
     }
     eprintln!("  Command socket: {}", cfg.socket.path.display());
+
+    // Merge metrics_listen: CLI > config > disabled
+    let metrics_listen = metrics_listen
+        .or_else(|| cfg.metrics.as_ref().and_then(|m| m.listen.clone()));
+    if let Some(ref addr) = metrics_listen {
+        if !addr.is_empty() {
+            eprintln!("  Metrics TCP:    http://{}/metrics", addr);
+        }
+    } else {
+        eprintln!("  Metrics TCP:    disabled");
+    }
 
     let store = Monitored::load(&cfg.monitored.path)?;
 
@@ -135,6 +147,7 @@ pub async fn cmd_daemon(
         sync_interval,
         Some(subscribe_buf),
         local_time || cfg.logging.local_time.unwrap_or(false),
+        metrics_listen.filter(|a| !a.is_empty()),
     )?;
 
     if !store.is_empty() {

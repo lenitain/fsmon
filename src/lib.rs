@@ -4,6 +4,7 @@ pub mod dir_cache;
 pub mod fid_parser;
 pub mod filters;
 pub mod help;
+pub mod metrics;
 pub mod monitor;
 pub mod monitored;
 pub mod proc_cache;

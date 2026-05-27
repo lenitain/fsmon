@@ -19,6 +19,7 @@ pub struct Config {
     pub logging: LoggingConfig,
     pub socket: SocketConfig,
     pub cache: Option<CacheConfig>,
+    pub metrics: Option<MetricsConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +55,17 @@ pub struct LoggingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SocketConfig {
     pub path: PathBuf,
+}
+
+/// Prometheus metrics endpoint configuration.
+///
+/// Socket `metrics` command is always available (zero overhead).
+/// TCP HTTP `/metrics` is optional — only enabled when `listen` is set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsConfig {
+    /// TCP address for HTTP `/metrics` endpoint.
+    /// e.g. "127.0.0.1:9845". None / absent → TCP disabled.
+    pub listen: Option<String>,
 }
 
 /// Cache configuration (optional — missing fields use code defaults).
@@ -305,6 +317,7 @@ impl Default for Config {
                 path: PathBuf::from("/tmp/fsmon-<UID>.sock"),
             },
             cache: None,
+            metrics: None,
         }
     }
 }
@@ -464,6 +477,12 @@ impl Config {
 # channel_capacity = 1024
 #   Subscribe event stream buffer capacity. Default: 4096.
 # subscribe_buf = 4096
+
+# [metrics]
+#   TCP HTTP /metrics endpoint address. Socket "metrics" command
+#   is always available; this enables Prometheus direct scrape.
+#   Uncomment to enable; absent/comment-out = disabled.
+# listen = "127.0.0.1:9845"
 "#.to_string()
     }
 

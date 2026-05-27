@@ -28,6 +28,7 @@ use crate::fid_parser::{
     mask_to_event_types, path_mask_from_options, read_fid_events_cached,
 };
 use crate::filters::{self, PathOptions};
+use crate::metrics::MetricsRegistry;
 use crate::monitored::Monitored;
 use crate::monitored::PathEntry;
 use crate::proc_cache::{
@@ -148,6 +149,10 @@ pub struct Monitor {
     event_stream_tx: Option<tokio::sync::broadcast::Sender<(FileEvent, String)>>,
     /// Use local time instead of UTC in timestamp serialization.
     local_time: bool,
+    /// Atomic metrics counters (thread-safe, cloneable).
+    metrics: MetricsRegistry,
+    /// TCP listen address for HTTP /metrics (None = disabled).
+    metrics_listen: Option<String>,
 }
 
 impl Monitor {
@@ -164,6 +169,7 @@ impl Monitor {
         sync_interval: Option<std::time::Duration>,
         subscribe_buf: Option<usize>,
         local_time: bool,
+        metrics_listen: Option<String>,
     ) -> Result<Self> {
         let cache_config = cache_config.unwrap_or_default();
         let buffer_size = buffer_size.unwrap_or(cache_config.buffer_size);
@@ -265,6 +271,8 @@ impl Monitor {
                 Some(tx)
             },
             local_time,
+            metrics: MetricsRegistry::new(),
+            metrics_listen,
         };
         if debug {
             eprintln!(
@@ -738,13 +746,26 @@ impl Monitor {
         let fw_sync = self.sync_interval;
         let fw_debug = self.debug;
         let fw_local = self.local_time;
+        let fw_metrics = self.metrics.clone();
         if let Some(fw_log_dir) = fw_log_dir {
             if let Some(ref tx) = self.event_stream_tx {
                 let fw_rx = tx.subscribe();
                 tokio::spawn(async move {
-                    let fw = FileLogWriter::new(fw_log_dir, fw_sync, fw_debug, fw_local);
+                    let fw = FileLogWriter::new(fw_log_dir, fw_sync, fw_debug, fw_local, fw_metrics);
                     fw.run(fw_rx).await;
                 });
+            }
+        }
+
+        // Spawn TCP metrics HTTP server (optional, only if listen is configured)
+        if let Some(ref addr_str) = self.metrics_listen {
+            match addr_str.parse::<std::net::SocketAddr>() {
+                Ok(addr) => {
+                    let _ = crate::metrics::serve_metrics_tcp(addr, self.metrics.clone()).await;
+                }
+                Err(e) => {
+                    eprintln!("[WARNING] Invalid metrics listen address '{}': {}", addr_str, e);
+                }
             }
         }
 
@@ -920,6 +941,11 @@ impl Monitor {
                             };
                             if cmd.cmd == "subscribe" {
                                 self.handle_subscribe(writer, &cmd);
+                            } else if cmd.cmd == "metrics" {
+                                let m = self.metrics.clone();
+                                tokio::spawn(async move {
+                                    crate::metrics::handle_metrics_socket(writer, &m).await;
+                                });
                             } else {
                                 let resp = self.handle_socket_cmd(cmd);
                                 if let Ok(toml_str) = toml::to_string(&resp) {
@@ -1052,6 +1078,9 @@ impl Monitor {
                             let cmd_name = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
                             let _ = tx.send((event.clone(), cmd_name.to_string()));
                         }
+                        // Increment metrics counter (atomic, zero lock overhead)
+                        let cmd_label = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
+                        self.metrics.inc_event(&event_type.to_string(), cmd_label);
                     }
                 }
             }
@@ -1259,6 +1288,7 @@ impl Monitor {
                 gave_up: false,
             });
         }
+        self.metrics.set_reader_groups(self.fs_groups.len() as i64);
     }
 
     /// Restart a reader task that has died.
@@ -1390,6 +1420,7 @@ impl Monitor {
                 path.display(),
                 recursive
             );
+            self.metrics.set_monitored_paths(self.monitored_entries.len() as i64);
             return Ok(());
         }
 
@@ -1613,6 +1644,7 @@ impl Monitor {
             }
         }
 
+        self.metrics.set_monitored_paths(self.monitored_entries.len() as i64);
         Ok(())
     }
 
@@ -1713,6 +1745,8 @@ impl Monitor {
             let label = cmd.unwrap_or("?");
             println!("Removed entry: [{}] {}", label, path.display());
         }
+        self.metrics.set_monitored_paths(self.monitored_entries.len() as i64);
+        self.metrics.set_reader_groups(self.fs_groups.len() as i64);
         Ok(())
     }
 
@@ -1852,7 +1886,9 @@ impl Monitor {
         // Subscriber can override local_time per-connection.
         // If not specified, use daemon default.
         let sub_local = cmd.local_time.unwrap_or(self.local_time);
-        tokio::spawn(subscriber_task(writer, rx, track_cmd, types, sub_local));
+        let sub_metrics = self.metrics.clone();
+        self.metrics.inc_subscribers();
+        tokio::spawn(subscriber_task(writer, rx, track_cmd, types, sub_local, sub_metrics));
     }
 
     fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> SocketResp {
@@ -2070,6 +2106,7 @@ impl Monitor {
 
         // Refresh inotify watches for remaining pending paths
         self.setup_inotify_watches();
+        self.metrics.set_pending_paths(self.pending_paths.len() as i64);
     }
 
     #[cfg(test)]
@@ -2147,6 +2184,7 @@ async fn subscriber_task(
     track_cmd: Option<String>,
     type_filter: Option<Vec<EventType>>,
     local_time: bool,
+    metrics: MetricsRegistry,
 ) {
     use tokio::io::AsyncWriteExt;
 
@@ -2200,6 +2238,7 @@ async fn subscriber_task(
             }
         }
     }
+    metrics.dec_subscribers();
     // writer drops → connection closes
 }
 
@@ -2216,10 +2255,17 @@ struct FileLogWriter {
     sync_interval: Option<Duration>,
     debug: bool,
     local_time: bool,
+    metrics: MetricsRegistry,
 }
 
 impl FileLogWriter {
-    fn new(log_dir: PathBuf, sync_interval: Option<Duration>, debug: bool, local_time: bool) -> Self {
+    fn new(
+        log_dir: PathBuf,
+        sync_interval: Option<Duration>,
+        debug: bool,
+        local_time: bool,
+        metrics: MetricsRegistry,
+    ) -> Self {
         Self {
             log_dir,
             disk_buf: VecDeque::with_capacity(10_000),
@@ -2227,6 +2273,7 @@ impl FileLogWriter {
             last_disk_check: std::time::Instant::now(),
             dirty_logs: HashSet::new(),
             sync_interval,
+            metrics,
             debug,
             local_time,
         }
@@ -2348,6 +2395,7 @@ impl FileLogWriter {
                     self.disk_buf
                         .push_back((event.clone(), cmd_name.to_string()));
                 }
+                self.metrics.set_disk_buffer_events(self.disk_buf.len() as i64);
                 Err(e)
             }
         }
@@ -2395,6 +2443,7 @@ impl FileLogWriter {
         self.disk_buf = remaining;
         self.disk_healthy = self.disk_buf.is_empty();
         self.last_disk_check = std::time::Instant::now();
+        self.metrics.set_disk_buffer_events(self.disk_buf.len() as i64);
     }
 
     /// Sync all dirty log files to disk via fdatasync.
@@ -2552,6 +2601,7 @@ mod tests {
             None,
             None,
             false,
+            None,
         )
         .unwrap()
     }
@@ -2678,6 +2728,7 @@ mod tests {
             None,
             None,
             false,
+            None,
         );
         assert!(result.is_err(), "Monitor::new() should reject cmd=fsmon");
         let err = result.err().unwrap().to_string();
@@ -2704,6 +2755,7 @@ mod tests {
             None,
             None,
             false,
+            None,
         );
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("at least 4096"));
@@ -2720,6 +2772,7 @@ mod tests {
             None,
             None,
             false,
+            None,
         );
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("not exceed"));
@@ -2736,13 +2789,14 @@ mod tests {
             None,
             None,
             false,
+            None,
         );
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_add_path_and_remove_path() {
-        let mut m = Monitor::new(vec![], None, None, None, None, false, None, None, None, None, false).unwrap();
+        let mut m = Monitor::new(vec![], None, None, None, None, false, None, None, None, None, false, None).unwrap();
 
         let entry = PathEntry {
             cmd: None,

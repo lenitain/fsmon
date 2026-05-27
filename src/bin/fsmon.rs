@@ -91,6 +91,12 @@ pub enum Commands {
         /// instead of Z suffix.
         #[arg(long)]
         local_time: bool,
+
+        /// TCP address for Prometheus HTTP /metrics endpoint.
+        /// e.g. "127.0.0.1:9845". Omit to disable TCP (socket metrics
+        /// command remains available). Takes precedence over config.
+        #[arg(long, value_name = "ADDRESS")]
+        metrics_listen: Option<String>,
     },
 
     /// Add a path to the monitoring list
