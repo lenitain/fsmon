@@ -133,27 +133,54 @@ impl Default for ResolvedCacheConfig {
 impl CacheConfig {
     /// Merge: explicit values from this config override defaults,
     /// then CLI overrides override config values.
-    pub fn resolve_with_cli(
-        &self,
-        cli: &CliCacheOverride,
-    ) -> ResolvedCacheConfig {
+    pub fn resolve_with_cli(&self, cli: &CliCacheOverride) -> ResolvedCacheConfig {
         let mut r = ResolvedCacheConfig::default();
-        if let Some(v) = self.dir_capacity { r.dir_capacity = v; }
-        if let Some(v) = self.dir_ttl_secs { r.dir_ttl_secs = v; }
-        if let Some(v) = self.file_size_capacity { r.file_size_capacity = v; }
-        if let Some(v) = self.proc_ttl_secs { r.proc_ttl_secs = v; }
-        if let Some(v) = self.stats_interval_secs { r.stats_interval_secs = v; }
-        if let Some(v) = self.channel_capacity { r.channel_capacity = Some(v); }
+        if let Some(v) = self.dir_capacity {
+            r.dir_capacity = v;
+        }
+        if let Some(v) = self.dir_ttl_secs {
+            r.dir_ttl_secs = v;
+        }
+        if let Some(v) = self.file_size_capacity {
+            r.file_size_capacity = v;
+        }
+        if let Some(v) = self.proc_ttl_secs {
+            r.proc_ttl_secs = v;
+        }
+        if let Some(v) = self.stats_interval_secs {
+            r.stats_interval_secs = v;
+        }
+        if let Some(v) = self.channel_capacity {
+            r.channel_capacity = Some(v);
+        }
         // Apply CLI overrides (highest priority)
-        if let Some(v) = cli.dir_capacity { r.dir_capacity = v; }
-        if let Some(v) = cli.dir_ttl_secs { r.dir_ttl_secs = v; }
-        if let Some(v) = cli.file_size_capacity { r.file_size_capacity = v; }
-        if let Some(v) = cli.proc_ttl_secs { r.proc_ttl_secs = v; }
-        if let Some(v) = cli.stats_interval_secs { r.stats_interval_secs = v; }
-        if let Some(v) = cli.buffer_size { r.buffer_size = v; }
-        if let Some(v) = cli.channel_capacity { r.channel_capacity = Some(v); }
-        if let Some(v) = self.subscribe_buf { r.subscribe_buf = v; }
-        if let Some(v) = cli.subscribe_buf { r.subscribe_buf = v; }
+        if let Some(v) = cli.dir_capacity {
+            r.dir_capacity = v;
+        }
+        if let Some(v) = cli.dir_ttl_secs {
+            r.dir_ttl_secs = v;
+        }
+        if let Some(v) = cli.file_size_capacity {
+            r.file_size_capacity = v;
+        }
+        if let Some(v) = cli.proc_ttl_secs {
+            r.proc_ttl_secs = v;
+        }
+        if let Some(v) = cli.stats_interval_secs {
+            r.stats_interval_secs = v;
+        }
+        if let Some(v) = cli.buffer_size {
+            r.buffer_size = v;
+        }
+        if let Some(v) = cli.channel_capacity {
+            r.channel_capacity = Some(v);
+        }
+        if let Some(v) = self.subscribe_buf {
+            r.subscribe_buf = v;
+        }
+        if let Some(v) = cli.subscribe_buf {
+            r.subscribe_buf = v;
+        }
         r
     }
 }
@@ -202,7 +229,10 @@ pub fn resolve_uid_gid() -> (u32, u32) {
     }
 
     // 3. Running as normal user
-    (nix::unistd::geteuid().as_raw(), nix::unistd::getegid().as_raw())
+    (
+        nix::unistd::geteuid().as_raw(),
+        nix::unistd::getegid().as_raw(),
+    )
 }
 
 /// Chown a path to the original user (daemon runs as root, files should go to the user).
@@ -371,7 +401,10 @@ impl Config {
     pub fn ensure_monitored_dir() -> Result<()> {
         let mut cfg = Config::load()?;
         cfg.resolve_paths()?;
-        let parent = cfg.monitored.path.parent()
+        let parent = cfg
+            .monitored
+            .path
+            .parent()
             .context("Monitored file path has no parent")?
             .to_path_buf();
         if !parent.exists() {
@@ -409,6 +442,7 @@ impl Config {
 
 [monitored]
 #   Where the monitored paths database is stored.
+#   Config-only (no CLI flag).
 path = "~/.local/share/fsmon/monitored.jsonl"
 
 [logging]
@@ -469,7 +503,8 @@ path = "/tmp/fsmon-<UID>.sock"
 #   available; this enables Prometheus direct scrape.
 #   CLI: --metrics-listen 127.0.0.1:9845
 # listen = "127.0.0.1:9845"
-"#.to_string()
+"#
+        .to_string()
     }
 
     /// Write a commented reference config file to the canonical path.
@@ -481,7 +516,7 @@ path = "/tmp/fsmon-<UID>.sock"
         }
         fs::write(path, Self::default_commented_toml())?;
         chown_to_original_user(path);
-        eprintln!("Created config:        {}", path.display());
+        eprintln!("Created config: {}", path.display());
         Ok(())
     }
 }
@@ -546,7 +581,10 @@ mod tests {
                 cfg.monitored.path.to_string_lossy(),
                 "~/.local/share/fsmon/monitored.jsonl"
             );
-            assert_eq!(cfg.logging.path, Some(PathBuf::from("~/.local/state/fsmon")));
+            assert_eq!(
+                cfg.logging.path,
+                Some(PathBuf::from("~/.local/state/fsmon"))
+            );
             assert_eq!(cfg.socket.path.to_string_lossy(), "/tmp/fsmon-<UID>.sock");
         });
     }
@@ -600,7 +638,10 @@ path = "/tmp/custom.sock"
             // Empty file or comment-only → return defaults (same as no file)
             fs::write(&config_path, "").unwrap();
             let cfg = Config::load().unwrap();
-            assert_eq!(cfg.monitored.path.to_string_lossy(), "~/.local/share/fsmon/monitored.jsonl");
+            assert_eq!(
+                cfg.monitored.path.to_string_lossy(),
+                "~/.local/share/fsmon/monitored.jsonl"
+            );
         });
     }
 
@@ -620,7 +661,12 @@ path = "/tmp/custom.sock"
                 home_str
             );
             assert!(
-                cfg.logging.path.as_ref().unwrap().to_string_lossy().starts_with(&*home_str),
+                cfg.logging
+                    .path
+                    .as_ref()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(&*home_str),
                 "logging.path should start with home dir"
             );
             assert!(
@@ -670,15 +716,24 @@ path = "/tmp/custom.sock"
             let monitored_dir = home.join(".local/share/fsmon");
             let config_file = home.join(".config/fsmon/fsmon.toml");
 
-            assert!(!log_dir.exists(), "log dir should not exist (init only creates config)");
-            assert!(!monitored_dir.exists(), "monitored dir should not exist (init only creates config)");
+            assert!(
+                !log_dir.exists(),
+                "log dir should not exist (init only creates config)"
+            );
+            assert!(
+                !monitored_dir.exists(),
+                "monitored dir should not exist (init only creates config)"
+            );
             assert!(
                 config_file.exists(),
                 "config file should be created by init"
             );
             // Config should load from the new file (comment-only → defaults)
             let cfg = Config::load().unwrap();
-            assert_eq!(cfg.monitored.path.to_string_lossy(), "~/.local/share/fsmon/monitored.jsonl");
+            assert_eq!(
+                cfg.monitored.path.to_string_lossy(),
+                "~/.local/share/fsmon/monitored.jsonl"
+            );
         });
     }
 
@@ -706,8 +761,14 @@ path = "/tmp/fsmon-<UID>.sock"
 
             let log_dir = home.join(".local/state/fsmon");
             let monitored_dir = home.join(".local/share/fsmon");
-            assert!(!log_dir.exists(), "log dir should not exist (init only creates config)");
-            assert!(!monitored_dir.exists(), "monitored dir should not exist (init only creates config)");
+            assert!(
+                !log_dir.exists(),
+                "log dir should not exist (init only creates config)"
+            );
+            assert!(
+                !monitored_dir.exists(),
+                "monitored dir should not exist (init only creates config)"
+            );
         });
     }
 
@@ -855,10 +916,10 @@ path = "/tmp/test.sock"
             subscribe_buf: None,
         };
         let r = cfg.resolve_with_cli(&cli);
-        assert_eq!(r.dir_capacity, 99999);    // CLI wins
-        assert_eq!(r.dir_ttl_secs, 100);       // Config (CLI didn't set)
+        assert_eq!(r.dir_capacity, 99999); // CLI wins
+        assert_eq!(r.dir_ttl_secs, 100); // Config (CLI didn't set)
         assert_eq!(r.file_size_capacity, 999); // CLI wins
-        assert_eq!(r.proc_ttl_secs, 50);       // Config (CLI didn't set)
+        assert_eq!(r.proc_ttl_secs, 50); // Config (CLI didn't set)
     }
 
     #[test]
