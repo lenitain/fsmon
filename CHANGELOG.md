@@ -73,6 +73,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enriched docstrings, and consistent `EXAMPLE ONLY` disclaimer.
 - **to_jsonl_string_local**: preserves exact struct field order (same as UTC mode),
   only replacing the timestamp value inline.
+- **Deferred event publish**: `process_event_batch` no longer sends events
+  directly to the broadcast channel. It returns `Vec<PendingEvent>`, and the
+  event loop handles the two-phase drain→build→drain→patch→publish pipeline.
+  This closes the race window between fanotify and proc connector events
+  without locks, sleeping, or callback indirection.
 
 ### Fixed
 
@@ -84,6 +89,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commented configuration template.
 - **Stale `--log-path` references**: purged from all code, docs, help text,
   and README.
+- **Process attribution regression**: snapshot-produced `start_time_ns` was
+  hardcoded to `0`, causing the PID reuse check to reject ALL pre-existing
+  process cache entries as "reused" — every event from those processes fell
+  through to the `/proc` fallback, and for short-lived processes (`rm`,
+  `touch`) that had already exited, the fallback also failed, resulting in
+  `cmd="unknown"` / `user="unknown"` across all events. Fixed by reading the
+  real `start_time_ns` from `/proc/{pid}/stat` during the snapshot.
+- **Race between fanotify and proc connector**: fanotify DELETE events and
+  proc connector Exec events arrive through independent kernel subsystems
+  with no ordering guarantee. A short-lived process's fanotify event could
+  be processed before its Exec event populated the caches. Fixed with a
+  **two-phase publish pipeline**: build events → drain proc events a second
+  time (typically ~200ns, almost always `WouldBlock`) → resolve any
+  remaining `unknown` fields from now-populated caches → publish to broadcast.
+  This eliminates the race at the architecture level rather than patching
+  events after they're emitted.
 
 ### Architecture
 
