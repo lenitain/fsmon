@@ -5,6 +5,99 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-28
+
+### Added
+
+- **Unified broadcast event stream**: all events flow through a single
+  `tokio::sync::broadcast` channel inside the daemon. File writing, subscribe,
+  and metrics all consume from the same stream — no duplicated work, consistent
+  ordering, zero-copy cloning.
+- **Subscribe protocol** (`cmd = "subscribe"`): real-time event streaming over the
+  Unix socket. Subscribers receive JSONL events as they happen. Supports per-connection
+  filters (`track_cmd`, `types`, `local_time`). See `extensions/subscribe-stream/`.
+- **Prometheus metrics endpoint**: dual-transport design — always available via Unix
+  socket (`cmd = "metrics"`), plus an optional TCP HTTP listener
+  (`--metrics-listen 127.0.0.1:9845`). Returns standard Prometheus text format.
+  Counters: `fsmon_events_total{event_type,cmd}`. Gauges: `fsmon_subscribers`,
+  `fsmon_monitored_paths`, `fsmon_reader_groups`, `fsmon_pending_paths`,
+  `fsmon_disk_buffer_events`. Configurable via `--subscribe-buf` (default 4096).
+- **Local time support**: `--local-time` CLI flag and `logging.local_time` config
+  option. When enabled, all timestamps in JSONL output use local timezone offset
+  (e.g. `+08:00`) instead of UTC `Z`. Per-subscriber override via subscribe command.
+  Field order is preserved identically to UTC mode.
+- **Integration examples** (`extensions/`): 10 Python scripts organized by the
+  4 data exit points, all with detailed quick-start / wire-protocol / bridge-to
+  documentation:
+  - `jsonl-logs/fsmon-log-tail.py` — tail, grep, aggregate on-disk JSONL files
+  - `subscribe-stream/fsmon-subscribe-demo.py` — minimal subscribe consumer
+  - `subscribe-stream/fsmon-webhook.py` — HTTP webhook bridge (Slack, Discord, etc.)
+  - `subscribe-stream/fsmon-kafka.py` — Apache Kafka producer
+  - `subscribe-stream/fsmon-to-es.py` — Elasticsearch bulk indexing
+  - `subscribe-stream/fsmon-to-influxdb.py` — InfluxDB line protocol
+  - `subscribe-stream/fsmon-to-s3.py` — S3 batch archiver
+  - `subscribe-stream/fsmon-custom-format.py` — CSV, TSV, syslog, Loki, JSON output
+  - `socket-admin/fsmon-admin.py` — programmatic add/remove/list/health
+  - `http-metrics/fsmon-metrics.py` — pull metrics via socket
+  - `http-metrics/prometheus.yml` — Prometheus scrape config + 4 alerting rules
+  - `http-metrics/fsmon-grafana.json` — Grafana dashboard (8 panels)
+- **Atomic metrics counters**: `MetricsRegistry` with lock-free `AtomicU64` counters
+  and labeled `CounterVec` — zero overhead on the hot path.
+- **Subscribe protocol integration tests**: end-to-end wire format test with TOML
+  command parsing, JSONL event streaming, and cmd/type filter verification.
+- **TCP /metrics integration tests**: HTTP 200, Content-Type, Connection: close,
+  Content-Length matching, empty registry, and labeled counter output.
+- **TESTING.md**: manual test procedures for all output channels.
+
+### Changed
+
+- **FileLogWriter decoupled**: log writing moved from `process_event_batch` hot path
+  to a standalone `FileLogWriter` task. It subscribes to the broadcast stream
+  just like any other consumer — file I/O no longer blocks event processing.
+- **File logging opt-in**: `logging.enabled` config option (default `true`).
+  `--no-log` CLI flag to disable local file writing entirely. Daemon runs
+  without a log directory when file logging is off.
+- **`--log-path` removed**: log path is now config-only (`logging.path` in fsmon.toml).
+  Removed from all CLI flags, help text, and documentation.
+- **Generated config restructured**: `fsmon init` output has three active sections —
+  `[monitored]`, `[logging]`, `[socket]` — with CLI availability annotations.
+- **Monitor module split**: `monitor.rs` (3153 lines) decomposed into 9 focused
+  submodules: `channel`, `events`, `file_writer`, `filtering`, `live_path`,
+  `reader`, `socket_handler`, `tests`, `mod`. Each ~100–400 lines.
+- **`src/help/` removed**: inline `changes.md` help text, removing the separate
+  help module directory.
+- **Internationalization cleanup**: all Chinese text removed from source code,
+  comments, and docs (except `README.zh-CN.md`). Codebase is now English-only.
+- **Extensions reorganized**: moved from flat `extensions/*.py` to 4 subdirectories
+  matching the 4 data exit points. All scripts updated with path references,
+  enriched docstrings, and consistent `EXAMPLE ONLY` disclaimer.
+- **to_jsonl_string_local**: preserves exact struct field order (same as UTC mode),
+  only replacing the timestamp value inline.
+
+### Fixed
+
+- **`fsmon cd` fallback**: when `path` is `None`, falls back to
+  `~/.local/state/fsmon` instead of panicking.
+- **`fsmon add` directory creation**: only `fsmon add` auto-creates the
+  monitored store directory; `fsmon init` never creates log directories.
+- **Config template**: added missing `local_time` field to the default
+  commented configuration template.
+- **Stale `--log-path` references**: purged from all code, docs, help text,
+  and README.
+
+### Architecture
+
+The 0.4.0 daemon exposes **4 data exit points**, all consuming from a single
+broadcast event stream:
+
+```
+fanotify → event_stream_tx (broadcast)
+              ├── FileLogWriter  → JSONL disk files       (exit ①)
+              ├── subscribe      → Unix socket stream      (exit ②)
+              ├── socket admin   → add/remove/list/health  (exit ③)
+              └── metrics        → Prometheus text         (exit ④)
+```
+
 ## [0.3.4] - 2026-05-26
 
 ### Added
