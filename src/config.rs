@@ -416,21 +416,17 @@ impl Config {
 # fsmon configuration file
 # ================================================================
 #
-# This file is fully commented. fsmon will use all built-in defaults.
-# To override a default, uncomment and modify the relevant line below.
+# This file uses defaults where commented. Uncomment keys to override.
 #
 # Changes take effect on the next daemon start (or SIGHUP reload).
-#
-# Only the sections and keys you need — omit the rest, defaults apply.
 
-# [monitored]
+[monitored]
 #   Where the monitored paths database is stored.
-# path = "~/.local/share/fsmon/monitored.jsonl"
+path = "~/.local/share/fsmon/monitored.jsonl"
 
-# [logging]
-#   Log file output directory. Uncomment to enable persistent file logging.
-#   Absent / commented-out = file logging disabled (same pattern as [metrics].listen).
-# path = "~/.local/state/fsmon"
+[logging]
+#   Log file output directory. Delete this section to disable file logging.
+path = "~/.local/state/fsmon"
 #   Auto-clean: keep entries for at most N days.
 # keep_days = 30
 #   Auto-clean: keep log file under this size.
@@ -445,9 +441,9 @@ impl Config {
 #   When true, timestamps include local timezone offset (e.g. +08:00).
 # local_time = false
 
-# [socket]
+[socket]
 #   Unix socket for CLI-to-daemon communication.
-# path = "/tmp/fsmon-<UID>.sock"
+path = "/tmp/fsmon-<UID>.sock"
 
 # [cache]
 #   Directory handle cache capacity (default: 100000).
