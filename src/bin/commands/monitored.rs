@@ -5,7 +5,6 @@ use fsmon::monitored::Monitored;
 pub fn cmd_monitored() -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
-    Config::ensure_monitored_dir()?;
     let store = Monitored::load(&cfg.monitored.path).unwrap_or_default();
 
     for group in &store.groups {
@@ -22,7 +21,6 @@ pub fn cmd_monitored() -> Result<()> {
 pub fn cmd_list_monitored_paths() -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
-    Config::ensure_monitored_dir()?;
     let store = Monitored::load(&cfg.monitored.path).unwrap_or_default();
     for entry in store.flatten() {
         println!("{}", entry.path.display());
