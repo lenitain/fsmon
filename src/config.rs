@@ -366,54 +366,29 @@ impl Config {
         Ok(())
     }
 
-    /// Create the default data directories (chezmoi-style init).
-    /// Creates monitored data dir, log dir, and config file.
+    /// Ensure the monitored store's parent directory exists.
+    /// Called by `fsmon add` / `fsmon monitored` on first use.
+    pub fn ensure_monitored_dir() -> Result<()> {
+        let mut cfg = Config::load()?;
+        cfg.resolve_paths()?;
+        let parent = cfg.monitored.path.parent()
+            .context("Monitored file path has no parent")?
+            .to_path_buf();
+        if !parent.exists() {
+            fs::create_dir_all(&parent).with_context(|| {
+                format!("Failed to create monitored directory: {}", parent.display())
+            })?;
+            chown_to_original_user(&parent);
+        }
+        Ok(())
+    }
+
+    /// Create the config file only. Directories are created on first use:
+    /// - Monitored dir: created by `fsmon add` / `fsmon monitored`
+    /// - Log dir: created by `fsmon cd` or `fsmon daemon`
     pub fn init_dirs() -> Result<()> {
         let config_path = Self::path();
 
-        let mut cfg = if config_path.exists() {
-            Config::load()?
-        } else {
-            Config::default()
-        };
-        cfg.resolve_paths()?;
-
-        let monitored_dir = cfg
-            .monitored
-            .path
-            .parent()
-            .context("Monitored file path has no parent")?
-            .to_path_buf();
-
-        let monitored_dir_new = !monitored_dir.exists();
-
-        // Create log directory (path is always present in default config)
-        if let Some(ref log_path) = cfg.logging.path {
-            let log_dir_new = !log_path.exists();
-            fs::create_dir_all(log_path).with_context(|| {
-                format!(
-                    "Failed to create log directory: {}",
-                    log_path.display()
-                )
-            })?;
-            chown_to_original_user(log_path);
-            let log_label = if log_dir_new { "Created" } else { "Exists" };
-            eprintln!("{log_label} log directory:  {}", log_path.display());
-        }
-
-        fs::create_dir_all(&monitored_dir).with_context(|| {
-            format!(
-                "Failed to create monitored directory: {}",
-                monitored_dir.display()
-            )
-        })?;
-
-        chown_to_original_user(&monitored_dir);
-
-        let monitored_label = if monitored_dir_new { "Created" } else { "Exists" };
-        eprintln!("{monitored_label} monitored directory: {}", monitored_dir.display());
-
-        // Create the default config file if it doesn't exist
         if !config_path.exists() {
             Self::create_default_config(&config_path)?;
         } else {
@@ -681,8 +656,8 @@ path = "/tmp/custom.sock"
             let monitored_dir = home.join(".local/share/fsmon");
             let config_file = home.join(".config/fsmon/fsmon.toml");
 
-            assert!(log_dir.exists(), "log dir should exist (init creates it)");
-            assert!(monitored_dir.exists(), "monitored dir should exist");
+            assert!(!log_dir.exists(), "log dir should not exist (init only creates config)");
+            assert!(!monitored_dir.exists(), "monitored dir should not exist (init only creates config)");
             assert!(
                 config_file.exists(),
                 "config file should be created by init"
@@ -717,8 +692,8 @@ path = "/tmp/fsmon-<UID>.sock"
 
             let log_dir = home.join(".local/state/fsmon");
             let monitored_dir = home.join(".local/share/fsmon");
-            assert!(log_dir.exists(), "log dir should exist (path configured)");
-            assert!(monitored_dir.exists(), "monitored dir should exist");
+            assert!(!log_dir.exists(), "log dir should not exist (init only creates config)");
+            assert!(!monitored_dir.exists(), "monitored dir should not exist (init only creates config)");
         });
     }
 
@@ -747,10 +722,10 @@ path = "/tmp/test.sock"
 
             Config::init_dirs().unwrap();
 
-            assert!(custom_log.exists(), "custom log dir should exist");
+            assert!(!custom_log.exists(), "init only creates config, not dirs");
             assert!(
-                custom_monitored_dir.exists(),
-                "custom monitored dir should exist"
+                !custom_monitored_dir.exists(),
+                "init only creates config, not dirs"
             );
         });
     }

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
+    Config::ensure_monitored_dir()?;
 
     let mut store = Monitored::load(&cfg.monitored.path)?;
 

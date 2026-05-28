@@ -10,6 +10,7 @@ use crate::AddArgs;
 pub fn cmd_add(args: AddArgs) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
+    Config::ensure_monitored_dir()?;
 
     // CMD is required. Use '_global' for global monitoring.
     let process_name = args.cmd.as_deref().ok_or_else(|| {
