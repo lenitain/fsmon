@@ -173,11 +173,57 @@ impl Monitor {
             event_type,
             path: raw.path.clone(),
             pid,
-            cmd: info.cmd,
-            user: info.user,
+            cmd: {
+                let mut resolved = info.cmd.clone();
+                // Race condition: proc_cache may miss short-lived processes
+                // (e.g. rm, touch) whose Exec event arrives after the fanotify
+                // event. Try the chain first (built from PidTree), then PidTree
+                // directly as fallback.
+                if resolved == "unknown" {
+                    if let Some(c) = chain_first_field(&chain, 1) {
+                        resolved = c.to_string();
+                    } else if let Some(tree) = self.pid_tree.as_ref()
+                        && let Some(node) = tree.get(&pid)
+                        && !node.cmd.is_empty()
+                    {
+                        resolved = node.cmd.clone();
+                    }
+                }
+                resolved
+            },
+            user: {
+                let mut resolved = info.user.clone();
+                // Try chain first, then proc_cache again (PID reuse check
+                // in get_process_info_by_pid may have incorrectly skipped
+                // a valid cached entry due to start_time_ns mismatch).
+                if resolved == "unknown" {
+                    if let Some(u) = chain_first_field(&chain, 2) {
+                        resolved = u.to_string();
+                    } else if let Some(cache) = self.proc_cache.as_ref()
+                        && let Some(entry) = cache.get(&pid)
+                    {
+                        resolved = entry.user.clone();
+                    }
+                }
+                resolved
+            },
             file_size,
-            ppid: info.ppid,
-            tgid: info.tgid,
+            ppid: if info.ppid == 0 {
+                self.pid_tree.as_ref()
+                    .and_then(|t| t.get(&pid))
+                    .map(|n| n.ppid)
+                    .unwrap_or(0)
+            } else {
+                info.ppid
+            },
+            tgid: if info.tgid == 0 {
+                self.proc_cache.as_ref()
+                    .and_then(|c| c.get(&pid))
+                    .map(|i| i.tgid)
+                    .unwrap_or(0)
+            } else {
+                info.tgid
+            },
             chain,
         }
     }
@@ -227,4 +273,13 @@ impl Monitor {
         }
         result
     }
+}
+
+/// Extract the nth `|`-separated field from the first chain segment.
+/// Chain format: "39198|rm|pilot;38415|fish|pilot;..."
+/// Field 0 = pid, 1 = cmd, 2 = user.
+/// Returns None if the chain is empty or the segment doesn't have enough fields.
+fn chain_first_field(chain: &str, field_idx: usize) -> Option<&str> {
+    let first_segment = chain.split(';').next()?;
+    first_segment.split('|').nth(field_idx)
 }
