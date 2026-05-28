@@ -190,10 +190,17 @@ pub fn read_fid_events_cached(
                     .or_else(|| resolve_file_handle(mount_fds, key.as_slice()));
 
                 if let Some(ref dp) = dir_path {
-                    ev.path = if filename.is_empty() {
-                        dp.clone()
+                    // Strip " (deleted)" suffix from resolve_file_handle paths
+                    let clean = dp.to_string_lossy();
+                    let parent = if let Some(stripped) = clean.strip_suffix(" (deleted)") {
+                        PathBuf::from(stripped)
                     } else {
-                        dp.join(filename)
+                        dp.clone()
+                    };
+                    ev.path = if filename.is_empty() {
+                        parent
+                    } else {
+                        parent.join(filename)
                     };
                     // Newly resolved → extract its handles for other events
                     if let Some(ref sk) = ev.self_handle {
