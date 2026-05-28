@@ -200,8 +200,7 @@ sudo fsmon daemon &                           # Start daemon in background
 sudo fsmon daemon --debug                     # Enable debug output (event matching + cache stats)
 sudo fsmon daemon --disk-min-free 10%         # Warn when disk space drops below threshold
 sudo fsmon daemon --sync-interval 5           # fdatasync log files every 5s
-sudo fsmon daemon --log-path ~/.local/state/fsmon    # Enable file logging (opt-in)
-sudo fsmon daemon                                      # No file logging (subscribe-only)
+sudo fsmon daemon --metrics-listen 127.0.0.1:9845  # With Prometheus endpoint
 sudo fsmon daemon --local-time                # Use local timezone in timestamps
 sudo fsmon daemon --metrics-listen 127.0.0.1:9845  # Enable Prometheus TCP /metrics
 sudo fsmon daemon --buffer-size 65536         # Fanotify read buffer (default: 32768)
@@ -218,12 +217,12 @@ sudo fsmon daemon --cache-stats-interval 0    # Disable periodic cache stats (de
 
 | Mode | Protocol | Default | Purpose |
 |------|----------|---------|---------|
-| File | JSONL to `~/.local/state/fsmon/` | ❌ opt-in via `--log-path` or `[logging].path` | Persistent storage, query/clean tools |
+| File | JSONL to `~/.local/state/fsmon/` | ✅ on (config-only) | Persistent storage, query/clean tools |
 | Push | Unix socket subscribe (JSONL stream) | ✅ always available | Real-time: Kafka, S3, webhook, Elasticsearch |
 | Pull | Socket `metrics` command (Prometheus text) | ✅ always available | Monitoring: Prometheus, Grafana |
 | Pull TCP | HTTP `/metrics` endpoint | ❌ opt-in via `--metrics-listen` | Direct Prometheus scrape |
 
-Enable file output with `--log-path` or setting `[logging].path` in config. Push and pull modes remain unaffected.
+Configure file output via `[logging].path` in config (enabled by default).
 
 See `extensions/` for example scripts integrating with Kafka, S3, Elasticsearch, webhooks, and more.
 
@@ -389,7 +388,7 @@ CLI args > fsmon.toml > code defaults
 
 CLI flags override both config file and defaults:
 ```bash
-sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536 --log-path ~/.local/state/fsmon --metrics-listen 127.0.0.1:9845
+sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536 --metrics-listen 127.0.0.1:9845
 ```
 
 ## Event Types

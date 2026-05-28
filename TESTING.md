@@ -43,9 +43,9 @@ cat ~/.local/state/fsmon/_global_log.jsonl | tail -2 | jq .
 Extended tests:
 
 ```bash
-# --log-path enables file output
+# File output configured via [logging].path in fsmon.toml
 sudo kill %1
-sudo ./target/release/fsmon daemon --log-path ~/.local/state/fsmon &
+sudo ./target/release/fsmon daemon &
 echo "test" > /tmp/fsmon-test/b.txt
 cat ~/.local/state/fsmon/_global_log.jsonl | wc -l  # line count unchanged
 

@@ -105,7 +105,7 @@ pub fn cmd_cd() -> Result<()> {
     let dir = match cfg.logging.path {
         Some(p) => p,
         None => {
-            eprintln!("Log directory is not configured. Set [logging].path in fsmon.toml or use --log-path.");
+            eprintln!("Log directory is not configured. Uncomment path in [logging] section of fsmon.toml.");
             process::exit(1);
         }
     };
