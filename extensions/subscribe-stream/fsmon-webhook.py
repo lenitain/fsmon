@@ -3,22 +3,46 @@
 EXAMPLE ONLY — NOT FOR PRODUCTION USE.
 Adapt this script to your environment before deploying.
 
-fsmon -> Webhook / Alerting bridge
+fsmon → Webhook Bridge — forward file events to HTTP endpoints.
 
-Receives real-time events from fsmon subscribe, matches conditions,
-then calls an HTTP webhook. No external dependencies (stdlib only).
+Receives real-time events from fsmon's subscribe stream and POSTs them
+as JSON to any HTTP webhook URL. No external dependencies (stdlib only).
 
-Use cases:
-  - File change alerts to Slack / Discord / Feishu / DingTalk
-  - Trigger CI/CD on suspicious file operations
-  - Custom HTTP callbacks
+── Use Cases ───────────────────────────────────────────────────────
+  - Slack / Discord / Feishu / DingTalk alerting on file changes
+  - Trigger CI/CD pipeline on suspicious file operations
+  - Custom HTTP callback to your own service
+  - Audit trail forwarding to a central collector
 
-Usage:
-  # Send all events to webhook
-  python3 fsmon-webhook.py --webhook http://localhost:8080/alert
+── Quick Start ─────────────────────────────────────────────────────
+  # Prerequisites: start the daemon
+  sudo fsmon daemon
 
-  # Only nginx log changes
-  python3 fsmon-webhook.py --track-cmd nginx --types MODIFY,CLOSE_WRITE --webhook http://...
+  # Forward ALL events to a webhook receiver
+  python3 extensions/subscribe-stream/fsmon-webhook.py \
+      --webhook http://localhost:8080/alert
+
+  # Only nginx write events → webhook
+  python3 extensions/subscribe-stream/fsmon-webhook.py \
+      --track-cmd nginx --types MODIFY,CLOSE_WRITE \
+      --webhook https://hooks.slack.com/services/xxx
+
+  # Also print events to stdout for debugging
+  python3 extensions/subscribe-stream/fsmon-webhook.py \
+      --webhook http://localhost:8080/alert --print
+
+── Slack Example ───────────────────────────────────────────────────
+  python3 extensions/subscribe-stream/fsmon-webhook.py \
+      --track-cmd nginx \
+      --types DELETE \
+      --webhook https://hooks.slack.com/services/T.../B.../xxx
+
+  Then configure Slack Incoming Webhook app to receive the JSON payload.
+
+── Bridge To ────────────────────────────────────────────────────────
+  - Any HTTP webhook receiver (Slack, Discord, Teams, custom)
+  - CI/CD triggers (Jenkins, GitHub Actions via repository_dispatch)
+  - Serverless functions (AWS Lambda URL, Cloud Functions)
 """
 
 import argparse

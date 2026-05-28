@@ -3,25 +3,42 @@
 EXAMPLE ONLY — NOT FOR PRODUCTION USE.
 Adapt this script to your environment before deploying.
 
-fsmon custom format converter
+fsmon Custom Format Converter — subscribe stream → any text format.
 
-Receives events from fsmon subscribe and converts to various output formats.
-Built-in formats: CSV, TSV, syslog (RFC 5424), JSON, Loki/Grafana logfmt.
+Receives events from fsmon's subscribe stream and converts them to
+various text-based output formats. No external dependencies (stdlib only).
 
-No external dependencies (stdlib only).
+── Built-in Formats ────────────────────────────────────────────────
+  csv      Comma-separated values (import to Excel, pandas)
+  tsv      Tab-separated values
+  syslog   RFC 5424 syslog format (forward to rsyslog/syslog-ng)
+  loki     Grafana Loki logfmt (label=value pairs for Loki ingestion)
+  json     Pretty-printed JSON
+  human    Human-readable one-line summary (default)
 
-Usage:
-  # Output CSV
-  python3 fsmon-custom-format.py --format csv
+── Quick Start ─────────────────────────────────────────────────────
+  # Prerequisites: start the daemon
+  sudo fsmon daemon
 
-  # Output syslog style
-  python3 fsmon-custom-format.py --format syslog --track-cmd nginx
+  # CSV output → pipe to file or another tool
+  python3 extensions/subscribe-stream/fsmon-custom-format.py --format csv > events.csv
 
-  # Output Loki-compatible logfmt
-  python3 fsmon-custom-format.py --format loki
+  # Syslog format → forward to local syslog via logger command
+  python3 extensions/subscribe-stream/fsmon-custom-format.py --format syslog | logger -t fsmon
 
-  # Redirect to file
-  python3 fsmon-custom-format.py --format csv > events.csv
+  # Loki format → send to Loki's push API
+  python3 extensions/subscribe-stream/fsmon-custom-format.py --format loki \
+      | curl -H "Content-Type: text/plain" --data-binary @- http://loki:3100/loki/api/v1/push
+
+  # Only nginx events in syslog format
+  python3 extensions/subscribe-stream/fsmon-custom-format.py \
+      --format syslog --track-cmd nginx
+
+── Bridge To ────────────────────────────────────────────────────────
+  - rsyslog / syslog-ng (via pipe to logger command)
+  - Grafana Loki (via logfmt → Loki push API)
+  - CSV consumers (Excel, pandas, R, database import)
+  - Any tool that reads from stdin or supports text-based ingestion
 """
 
 import argparse

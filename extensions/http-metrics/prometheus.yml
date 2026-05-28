@@ -1,0 +1,83 @@
+# ====================================================================
+# EXAMPLE ONLY — NOT FOR PRODUCTION USE.
+# Copy and adapt to your environment before deploying.
+# ====================================================================
+#
+# Prometheus scrape configuration for fsmon daemon.
+#
+# fsmon exposes metrics via TCP HTTP in Prometheus text format.
+# This is NOT Prometheus-specific — any TCP consumer can scrape /metrics.
+# The format follows the Prometheus exposition format (de facto standard).
+#
+# ── Setup ─────────────────────────────────────────────────────────
+# 1. Start fsmon daemon with the TCP metrics endpoint:
+#
+#      sudo fsmon daemon --metrics-listen 127.0.0.1:9845
+#
+# 2. Add the scrape job below to your prometheus.yml (usually /etc/prometheus/prometheus.yml)
+#
+# 3. Restart Prometheus:
+#
+#      sudo systemctl reload prometheus
+#
+# 4. Verify targets are up: http://localhost:9090/targets
+#
+# ── Alternative: Socket-Based Scraping ────────────────────────────
+# If you cannot add --metrics-listen, use fsmon-metrics.py as a
+# custom exporter via the Unix socket:
+#
+#   python3 extensions/http-metrics/fsmon-metrics.py --watch 15
+#
+# Or write a small Prometheus exporter that wraps the socket command.
+# ====================================================================
+
+scrape_configs:
+  - job_name: 'fsmon'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['127.0.0.1:9845']
+
+# ====================================================================
+# Alerting Rules (optional — add to your rule_files)
+# ====================================================================
+#
+# groups:
+#   - name: fsmon
+#     rules:
+#       - alert: FsmonHighDeleteRate
+#         expr: rate(fsmon_events_total{event_type=~"DELETE|DELETE_SELF"}[5m]) > 10
+#         for: 5m
+#         labels:
+#           severity: warning
+#         annotations:
+#           summary: "High file deletion rate on {{ $labels.cmd }}"
+#           description: "{{ $labels.cmd }} is deleting {{ $value }} files/sec"
+#
+#       - alert: FsmonDiskBufferFull
+#         expr: fsmon_disk_buffer_events > 0
+#         for: 1m
+#         labels:
+#           severity: critical
+#         annotations:
+#           summary: "fsmon cannot write to disk — disk may be full"
+#
+#       - alert: FsmonReaderDead
+#         expr: fsmon_reader_groups == 0
+#         for: 2m
+#         labels:
+#           severity: critical
+#         annotations:
+#           summary: "All fsmon readers are dead — daemon needs restart"
+#
+#       - alert: FsmonSubscriberSurge
+#         expr: fsmon_subscribers > 50
+#         for: 5m
+#         labels:
+#           severity: warning
+#         annotations:
+#           summary: "High number of fsmon subscribers: {{ $value }}"
+#
+# ── Grafana ───────────────────────────────────────────────────────
+# Import fsmon-grafana.json from this directory into Grafana
+# (Dashboard → Import → Paste JSON). Requires Prometheus data source.
+# ====================================================================

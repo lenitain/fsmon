@@ -12,10 +12,10 @@ Dependency:
   pip install elasticsearch
 
 Usage:
-  python3 fsmon-to-es.py --host localhost:9200 --index fsmon-events
+  python3 extensions/subscribe-stream/fsmon-to-es.py --host localhost:9200 --index fsmon-events
 
   # With authentication
-  python3 fsmon-to-es.py --host https://es.example.com:9200 --user admin --pass secret
+  python3 extensions/subscribe-stream/fsmon-to-es.py --host https://es.example.com:9200 --user admin --pass secret
 """
 
 import argparse

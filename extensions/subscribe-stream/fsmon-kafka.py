@@ -14,10 +14,10 @@ If kafka-python is not installed, the script prints install instructions and exi
 
 Usage:
   # All events to Kafka
-  python3 fsmon-kafka.py --broker localhost:9092 --topic fsmon-events
+  python3 extensions/subscribe-stream/fsmon-kafka.py --broker localhost:9092 --topic fsmon-events
 
   # Only nginx CLOSE_WRITE events
-  python3 fsmon-kafka.py --broker localhost:9092 --topic nginx-writes --track-cmd nginx --types CLOSE_WRITE
+  python3 extensions/subscribe-stream/fsmon-kafka.py --broker localhost:9092 --topic nginx-writes --track-cmd nginx --types CLOSE_WRITE
 
 Prometheus / Grafana can consume the fsmon_events_total counter from Kafka.
 """

@@ -13,7 +13,7 @@ Dependency:
 
 Usage:
   export INFLUXDB_TOKEN=xxx
-  python3 fsmon-to-influxdb.py --url http://localhost:8086 --org my-org --bucket fsmon
+  python3 extensions/subscribe-stream/fsmon-to-influxdb.py --url http://localhost:8086 --org my-org --bucket fsmon
 """
 
 import argparse

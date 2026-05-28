@@ -17,7 +17,7 @@ S3 credentials are read from environment variables or ~/.aws/credentials.
 Usage:
   export AWS_ACCESS_KEY_ID=xxx
   export AWS_SECRET_ACCESS_KEY=xxx
-  python3 fsmon-to-s3.py --bucket my-audit-bucket --prefix fsmon/nginx/
+  python3 extensions/subscribe-stream/fsmon-to-s3.py --bucket my-audit-bucket --prefix fsmon/nginx/
 """
 
 import argparse

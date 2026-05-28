@@ -3,25 +3,45 @@
 EXAMPLE ONLY — NOT FOR PRODUCTION USE.
 Adapt this script to your environment before deploying.
 
-fsmon metrics command — pull Prometheus-format metrics via Unix socket.
+fsmon Metrics Client — pull Prometheus-format metrics via Unix socket.
 
-Demonstrates the pull-mode socket layer:
-  1. Connect to socket
-  2. Send TOML metrics command
-  3. Read back Prometheus text format
-  4. Display as-is or summary
+fsmon exposes metrics through two transport layers:
+  1. Unix socket: cmd="metrics" → returns Prometheus text (this script)
+  2. TCP HTTP:    GET /metrics → returns Prometheus text (for Prometheus scraper)
 
-No configuration needed — the socket metrics command is always available.
+Both return the same Prometheus text format. The socket layer is always
+available; the TCP layer requires --metrics-listen at daemon startup.
 
-Usage:
-  # Output Prometheus format (default)
-  python3 fsmon-metrics.py
+── Quick Start ─────────────────────────────────────────────────────
+  # Prerequisites: start daemon with TCP metrics endpoint
+  sudo fsmon daemon --metrics-listen 127.0.0.1:9845
 
-  # Show summary only
-  python3 fsmon-metrics.py --summary
+  # Pull metrics once via socket (always available, no --metrics-listen needed)
+  python3 extensions/http-metrics/fsmon-metrics.py
 
-  # Watch mode: pull every N seconds (like Prometheus scrape)
-  python3 fsmon-metrics.py --watch 15
+  # Human-readable summary
+  python3 extensions/http-metrics/fsmon-metrics.py --summary
+
+  # Watch mode: pull every 15s (like a lightweight Prometheus scraper)
+  python3 extensions/http-metrics/fsmon-metrics.py --watch 15
+
+  # Or point Prometheus directly at the TCP endpoint:
+  # See prometheus.yml in this directory for scrape config.
+
+── Metrics Explained ───────────────────────────────────────────────
+  fsmon_events_total{event_type,cmd}   Counter: total events processed
+  fsmon_subscribers                    Gauge: active subscribe connections
+  fsmon_monitored_paths                Gauge: number of monitored path entries
+  fsmon_reader_groups                  Gauge: number of fanotify fd groups
+  fsmon_pending_paths                  Gauge: paths waiting for creation
+  fsmon_disk_buffer_events             Gauge: events buffered (disk full)
+
+── Bridge To ────────────────────────────────────────────────────────
+  - Prometheus (scrape TCP /metrics or use this script as custom exporter)
+  - Grafana (import fsmon-grafana.json dashboard from this directory)
+  - Datadog / New Relic (custom metrics via their agent or API)
+  - Any monitoring system that speaks Prometheus text format
+  - Shell scripts: parse --summary output for Nagios/Icinga checks
 """
 
 import argparse
