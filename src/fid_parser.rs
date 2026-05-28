@@ -214,13 +214,28 @@ pub fn read_fid_events_cached(
             if ev.path.as_os_str().is_empty()
                 && let Some(ref key) = ev.self_handle
             {
-                // Check same three-tier chain
+                // Check same three-tier chain (add resolve_file_handle as
+                // third tier — same as dfid_name path, but for events
+                // without a parent reference, e.g. DELETE_SELF on dirs).
                 if let Some(path) = handle_map
                     .get(key)
                     .cloned()
                     .or_else(|| dir_cache.get(key))
+                    .or_else(|| resolve_file_handle(mount_fds, key.as_slice()).map(|p| {
+                        let clean = p.to_string_lossy();
+                        if let Some(stripped) = clean.strip_suffix(" (deleted)") {
+                            PathBuf::from(stripped)
+                        } else {
+                            p
+                        }
+                    }))
                 {
                     ev.path = path;
+                    // Newly resolved → seed handle_map so child events can
+                    // find this directory via their dfid_name_handle
+                    if let Some(ref sk) = ev.self_handle {
+                        handle_map.entry(sk.clone()).or_insert_with(|| ev.path.clone());
+                    }
                     made_progress = true;
                 }
             }
