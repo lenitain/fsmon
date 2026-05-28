@@ -80,13 +80,6 @@ pub enum Commands {
         #[arg(long, value_name = "SECS")]
         sync_interval: Option<u64>,
 
-        /// Log file output directory. Sets [logging].path.
-        /// When set, enables persistent JSONL file logging.
-        /// Omit to disable file logging (same pattern as --metrics-listen).
-        /// Takes precedence over config file.
-        #[arg(long, value_name = "PATH")]
-        log_path: Option<PathBuf>,
-
         /// Use local time instead of UTC in event timestamps.
         /// When set, timestamps show local timezone offset (e.g. +08:00)
         /// instead of Z suffix.

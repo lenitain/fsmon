@@ -4,7 +4,7 @@ use fsmon::config::{CacheConfig, CliCacheOverride, Config};
 use fsmon::monitor::Monitor;
 use fsmon::monitored::Monitored;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::parse_path_entries;
 
@@ -13,7 +13,6 @@ pub async fn cmd_daemon(
     cli_cache: CliCacheOverride,
     disk_min_free: Option<String>,
     sync_interval: Option<u64>,
-    log_path: Option<PathBuf>,
     local_time: bool,
     metrics_listen: Option<String>,
 ) -> Result<()> {
@@ -29,8 +28,8 @@ pub async fn cmd_daemon(
         "  Monitored path database:  {}",
         cfg.monitored.path.display()
     );
-    // Merge log_path: CLI > config. Absent/None = file logging disabled.
-    let log_path = log_path.or(cfg.logging.path.clone());
+    // Log path comes purely from config
+    let log_path = cfg.logging.path.clone();
     if let Some(ref p) = log_path {
         eprintln!("  Event logs:     {}", p.display());
     } else {
