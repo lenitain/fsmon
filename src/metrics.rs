@@ -342,6 +342,54 @@ pub async fn serve_metrics_tcp(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpStream;
+
+    /// Start metrics TCP server on a random port, return the bound address.
+    async fn start_test_metrics_server(metrics: MetricsRegistry) -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((mut stream, _)) => {
+                        let text = metrics.format_prometheus();
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\n\
+                             Content-Type: text/plain; version=0.0.4\r\n\
+                             Content-Length: {}\r\n\
+                             Connection: close\r\n\
+                             \r\n\
+                             {}",
+                            text.len(),
+                            text,
+                        );
+                        tokio::spawn(async move {
+                            use tokio::io::AsyncWriteExt;
+                            let _ = stream.write_all(response.as_bytes()).await;
+                        });
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        addr
+    }
+
+    /// Read full HTTP response from a TCP stream.
+    async fn read_http_response(stream: &mut TcpStream) -> (String, String) {
+        let mut buf = vec![0u8; 8192];
+        let n = stream.read(&mut buf).await.unwrap();
+        let raw = String::from_utf8_lossy(&buf[..n]).to_string();
+        // Split headers and body
+        if let Some(pos) = raw.find("\r\n\r\n") {
+            let headers = raw[..pos].to_string();
+            let body = raw[pos + 4..].to_string();
+            (headers, body)
+        } else {
+            (raw, String::new())
+        }
+    }
 
     #[test]
     fn test_counter_vec_inc() {
@@ -429,5 +477,105 @@ mod tests {
         // Should still have gauge lines
         assert!(text.contains("fsmon_subscribers 0"));
         assert!(!text.contains("fsmon_events_total{"));
+    }
+
+    // ── TCP HTTP /metrics integration tests ──
+
+    #[tokio::test]
+    async fn test_tcp_metrics_http_200_content_type() {
+        // Verify HTTP response format: status line, Content-Type, valid body
+        let r = MetricsRegistry::new();
+        r.set_subscribers(7);
+        r.set_monitored_paths(3);
+        r.set_reader_groups(2);
+        r.set_pending_paths(1);
+
+        let addr = start_test_metrics_server(r).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let (headers, body) = read_http_response(&mut stream).await;
+
+        // HTTP status line
+        assert!(headers.starts_with("HTTP/1.1 200 OK"), "Expected 200 OK, got: {}", headers.lines().next().unwrap_or(""));
+        // Content-Type
+        assert!(headers.contains("Content-Type: text/plain"), "Expected text/plain Content-Type");
+        // Body is valid Prometheus text
+        assert!(body.contains("fsmon_subscribers 7"));
+        assert!(body.contains("fsmon_monitored_paths 3"));
+        assert!(body.contains("fsmon_reader_groups 2"));
+        assert!(body.contains("fsmon_pending_paths 1"));
+        assert!(body.contains("# HELP fsmon_subscribers"));
+        assert!(body.contains("# TYPE fsmon_subscribers gauge"));
+    }
+
+    #[tokio::test]
+    async fn test_tcp_metrics_empty_registry() {
+        // Empty registry: all gauges at zero, no counter lines
+        let r = MetricsRegistry::new();
+        let addr = start_test_metrics_server(r).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let (headers, body) = read_http_response(&mut stream).await;
+
+        assert!(headers.starts_with("HTTP/1.1 200 OK"));
+        assert!(body.contains("fsmon_subscribers 0"));
+        assert!(body.contains("fsmon_monitored_paths 0"));
+        assert!(!body.contains("fsmon_events_total{"));
+    }
+
+    #[tokio::test]
+    async fn test_tcp_metrics_with_events() {
+        // Events should appear as labeled counter lines
+        let r = MetricsRegistry::new();
+        r.inc_event("CREATE", "nginx");
+        r.inc_event("CREATE", "nginx");
+        r.inc_event("DELETE", "global");
+        r.inc_event("MODIFY", "global");
+        r.inc_event("MODIFY", "global");
+        r.inc_event("MODIFY", "global");
+
+        let addr = start_test_metrics_server(r).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let (_, body) = read_http_response(&mut stream).await;
+
+        assert!(body.contains("fsmon_events_total{event_type=\"CREATE\",cmd=\"nginx\"} 2"));
+        assert!(body.contains("fsmon_events_total{event_type=\"DELETE\",cmd=\"global\"} 1"));
+        assert!(body.contains("fsmon_events_total{event_type=\"MODIFY\",cmd=\"global\"} 3"));
+        // HELP/TYPE for the counter
+        assert!(body.contains("# HELP fsmon_events_total"));
+        assert!(body.contains("# TYPE fsmon_events_total counter"));
+    }
+
+    #[tokio::test]
+    async fn test_tcp_metrics_connection_close_header() {
+        // Prometheus expects Connection: close for one-shot scrape
+        let r = MetricsRegistry::new();
+        let addr = start_test_metrics_server(r).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let (headers, _) = read_http_response(&mut stream).await;
+
+        assert!(headers.contains("Connection: close"),
+            "Prometheus scrape requires Connection: close, got headers: {}", headers);
+    }
+
+    #[tokio::test]
+    async fn test_tcp_metrics_content_length_matches_body() {
+        // Content-Length must match actual body length for HTTP compliance
+        let r = MetricsRegistry::new();
+        r.set_subscribers(42);
+        r.set_monitored_paths(99);
+
+        let addr = start_test_metrics_server(r).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let (headers, body) = read_http_response(&mut stream).await;
+
+        // Extract Content-Length value
+        let cl = headers
+            .lines()
+            .find(|l| l.to_lowercase().starts_with("content-length:"))
+            .and_then(|l| l.split(':').nth(1))
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .expect("Content-Length header missing or invalid");
+
+        assert_eq!(cl, body.len(),
+            "Content-Length ({}) must match body length ({})", cl, body.len());
     }
 }
