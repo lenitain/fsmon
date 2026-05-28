@@ -224,7 +224,7 @@ sudo fsmon daemon --cache-stats-interval 0    # Disable periodic cache stats (de
 
 Configure file output via `[logging].path` in config (enabled by default).
 
-See `extensions/` for example scripts integrating with Kafka, S3, Elasticsearch, webhooks, and more.
+See `extensions/` for example scripts organized by data exit point.
 
 ### add
 
@@ -330,8 +330,9 @@ find ~/.local/state/fsmon/ -name '*.jsonl' -mtime +30 -delete
 
 ### init
 
-Initialize fsmon data directories. Creates log dir and monitored data dir.
-Does NOT write a config file — `fsmon init` creates a fully-commented reference config; defaults apply without modifications.
+Create the config file at `~/.config/fsmon/fsmon.toml` with all settings commented
+(defaults apply). Does NOT create log or monitored directories — those are created
+on first use by `fsmon add` (monitored) and `fsmon daemon` / `fsmon cd` (logs).
 
 ```
 fsmon init
@@ -348,7 +349,7 @@ ls _global_log.jsonl
 
 ## Configuration
 
-Config file is optional — `fsmon init` creates a fully-commented reference config; defaults apply without modifications.
+Config file is optional — `fsmon init` creates a reference config; defaults apply without modifications. The generated config has `[logging]` active (file output on).
 
 ```toml
 # ~/.config/fsmon/fsmon.toml
@@ -357,7 +358,8 @@ Config file is optional — `fsmon init` creates a fully-commented reference con
 path = "~/.local/share/fsmon/monitored.jsonl"
 
 [logging]
-# path = "~/.local/state/fsmon"     # Uncomment to enable file logging (opt-in)
+#   File output is on by default (remove this section to disable).
+path = "~/.local/state/fsmon"
 keep_days = 30
 size = ">=1GB"
 disk_min_free = "10%"           # Warn when free space drops below threshold
@@ -473,16 +475,27 @@ src/
 │       ├── query.rs             # CLI query: time filter, execute query
 │       ├── clean.rs             # CLI clean: parser delegation
 │       └── init_cd.rs           # CLI init, cd
+│   ├── changes.rs            # CLI changes: deduplicated per-path event summary
+│   └── health.rs             # CLI health: daemon status query
 │
-├── lib.rs              # FileEvent, EventType,  # DaemonLock (flock singleton)
+├── lib.rs              # FileEvent, EventType, DaemonLock (flock singleton)
 ├── clean.rs            # Log cleanup engine: time/size trim, tail-offset
-├── config.rs           # TOML config,  # SUDO_UID home resolution
+├── config.rs           # TOML config, SUDO_UID home resolution
+├── metrics.rs          # Prometheus metrics registry (AtomicU64 counters)
 ├── monitored.rs        # Monitored paths database (JSONL store)
-├── monitor.rs          # Fanotify loop, socket handler, add/remove/events
+├── monitor/            # Fanotify event loop (split into 9 submodules)
+│   ├── mod.rs          #   Monitor struct + main event loop
+│   ├── channel.rs      #   EventSender / EventReceiver types
+│   ├── events.rs       #   Event batch processing, matching, building
+│   ├── file_writer.rs  #   FileLogWriter task (broadcast subscriber)
+│   ├── filtering.rs    #   Path scope checks, output filtering
+│   ├── live_path.rs    #   Dynamic add/remove, inotify pending paths
+│   ├── reader.rs       #   Fanotify fd reader task + restart logic
+│   └── socket_handler.rs # Subscribe handler, subscriber task, health
 ├── fid_parser.rs       # FID event parsing, two-pass path recovery
 ├── filters.rs          # PathOptions, event/size filters, path matching
-├── dir_cache.rs        # Directory handle cache (DashMap + HandleKey)
-├── proc_cache.rs       # hNetlink proc connector:  # Fork/Exec/Exit, build_chain
+├── dir_cache.rs        # Directory handle cache (moka + HandleKey)
+├── proc_cache.rs       # Netlink proc connector: Fork/Exec/Exit, build_chain
 ├── query.rs            # Binary-search log query on sorted JSONL
 ├── socket.rs           # Unix socket protocol (TOML req/resp)
 ├── utils.rs            # Size/time parsing, process info lookup, chown
@@ -493,7 +506,15 @@ src/
 
 **All extension scripts are examples — not production-ready. Adapt before deploying.**
 
-### Push — Socket Subscribe (real-time JSONL stream)
+See `extensions/README.md` for the full directory structure and quick navigation.
+
+### ① JSONL Log Files — `extensions/jsonl-logs/`
+
+| Script | Target consumer |
+|--------|----------------|
+| `fsmon-log-tail.py` | grep, aggregate, replay on-disk JSONL files |
+
+### ② Subscribe Stream — `extensions/subscribe-stream/`
 
 | Script | Target consumer |
 |--------|----------------|
@@ -505,18 +526,19 @@ src/
 | `fsmon-to-influxdb.py` | InfluxDB / Telegraf |
 | `fsmon-custom-format.py` | CSV, TSV, syslog, Loki/Grafana, JSON |
 
-### Pull — Socket `metrics` command (one-shot text)
+### ③ Socket Admin — `extensions/socket-admin/`
 
 | Script | Target consumer |
 |--------|----------------|
-| `fsmon-metrics.py` | Cron, systemd timer, Telegraf exec, Nagios check, manual |
+| `fsmon-admin.py` | Programmatic add/remove/list/health |
 
-### Pull — TCP HTTP `/metrics` (Prometheus scrape)
+### ④ HTTP Metrics — `extensions/http-metrics/`
 
 | File | Target consumer |
 |------|----------------|
-| `prometheus.yml` | Prometheus scrape config + alert rule example |
-| `fsmon-grafana.json` | Grafana dashboard (import JSON) |
+| `fsmon-metrics.py` | Cron, systemd timer, Telegraf exec, Nagios check, manual pull |
+| `prometheus.yml` | Prometheus scrape config + 4 alerting rules |
+| `fsmon-grafana.json` | Grafana dashboard (import JSON, 8 panels) |
 | — | VictoriaMetrics, Thanos, Alertmanager, Grafana Agent, OpenTelemetry Collector |
 
 All Prometheus-compatible systems can scrape the TCP `/metrics` endpoint directly.

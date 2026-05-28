@@ -54,9 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **FileLogWriter decoupled**: log writing moved from `process_event_batch` hot path
   to a standalone `FileLogWriter` task. It subscribes to the broadcast stream
   just like any other consumer — file I/O no longer blocks event processing.
-- **File logging opt-in**: `logging.enabled` config option (default `true`).
-  `--no-log` CLI flag to disable local file writing entirely. Daemon runs
-  without a log directory when file logging is off.
+- **File logging on by default**: the default `[logging].path` is
+  `~/.local/state/fsmon`. Set to `""` (empty) or remove the `[logging]` section to disable.
+  Log path is config-only; no CLI flag to toggle.
 - **`--log-path` removed**: log path is now config-only (`logging.path` in fsmon.toml).
   Removed from all CLI flags, help text, and documentation.
 - **Generated config restructured**: `fsmon init` output has three active sections —

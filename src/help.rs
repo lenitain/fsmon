@@ -43,7 +43,6 @@ Usage:
   sudo fsmon daemon --sync-interval 5         fdatasync log files every 5s
   sudo fsmon daemon --metrics-listen 127.0.0.1:9845  With Prometheus endpoint
   sudo fsmon daemon --local-time              Use local timezone in timestamps
-  sudo fsmon daemon --metrics-listen 127.0.0.1:9845  Enable Prometheus TCP /metrics
   sudo fsmon daemon --buffer-size 65536       Fanotify read buffer
   sudo fsmon daemon --channel-capacity 1024   Event channel cap (default: unbounded)
   sudo fsmon daemon --subscribe-buf 8192      Subscribe broadcast buffer
@@ -63,12 +62,14 @@ Log dir:          ~/.local/state/fsmon/ (configurable via [logging].path)
 Socket:           /tmp/fsmon-<UID>.sock (configurable via [socket].path)"#
         }
         HelpTopic::Init => {
-            r#"Initialize fsmon data directories (chezmoi-style).
+            r#"Create the config file only (chezmoi-style).
 
 Creates:
-  ~/.local/state/fsmon/     Event log storage
-  ~/.local/share/fsmon/     Monitored paths database
-  ~/.config/fsmon/fsmon.toml  Reference config (all commented, defaults apply)
+  ~/.config/fsmon/fsmon.toml  Reference config (defaults apply without modification)
+
+Directories are created on first use:
+  - Monitored dir: by 'fsmon add' on first run
+  - Log dir: by 'fsmon daemon' or 'fsmon cd' on first run
 
 With --service, also installs a systemd service for automatic crash recovery:
   sudo fsmon init --service
@@ -111,11 +112,11 @@ Options:
                           e.g. >1MB, >=500KB, <100MB, =0
 Examples:
   fsmon add openclaw --path /home -r           Track openclaw on /home (recursive)
-  fsmon add nginx                              Track nginx globally (process-only)
-  fsmon add --path /home -r                    Monitor /home recursively (path-only)
-  fsmon add --path /home --types MODIFY --types CREATE  Filter by event types
-  fsmon add --path /home --types all                   All 14 event types
-  fsmon add --path /home -s '>=1MB'                    Minimum file size change"#
+  fsmon add _global --path /home -r            Monitor /home (all processes)
+  fsmon add nginx --path /var/log/nginx        Track nginx on /var/log/nginx
+  fsmon add _global --path /home --types MODIFY --types CREATE  Filter by event types
+  fsmon add _global --path /home --types all                   All 14 event types
+  fsmon add _global --path /home -s '>=1MB'                    Minimum file size change"#
         }
         HelpTopic::Remove => {
             r#"Remove one or more paths from the monitoring list.
@@ -245,13 +246,12 @@ pub const fn after_help() -> &'static str {
     r#"Use 'fsmon <COMMAND> --help' for detailed help
 
 Setup (no sudo needed):
-  fsmon init                        Create log, monitored directories and config
+  fsmon init                        Create config file (directories created on first use)
   sudo fsmon init --service         Also install systemd service (auto-start on crash)
   fsmon cd                          Open subshell in log directory
 
 Daemon (requires sudo):
   sudo fsmon daemon &               Start daemon in background
-  sudo fsmon daemon --metrics-listen 127.0.0.1:9845  With Prometheus endpoint
   sudo fsmon daemon --metrics-listen 127.0.0.1:9845  With Prometheus endpoint
   sudo systemctl start fsmon        Start via systemd (if installed)
   sudo systemctl stop fsmon         Stop via systemd
@@ -266,7 +266,7 @@ Management (no sudo needed):
   fsmon monitored                   List monitored paths
 
 Query (stdout JSONL, pipe to jq):
-  fsmon query -t '>1h'             Events from last hour
+  fsmon query _global -t '>1h'             Events from last hour
   fsmon query _global | jq 'select(.cmd == "nginx")'  Custom filter
 
 Clean (config defaults: keep_days=30, size=>=1GB):
@@ -274,15 +274,13 @@ Clean (config defaults: keep_days=30, size=>=1GB):
   fsmon clean openclaw -t '>7d'    Keep last 7 days of openclaw
   fsmon clean nginx --dry-run       Preview nginx log cleaning
 
-Config:  ~/.config/fsmon/fsmon.toml (created by fsmon init, all-commented — defaults apply)
+Config:  ~/.config/fsmon/fsmon.toml (created by fsmon init, defaults apply without modification)
 Monitor: ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
 Logs:    ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].path)
 
-Output modes:
-  File:   JSONL log files (config-only via [logging].path)
-  Push:   Unix socket subscribe — real-time JSONL stream (integrations in extensions/)
-  Pull:   Socket 'metrics' command — Prometheus text (always available)
-  Pull:   TCP /metrics — Prometheus scrape (opt-in via --metrics-listen)
-
-See extensions/ for Kafka, S3, Elasticsearch, webhook integration scripts."#
+4 data exit points:
+  ① JSONL log files (on by default, configurable via [logging].path)
+  ② Unix socket subscribe — real-time JSONL stream (extensions/subscribe-stream/)
+  ③ Unix socket admin — add/remove/list/health (extensions/socket-admin/)
+  ④ HTTP /metrics — Prometheus scrape (opt-in via --metrics-listen)"#
 }
