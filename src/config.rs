@@ -413,47 +413,61 @@ path = "~/.local/share/fsmon/monitored.jsonl"
 
 [logging]
 #   Log file output directory. Delete this section to disable file logging.
+#   Config-only (no CLI flag).
 path = "~/.local/state/fsmon"
 #   Auto-clean: keep entries for at most N days.
+#   Config-only (clean command accepts -t/--time per invocation).
 # keep_days = 30
 #   Auto-clean: keep log file under this size.
+#   Config-only (clean command accepts -s/--size per invocation).
 # size = ">=1GB"
 #   Warn when free disk space drops below this threshold.
 #   Percentage ("10%") or absolute ("5GB"). Default: no check.
+#   CLI: --disk-min-free 10%
 # disk_min_free = "10%"
 #   Log file sync interval in seconds (fdatasync). Default: disabled.
 #   Recommended: 5. Prevents event loss on crash (kill -9, power loss).
+#   CLI: --sync-interval 5
 # sync_interval_secs = 5
 #   Use local time instead of UTC in event timestamps. Default: false.
-#   When true, timestamps include local timezone offset (e.g. +08:00).
+#   CLI: --local-time
 # local_time = false
 
 [socket]
 #   Unix socket for CLI-to-daemon communication.
+#   Config-only (no CLI flag).
 path = "/tmp/fsmon-<UID>.sock"
 
 # [cache]
 #   Directory handle cache capacity (default: 100000).
+#   CLI: --cache-dir-cap 200000
 # dir_capacity = 100000
 #   Directory handle cache TTL in seconds (default: 3600).
+#   CLI: --cache-dir-ttl 7200
 # dir_ttl_secs = 3600
 #   File size cache capacity (default: 10000).
+#   CLI: --cache-file-size 20000
 # file_size_capacity = 10000
 #   Process cache TTL in seconds (default: 600).
+#   CLI: --cache-proc-ttl 1200
 # proc_ttl_secs = 600
 #   Cache stats output interval in debug mode (default: 60).
+#   CLI: --cache-stats-interval 30
 # stats_interval_secs = 60
 #   Fanotify read buffer size in bytes (default: 32768).
+#   CLI: --buffer-size 65536
 # buffer_size = 32768
 #   Event channel capacity. Default: unbounded.
+#   CLI: --channel-capacity 1024
 # channel_capacity = 1024
 #   Subscribe event stream buffer capacity. Default: 4096.
+#   CLI: --subscribe-buf 8192
 # subscribe_buf = 4096
 
 # [metrics]
-#   TCP HTTP /metrics endpoint address. Socket "metrics" command
-#   is always available; this enables Prometheus direct scrape.
-#   Uncomment to enable; absent/comment-out = disabled.
+#   TCP HTTP /metrics endpoint address. Socket "metrics" command is always
+#   available; this enables Prometheus direct scrape.
+#   CLI: --metrics-listen 127.0.0.1:9845
 # listen = "127.0.0.1:9845"
 "#.to_string()
     }
