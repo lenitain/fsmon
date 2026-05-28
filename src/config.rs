@@ -398,11 +398,6 @@ impl Config {
 
         chown_to_original_user(&monitored_dir);
 
-        if let Some(ref log_path) = cfg.logging.path {
-            eprintln!("Log directory:      {} (not created — use daemon or `fsmon cd`)", log_path.display());
-        } else {
-            eprintln!("Log directory:      not configured (file logging disabled)");
-        }
         let monitored_label = if monitored_dir_new { "Created" } else { "Exists" };
         eprintln!("{monitored_label} monitored directory: {}", monitored_dir.display());
 
