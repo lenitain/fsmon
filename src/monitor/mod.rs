@@ -43,6 +43,7 @@ mod reader;
 mod socket_handler;
 
 pub(crate) use channel::{EventSender, EventReceiver};
+pub(crate) use events::PendingEvent;
 pub(crate) use file_writer::{FileLogWriter, notify_sd_ready};
 pub(crate) use reader::ReaderState;
 pub(crate) use socket_handler::tokio_io_oneshot;
@@ -694,6 +695,7 @@ impl Monitor {
         loop {
             tokio::select! {
                 Some(events) = event_rx.recv() => {
+                    // 1. Drain proc events before processing (existing behavior)
                     if let Some(afd) = proc_afd.as_ref() {
                         let conn = afd.get_ref();
                         loop {
@@ -710,7 +712,28 @@ impl Monitor {
                             }
                         }
                     }
-                    self.process_event_batch(&events);
+                    // 2. Build events (deferred send)
+                    let mut pending = self.process_event_batch(&events);
+                    // 3. Second drain: catch Exec events that arrived between step 1 and step 2.
+                    //    This closes the race window for short-lived processes (rm, touch, etc.)
+                    //    whose Exec event may arrive after the fanotify event.
+                    if let Some(afd) = proc_afd.as_ref() {
+                        let conn = afd.get_ref();
+                        loop {
+                            match conn.recv_raw(&mut proc_buf) {
+                                Ok(n) => {
+                                    proc_cache::handle_proc_events(&proc_cache, &pid_tree, &proc_buf, n);
+                                }
+                                Err(proc_connector::Error::WouldBlock) => break,
+                                Err(proc_connector::Error::Interrupted) => continue,
+                                _ => break,
+                            }
+                        }
+                    }
+                    // 4. Patch any "unknown" fields using now-populated caches
+                    self.patch_pending_events(&mut pending);
+                    // 5. Send to broadcast
+                    self.send_pending_events(&pending);
                     if self.debug && self.cache_config.stats_interval_secs > 0
                         && last_cache_stats.elapsed() >= std::time::Duration::from_secs(self.cache_config.stats_interval_secs)
                     {
@@ -724,13 +747,17 @@ impl Monitor {
                 }
                 _ = tokio::signal::ctrl_c() => {
                     while let Ok(events) = event_rx.try_recv() {
-                        self.process_event_batch(&events);
+                        let mut pending = self.process_event_batch(&events);
+                        self.patch_pending_events(&mut pending);
+                        self.send_pending_events(&pending);
                     }
                     break;
                 }
                 _ = sigterm.recv() => {
                     while let Ok(events) = event_rx.try_recv() {
-                        self.process_event_batch(&events);
+                        let mut pending = self.process_event_batch(&events);
+                        self.patch_pending_events(&mut pending);
+                        self.send_pending_events(&pending);
                     }
                     break;
                 }
@@ -843,6 +870,15 @@ impl Monitor {
         println!("\nStopping file trace monitor...");
         drop(self.event_stream_tx.take());
         Ok(())
+    }
+
+    /// Publish pending events to the broadcast stream.
+    fn send_pending_events(&self, pending: &[PendingEvent]) {
+        if let Some(ref tx) = self.event_stream_tx {
+            for pe in pending {
+                let _ = tx.send((pe.event.clone(), pe.cmd_name.clone()));
+            }
+        }
     }
 }
 

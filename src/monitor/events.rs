@@ -10,19 +10,30 @@ use crate::fid_parser::mask_to_event_types;
 use crate::filters;
 use crate::filters::PathOptions;
 use crate::monitored::PathEntry;
-use crate::proc_cache::{build_chain, is_descendant};
+use crate::proc_cache::build_chain;
 use crate::utils::{format_size, get_process_info_by_pid};
 use crate::{EventType, FileEvent};
 
 use super::Monitor;
 
+/// Pending event ready for broadcast, held back to allow late proc event drain.
+pub(crate) struct PendingEvent {
+    pub event: FileEvent,
+    pub cmd_name: String,
+    pub pid: u32,
+}
+
 impl Monitor {
-    /// Process a batch of fanotify events: match paths, filter, build FileEvents, write logs.
-    /// Called from both the main event loop and the shutdown drain path.
+    /// Process a batch of fanotify events: match paths, filter, build FileEvents.
+    /// Events are NOT sent to broadcast here — they are returned as PendingEvents
+    /// so the caller can drain proc events and resolve "unknown" fields before
+    /// publishing. Metrics are still incremented immediately.
     pub(crate) fn process_event_batch(
         &mut self,
         events: &[FidEvent],
-    ) {
+    ) -> Vec<PendingEvent> {
+        let mut pending: Vec<PendingEvent> = Vec::new();
+
         for raw in events {
             if raw.mask & FAN_Q_OVERFLOW != 0 {
                 eprintln!("[WARNING] fanotify queue overflow - some events may have been lost");
@@ -86,7 +97,7 @@ impl Monitor {
                 // Check process tree filter
                 let cmd_match = if let Some(ref cmd_name) = opts.cmd {
                     let matched = self.pid_tree.as_ref()
-                        .map(|tree| is_descendant(tree, event_pid, cmd_name))
+                        .map(|tree| crate::proc_cache::is_descendant(tree, event_pid, cmd_name))
                         .unwrap_or(false);
                     if self.debug {
                         eprintln!("[DEBUG]   check cmd=\"{}\" pid={}: {}",
@@ -118,15 +129,55 @@ impl Monitor {
                             let cmd = opts.cmd.as_deref().unwrap_or("global");
                             eprintln!("[DEBUG]   -> {}_log.jsonl", cmd);
                         }
-                        // Push to unified event stream (broadcast)
-                        // All consumers (file writer, subscribe) receive from here
-                        if let Some(ref tx) = self.event_stream_tx {
-                            let cmd_name = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
-                            let _ = tx.send((event.clone(), cmd_name.to_string()));
+                        let cmd_name = opts.cmd.as_deref()
+                            .unwrap_or(crate::monitored::CMD_GLOBAL)
+                            .to_string();
+                        self.metrics.inc_event(&event_type.to_string(), &cmd_name);
+                        pending.push(PendingEvent {
+                            event,
+                            cmd_name,
+                            pid: event_pid,
+                        });
+                    }
+                }
+            }
+        }
+
+        pending
+    }
+
+    /// Resolve "unknown" fields in pending events after proc events have been drained.
+    /// Called by the event loop after the second drain.
+    pub(crate) fn patch_pending_events(&self, pending: &mut [PendingEvent]) {
+        for pe in pending {
+            let ev = &mut pe.event;
+            if ev.cmd == "unknown" || ev.user == "unknown" || ev.ppid == 0 || ev.tgid == 0 {
+                // Try proc_cache (now populated by the second drain)
+                if let Some(ref cache) = self.proc_cache {
+                    if let Some(info) = cache.get(&pe.pid) {
+                        if ev.cmd == "unknown" {
+                            ev.cmd = info.cmd.clone();
                         }
-                        // Increment metrics counter (atomic, zero lock overhead)
-                        let cmd_label = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
-                        self.metrics.inc_event(&event_type.to_string(), cmd_label);
+                        if ev.user == "unknown" {
+                            ev.user = info.user.clone();
+                        }
+                        if ev.ppid == 0 {
+                            ev.ppid = info.ppid;
+                        }
+                        if ev.tgid == 0 {
+                            ev.tgid = info.tgid;
+                        }
+                    }
+                }
+                // Also try PidTree for cmd/ppid
+                if let Some(ref tree) = self.pid_tree {
+                    if let Some(node) = tree.get(&pe.pid) {
+                        if ev.cmd == "unknown" && !node.cmd.is_empty() {
+                            ev.cmd = node.cmd.clone();
+                        }
+                        if ev.ppid == 0 {
+                            ev.ppid = node.ppid;
+                        }
                     }
                 }
             }
