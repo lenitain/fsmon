@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, ensure};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 
 pub fn cmd_init(service: bool) -> Result<()> {
@@ -102,13 +102,11 @@ fn install_service() -> Result<()> {
 pub fn cmd_cd() -> Result<()> {
     let mut cfg = fsmon::config::Config::load()?;
     cfg.resolve_paths()?;
-    let dir = match cfg.logging.path {
-        Some(p) => p,
-        None => {
-            eprintln!("Log directory is not configured. Uncomment path in [logging] section of fsmon.toml.");
-            process::exit(1);
-        }
-    };
+    // Use configured path or default
+    let dir = cfg.logging.path.unwrap_or_else(|| {
+        let home = fsmon::config::guess_home();
+        PathBuf::from(format!("{}/.local/state/fsmon", home))
+    });
 
     if !dir.exists() {
         std::fs::create_dir_all(&dir).with_context(|| {
