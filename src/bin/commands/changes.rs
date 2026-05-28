@@ -29,7 +29,7 @@ pub async fn cmd_changes(args: ChangesArgs) -> Result<()> {
         .collect::<Result<Vec<_>>>()?;
 
     let query = Query::new(
-        cfg.logging.path,
+        cfg.logging.path.clone().unwrap_or_default(),
         Some(cmd.to_string()),
         path_filters,
         time_filters,

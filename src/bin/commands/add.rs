@@ -60,25 +60,25 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             }
         };
 
-        let log_dir_canon = cfg
-            .logging
-            .path
-            .canonicalize()
-            .unwrap_or_else(|_| cfg.logging.path.clone());
-        if args.recursive && log_dir_canon.starts_with(&resolved) || log_dir_canon == resolved {
-            bail!(
-                "Cannot monitor '{}': {}\n\
-                 Tip: use a path outside the log directory, or use a different logging.path",
-                raw_path.display(),
-                if log_dir_canon == resolved {
-                    "this path is the log directory itself".to_string()
-                } else {
-                    format!(
-                        "log directory '{}' is inside this path",
-                        cfg.logging.path.display()
-                    )
-                }
-            );
+        if let Some(ref log_path) = cfg.logging.path {
+            let log_dir_canon = log_path
+                .canonicalize()
+                .unwrap_or_else(|_| log_path.clone());
+            if args.recursive && log_dir_canon.starts_with(&resolved) || log_dir_canon == resolved {
+                bail!(
+                    "Cannot monitor '{}': {}\n\
+                     Tip: use a path outside the log directory, or use a different logging.path",
+                    raw_path.display(),
+                    if log_dir_canon == resolved {
+                        "this path is the log directory itself".to_string()
+                    } else {
+                        format!(
+                            "log directory '{}' is inside this path",
+                            log_path.display()
+                        )
+                    }
+                );
+            }
         }
         Some(resolved)
     } else {

@@ -41,7 +41,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
             subscribe_buf,
             disk_min_free,
             sync_interval,
-            no_log,
+            log_path,
             local_time,
             metrics_listen,
         } => {
@@ -55,7 +55,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
                 channel_capacity,
                 subscribe_buf,
             };
-            cmd_daemon(debug, cli_cache, disk_min_free, sync_interval, no_log, local_time, metrics_listen).await_()
+            cmd_daemon(debug, cli_cache, disk_min_free, sync_interval, log_path, local_time, metrics_listen).await_()
         }
         Add(args) => cmd_add(args),
         Remove { cmd, path } => cmd_remove(cmd, path),

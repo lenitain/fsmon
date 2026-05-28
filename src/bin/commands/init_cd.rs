@@ -102,7 +102,13 @@ fn install_service() -> Result<()> {
 pub fn cmd_cd() -> Result<()> {
     let mut cfg = fsmon::config::Config::load()?;
     cfg.resolve_paths()?;
-    let dir = cfg.logging.path.clone();
+    let dir = match cfg.logging.path {
+        Some(p) => p,
+        None => {
+            eprintln!("Log directory is not configured. Set [logging].path in fsmon.toml or use --log-path.");
+            process::exit(1);
+        }
+    };
 
     if !dir.exists() {
         eprintln!("Log directory does not exist yet. Run 'fsmon init' first.");

@@ -29,11 +29,13 @@ pub struct MonitoredConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
-    pub path: PathBuf,
+    /// Log file output directory. None or absent = file logging disabled.
+    /// Set a path to enable persistent JSONL log file writing.
+    /// Same pattern as [metrics].listen: absent = off, present = on.
+    pub path: Option<PathBuf>,
     /// Keep log entries for at most this many days (default: 30).
     pub keep_days: Option<u32>,
     /// Maximum size per log file before truncation.
-    /// Size limit per log file before truncation.
     pub size: Option<String>,
     /// Minimum free disk space before warning (e.g. "10%", "5GB").
     /// None = no check. Only applies to the log directory filesystem.
@@ -41,11 +43,6 @@ pub struct LoggingConfig {
     /// Log file sync interval in seconds. 0 or None = disabled.
     /// When set, fdatasync is called on all dirty log files every N seconds.
     pub sync_interval_secs: Option<u64>,
-    /// Enable local JSONL log file writing. Default: true.
-    /// Set to false to completely disable file I/O — no FileLogWriter task,
-    /// no disk buffer, zero overhead. Events still flow through broadcast
-    /// for subscribe consumers.
-    pub enabled: Option<bool>,
     /// Use local time instead of UTC in event timestamps. Default: false.
     /// When true, timestamps in JSONL output are converted to local timezone
     /// (e.g. "2026-05-27T07:12:50+08:00" instead of "2026-05-26T23:12:50Z").
@@ -305,12 +302,11 @@ impl Default for Config {
                 path: PathBuf::from("~/.local/share/fsmon/monitored.jsonl"),
             },
             logging: LoggingConfig {
-                path: PathBuf::from("~/.local/state/fsmon"),
+                path: None,
                 keep_days: None,
                 size: None,
                 disk_min_free: None,
                 sync_interval_secs: None,
-                enabled: None,
                 local_time: None,
             },
             socket: SocketConfig {
@@ -358,7 +354,9 @@ impl Config {
         let uid = resolve_uid();
 
         self.monitored.path = expand_tilde(&self.monitored.path, &home);
-        self.logging.path = expand_tilde(&self.logging.path, &home);
+        if let Some(ref mut p) = self.logging.path {
+            *p = expand_tilde(p, &home);
+        }
 
         let socket_str = self.socket.path.to_string_lossy().to_string();
         self.socket.path = PathBuf::from(socket_str.replace("<UID>", &uid.to_string()));
@@ -387,15 +385,17 @@ impl Config {
             .context("Monitored file path has no parent")?
             .to_path_buf();
 
-        let log_dir_new = !cfg.logging.path.exists();
+        let log_dir_new = cfg.logging.path.as_ref().is_some_and(|p| !p.exists());
         let monitored_dir_new = !monitored_dir.exists();
 
-        fs::create_dir_all(&cfg.logging.path).with_context(|| {
-            format!(
-                "Failed to create log directory: {}",
-                cfg.logging.path.display()
-            )
-        })?;
+        if let Some(ref log_path) = cfg.logging.path {
+            fs::create_dir_all(log_path).with_context(|| {
+                format!(
+                    "Failed to create log directory: {}",
+                    log_path.display()
+                )
+            })?;
+        }
         fs::create_dir_all(&monitored_dir).with_context(|| {
             format!(
                 "Failed to create monitored directory: {}",
@@ -404,11 +404,17 @@ impl Config {
         })?;
 
         // Chown to original user
-        chown_to_original_user(&cfg.logging.path);
+        if let Some(ref log_path) = cfg.logging.path {
+            chown_to_original_user(log_path);
+        }
         chown_to_original_user(&monitored_dir);
 
-        let log_label = if log_dir_new { "Created" } else { "Exists" };
-        eprintln!("{log_label} log directory:  {}", cfg.logging.path.display());
+        if let Some(ref log_path) = cfg.logging.path {
+            let log_label = if log_dir_new { "Created" } else { "Exists" };
+            eprintln!("{log_label} log directory:  {}", log_path.display());
+        } else {
+            eprintln!("Log directory:      not configured (file logging disabled)");
+        }
         let monitored_label = if monitored_dir_new { "Created" } else { "Exists" };
         eprintln!("{monitored_label} monitored directory: {}", monitored_dir.display());
 
@@ -439,7 +445,8 @@ impl Config {
 # path = "~/.local/share/fsmon/monitored.jsonl"
 
 # [logging]
-#   Event log files directory.
+#   Log file output directory. Uncomment to enable persistent file logging.
+#   Absent / commented-out = file logging disabled (same pattern as [metrics].listen).
 # path = "~/.local/state/fsmon"
 #   Auto-clean: keep entries for at most N days.
 # keep_days = 30
@@ -451,10 +458,6 @@ impl Config {
 #   Log file sync interval in seconds (fdatasync). Default: disabled.
 #   Recommended: 5. Prevents event loss on crash (kill -9, power loss).
 # sync_interval_secs = 5
-#   Enable local log file writing. Default: true.
-#   Set to false for broadcast-only mode (subscribe consumers only).
-#   Zero overhead when disabled — no FileLogWriter task, no disk I/O.
-# enabled = true
 #   Use local time instead of UTC in event timestamps. Default: false.
 #   When true, timestamps include local timezone offset (e.g. +08:00).
 # local_time = false
@@ -563,7 +566,7 @@ mod tests {
                 cfg.monitored.path.to_string_lossy(),
                 "~/.local/share/fsmon/monitored.jsonl"
             );
-            assert_eq!(cfg.logging.path.to_string_lossy(), "~/.local/state/fsmon");
+            assert_eq!(cfg.logging.path, None);
             assert_eq!(cfg.socket.path.to_string_lossy(), "/tmp/fsmon-<UID>.sock");
         });
     }
@@ -587,7 +590,7 @@ path = "/tmp/custom.sock"
 
             let cfg = Config::load().unwrap();
             assert_eq!(cfg.monitored.path, PathBuf::from("/custom/monitored.jsonl"));
-            assert_eq!(cfg.logging.path, PathBuf::from("/custom/logs"));
+            assert_eq!(cfg.logging.path, Some(PathBuf::from("/custom/logs")));
             assert_eq!(cfg.socket.path, PathBuf::from("/tmp/custom.sock"));
         });
     }
@@ -625,6 +628,8 @@ path = "/tmp/custom.sock"
     fn test_resolve_paths_expands_tilde_and_uid() {
         with_isolated_home(|home| {
             let mut cfg = Config::default();
+            // Set log path explicitly for test (default is None now)
+            cfg.logging.path = Some(PathBuf::from("~/.local/state/fsmon"));
             cfg.resolve_paths().unwrap();
 
             let home_str = home.to_string_lossy();
@@ -635,7 +640,7 @@ path = "/tmp/custom.sock"
                 home_str
             );
             assert!(
-                cfg.logging.path.to_string_lossy().starts_with(&*home_str),
+                cfg.logging.path.as_ref().unwrap().to_string_lossy().starts_with(&*home_str),
                 "logging.path should start with home dir"
             );
             assert!(
@@ -685,7 +690,7 @@ path = "/tmp/custom.sock"
             let monitored_dir = home.join(".local/share/fsmon");
             let config_file = home.join(".config/fsmon/fsmon.toml");
 
-            assert!(log_dir.exists(), "log dir should exist");
+            assert!(!log_dir.exists(), "log dir should not exist (path not configured)");
             assert!(monitored_dir.exists(), "monitored dir should exist");
             assert!(
                 config_file.exists(),
@@ -721,7 +726,7 @@ path = "/tmp/fsmon-<UID>.sock"
 
             let log_dir = home.join(".local/state/fsmon");
             let monitored_dir = home.join(".local/share/fsmon");
-            assert!(log_dir.exists(), "log dir should exist");
+            assert!(log_dir.exists(), "log dir should exist (path configured)");
             assert!(monitored_dir.exists(), "monitored dir should exist");
         });
     }

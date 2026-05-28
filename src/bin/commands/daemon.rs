@@ -4,7 +4,7 @@ use fsmon::config::{CacheConfig, CliCacheOverride, Config};
 use fsmon::monitor::Monitor;
 use fsmon::monitored::Monitored;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::parse_path_entries;
 
@@ -13,7 +13,7 @@ pub async fn cmd_daemon(
     cli_cache: CliCacheOverride,
     disk_min_free: Option<String>,
     sync_interval: Option<u64>,
-    no_log: bool,
+    log_path: Option<PathBuf>,
     local_time: bool,
     metrics_listen: Option<String>,
 ) -> Result<()> {
@@ -29,11 +29,12 @@ pub async fn cmd_daemon(
         "  Monitored path database:  {}",
         cfg.monitored.path.display()
     );
-    let logging_enabled = !no_log && cfg.logging.enabled.unwrap_or(true);
-    if logging_enabled {
-        eprintln!("  Event logs:     {}", cfg.logging.path.display());
+    // Merge log_path: CLI > config. Absent/None = file logging disabled.
+    let log_path = log_path.or(cfg.logging.path.clone());
+    if let Some(ref p) = log_path {
+        eprintln!("  Event logs:     {}", p.display());
     } else {
-        eprintln!("  Event logs:     disabled (broadcast-only)");
+        eprintln!("  Event logs:     disabled (path not configured)");
     }
     eprintln!("  Command socket: {}", cfg.socket.path.display());
 
@@ -126,14 +127,9 @@ pub async fn cmd_daemon(
 
     let store_path = cfg.monitored.path.clone();
     let subscribe_buf = cache_cfg.subscribe_buf;
-    let logging_enabled = !no_log && cfg.logging.enabled.unwrap_or(true);
-    let log_dir = if logging_enabled {
-        Some(cfg.logging.path.clone())
-    } else {
-        None
-    };
+    let log_dir = log_path;
     if debug {
-        eprintln!("[DEBUG]   local logging:      {}", if logging_enabled { "enabled" } else { "disabled" });
+        eprintln!("[DEBUG]   local logging:      {}", if log_dir.is_some() { "enabled" } else { "disabled" });
     }
     let mut monitor = Monitor::new(
         paths_and_options,

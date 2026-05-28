@@ -41,7 +41,7 @@ Usage:
   sudo fsmon daemon --debug               Enable debug output
   sudo fsmon daemon --disk-min-free 10%       Warn when disk < 10% free
   sudo fsmon daemon --sync-interval 5         fdatasync log files every 5s
-  sudo fsmon daemon --no-log                  Disable local JSONL file writing
+  sudo fsmon daemon --log-path ~/.local/state/fsmon    Enable file logging (opt-in)
   sudo fsmon daemon --local-time              Use local timezone in timestamps
   sudo fsmon daemon --metrics-listen 127.0.0.1:9845  Enable Prometheus TCP /metrics
   sudo fsmon daemon --buffer-size 65536       Fanotify read buffer
@@ -225,7 +225,7 @@ Setup (no sudo needed):
 
 Daemon (requires sudo):
   sudo fsmon daemon &               Start daemon in background
-  sudo fsmon daemon --no-log        Start without local file writing
+  sudo fsmon daemon --log-path ~/.local/state/fsmon  Start with file logging enabled
   sudo fsmon daemon --metrics-listen 127.0.0.1:9845  With Prometheus endpoint
   sudo systemctl start fsmon        Start via systemd (if installed)
   sudo systemctl stop fsmon         Stop via systemd
@@ -253,7 +253,7 @@ Monitor: ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path
 Logs:    ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].path)
 
 Output modes:
-  File:   JSONL log files (disable with --no-log / [logging] enabled = false)
+  File:   JSONL log files (opt-in via --log-path / [logging].path)
   Push:   Unix socket subscribe — real-time JSONL stream (integrations in extensions/)
   Pull:   Socket 'metrics' command — Prometheus text (always available)
   Pull:   TCP /metrics — Prometheus scrape (opt-in via --metrics-listen)

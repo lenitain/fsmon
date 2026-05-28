@@ -80,11 +80,12 @@ pub enum Commands {
         #[arg(long, value_name = "SECS")]
         sync_interval: Option<u64>,
 
-        /// Disable local JSONL log file writing.
-        /// No FileLogWriter task, no disk I/O, zero overhead.
-        /// Events still flow through broadcast for subscribe consumers.
-        #[arg(long)]
-        no_log: bool,
+        /// Log file output directory. Sets [logging].path.
+        /// When set, enables persistent JSONL file logging.
+        /// Omit to disable file logging (same pattern as --metrics-listen).
+        /// Takes precedence over config file.
+        #[arg(long, value_name = "PATH")]
+        log_path: Option<PathBuf>,
 
         /// Use local time instead of UTC in event timestamps.
         /// When set, timestamps show local timezone offset (e.g. +08:00)
@@ -1047,8 +1048,10 @@ mod tests {
             use std::io::Write;
             let log_dir = {
                 let mut cfg = fsmon::config::Config::load().unwrap();
+                // Set log path explicitly for test (default is None now)
+                cfg.logging.path = Some(std::path::PathBuf::from("~/.local/state/fsmon"));
                 cfg.resolve_paths().unwrap();
-                cfg.logging.path
+                cfg.logging.path.unwrap()
             };
             fs::create_dir_all(&log_dir).unwrap();
             let log_path = log_dir.join(fsmon::utils::cmd_to_log_name("_global"));
