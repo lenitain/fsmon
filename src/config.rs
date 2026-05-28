@@ -367,7 +367,9 @@ impl Config {
     }
 
     /// Create the default data directories (chezmoi-style init).
-    /// Creates log dir and monitored data dir. Config file is optional.
+    /// Creates only the monitored data dir. Log directory is NOT created —
+    /// the daemon creates it on first use, or use `fsmon cd` to create on demand.
+    /// Config file is optional.
     pub fn init_dirs() -> Result<()> {
         let config_path = Self::path();
 
@@ -385,17 +387,8 @@ impl Config {
             .context("Monitored file path has no parent")?
             .to_path_buf();
 
-        let log_dir_new = cfg.logging.path.as_ref().is_some_and(|p| !p.exists());
         let monitored_dir_new = !monitored_dir.exists();
 
-        if let Some(ref log_path) = cfg.logging.path {
-            fs::create_dir_all(log_path).with_context(|| {
-                format!(
-                    "Failed to create log directory: {}",
-                    log_path.display()
-                )
-            })?;
-        }
         fs::create_dir_all(&monitored_dir).with_context(|| {
             format!(
                 "Failed to create monitored directory: {}",
@@ -403,15 +396,10 @@ impl Config {
             )
         })?;
 
-        // Chown to original user
-        if let Some(ref log_path) = cfg.logging.path {
-            chown_to_original_user(log_path);
-        }
         chown_to_original_user(&monitored_dir);
 
         if let Some(ref log_path) = cfg.logging.path {
-            let log_label = if log_dir_new { "Created" } else { "Exists" };
-            eprintln!("{log_label} log directory:  {}", log_path.display());
+            eprintln!("Log directory:      {} (not created — use daemon or `fsmon cd`)", log_path.display());
         } else {
             eprintln!("Log directory:      not configured (file logging disabled)");
         }
@@ -690,7 +678,7 @@ path = "/tmp/custom.sock"
             let monitored_dir = home.join(".local/share/fsmon");
             let config_file = home.join(".config/fsmon/fsmon.toml");
 
-            assert!(!log_dir.exists(), "log dir should not exist (path not configured)");
+            assert!(!log_dir.exists(), "log dir should not exist (init never creates it)");
             assert!(monitored_dir.exists(), "monitored dir should exist");
             assert!(
                 config_file.exists(),
@@ -726,7 +714,7 @@ path = "/tmp/fsmon-<UID>.sock"
 
             let log_dir = home.join(".local/state/fsmon");
             let monitored_dir = home.join(".local/share/fsmon");
-            assert!(log_dir.exists(), "log dir should exist (path configured)");
+            assert!(!log_dir.exists(), "log dir should not exist (init never creates log dir)");
             assert!(monitored_dir.exists(), "monitored dir should exist");
         });
     }
@@ -756,7 +744,7 @@ path = "/tmp/test.sock"
 
             Config::init_dirs().unwrap();
 
-            assert!(custom_log.exists(), "custom log dir should exist");
+            assert!(!custom_log.exists(), "init never creates log dir");
             assert!(
                 custom_monitored_dir.exists(),
                 "custom monitored dir should exist"

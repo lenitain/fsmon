@@ -111,8 +111,11 @@ pub fn cmd_cd() -> Result<()> {
     };
 
     if !dir.exists() {
-        eprintln!("Log directory does not exist yet. Run 'fsmon init' first.");
-        process::exit(1);
+        std::fs::create_dir_all(&dir).with_context(|| {
+            format!("Failed to create log directory: {}", dir.display())
+        })?;
+        fsmon::config::chown_to_original_user(&dir);
+        eprintln!("Created log directory: {}", dir.display());
     }
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
