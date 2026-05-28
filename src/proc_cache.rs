@@ -141,7 +141,8 @@ pub fn snapshot_process_tree(tree: &PidTree, cache: &ProcCache) {
                 tgid = val.trim().parse().unwrap_or(0);
             }
         }
-        tree.insert(pid, PidNode { ppid, cmd: cmd.clone(), start_time_ns: 0 });
+        let start_time_ns = read_proc_start_time_ns(pid);
+        tree.insert(pid, PidNode { ppid, cmd: cmd.clone(), start_time_ns });
         cache.insert(
             pid,
             ProcInfo {
@@ -149,7 +150,7 @@ pub fn snapshot_process_tree(tree: &PidTree, cache: &ProcCache) {
                 user,
                 ppid,
                 tgid,
-                start_time_ns: 0,
+                start_time_ns,
             },
         );
     }
