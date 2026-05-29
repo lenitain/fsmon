@@ -201,10 +201,12 @@ def main() -> None:
     es_kwargs: dict = {"hosts": [args.host]}
     if args.user:
         es_kwargs["basic_auth"] = (args.user, args.pwd or "")
-    es = Elasticsearch(**es_kwargs)
-
-    if not es.ping():
-        logging.error("cannot connect to ES %s", args.host)
+    try:
+        es = Elasticsearch(**es_kwargs)
+        if not es.ping():
+            raise ConnectionError("ping failed")
+    except Exception as e:
+        logging.error("cannot connect to ES %s: %s", args.host, e)
         sys.exit(1)
 
     logging.info("listening on %s -> ES %s/%s-YYYY.MM.DD", socket_path, args.host, args.index)
