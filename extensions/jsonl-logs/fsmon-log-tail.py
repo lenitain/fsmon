@@ -92,9 +92,8 @@ def parse_duration(s: str) -> timedelta:
         raise ValueError(f"Invalid duration: {s} (use 30s, 5m, 1h, 2d)")
     value = int(m.group(1))
     unit = m.group(2)
-    return timedelta(**{
-        "s": "seconds", "m": "minutes", "h": "hours", "d": "days"
-    }[unit]) * value
+    unit_map = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
+    return timedelta(**{unit_map[unit]: value})
 
 
 def parse_event_time(ev: dict) -> datetime:

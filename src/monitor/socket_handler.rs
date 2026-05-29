@@ -273,9 +273,15 @@ pub(crate) async fn subscriber_task(
     loop {
         match rx.recv().await {
             Ok((event, _cmd_name)) => {
-                // Optional filter by cmd group
+                // Optional filter by cmd group.
+                // Global events have empty chains (no process tracking).
                 if let Some(ref wanted) = track_cmd {
-                    if event.chain.is_empty() || !chains_contain(&event.chain, wanted) {
+                    let keep = if wanted == crate::monitored::CMD_GLOBAL {
+                        event.chain.is_empty()
+                    } else {
+                        !event.chain.is_empty() && chains_contain(&event.chain, wanted)
+                    };
+                    if !keep {
                         continue;
                     }
                 }
