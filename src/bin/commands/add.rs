@@ -112,22 +112,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     let types: Option<Vec<String>> = if args.types.is_empty() {
         None
     } else if args.types.iter().any(|s| s.eq_ignore_ascii_case("all")) {
-        Some(vec![
-            "ACCESS".into(),
-            "MODIFY".into(),
-            "CLOSE_WRITE".into(),
-            "CLOSE_NOWRITE".into(),
-            "OPEN".into(),
-            "OPEN_EXEC".into(),
-            "ATTRIB".into(),
-            "CREATE".into(),
-            "DELETE".into(),
-            "DELETE_SELF".into(),
-            "MOVED_FROM".into(),
-            "MOVED_TO".into(),
-            "MOVE_SELF".into(),
-            "FS_ERROR".into(),
-        ])
+        Some(fsmon::EventType::ALL.iter().map(|t| t.to_string()).collect())
     } else {
         Some(args.types.clone())
     };

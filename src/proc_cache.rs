@@ -44,11 +44,6 @@ pub const PID_TREE_TTL_SECS: u64 = 600;
 /// Shared PID → ProcInfo cache (thread-safe, bounded, TTL-based eviction).
 pub type ProcCache = Cache<u32, ProcInfo>;
 
-/// Create a new ProcCache with the configured capacity and TTL.
-pub fn new_cache() -> ProcCache {
-    new_cache_with(CacheParams::default())
-}
-
 /// Create a ProcCache with explicit capacity and TTL overrides.
 pub fn new_cache_with(params: CacheParams) -> ProcCache {
     Cache::builder()
@@ -84,11 +79,6 @@ pub struct PidNode {
 
 /// Shared process tree: PID → parent PID + cmd (bounded, TTL-based eviction).
 pub type PidTree = Cache<u32, PidNode>;
-
-/// Create a new PidTree with the configured capacity and TTL.
-pub fn new_pid_tree() -> PidTree {
-    new_pid_tree_with(CacheParams::default())
-}
 
 /// Create a PidTree with explicit capacity and TTL overrides.
 pub fn new_pid_tree_with(params: CacheParams) -> PidTree {
@@ -386,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_proc_cache_insert_and_get() {
-        let cache = new_cache();
+        let cache = new_cache_with(CacheParams::default());
         cache.insert(
             12345,
             ProcInfo {
@@ -405,7 +395,7 @@ mod tests {
 
     #[test]
     fn test_is_descendant() {
-        let tree = new_pid_tree();
+        let tree = new_pid_tree_with(CacheParams::default());
         tree.insert(
             1,
             PidNode {
@@ -448,7 +438,7 @@ mod tests {
 
     #[test]
     fn test_is_descendant_unknown_pid() {
-        let tree = new_pid_tree();
+        let tree = new_pid_tree_with(CacheParams::default());
         tree.insert(
             1,
             PidNode {
@@ -463,7 +453,7 @@ mod tests {
     #[test]
     fn test_is_descendant_cycle() {
         // Complex cycle: A→B→C→A. is_descendant must not infinite-loop.
-        let tree = new_pid_tree();
+        let tree = new_pid_tree_with(CacheParams::default());
         tree.insert(1, PidNode { ppid: 2, cmd: "a".into(), start_time_ns: 0 });
         tree.insert(2, PidNode { ppid: 3, cmd: "b".into(), start_time_ns: 0 });
         tree.insert(3, PidNode { ppid: 1, cmd: "c".into(), start_time_ns: 0 });
@@ -474,8 +464,8 @@ mod tests {
     #[test]
     fn test_build_chain_cycle() {
         // Complex cycle: 1→2→3→1. build_chain must not infinite-loop.
-        let tree = new_pid_tree();
-        let cache = new_cache();
+        let tree = new_pid_tree_with(CacheParams::default());
+        let cache = new_cache_with(CacheParams::default());
         tree.insert(1, PidNode { ppid: 2, cmd: "a".into(), start_time_ns: 0 });
         tree.insert(2, PidNode { ppid: 3, cmd: "b".into(), start_time_ns: 0 });
         tree.insert(3, PidNode { ppid: 1, cmd: "c".into(), start_time_ns: 0 });
@@ -490,8 +480,8 @@ mod tests {
 
     #[test]
     fn test_build_chain_from_tree() {
-        let tree = new_pid_tree();
-        let cache = new_cache();
+        let tree = new_pid_tree_with(CacheParams::default());
+        let cache = new_cache_with(CacheParams::default());
         tree.insert(
             1,
             PidNode {
@@ -574,8 +564,8 @@ mod tests {
 
     #[test]
     fn test_build_chain_single() {
-        let tree = new_pid_tree();
-        let cache = new_cache();
+        let tree = new_pid_tree_with(CacheParams::default());
+        let cache = new_cache_with(CacheParams::default());
         tree.insert(
             1,
             PidNode {
@@ -602,8 +592,8 @@ mod tests {
     #[test]
     fn test_snapshot_pid1() {
         // PID 1 always exists on Linux
-        let tree = new_pid_tree();
-        let cache = new_cache();
+        let tree = new_pid_tree_with(CacheParams::default());
+        let cache = new_cache_with(CacheParams::default());
         snapshot_process_tree(&tree, &cache);
         assert!(tree.contains_key(&1), "PID 1 should exist after snapshot");
         if let Some(node) = tree.get(&1) {

@@ -209,69 +209,6 @@ impl MetricsRegistry {
         self.disk_buffer_events.set(n);
     }
 
-    // ── Format ──
-
-    /// Format all metrics in Prometheus text format.
-    /// https://prometheus.io/docs/instrumenting/exposition_formats/
-    pub fn format_prometheus(&self) -> String {
-        let mut out = String::new();
-
-        // events_total (counter vec)
-        let entries = self.events_total.gather();
-        if !entries.is_empty() {
-            push_help_type(&mut out, self.events_total.name(), self.events_total.help(), "counter");
-            for (labels, value) in &entries {
-                push_metric_line(&mut out, self.events_total.name(), &[("event_type", &labels[0]), ("cmd", &labels[1])], *value);
-            }
-        }
-
-        // gauges
-        push_gauge(&mut out, &self.subscribers);
-        push_gauge(&mut out, &self.monitored_paths);
-        push_gauge(&mut out, &self.reader_groups);
-        push_gauge(&mut out, &self.pending_paths);
-        push_gauge(&mut out, &self.disk_buffer_events);
-
-        out
-    }
-}
-
-fn push_help_type(out: &mut String, name: &str, help: &str, typ: &str) {
-    out.push_str("# HELP ");
-    out.push_str(name);
-    out.push(' ');
-    out.push_str(help);
-    out.push('\n');
-    out.push_str("# TYPE ");
-    out.push_str(name);
-    out.push(' ');
-    out.push_str(typ);
-    out.push('\n');
-}
-
-fn push_metric_line(out: &mut String, name: &str, labels: &[(&str, &str)], value: u64) {
-    out.push_str(name);
-    if !labels.is_empty() {
-        out.push('{');
-        for (i, (k, v)) in labels.iter().enumerate() {
-            if i > 0 {
-                out.push(',');
-            }
-            out.push_str(k);
-            out.push_str("=\"");
-            out.push_str(v);
-            out.push('"');
-        }
-        out.push('}');
-    }
-    out.push(' ');
-    out.push_str(&value.to_string());
-    out.push('\n');
-}
-
-fn push_gauge(out: &mut String, g: &IntGauge) {
-    push_help_type(out, g.name(), g.help(), "gauge");
-    push_metric_line(out, g.name(), &[], g.get() as u64);
 }
 
 #[cfg(test)]
@@ -335,31 +272,4 @@ mod tests {
         assert_eq!(g.get(), 42);
     }
 
-    #[test]
-    fn test_format_prometheus() {
-        let r = MetricsRegistry::new();
-        r.inc_event("CREATE", "nginx");
-        r.inc_event("CREATE", "nginx");
-        r.inc_event("MODIFY", "global");
-        r.set_subscribers(3);
-        r.set_monitored_paths(5);
-
-        let text = r.format_prometheus();
-        assert!(text.contains("fsmon_events_total{event_type=\"CREATE\",cmd=\"nginx\"} 2"));
-        assert!(text.contains("fsmon_events_total{event_type=\"MODIFY\",cmd=\"global\"} 1"));
-        assert!(text.contains("fsmon_subscribers 3"));
-        assert!(text.contains("fsmon_monitored_paths 5"));
-        assert!(text.contains("# HELP fsmon_subscribers"));
-        assert!(text.contains("# TYPE fsmon_subscribers gauge"));
-        assert!(text.contains("# HELP fsmon_events_total"));
-        assert!(text.contains("# TYPE fsmon_events_total counter"));
-    }
-
-    #[test]
-    fn test_format_prometheus_empty_counters() {
-        let r = MetricsRegistry::new();
-        let text = r.format_prometheus();
-        assert!(text.contains("fsmon_subscribers 0"));
-        assert!(!text.contains("fsmon_events_total{"));
-    }
 }

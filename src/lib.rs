@@ -81,8 +81,6 @@ use std::str::FromStr;
 pub const DEFAULT_KEEP_DAYS: u32 = 30;
 pub const DEFAULT_MAX_SIZE: &str = ">=1GB";
 
-pub const EXIT_CONFIG: i32 = 78;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum EventType {
