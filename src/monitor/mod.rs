@@ -1,7 +1,6 @@
 use anyhow::{Context, Result, bail};
 use fanotify_fid::consts::{
-    AT_FDCWD, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_MARK_ADD, FAN_MARK_FILESYSTEM,
-    FAN_NONBLOCK, FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
+    FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_NONBLOCK, FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
 };
 use fanotify_fid::prelude::*;
 use std::collections::HashMap;
@@ -407,56 +406,15 @@ impl Monitor {
                 )
             })?;
 
-            let (is_fs_mark, _) = match fanotify_mark(
-                &new_fd,
-                FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
-                path_mask,
-                AT_FDCWD,
-                canonical,
-            ) {
-                Ok(()) => {
-                    eprintln!(
-                        "[INFO] Added {} (filesystem mark) on fd {}",
-                        canonical.display(),
-                        new_fd.as_raw_fd()
-                    );
-                    (true, true)
-                }
-                Err(FanotifyError::Mark(code)) if code == libc::EXDEV => {
-                    match mark_directory(&new_fd, path_mask, canonical) {
-                        Ok(()) => {
-                            eprintln!(
-                                "[INFO] Added {} (inode mark) on fd {}",
-                                canonical.display(),
-                                new_fd.as_raw_fd()
-                            );
-                            let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
-                            if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
-                                mark_recursive(&new_fd, path_mask, canonical);
-                            }
-                            (false, true)
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "[WARNING] Cannot monitor {} (inode mark): {:#}",
-                                canonical.display(),
-                                e
-                            );
-                            drop(new_fd);
-                            continue;
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("[WARNING] Cannot monitor {}: {:#}", canonical.display(), e);
+            let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
+            let recursive = opts.is_some_and(|o| o.recursive) && canonical.is_dir();
+            let is_fs_mark = match self.add_mark_fs_upward(&new_fd, path_mask, canonical, recursive) {
+                Some(v) => v,
+                None => {
                     drop(new_fd);
                     continue;
                 }
             };
-
-            if !is_fs_mark {
-                // inode mark branch handles it
-            }
 
             // Open directory fd for open_by_handle_at
             let mount_fd = match Self::open_dir(canonical) {
