@@ -405,7 +405,7 @@ value = int(parts[1].strip() if len(parts) > 1 else 0)
 
 ---
 
-### 🔵 P3 — 文档 / 使用体验（7 项）
+### 🔵 P3 — 文档 / 使用体验（8 项）
 
 #### P3-1. docstring 示例路径硬编码
 
@@ -461,7 +461,22 @@ value = int(parts[1].strip() if len(parts) > 1 else 0)
 
 ---
 
-#### P3-7. 各脚本 docstring 需统一 PEP 723 运行示例
+#### P3-7. daemon 依赖说明不完整
+
+**范围**: subscribe-stream 下全部 7 个文件 + `fsmon-metrics.py`
+
+**现状**: docstring 的 Prerequisites 写了 `sudo fsmon daemon`，但如果用户是初次接触 fsmon，他不知道 fsmon 是什么、去哪安装。subscribe 脚本连接失败时只输出 `subscribe failed:...`，不提示 daemon 未运行。
+
+**风险**: 用户拿到脚本后卡在第一步，不知道依赖链路。
+
+**修复**:
+1. 每个脚本 docstring Prerequisites 顶部加：`fsmon — file system monitor (https://github.com/xxx/fsmon)`
+2. subscribe 脚本 connect 失败时输出：`Is the daemon running? Start with: sudo fsmon daemon`
+3. socket 文件不存在时额外提示：`Install fsmon: https://github.com/xxx/fsmon`
+
+---
+
+#### P3-8. 各脚本 docstring 需统一 PEP 723 运行示例
 
 **范围**: 全部 10 个文件
 
@@ -523,7 +538,7 @@ extensions/_templates/
 
 ---
 
-### 阶段 5: 文档（P3-1 ~ P3-7）
+### 阶段 5: 文档（P3-1 ~ P3-8）
 
 - docstring 示例更新
 - Loki 方向修正
