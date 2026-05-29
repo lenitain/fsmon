@@ -8,6 +8,7 @@ use fanotify_fid::consts::{
     FAN_MOVED_FROM, FAN_MOVED_TO, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC,
 };
 use fanotify_fid::handle::resolve_file_handle;
+use libc;
 use fanotify_fid::prelude::*;
 use fanotify_fid::types::{FidEvent, HandleKey};
 use std::ffi::CString;
@@ -155,6 +156,10 @@ pub fn read_fid_events_cached(
     // Phase 0: raw read + parse (fanotify-fid resolves paths via open_by_handle_at)
     let mut events = match fanotify_fid::read::read_fid_events(fan_fd, mount_fds, buf, None) {
         Ok(e) => e,
+        Err(FanotifyError::Read(code)) if code == libc::EAGAIN => {
+            // Non-blocking fd, no events available — normal.
+            return vec![];
+        }
         Err(err) => {
             eprintln!("[WARNING] fanotify read error on fd {}: {err}", fan_fd.as_raw_fd());
             return vec![];
