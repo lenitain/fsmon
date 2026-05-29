@@ -745,6 +745,11 @@ impl Monitor {
     /// Retry setting up fanotify monitoring for paths that didn't exist before.
     /// Called when inotify detects directory creation under a watched parent.
     pub(crate) fn check_pending(&mut self) {
+        // Fast path: nothing pending and no temp marks to clean up.
+        if self.pending_paths.is_empty() && self.temp_parent_marks.is_empty() {
+            return;
+        }
+
         if self.debug && !self.pending_paths.is_empty() {
             eprintln!(
                 "[DEBUG] check_pending: {} pending path(s)",
