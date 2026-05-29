@@ -302,7 +302,9 @@ impl Monitor {
         use fanotify_fid::consts::{FAN_MARK_ADD, FAN_MARK_FILESYSTEM, AT_FDCWD};
         use fanotify_fid::prelude::fanotify_mark;
 
-        let mut try_path = canonical.to_path_buf();
+        // Strategy: try / first (broadest), then walk up from the monitored path.
+        let mut try_path = std::path::PathBuf::from("/");
+        let mut phase = 0; // 0 = /, 1 = walk up from canonical
         loop {
             match fanotify_mark(
                 new_fd,
@@ -321,10 +323,15 @@ impl Monitor {
                     return Some(true);
                 }
                 Err(FanotifyError::Mark(code)) if code == libc::EXDEV => {
-                    if !try_path.pop() {
-                        break; // reached root, give up
+                    if phase == 0 {
+                        // / failed, start walking up from the monitored path
+                        phase = 1;
+                        try_path = canonical.to_path_buf();
+                        continue;
                     }
-                    // Continue up
+                    if !try_path.pop() {
+                        break;
+                    }
                 }
                 Err(_) => break,
             }
