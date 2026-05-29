@@ -85,7 +85,7 @@ Type 'exit' to return to the original directory.
 
 Examples:
   fsmon cd -l                     Enter log directory in subshell
-  fsmon cd -m                     Enter first monitored path directory"#
+  fsmon cd -m                     Enter monitored store directory"#
         }
         HelpTopic::Add => {
             r#"Add a path or process to the monitoring list.
@@ -158,7 +158,7 @@ USAGE:
   fsmon query [CMD] [OPTIONS]
 
 ARGS:
-  <CMD>   Cmd group to query (positional). Omit to query all cmd groups.
+  <CMD>   Cmd group to query (positional). Use '_global' for global events.
           Log files are named by cmd: `{cmd}_log.jsonl` or `_global_log.jsonl`.
 
 Options:
@@ -175,9 +175,9 @@ Alternatively, query the log files directly with standard Unix tools:
 (Note: native fsmon query uses binary search and is significantly faster on large logs)
 
 Examples:
-  fsmon query                        All events from all cmd groups
+  fsmon query _global                All global events
   fsmon query openclaw               Events from openclaw cmd group
-  fsmon query --path /home           Events under /home (all cmd groups)
+  fsmon query _global --path /home   Global events under /home
   fsmon query nginx --path /var/www  Nginx events under /var/www
   fsmon query -t '>1h'               Events from last hour"#
         }
@@ -222,7 +222,7 @@ USAGE:
   fsmon changes [CMD] [OPTIONS]
 
 ARGS:
-  <CMD>   Cmd group to query (positional). Omit to query all cmd groups.
+  <CMD>   Cmd group to query (positional). Use '_global' for global events.
 
 Options:
   -p, --path        Path prefix filter(s). Repeatable.
@@ -249,7 +249,7 @@ Setup (no sudo needed):
   fsmon init                        Create config file (directories created on first use)
   sudo fsmon init --service         Also install systemd service (auto-start on crash)
   fsmon cd -l                       Open subshell in log directory
-  fsmon cd -m                       Open subshell in first monitored path
+  fsmon cd -m                       Open subshell in monitored store directory
 
 Daemon (requires sudo):
   sudo fsmon daemon &               Start daemon in background

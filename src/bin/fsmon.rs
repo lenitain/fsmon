@@ -136,7 +136,7 @@ pub enum Commands {
     /// Open a subshell in the monitored path or log directory
     #[command(about = help::about(HelpTopic::Cd), long_about = help::long_about(HelpTopic::Cd))]
     Cd {
-        /// cd to the first monitored path directory
+        /// cd to the monitored store directory
         #[arg(short = 'm', long, conflicts_with = "logging", required_unless_present = "logging")]
         monitored: bool,
         /// cd to the log directory (same as old `fsmon cd`)
@@ -178,7 +178,7 @@ pub struct AddArgs {
 
 #[derive(Parser)]
 pub struct QueryArgs {
-    /// Cmd group to query (positional). Omit to query all cmd groups.
+    /// Cmd group to query (positional). Use '_global' for global events.
     #[arg(value_name = "CMD")]
     pub cmd: Option<String>,
     /// Path prefix filter(s) applied to event.path. Repeatable.
@@ -191,7 +191,7 @@ pub struct QueryArgs {
 
 #[derive(Parser)]
 pub struct ChangesArgs {
-    /// Cmd group to query (positional). Omit to query all cmd groups.
+    /// Cmd group to query (positional). Use '_global' for global events.
     #[arg(value_name = "CMD")]
     pub cmd: Option<String>,
     /// Path prefix filter(s) applied to event.path. Repeatable.

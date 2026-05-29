@@ -331,12 +331,14 @@ fsmon init
 
 ### cd
 
-在日志目录中打开子 shell。输入 `exit` 返回：
+在监控存储或日志目录中打开子 shell。
 
 ```
-fsmon cd
-ls _global_log.jsonl
+fsmon cd -l    # 在日志目录中打开子 shell (~/.local/state/fsmon)
+fsmon cd -m    # 在监控存储目录中打开子 shell (~/.local/share/fsmon)
 ```
+
+输入 `exit` 返回原始目录。
 
 ## 配置
 
@@ -465,9 +467,9 @@ src/
 │       ├── monitored.rs         # CLI monitored：JSONL 输出
 │       ├── query.rs             # CLI query：时间过滤、执行查询
 │       ├── clean.rs             # CLI clean：解析器委托
+│       ├── changes.rs           # CLI changes：去重路径事件摘要
+│       ├── health.rs            # CLI health：守护进程健康状态查询
 │       └── init_cd.rs           # CLI init、cd
-│   ├── changes.rs            # CLI changes：去重路径事件摘要
-│   └── health.rs             # CLI health：守护进程健康状态查询
 │
 ├── lib.rs              # FileEvent、EventType、DaemonLock（flock 单例）
 ├── clean.rs            # 日志清理引擎：时间/大小修剪、尾偏移

@@ -271,6 +271,25 @@ fsmon monitored  # Show all monitored path groups
 
 Each line is a JSON object with `cmd` and `paths` fields. Pipe to `jq` for filtering.
 
+### changes
+
+Show the most recent event per path — a deduplicated summary. Same filters as `query`,
+but only the latest event for each unique path is shown, sorted by time descending.
+
+```
+fsmon changes _global -t '>1h'          # What changed in the last hour?
+fsmon changes _global -t '>2026-05-01'    # Since a specific date
+fsmon changes _global --path /var/www     # Filter by path prefix
+```
+
+### health
+
+Query daemon health status from the running daemon via Unix socket.
+
+```
+fsmon health
+```
+
 ### query
 
 Query historical events from log files. Output is JSONL — pipe to `jq` for filtering.
@@ -340,12 +359,14 @@ fsmon init
 
 ### cd
 
-Open a subshell in the log directory. Type `exit` to return:
+Open a subshell in the monitored store or log directory.
 
 ```
-fsmon cd
-ls _global_log.jsonl
+fsmon cd -l    # Open subshell in log directory (~/.local/state/fsmon)
+fsmon cd -m    # Open subshell in monitored store directory (~/.local/share/fsmon)
 ```
+
+Type `exit` to return to the original directory.
 
 ## Configuration
 
@@ -474,9 +495,9 @@ src/
 │       ├── monitored.rs         # CLI monitored:  # JSONL output
 │       ├── query.rs             # CLI query: time filter, execute query
 │       ├── clean.rs             # CLI clean: parser delegation
+│       ├── changes.rs           # CLI changes: deduplicated per-path event summary
+│       ├── health.rs            # CLI health: daemon status query
 │       └── init_cd.rs           # CLI init, cd
-│   ├── changes.rs            # CLI changes: deduplicated per-path event summary
-│   └── health.rs             # CLI health: daemon status query
 │
 ├── lib.rs              # FileEvent, EventType, DaemonLock (flock singleton)
 ├── clean.rs            # Log cleanup engine: time/size trim, tail-offset
