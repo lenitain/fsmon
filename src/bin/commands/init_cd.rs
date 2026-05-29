@@ -99,26 +99,39 @@ fn install_service() -> Result<()> {
     Ok(())
 }
 
-pub fn cmd_cd() -> Result<()> {
-    let mut cfg = fsmon::config::Config::load()?;
-    cfg.resolve_paths()?;
-    // Use configured path or default
-    let dir = cfg.logging.path.unwrap_or_else(|| {
-        let home = fsmon::config::guess_home();
-        PathBuf::from(format!("{}/.local/state/fsmon", home))
-    });
+pub fn cmd_cd(monitored: bool, logging: Option<PathBuf>, store: &fsmon::monitored::Monitored) -> Result<()> {
+    let dir = if monitored {
+        // cd to first configured monitored path
+        let entries = store.flatten();
+        let first = entries.first().ok_or_else(|| {
+            anyhow::anyhow!("No monitored paths configured. Add one first: fsmon add <cmd> --path <dir>")
+        })?;
+        first.path.clone()
+    } else if let Some(custom) = logging {
+        // cd to custom log directory
+        custom
+    } else {
+        // cd to configured log directory
+        let mut cfg = fsmon::config::Config::load()?;
+        cfg.resolve_paths()?;
+        cfg.logging.path.unwrap_or_else(|| {
+            let home = fsmon::config::guess_home();
+            PathBuf::from(format!("{}/.local/state/fsmon", home))
+        })
+    };
 
     if !dir.exists() {
         std::fs::create_dir_all(&dir).with_context(|| {
-            format!("Failed to create log directory: {}", dir.display())
+            format!("Failed to create directory: {}", dir.display())
         })?;
         fsmon::config::chown_to_original_user(&dir);
-        eprintln!("Created log directory: {}", dir.display());
+        eprintln!("Created directory: {}", dir.display());
     }
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
 
-    eprintln!("Entering fsmon log directory (type 'exit' to return)...");
+    let label = if monitored { "monitored path" } else { "log" };
+    eprintln!("Entering fsmon {} directory (type 'exit' to return)...", label);
     eprintln!("  {}", dir.display());
     eprintln!();
 

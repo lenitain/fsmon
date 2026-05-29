@@ -135,7 +135,14 @@ pub enum Commands {
 
     /// Print the log directory path
     #[command(about = help::about(HelpTopic::Cd), long_about = help::long_about(HelpTopic::Cd))]
-    Cd,
+    Cd {
+        /// cd to the monitored path directory instead of the log directory
+        #[arg(short = 'm', long, conflicts_with = "logging")]
+        monitored: bool,
+        /// cd to a custom log directory (overrides config)
+        #[arg(short = 'l', long, value_name = "DIR", conflicts_with = "monitored")]
+        logging: Option<PathBuf>,
+    },
 
     /// Query daemon health status from the running daemon
     #[command(about = "Query daemon health status")]
@@ -1079,5 +1086,73 @@ mod tests {
 
             let _ = fs::remove_dir_all(home);
         });
+    }
+
+    // ---- Cd CLI parsing ----
+
+    #[test]
+    fn test_cd_default() {
+        let cli = Cli::try_parse_from(["fsmon", "cd"]).unwrap();
+        match cli.command {
+            Commands::Cd { monitored, logging } => {
+                assert!(!monitored);
+                assert!(logging.is_none());
+            }
+            _ => panic!("expected Cd"),
+        };
+    }
+
+    #[test]
+    fn test_cd_monitored() {
+        let cli = Cli::try_parse_from(["fsmon", "cd", "--monitored"]).unwrap();
+        match cli.command {
+            Commands::Cd { monitored, logging } => {
+                assert!(monitored);
+                assert!(logging.is_none());
+            }
+            _ => panic!("expected Cd"),
+        };
+    }
+
+    #[test]
+    fn test_cd_monitored_short() {
+        let cli = Cli::try_parse_from(["fsmon", "cd", "-m"]).unwrap();
+        match cli.command {
+            Commands::Cd { monitored, .. } => {
+                assert!(monitored);
+            }
+            _ => panic!("expected Cd"),
+        };
+    }
+
+    #[test]
+    fn test_cd_logging() {
+        let cli = Cli::try_parse_from(["fsmon", "cd", "--logging", "/custom/log"]).unwrap();
+        match cli.command {
+            Commands::Cd { monitored, logging } => {
+                assert!(!monitored);
+                assert_eq!(logging, Some(PathBuf::from("/custom/log")));
+            }
+            _ => panic!("expected Cd"),
+        };
+    }
+
+    #[test]
+    fn test_cd_logging_short() {
+        let cli = Cli::try_parse_from(["fsmon", "cd", "-l", "/custom/log"]).unwrap();
+        match cli.command {
+            Commands::Cd { monitored, logging } => {
+                assert!(!monitored);
+                assert_eq!(logging, Some(PathBuf::from("/custom/log")));
+            }
+            _ => panic!("expected Cd"),
+        };
+    }
+
+    #[test]
+    fn test_cd_monitored_conflicts_with_logging() {
+        let result =
+            Cli::try_parse_from(["fsmon", "cd", "-m", "--logging", "/tmp"]);
+        assert!(result.is_err(), "-m and --logging should conflict");
     }
 }
