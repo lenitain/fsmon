@@ -543,6 +543,12 @@ impl Monitor {
         };
 
         let mask = WatchMask::CREATE | WatchMask::MOVED_TO;
+        // Mask for monitored directory roots themselves: detect when the
+        // directory is deleted (DELETE_SELF) so we can move it to pending.
+        // fanotify FAN_DELETE_SELF is unreliable with FID mode, so inotify
+        // acts as the primary trigger for the delete→pending transition.
+        let dir_self_mask = WatchMask::DELETE_SELF | WatchMask::MOVE_SELF;
+        let dir_root_mask = mask | dir_self_mask;
 
         // 1. Watch parent dirs of pending paths
         for (path, _) in &self.pending_paths {
@@ -553,7 +559,8 @@ impl Monitor {
             }
         }
 
-        // 2. Watch recursively-monitored directory roots only (inode marks).
+        // 2. Watch recursively-monitored directory roots (inode marks)
+        //    for new subdirectory creation AND self-deletion detection.
         //    Watching just the roots is sufficient — on_new_subdirectory adds
         //    watches for newly created subdirs as they appear.  Recursively
         //    walking ~25k subdirs at startup would add excessive latency.
@@ -567,7 +574,20 @@ impl Monitor {
                 continue;
             }
             if !watches.iter().any(|(p, _)| p == path)
-                && let Ok(wd) = ino.watches().add(path, mask)
+                && let Ok(wd) = ino.watches().add(path, dir_root_mask)
+            {
+                watches.push((path.clone(), wd));
+            }
+        }
+
+        // 3. Watch non-recursive monitored directories for self-deletion.
+        //    Recursive dirs are covered by section 2 above.
+        for (path, opts) in &self.monitored_entries {
+            if opts.recursive || !path.is_dir() {
+                continue;
+            }
+            if !watches.iter().any(|(p, _)| p == path)
+                && let Ok(wd) = ino.watches().add(path, dir_self_mask)
             {
                 watches.push((path.clone(), wd));
             }
@@ -614,9 +634,63 @@ impl Monitor {
             }
         };
 
+        let events: Vec<_> = events.collect();
+
         let dir_mask = inotify::EventMask::CREATE | inotify::EventMask::ISDIR;
         let dir_moved = inotify::EventMask::MOVED_TO | inotify::EventMask::ISDIR;
 
+        // First pass: handle DELETE_SELF / MOVE_SELF on monitored directories.
+        // fanotify FAN_DELETE_SELF is unreliable with FID mode, so inotify is
+        // the primary trigger for the delete→pending transition.
+        let mut deleted_paths: Vec<PathBuf> = Vec::new();
+        for event in &events {
+            if !event.mask.intersects(inotify::EventMask::DELETE_SELF)
+                && !event.mask.intersects(inotify::EventMask::MOVE_SELF)
+            {
+                continue;
+            }
+            // Map wd → watched directory path
+            let Some(watched) = self._inotify_watches.iter()
+                .find(|(_, wd)| *wd == event.wd)
+                .map(|(p, _)| p.clone())
+            else { continue };
+
+            // Only handle directories that are actively monitored
+            if !self.paths.contains(&watched) {
+                continue;
+            }
+            deleted_paths.push(watched);
+        }
+        for path in &deleted_paths {
+            if self.debug {
+                eprintln!("[DEBUG] inotify: monitored directory deleted (self): {}", path.display());
+            }
+            let all_opts: Vec<PathOptions> = self.opts_for_path(path).into_iter().cloned().collect();
+            if let Err(e) = self.remove_path(path, None) {
+                eprintln!("[WARNING] inotify delete-self: failed to remove path '{}': {e}", path.display());
+            }
+            for opts in all_opts {
+                self.pending_paths.push((
+                    path.clone(),
+                    PathEntry {
+                        path: path.clone(),
+                        recursive: Some(opts.recursive),
+                        types: opts.event_types.as_ref().map(
+                            |v| v.iter().map(|t| t.to_string()).collect()
+                        ),
+                        size: opts.size_filter.map(|f| format!("{}{}", f.op, crate::utils::format_size(f.bytes))),
+                        cmd: opts.cmd,
+                    },
+                ));
+            }
+            self.add_temp_parent_mark(path);
+        }
+        if !deleted_paths.is_empty() {
+            self.setup_inotify_watches();
+            self.check_pending();
+        }
+
+        // Second pass: handle new subdirectory creation.
         for event in events {
             let is_new_dir = event.mask.intersects(dir_mask)
                 || event.mask.intersects(dir_moved);

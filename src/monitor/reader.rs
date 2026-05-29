@@ -144,7 +144,13 @@ impl Monitor {
                     // readable().await resolves immediately if more events
                     // are still queued (e.g. DELETE → DELETE_SELF batch).
                     guard.retain_ready();
+                    if debug {
+                        eprintln!("[DEBUG] fd {} reader: retain_ready, looping", raw_fd);
+                    }
                 } else {
+                    if debug {
+                        eprintln!("[DEBUG] fd {} reader: empty read, clear_ready", raw_fd);
+                    }
                     guard.clear_ready();
                 }
             }
