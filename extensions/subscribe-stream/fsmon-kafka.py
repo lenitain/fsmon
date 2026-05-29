@@ -32,11 +32,13 @@ import signal
 import socket
 import sys
 import time
+from collections.abc import Generator
+from typing import Any
 
 _shutdown = False
 
 
-def _on_sigterm(signum, frame):
+def _on_sigterm(signum: int, frame: Any) -> None:
     global _shutdown
     _shutdown = True
 import logging
@@ -50,7 +52,7 @@ except ImportError:
 
 
 def subscribe(socket_path: str, track_cmd: str | None = None,
-              type_filter: str | None = None):
+              type_filter: str | None = None) -> Generator[dict[str, Any], None, None]:
     """Yield fsmon events with auto-reconnect and error logging."""
     _log = logging.getLogger("fsmon.subscribe")
     delay = 1.0
@@ -74,7 +76,7 @@ def subscribe(socket_path: str, track_cmd: str | None = None,
 
 
 def _subscribe_inner(socket_path: str, track_cmd: str | None,
-                     type_filter: str | None):
+                     type_filter: str | None) -> Generator[dict[str, Any], None, None]:
     """Single subscribe connection. Raises on disconnect."""
     _log = logging.getLogger("fsmon.subscribe")
     cmd: dict = {"cmd": "subscribe"}
@@ -115,7 +117,7 @@ def _subscribe_inner(socket_path: str, track_cmd: str | None,
                 _log.error("JSON decode error (#%d): %.120s", json_errors, line)
 
 
-def _dict_to_toml(d: dict) -> str:
+def _dict_to_toml(d: dict[str, Any]) -> str:
     """Serialize flat dict to TOML subset."""
     def _esc(s: str) -> str:
         return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
@@ -143,7 +145,7 @@ def _get_socket_path() -> str:
     return f"/tmp/fsmon-{uid}.sock"
 
 
-def _write_dlq(directory: str, item: dict) -> None:
+def _write_dlq(directory: str, item: dict[str, Any]) -> None:
     """Append a failed item to the daily dead-letter file."""
     today = time.strftime("%Y-%m-%d")
     path = os.path.join(directory, f"dlq-{today}.jsonl")
@@ -163,7 +165,7 @@ def _print_stats(count: int, errors: int) -> None:
     }), file=sys.stderr, flush=True)
 
 
-def main():
+def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",

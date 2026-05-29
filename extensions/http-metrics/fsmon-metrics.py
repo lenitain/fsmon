@@ -46,20 +46,28 @@ available; the TCP layer requires --metrics-listen at daemon startup.
 """
 
 import argparse
+import os
 import socket
 import sys
 import time
 
 
-def pull_metrics(socket_path="/tmp/fsmon-1000.sock") -> str:
-    """Connect to fsmon socket, send metrics command, return Prometheus text."""
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(5)
-    s.connect(socket_path)
-    s.sendall(b'cmd = "metrics"\n\n')
+def get_socket_path() -> str:
+    sudo_uid = os.environ.get("SUDO_UID")
+    uid = sudo_uid if sudo_uid else str(os.getuid())
+    return f"/tmp/fsmon-{uid}.sock"
 
-    reader = s.makefile("r")
-    return reader.read()
+
+def pull_metrics(socket_path: str | None = None) -> str:
+    """Connect to fsmon socket, send metrics command, return Prometheus text."""
+    if socket_path is None:
+        socket_path = get_socket_path()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.settimeout(5)
+        s.connect(socket_path)
+        s.sendall(b'cmd = "metrics"\n\n')
+        reader = s.makefile("r")
+        return reader.read()
 
 
 def parse_summary(text: str) -> dict:
@@ -70,7 +78,7 @@ def parse_summary(text: str) -> dict:
         if line.startswith("fsmon_events_total{"):
             parts = line.split("}")
             labels = parts[0].replace("fsmon_events_total{", "")
-            value = int(parts[1].strip() if len(parts) > 1 else 0)
+            value = int((parts[1].strip() or "0") if len(parts) > 1 else 0)
             key = labels.replace('"', "").replace("event_type=", "").replace(",cmd=", " / ")
             info[key] = value
         elif line.startswith("fsmon_subscribers "):
@@ -86,9 +94,9 @@ def parse_summary(text: str) -> dict:
     return info
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Pull fsmon metrics via Unix socket")
-    parser.add_argument("--socket", default="/tmp/fsmon-1000.sock")
+    parser.add_argument("--socket", default=None, help="Socket path (auto-detected)")
     parser.add_argument("--summary", action="store_true", help="Show human-readable summary")
     parser.add_argument("--watch", type=int, metavar="SECS", help="Watch mode: pull every N seconds")
     args = parser.parse_args()

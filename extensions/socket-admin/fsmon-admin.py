@@ -356,7 +356,7 @@ def cmd_health(args):
 
 # ── Main ────────────────────────────────────────────────────────────
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="fsmon admin client — manage daemon programmatically",
         epilog="""

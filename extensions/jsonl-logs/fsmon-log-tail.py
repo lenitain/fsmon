@@ -263,7 +263,7 @@ def aggregate_events(files: list, since: datetime = None):
 
 # ── Main ────────────────────────────────────────────────────────────
 
-def main():
+def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
