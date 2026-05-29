@@ -100,10 +100,10 @@ pub enum Commands {
     /// Remove one or more paths from the monitoring list
     #[command(about = help::about(HelpTopic::Remove), long_about = help::long_about(HelpTopic::Remove))]
     Remove {
-        /// Process name scope (positional). Without --path, removes the entire cmd group.
+        /// Cmd group to remove (positional). Use '_global' for global monitoring.
         #[arg(value_name = "CMD")]
         cmd: Option<String>,
-        /// Path(s) to remove from the cmd group (repeatable). Without cmd, operates on the null group.
+        /// Path(s) to remove from the cmd group (repeatable).
         #[arg(long, value_name = "PATH")]
         path: Vec<PathBuf>,
     },
@@ -155,7 +155,7 @@ pub enum Commands {
 
 #[derive(Parser)]
 pub struct AddArgs {
-    /// Process name to track (process tree + ancestry chain). Positional argument.
+    /// Process name to track (positional). Use '_global' for global monitoring.
     #[arg(value_name = "CMD")]
     pub cmd: Option<String>,
 

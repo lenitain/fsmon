@@ -202,7 +202,6 @@ sudo fsmon daemon --disk-min-free 10%         # Warn when disk space drops below
 sudo fsmon daemon --sync-interval 5           # fdatasync log files every 5s
 sudo fsmon daemon --metrics-listen 127.0.0.1:9845  # With Prometheus endpoint
 sudo fsmon daemon --local-time                # Use local timezone in timestamps
-sudo fsmon daemon --metrics-listen 127.0.0.1:9845  # Enable Prometheus TCP /metrics
 sudo fsmon daemon --buffer-size 65536         # Fanotify read buffer (default: 32768)
 sudo fsmon daemon --channel-capacity 1024     # Event channel bound (default: unbounded)
 sudo fsmon daemon --subscribe-buf 8192        # Subscribe broadcast buffer (default: 4096)

@@ -49,7 +49,7 @@ Usage:
   sudo fsmon daemon --cache-dir-cap 200000    Override dir_cache capacity
   fsmon add openclaw --path /home -r          Track openclaw on /home (recursive)
   fsmon monitored                             List monitored paths
-  fsmon query -t '>1h'                        Query events from last hour
+  fsmon query _global -t '>1h'             Events from last hour
 
 For systemd integration:
   sudo fsmon init --service             Install systemd service (auto-start on crash)
@@ -102,7 +102,7 @@ ARGS:
   <CMD>   Process name to track (process tree + ancestry chain).
           Enables process tree tracking: fork/exec children are auto-included.
           When specified, matching events include a `chain` field.
-          Omit to monitor all events on a path (path-only mode).
+          Use '_global' to monitor all events on a path (no process tracking).
 
 Options:
   --path <PATH>           Filesystem path to monitor
@@ -129,16 +129,16 @@ USAGE:
   fsmon remove [CMD] [--path <PATH>...]
 
 ARGS:
-  <CMD>   Cmd group to remove (positional). Omit for null cmd group.
+  <CMD>   Cmd group to remove (positional). Use '_global' for global monitoring.
 
 Options:
   --path <PATH>    Path(s) to remove from the cmd group (repeatable)
 
 Examples:
-  fsmon remove                       Remove all paths from null cmd group
+  fsmon remove _global               Remove entire global cmd group
   fsmon remove openclaw              Remove the entire openclaw cmd group
   fsmon remove openclaw --path /a    Remove /a from openclaw group
-  fsmon remove --path /a --path /b   Remove /a, /b from null cmd group (atomic)"#
+  fsmon remove _global --path /a --path /b  Remove /a, /b from global group (atomic)"#
         }
         HelpTopic::Monitored => {
             r#"List all monitored paths with their configuration.
@@ -179,7 +179,7 @@ Examples:
   fsmon query openclaw               Events from openclaw cmd group
   fsmon query _global --path /home   Global events under /home
   fsmon query nginx --path /var/www  Nginx events under /var/www
-  fsmon query -t '>1h'               Events from last hour"#
+  fsmon query _global -t '>1h'       Events from last hour"#
         }
         HelpTopic::Clean => {
             r#"Clean a log file for a specific cmd group, retain by time or size.
@@ -232,12 +232,11 @@ Options:
                     Combine both for a range: -t '>1h' -t '<now'
 
 Examples:
-  fsmon changes                        Latest event per path across all cmd groups
   fsmon changes _global                Latest event per path in global log
   fsmon changes nginx -t '>1h'        Latest nginx file changes in last hour
-  fsmon changes -p /etc -t '>24h'     What changed in /etc since yesterday
-  fsmon changes -t '>2026-05-25 08:00'  What changed since last deploy
-  fsmon changes | wc -l               Count of changed files"#
+  fsmon changes _global -p /etc -t '>24h'  What changed in /etc since yesterday
+  fsmon changes _global -t '>2026-05-25 08:00'  What changed since last deploy
+  fsmon changes _global | wc -l          Count of changed files"#
         }
     }
 }
