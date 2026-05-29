@@ -1,0 +1,16 @@
+# 阶段二：自定义日志路径 + local_time + sync_interval + disk_min_free
+# 复制到 ~/.config/fsmon/fsmon.toml 后重启 daemon
+
+[monitored]
+path = "~/.local/share/fsmon/monitored.jsonl"
+
+[logging]
+path = "/tmp/fsmon_custom_logs"
+keep_days = 30
+size = ">=1GB"
+disk_min_free = "10%"
+sync_interval_secs = 5
+local_time = true
+
+[socket]
+path = "/tmp/fsmon-<UID>.sock"

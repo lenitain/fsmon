@@ -1,0 +1,19 @@
+# 阶段三：禁用文件日志 + 自定义 cache + 自定义 socket 路径
+# 复制到 ~/.config/fsmon/fsmon.toml 后重启 daemon
+# 注意: logging 段被注释 = 文件日志禁用
+
+[monitored]
+path = "~/.local/share/fsmon/monitored.jsonl"
+
+# [logging]   ← 整个段注释掉，禁用文件日志
+# path = "/tmp/fsmon_custom_logs"
+
+[socket]
+path = "/tmp/fsmon_test_custom.sock"
+
+[cache]
+dir_capacity = 50000
+dir_ttl_secs = 1800
+file_size_capacity = 5000
+proc_ttl_secs = 300
+stats_interval_secs = 30

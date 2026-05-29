@@ -1,450 +1,654 @@
 # fsmon 详细测试方案
 
-> **测试环境**: daemon 已在后台运行: `sudo fsmon daemon --debug 2>&1 | tee /tmp/fsmon.log`
+> **当前状态**: daemon 已在后台运行 `sudo fsmon daemon --debug 2>&1 | tee /tmp/fsmon.log`
 > **监控目标**: `_global` 组: `/home/pilot/.config/what` + `/tmp/fsmon_ext_test`（均递归）
-> **socket**: `/tmp/fsmon-1000.sock`
+> **socket**: `/tmp/fsmon-1000.sock`, **日志路径**: `~/.local/state/fsmon`
+> **配置文件**: `~/.config/fsmon/fsmon.toml`（全默认，全部注释状态）
 
 ---
 
 ## 测试执行说明
 
-每个测试用例包含：
-- **测试内容**: 测试什么能力
-- **测试方法**: 具体操作步骤和命令
-- **预期结果**: 从系统输出、日志(`/tmp/fsmon.log`)和日志文件(`~/.local/state/fsmon/_global_log.jsonl`)三方面验证
+每个测试用例包含三要素：**测试内容 / 测试方法 / 预期结果**。
+每个用例需从三方面验证：①命令输出 ②`/tmp/fsmon.log`(daemon debug) ③JSONL 日志文件。
 
-**每次测试后需检查三点**：
-1. 命令输出是否正确
-2. `/tmp/fsmon.log` (daemon debug 输出) 有无异常
-3. 生成的 JSONL 日志事件内容是否正确
+测试按 **配置阶段** 组织，不同阶段需要修改 fsmon.toml 并重启 daemon。
 
 ---
 
-## 一、CLI 命令测试（不需要 daemon 状态变更）
-
-### 1.1 `fsmon monitored` — 列出已监控路径
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 验证 `monitored` 命令能正确列出当前所有监控路径及配置 |
-| **测试方法** | `fsmon monitored` |
-| **预期结果** | 输出一行 JSON，包含 `cmd: "_global"` 和 `paths` 字段，其中 paths 包含 `/home/pilot/.config/what`(recursive:true) 和 `/tmp/fsmon_ext_test`(recursive:true) |
-
-### 1.2 `fsmon health` — daemon 健康状态
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 验证 `health` 命令通过 socket 查询 daemon 运行状态 |
-| **测试方法** | `fsmon health` |
-| **预期结果** | 输出 TOML 格式：`ok = true`, `uptime_secs` > 0, `monitored_paths` = 2, `reader_groups` >= 1, `readers[0].alive = true` |
-
-### 1.3 `fsmon query _global` — 查询历史事件
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 验证 query 命令能读取 JSONL 日志并输出所有事件 |
-| **测试方法** | `fsmon query _global` |
-| **预期结果** | 输出所有历史事件的 JSONL（每行一个 JSON），至少包含已有的旧事件。事件字段完整：time, event_type, path, pid, cmd, user, file_size, ppid, tgid, chain |
-
-### 1.4 `fsmon query _global -t '>1h'` — 时间过滤查询
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 验证时间过滤器只返回最近1小时的事件 |
-| **测试方法** | `fsmon query _global -t '>1h'` |
-| **预期结果** | 仅输出最近1小时内的事件（如果刚触发过文件变化则能看到，否则输出空） |
-
-### 1.5 `fsmon query _global -p /tmp/fsmon_ext_test` — 路径过滤查询
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 验证路径前缀过滤只返回匹配路径的事件 |
-| **测试方法** | `fsmon query _global -p /tmp/fsmon_ext_test` |
-| **预期结果** | 仅输出 path 以 `/tmp/fsmon_ext_test` 开头的事件，不包含 `/home/pilot/.config/what` 下的事件 |
-
-### 1.6 `fsmon changes _global` — 去重变化列表
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 验证 `changes` 命令按路径去重，只保留每个路径的最新事件，按时间倒序输出 |
-| **测试方法** | `fsmon changes _global` |
-| **预期结果** | 每个唯一路径只出现一条事件（最新那条），按时间从新到旧排列 |
-
-### 1.7 `fsmon clean _global --dry-run` — 干运行清理
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 验证 dry-run 模式不修改文件，仅列出将被删除的条目 |
-| **测试方法** | `fsmon clean _global --dry-run` |
-| **预期结果** | 输出 `[to-delete]` 条目列表（如果有超过30天的事件），底部显示 `Dry run: N entries would be deleted`。检查 `~/.local/state/fsmon/_global_log.jsonl` 内容未被修改 |
-
-### 1.8 `fsmon cd -l` — 进入日志目录
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 验证 `cd` 命令能打开子 shell 进入日志目录 |
-| **测试方法** | `echo "pwd && exit" | fsmon cd -l` 或直接在交互 shell 中 `fsmon cd -l` 然后 `ls` 再 `exit` |
-| **预期结果** | 进入 `~/.local/state/fsmon` 目录，能看到 `_global_log.jsonl` 文件 |
-
-### 1.9 `fsmon cd -m` — 进入 monitored 存储目录
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 验证 cd -m 进入 monitored.jsonl 所在目录 |
-| **测试方法** | `fsmon cd -m` 然后 `ls` 再 `exit` |
-| **预期结果** | 进入 `~/.local/share/fsmon` 目录，能看到 `monitored.jsonl` 文件 |
-
 ---
 
-## 二、事件捕获核心测试（触发真实文件变化）
+# 阶段一：默认配置
 
-### 2.1 文件创建事件 (CREATE + CLOSE_WRITE)
+> **配置**: fsmon.toml 保持当前全注释默认状态，daemon 不重启
+> **日志路径**: `~/.local/state/fsmon/`, **同步**: 关闭, **时区**: UTC
 
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 创建新文件时能捕获 CREATE 和 CLOSE_WRITE 事件，且包含正确的进程信息 |
-| **测试方法** | `touch /tmp/fsmon_ext_test/create_test` |
-| **预期结果** | `<br/> **daemon日志**: 看到 `[DEBUG]` 输出有关 event building<br/> **JSONL日志**: `tail -5 ~/.local/state/fsmon/_global_log.jsonl` 能看到 `CREATE` 事件 (path=/tmp/fsmon_ext_test/create_test) 和 `CLOSE_WRITE` 事件<br/> **关键字段验证**: `cmd="touch"`, `user="pilot"`, `pid` 和 `ppid` 为正确进程 ID, `file_size=0` |
-
-### 2.2 文件修改事件 (MODIFY + CLOSE_WRITE)
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 向已有文件写入内容时能捕获 MODIFY 和 CLOSE_WRITE 事件 |
-| **测试方法** | `echo "hello fsmon" > /tmp/fsmon_ext_test/modify_test` |
-| **预期结果** | JSONL 中出现 `MODIFY` 事件（如果写入) 和 `CLOSE_WRITE` 事件<br/> `file_size` 应该是 12（"hello fsmon\n"的长度）<br/> `cmd` 应为 `bash` 或 shell 进程名 |
-
-### 2.3 文件删除事件 (DELETE)
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 删除文件时能捕获 DELETE 事件 |
-| **测试方法** | `rm /tmp/fsmon_ext_test/modify_test` |
-| **预期结果** | JSONL 中出现 `DELETE` 事件, path=`/tmp/fsmon_ext_test/modify_test`, cmd=`rm` |
-
-### 2.4 `rm -rf` 完整删除捕获
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 递归删除目录时能捕获所有被删除文件的 DELETE 事件（依赖目录句柄缓存） |
-| **测试方法** | `mkdir -p /tmp/fsmon_ext_test/rmrf_test/sub && touch /tmp/fsmon_ext_test/rmrf_test/a /tmp/fsmon_ext_test/rmrf_test/sub/b && rm -rf /tmp/fsmon_ext_test/rmrf_test` |
-| **预期结果** | JSONL 中能看到所有被删除文件的 DELETE 事件（a, b）。每个文件都有一条 DELETE 记录 |
-
-### 2.5 递归子目录事件
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 在监控路径的深层子目录中创建文件，验证递归监控有效 |
-| **测试方法** | `mkdir -p /tmp/fsmon_ext_test/deep/nested/dir && touch /tmp/fsmon_ext_test/deep/nested/dir/deep_file` |
-| **预期结果** | JSONL 中出现深度路径的 CREATE 事件：`/tmp/fsmon_ext_test/deep/nested/dir/deep_file` |
-
-### 2.6 目录创建事件
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 在监控路径下创建新子目录，验证目录创建被捕获，且新目录自动被纳入监控 |
-| **测试方法** | `mkdir /tmp/fsmon_ext_test/new_dir` |
-| **预期结果** | JSONL 中出现 path=`/tmp/fsmon_ext_test/new_dir` 的 CREATE 事件<br/> **daemon日志** 可能显示 `[DEBUG]` 有关新目录被标记为递归监控 |
-
-### 2.7 属性变更事件 (ATTRIB)
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 修改文件属性时能捕获 ATTRIB 事件 |
-| **测试方法** | `chmod 644 /tmp/fsmon_ext_test/test.txt` |
-| **预期结果** | JSONL 中出现 `ATTRIB` 事件, path=`/tmp/fsmon_ext_test/test.txt`, cmd=`chmod` |
-
-### 2.8 移动/重命名事件 (MOVED_FROM / MOVED_TO)
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 在同一文件系统内移动/重命名文件时捕获 MOVED_FROM 和 MOVED_TO |
-| **测试方法** | `mv /tmp/fsmon_ext_test/create_test /tmp/fsmon_ext_test/renamed_test` |
-| **预期结果** | JSONL 中出现 `MOVED_FROM` (path=旧名) 和 `MOVED_TO` (path=新名) 事件 |
-
----
-
-## 三、进程追踪测试
-
-### 3.1 基本进程归属
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 验证每个事件正确记录了触发进程的 pid, cmd, user, ppid, tgid |
-| **测试方法** | `touch /tmp/fsmon_ext_test/proc_test` 然后在 JSONL 中检查 |
-| **预期结果** | 事件中 `pid` = touch 进程的 PID, `cmd="touch"`, `user="pilot"`, `ppid` 为父进程 PID(shell), `tgid` 与 pid 一致 |
-
-### 3.2 daemon 自身事件过滤
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | fsmon daemon 自身产生的文件事件不会被记录 |
-| **测试方法** | daemon 运行时写日志到 `~/.local/state/fsmon/_global_log.jsonl`，检查这些写操作是否产生了事件 |
-| **预期结果** | 日志目录下的写入事件**不应该**出现在监控日志中（daemon PID 被过滤）。验证：`fsmon query _global | jq 'select(.path | startswith("/home/pilot/.local/state/fsmon"))'` 应为空 |
-
----
-
-## 四、动态路径管理（live add/remove，不重启 daemon）
-
-### 4.1 `fsmon add` — 实时添加路径
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | daemon 运行时通过 socket 实时添加新的监控路径 |
-| **测试方法** | `fsmon add _global --path /tmp/fsmon_live_add -r` |
-| **预期结果** | 输出 `Entry added: /tmp/fsmon_live_add`<br/> **daemon日志**: 显示 `[DEBUG] socket command: add` 和 fanotify mark 相关信息<br/> **验证**: `mkdir -p /tmp/fsmon_live_add && touch /tmp/fsmon_live_add/live_file && sleep 1 && fsmon query _global | jq 'select(.path | startswith("/tmp/fsmon_live_add"))'` 能看到事件 |
-
-### 4.2 `fsmon add` — 添加不存在的路径（pending）
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 添加还不存在的路径 → daemon 等待目录创建后自动开始监控 |
-| **测试方法** | `fsmon add _global --path /tmp/fsmon_pending_test -r`（路径不存在）<br/> 然后 `mkdir /tmp/fsmon_pending_test && touch /tmp/fsmon_pending_test/after_create` |
-| **预期结果** | add 时输出 `[Note] path does not exist yet...`<br/> **daemon日志**: 看到 inotify watch 被添加到 `/tmp`<br/> 创建目录后，touch 的事件能被捕获 |
-
-### 4.3 `fsmon add` — 带类型过滤
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 添加路径时指定事件类型过滤，只捕获指定类型的事件 |
-| **测试方法** | `fsmon add _global --path /tmp/fsmon_type_test -r --types CREATE --types DELETE`<br/> `mkdir -p /tmp/fsmon_type_test && touch /tmp/fsmon_type_test/f1 && echo x > /tmp/fsmon_type_test/f1 && rm /tmp/fsmon_type_test/f1` |
-| **预期结果** | 只能看到 CREATE 和 DELETE 事件，看不到 MODIFY 或 CLOSE_WRITE<br/> **验证**: `fsmon query _global -p /tmp/fsmon_type_test | jq '.event_type'` 只输出 CREATE 和 DELETE |
-
-### 4.4 `fsmon add` — 带大小过滤
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 只输出文件大小满足过滤条件的事件 |
-| **测试方法** | `fsmon add _global --path /tmp/fsmon_size_test -r -s '>0'`<br/> `mkdir -p /tmp/fsmon_size_test && touch /tmp/fsmon_size_test/empty && echo "data" > /tmp/fsmon_size_test/data` |
-| **预期结果** | empty 文件的 CREATE/CLOSE_WRITE 事件（file_size=0）不会被输出；data 文件（file_size>0）的事件被输出 |
-
-### 4.5 `fsmon remove` — 实时移除路径
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | daemon 运行时通过 socket 实时移除监控路径 |
-| **测试方法** | `fsmon remove _global --path /tmp/fsmon_live_add` |
-| **预期结果** | 输出 `Entry removed: /tmp/fsmon_live_add`<br/> **验证**: `touch /tmp/fsmon_live_add/after_remove`，检查是否不再产生事件（`fsmon query _global -p /tmp/fsmon_live_add` 没有新事件） |
-
-### 4.6 `fsmon remove` — 移除整个 cmd 组
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 不带 --path 时移除整个 cmd 组的所有路径 |
-| **测试方法** | `fsmon add testapp --path /tmp/fsmon_group_test -r` 然后 `fsmon remove testapp` |
-| **预期结果** | 输出 `Entry removed: [testapp]`<br/> `fsmon monitored` 不再包含 testapp 组 |
-
-### 4.7 `fsmon add` — 重复添加覆盖
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 添加已存在的 (path, cmd) 对时，新参数替换旧参数 |
-| **测试方法** | `fsmon add _global --path /tmp/fsmon_size_test -r -s '=0'`（覆盖之前的 `>0` 过滤）<br/> `touch /tmp/fsmon_size_test/another_empty` |
-| **预期结果** | 添加时输出 `[Note] ... is already monitored — new parameters will replace...`<br/> file_size=0 的事件现在能被看到（因为过滤改为 =0） |
-
----
-
-## 五、Subscription 实时流测试
-
-### 5.1 基本 subscribe
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 通过 Unix socket subscribe 实时接收事件流 |
-| **测试方法** | 终端 A: `echo 'cmd = "subscribe"' | socat - UNIX-CONNECT:/tmp/fsmon-1000.sock`<br/> 终端 B: `touch /tmp/fsmon_ext_test/sub_test` |
-| **预期结果** | socat 首先收到 TOML 响应 `ok = true`，随后流式输出 JSONL 事件（包括 touch 产生的事件） |
-
-### 5.2 subscribe 带 cmd 过滤
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | subscribe 时过滤只接收特定 cmd 组的事件 |
-| **测试方法** | 使用 subscribe.py 或手动构造 TOML：<br/> `echo -e 'cmd = "subscribe"\ntrack_cmd = "touch"\n\n' | socat - UNIX-CONNECT:/tmp/fsmon-1000.sock` |
-| **预期结果** | 只收到 cmd="touch" 的事件 |
-
-### 5.3 subscribe 带类型过滤
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | subscribe 时过滤只接收特定事件类型 |
-| **测试方法** | 使用 subscribe.py 并传入 types 过滤，或手动构造 TOML<br/> `echo -e 'cmd = "subscribe"\ntypes = ["CREATE", "DELETE"]\n\n' | socat - UNIX-CONNECT:/tmp/fsmon-1000.sock` |
-| **预期结果** | 只收到 CREATE 和 DELETE 事件，不会收到 MODIFY/ATTRIB 等 |
-
-### 5.4 subscribe 连接断开行为
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 客户端断开后 daemon 正常运行，其他操作不受影响 |
-| **测试方法** | 建立 subscribe 连接后 Ctrl+C 断开，然后 `fsmon health` 检查 |
-| **预期结果** | daemon 正常响应 health 命令，没有 crash |
-
----
-
-## 六、Extensions 扩展测试
-
-### 6.1 `read-jsonl.sh` — JSONL 日志读取
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | extensions 中的 bash 示例脚本能正确读取日志文件 |
-| **测试方法** | `bash /home/pilot/.projects/fsmon/extensions/examples/read-jsonl.sh` |
-| **预期结果** | 输出 `=== recent 5 events ===` 以及最近的5条事件摘要，显示 time / event_type / path |
-
-### 6.2 `read-jsonl.py` — JSONL 日志读取 (Python)
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | extensions 中的 Python 示例脚本能正确读取日志文件 |
-| **测试方法** | `python3 /home/pilot/.projects/fsmon/extensions/examples/read-jsonl.py` |
-| **预期结果** | 输出 `=== last 5 events ===` 以及最近的5条事件摘要，显示 time / event_type / cmd / path |
-
-### 6.3 `subscribe.sh` — Socket 订阅 (bash)
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 验证 extensions 中的 subscribe.sh 脚本能通过 socket 订阅事件流 |
-| **测试方法** | 终端 A: `bash /home/pilot/.projects/fsmon/extensions/examples/subscribe.sh`<br/> 终端 B: `touch /tmp/fsmon_ext_test/sub_ext_test` |
-| **预期结果** | socat 模式：看到 `[subscribed]` 和 TOML ok 响应，然后 JSONL 事件流<br/> Python fallback 模式：同样行为 |
-
-### 6.4 `subscribe.py` — Socket 订阅 (Python)
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 验证 extensions 中的 subscribe.py 脚本能独立订阅事件流 |
-| **测试方法** | 终端 A: `python3 /home/pilot/.projects/fsmon/extensions/examples/subscribe.py | jq '.'`<br/> 终端 B: `touch /tmp/fsmon_ext_test/sub_py_test` |
-| **预期结果** | 输出 `[subscribed] ok = true`，然后 touch 产生的事件以 JSON 形式输出 |
-
----
-
-## 七、daemon 日志验证
-
-### 7.1 启动日志完整性
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | daemon 启动时的 debug 日志是否完整 |
-| **测试方法** | `cat /tmp/fsmon.log` |
-| **预期结果** | 包含：Config loaded（3 个路径）、cache configuration（所有默认值）、Monitor initialized（2 个 path entries）、combined fanotify mask（0x48000fcc）、Active paths 列表、cache stats（初始状态） |
-
-### 7.2 事件处理日志
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 触发事件后 debug 日志是否有相关输出 |
-| **测试方法** | `touch /tmp/fsmon_ext_test/debug_log_test && sleep 1 && tail -30 /tmp/fsmon.log` |
-| **预期结果** | 看到 event building 或 event routing 相关 debug 信息（取决于具体实现），不应有 ERROR/WARNING |
-
-### 7.3 cache stats 周期性输出
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 每 60 秒输出一次 cache stats（debug 模式下） |
-| **测试方法** | 等待至少 60 秒，然后检查 `/tmp/fsmon.log` |
-| **预期结果** | 每隔约 60 秒出现 `[DEBUG] --- cache stats ---` 段，显示 dir_cache, proc_cache, pid_tree, file_size_cache 的条目数 |
-
-### 7.4 inotify pending 路径就绪日志
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | pending 路径的目录被创建时，daemon 日志应有记录 |
-| **测试方法** | （如果 `/tmp/fsmon_ext_test` 之前是 pending 状态，创建后应有日志）<br/> 查看 `/tmp/fsmon.log` 中是否有 inotify 相关的日志 |
-| **预期结果** | 看到 `[DEBUG] inotify fd became readable` 和路径被转移到 Active paths 的相关日志 |
-
----
-
-## 八、边界场景测试
-
-### 8.1 监控不存在的路径（pending → active 转换）
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 添加不存在路径后，创建该目录，验证自动开始监控 |
-| **测试方法** | `fsmon add _global --path /tmp/fsmon_nonexist_test -r`（add 时目录不存在）<br/> `mkdir /tmp/fsmon_nonexist_test && touch /tmp/fsmon_nonexist_test/hello` |
-| **预期结果** | 创建目录后，hello 文件的 CREATE 事件被捕获 |
-
-### 8.2 超大 JSONL 文件查询
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 日志文件较大时（175KB），query 能正常工作 |
-| **测试方法** | `wc -c ~/.local/state/fsmon/_global_log.jsonl && fsmon query _global | wc -l` |
-| **预期结果** | query 返回的行数与 `grep -c . ~/.local/state/fsmon/_global_log.jsonl`（不包含空行）一致 |
-
-### 8.3 重复添加同一路径不同 cmd
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 同一路径可被多个 cmd 组监控，各自独立配置 |
-| **测试方法** | `fsmon add myapp --path /tmp/fsmon_ext_test -r --types CREATE`<br/> `touch /tmp/fsmon_ext_test/multi_cmd_test` |
-| **预期结果** | 全局组（无过滤）能看到所有事件；myapp 组的事件中 chain 字段应包含 myapp 进程信息（如果由 myapp 进程触发） |
-
-### 8.4 并发文件操作
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 同时多个进程操作文件时，事件不丢失、不错乱 |
-| **测试方法** | `for i in $(seq 1 20); do touch "/tmp/fsmon_ext_test/concurrent_$i" & done; wait` |
-| **预期结果** | JSONL 中能数出 20 个 `CREATE` 事件（每个 concurrent_* 文件一个），PID 各不相同 |
-
-### 8.5 删除监控路径本身
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 删除正在被监控的目录，验证 DELETE_SELF 事件的捕获和 daemon 稳定性 |
-| **测试方法** | `mkdir /tmp/fsmon_self_test && fsmon add _global --path /tmp/fsmon_self_test -r`<br/> `rmdir /tmp/fsmon_self_test` |
-| **预期结果** | 捕获 DELETE_SELF 事件，daemon 不崩溃 |
-
-### 8.6 SIGHUP 重载配置
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 发送 SIGHUP 信号后 daemon 重新加载 monitored.jsonl 配置 |
-| **测试方法** | `sudo kill -HUP $(pgrep -f "fsmon daemon")` |
-| **预期结果** | daemon 日志显示 `[DEBUG] reload_config`，不崩溃。监控路径与最新的 monitored.jsonl 一致 |
-
-### 8.7 daemon 单例锁
-
-| 项目 | 内容 |
-|------|------|
-| **测试内容** | 尝试启动第二个 daemon 实例时提示已运行 |
-| **测试方法** | `sudo fsmon daemon --debug 2>&1 | head -5` |
-| **预期结果** | 输出错误信息 `Another fsmon daemon is already running`，退出 |
-
----
-
-## 九、测试清理
-
-所有测试结束后执行以下清理：
+## 准备：确保测试目录就绪
 
 ```bash
-# 移除测试添加的路径
-fsmon remove _global --path /tmp/fsmon_type_test
-fsmon remove _global --path /tmp/fsmon_size_test
-fsmon remove _global --path /tmp/fsmon_live_add
-fsmon remove _global --path /tmp/fsmon_pending_test
-fsmon remove _global --path /tmp/fsmon_nonexist_test
-fsmon remove _global --path /tmp/fsmon_self_test
+mkdir -p /tmp/fsmon_ext_test
+# 等待 daemon 通过 inotify pick up 该目录（tail /tmp/fsmon.log 确认）
+```
+
+## 1.1 CLI 命令基础测试
+
+### 1.1.1 `fsmon monitored` — 列出监控路径
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 列出所有监控路径及配置 |
+| **测试方法** | `fsmon monitored` |
+| **预期结果** | JSON 输出含 `cmd:"_global"`, paths 含两个路径均为 recursive:true |
+
+### 1.1.2 `fsmon health` — daemon 健康状态
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 通过 socket 查询 daemon 运行状态 |
+| **测试方法** | `fsmon health` |
+| **预期结果** | TOML: `ok=true`, `uptime_secs>0`, `monitored_paths>=1`, `reader_groups>=1`, `readers[0].alive=true` |
+
+### 1.1.3 `fsmon query _global` — 查询全部历史事件
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 读取 JSONL 日志输出所有事件 |
+| **测试方法** | `fsmon query _global` |
+| **预期结果** | 每行一个 JSON，字段完整：time, event_type, path, pid, cmd, user, file_size, ppid, tgid, chain。time 以 Z 结尾(UTC) |
+
+### 1.1.4 `fsmon query _global -t '>1h'` — 时间过滤
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 只返回最近1小时事件 |
+| **测试方法** | `fsmon query _global -t '>1h'` |
+| **预期结果** | 仅输出1小时内的事件。与 `fsmon query _global | wc -l` 对比行数应 ≤ 全量 |
+
+### 1.1.5 `fsmon query _global -p /tmp/fsmon_ext_test` — 路径过滤
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 路径前缀过滤 |
+| **测试方法** | `fsmon query _global -p /tmp/fsmon_ext_test` |
+| **预期结果** | 所有输出 path 以 `/tmp/fsmon_ext_test` 开头，不包含 `/home/pilot/.config/what` 的事件 |
+
+### 1.1.6 `fsmon changes _global` — 去重变化列表
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 每路径只保留最新事件，时间倒序 |
+| **测试方法** | `fsmon changes _global | head -5` |
+| **预期结果** | 输出中同一 path 不重复出现。时间从新到旧排列 |
+
+### 1.1.7 `fsmon clean _global --dry-run` — 干运行清理
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | dry-run 不修改文件，仅预览删除条目 |
+| **测试方法** | `fsmon clean _global --dry-run` |
+| **预期结果** | 若有超过30天的事件则显示 `[to-delete]`；底部显示 `Dry run: N entries would be deleted`。验证 `~/.local/state/fsmon/_global_log.jsonl` 内容未变 |
+
+### 1.1.8 `fsmon cd -l` / `fsmon cd -m` — 进入目录
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | cd -l 进日志目录，cd -m 进 monitored 存储目录 |
+| **测试方法** | `echo "ls _global_log.jsonl && exit" \| fsmon cd -l`<br/>`echo "ls monitored.jsonl && exit" \| fsmon cd -m` |
+| **预期结果** | -l 下能看到 `_global_log.jsonl`；-m 下能看到 `monitored.jsonl` |
+
+### 1.1.9 `fsmon cd` 无参数报错
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | cd 不带参数时应有错误提示 |
+| **测试方法** | `fsmon cd 2>&1` |
+| **预期结果** | 非零退出码，提示需要 `-l` 或 `-m` |
+
+## 1.2 事件捕获核心测试
+
+### 1.2.1 文件创建 (CREATE + CLOSE_WRITE + ATTRIB)
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | `touch` 创建文件捕获完整事件链 |
+| **测试方法** | `touch /tmp/fsmon_ext_test/cap_create && sleep 0.5`<br/>`tail -5 ~/.local/state/fsmon/_global_log.jsonl` |
+| **预期结果** | 出现 CREATE → CLOSE_WRITE → ATTRIB 三条。`cmd="touch"`, `user="pilot"`, `file_size=0` |
+
+### 1.2.2 文件修改 (MODIFY + CLOSE_WRITE)
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 写入已有文件捕获 MODIFY 事件 |
+| **测试方法** | `echo "hello fsmon" > /tmp/fsmon_ext_test/cap_modify` |
+| **预期结果** | 出现 MODIFY + CLOSE_WRITE。`file_size=12`（"hello fsmon\n"） |
+
+### 1.2.3 文件删除 (DELETE)
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 删除文件捕获 DELETE 事件 |
+| **测试方法** | `rm /tmp/fsmon_ext_test/cap_modify` |
+| **预期结果** | DELETE 事件，`path=/tmp/fsmon_ext_test/cap_modify`, `cmd="rm"` |
+
+### 1.2.4 `rm -rf` 目录完整删除捕获
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 递归删除目录时每个文件都被记录 DELETE |
+| **测试方法** | `mkdir -p /tmp/fsmon_ext_test/rmrf/sub && touch /tmp/fsmon_ext_test/rmrf/a /tmp/fsmon_ext_test/rmrf/sub/b && rm -rf /tmp/fsmon_ext_test/rmrf` |
+| **预期结果** | 能看到 a 和 b 的 DELETE 事件。验证 `fsmon query _global \| jq 'select(.path \| startswith("/tmp/fsmon_ext_test/rmrf"))'` 至少有 2 条 DELETE |
+
+### 1.2.5 递归子目录深层事件
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 深层子目录中的文件被递归监控 |
+| **测试方法** | `mkdir -p /tmp/fsmon_ext_test/deep/nested && touch /tmp/fsmon_ext_test/deep/nested/deep_file` |
+| **预期结果** | 出现 path=`/tmp/fsmon_ext_test/deep/nested/deep_file` 的 CREATE 事件 |
+
+### 1.2.6 目录创建
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 新建子目录产生 CREATE 事件，且自动纳入递归监控 |
+| **测试方法** | `mkdir /tmp/fsmon_ext_test/new_subdir && touch /tmp/fsmon_ext_test/new_subdir/inner` |
+| **预期结果** | new_subdir 有 CREATE 事件，new_subdir/inner 也有 CREATE 事件（说明新目录已被递归监视） |
+
+### 1.2.7 属性变更 (ATTRIB)
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | chmod 触发 ATTRIB 事件 |
+| **测试方法** | `chmod 644 /tmp/fsmon_ext_test/cap_create` |
+| **预期结果** | ATTRIB 事件，`cmd="chmod"` |
+
+### 1.2.8 重命名 (MOVED_FROM + MOVED_TO)
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | mv 在同一文件系统内重命名 |
+| **测试方法** | `mv /tmp/fsmon_ext_test/cap_create /tmp/fsmon_ext_test/renamed` |
+| **预期结果** | MOVED_FROM(旧名) + MOVED_TO(新名) 成对出现 |
+
+## 1.3 进程归属验证
+
+### 1.3.1 基本进程字段
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 验证 pid, cmd, user, ppid, tgid 字段正确 |
+| **测试方法** | `touch /tmp/fsmon_ext_test/proc_fields && sleep 0.5`<br/>`tail -5 ~/.local/state/fsmon/_global_log.jsonl \| jq '{pid, cmd, user, ppid, tgid}'` |
+| **预期结果** | pid=实际 touch PID, ppid=shell PID, tgid=pid, user="pilot" |
+
+### 1.3.2 daemon 自身事件被过滤
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | daemon 写日志文件的操作不会产生监控事件 |
+| **测试方法** | `fsmon query _global \| jq 'select(.path \| startswith("/home/pilot/.local/state/fsmon"))'` |
+| **预期结果** | 无输出（daemon 的日志写入被 PID 过滤排除） |
+
+## 1.4 动态路径管理（live 操作，不重启 daemon）
+
+### 1.4.1 `fsmon add _global` — 实时添加路径
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | daemon 运行时通过 socket 实时添加监控路径 |
+| **测试方法** | `mkdir -p /tmp/fsmon_dyn_add`<br/>`fsmon add _global --path /tmp/fsmon_dyn_add -r`<br/>`touch /tmp/fsmon_dyn_add/live_test && sleep 0.5`<br/>`fsmon query _global -p /tmp/fsmon_dyn_add` |
+| **预期结果** | add 输出 `Entry added`；随后 live_test 的 CREATE 事件被捕获 |
+
+### 1.4.2 `fsmon add` — 不存在的路径（pending 模式）
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 添加不存在路径 → daemon 等目录创建后自动开始监控 |
+| **测试方法** | `fsmon add _global --path /tmp/fsmon_pending -r`（add 时不创建目录）<br/>`mkdir /tmp/fsmon_pending && touch /tmp/fsmon_pending/hello && sleep 1`<br/>`fsmon query _global -p /tmp/fsmon_pending` |
+| **预期结果** | add 输出 `[Note] path does not exist yet`；daemon 日志出现 inotify watch；目录创建后 hello 事件被捕获 |
+
+### 1.4.3 `fsmon add` — 带事件类型过滤
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 只捕获指定事件类型 |
+| **测试方法** | `mkdir -p /tmp/fsmon_type_filter`<br/>`fsmon add _global --path /tmp/fsmon_type_filter -r --types CREATE --types DELETE`<br/>`touch /tmp/fsmon_type_filter/f1 && echo x > /tmp/fsmon_type_filter/f1 && rm /tmp/fsmon_type_filter/f1 && sleep 0.5`<br/>`fsmon query _global -p /tmp/fsmon_type_filter \| jq '.event_type'` |
+| **预期结果** | 只有 CREATE 和 DELETE，没有 MODIFY/CLOSE_WRITE |
+
+### 1.4.4 `fsmon add` — 带大小过滤 (>0)
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 只输出文件大小满足条件的 |
+| **测试方法** | `mkdir -p /tmp/fsmon_size_filter`<br/>`fsmon add _global --path /tmp/fsmon_size_filter -r -s '>0'`<br/>`touch /tmp/fsmon_size_filter/empty && echo data > /tmp/fsmon_size_filter/data && sleep 0.5`<br/>`fsmon query _global -p /tmp/fsmon_size_filter` |
+| **预期结果** | empty(file_size=0) 无事件；data(file_size=5) 有事件 |
+
+### 1.4.5 `fsmon add` — 重复添加覆盖
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 已存在的(path,cmd)对重复添加时参数被替换 |
+| **测试方法** | `fsmon add _global --path /tmp/fsmon_size_filter -r -s '=0'`（覆盖之前 >0）<br/>`touch /tmp/fsmon_size_filter/another_empty && sleep 0.5`<br/>`fsmon query _global -p /tmp/fsmon_size_filter \| jq 'select(.path \| endswith("another_empty"))'` |
+| **预期结果** | add 输出 `[Note] ... already monitored — new parameters will replace`；file_size=0 的事件现在能看到了 |
+
+### 1.4.6 `fsmon remove _global --path` — 实时移除路径
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | daemon 运行时移除监控路径 |
+| **测试方法** | `fsmon remove _global --path /tmp/fsmon_dyn_add`<br/>`touch /tmp/fsmon_dyn_add/after_remove && sleep 1`<br/>`fsmon query _global -p /tmp/fsmon_dyn_add \| jq 'select(.path \| endswith("after_remove"))'` |
+| **预期结果** | remove 输出 `Entry removed`；after_remove 无新事件 |
+
+### 1.4.7 `fsmon remove <cmd>` — 移除整个 cmd 组
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 不带 --path 时移除整个 cmd 组 |
+| **测试方法** | `fsmon add testapp --path /tmp/fsmon_group_test -r`<br/>`fsmon remove testapp`<br/>`fsmon monitored \| jq 'select(.cmd=="testapp")'` |
+| **预期结果** | 输出 `Entry removed: [testapp]`；monitored 不再包含 testapp 组 |
+
+### 1.4.8 同一路径多 cmd 组独立配置
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 同一路径可被多个 cmd 组监控，各自独立 |
+| **测试方法** | `mkdir -p /tmp/fsmon_multi`<br/>`fsmon add myapp --path /tmp/fsmon_multi -r --types CREATE`<br/>`touch /tmp/fsmon_multi/shared_file && sleep 0.5`<br/>`fsmon query _global -p /tmp/fsmon_multi \| jq '.event_type'`（全局组无类型过滤，应看到所有事件） |
+
+## 1.5 日志验证（阶段一）
+
+### 1.5.1 启动日志完整性
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | daemon 启动时的 debug 输出完整 |
+| **测试方法** | `head -40 /tmp/fsmon.log` |
+| **预期结果** | 包含: Config loaded(3路径), cache configuration(所有默认值), Monitor initialized(2路径), combined fanotify mask, Active paths |
+
+### 1.5.2 事件处理日志
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 事件产生时 debug 日志有相关输出 |
+| **测试方法** | `touch /tmp/fsmon_ext_test/debug_check && sleep 1 && tail -10 /tmp/fsmon.log` |
+| **预期结果** | 不应有 ERROR/WARNING（正常流程） |
+
+### 1.5.3 cache stats 周期输出 (60s)
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | debug 模式下每60秒输出 cache 统计 |
+| **测试方法** | `grep "cache stats" /tmp/fsmon.log` |
+| **预期结果** | 每隔约60秒出现一次 `[DEBUG] --- cache stats ---` 及各缓存条目数 |
+
+### 1.5.4 默认日志路径 UTC 时戳
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 默认配置下时间戳为 UTC |
+| **测试方法** | `fsmon query _global -t '>1s' \| jq -r '.time' \| head -1` |
+| **预期结果** | 时间戳以 `Z` 结尾（如 `2026-05-29T23:55:02.426Z`） |
+
+---
+
+# 阶段二：自定义日志路径 + local_time + sync_interval + disk_min_free
+
+> **需要修改 fsmon.toml 并重启 daemon**
+
+### 修改配置
+
+编辑 `~/.config/fsmon/fsmon.toml`，取消注释并修改以下行：
+
+```toml
+[logging]
+path = "/tmp/fsmon_custom_logs"
+sync_interval_secs = 5
+local_time = true
+disk_min_free = "10%"
+```
+
+完整内容（只改 logging 段，其余保持注释）：
+```toml
+# ================================================================
+# fsmon configuration file
+# ================================================================
+[monitored]
+path = "~/.local/share/fsmon/monitored.jsonl"
+
+[logging]
+path = "/tmp/fsmon_custom_logs"
+keep_days = 30
+size = ">=1GB"
+disk_min_free = "10%"
+sync_interval_secs = 5
+local_time = true
+
+[socket]
+path = "/tmp/fsmon-<UID>.sock"
+```
+
+### 重启 daemon
+
+```bash
+# 停止当前 daemon
+sudo pkill -f "fsmon daemon"
+# 创建自定义日志目录
+mkdir -p /tmp/fsmon_custom_logs
+# 重新启动
+sudo fsmon daemon --debug 2>&1 | tee /tmp/fsmon.log &
+```
+
+## 2.1 自定义日志路径验证
+
+### 2.1.1 日志写入自定义路径
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 事件日志写入 `/tmp/fsmon_custom_logs` 而非默认路径 |
+| **测试方法** | `touch /tmp/fsmon_ext_test/custom_log_test && sleep 0.5`<br/>`ls -la /tmp/fsmon_custom_logs/` |
+| **预期结果** | `/tmp/fsmon_custom_logs/_global_log.jsonl` 存在且包含新事件<br/>**反面验证**: `~/.local/state/fsmon/_global_log.jsonl` 不应有该新事件 |
+
+### 2.1.2 daemon 日志显示自定义路径
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | daemon 启动日志显示自定义日志路径 |
+| **测试方法** | `head -20 /tmp/fsmon.log` |
+| **预期结果** | `Event logs: /tmp/fsmon_custom_logs` |
+
+## 2.2 local_time 时区验证
+
+### 2.2.1 时间戳使用本地时区
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 时间戳使用本地时区（+08:00）而非 UTC（Z） |
+| **测试方法** | `touch /tmp/fsmon_ext_test/local_time_test && sleep 0.5`<br/>`tail -3 /tmp/fsmon_custom_logs/_global_log.jsonl \| jq -r '.time'` |
+| **预期结果** | 时间戳含 `+08:00` 偏移，如 `2026-05-30T07:55:02.426+08:00`<br/>**不应**以 `Z` 结尾 |
+
+### 2.2.2 query/changes 输出也使用本地时间
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | query 输出时间戳也用 local time |
+| **测试方法** | `fsmon query _global -p /tmp/fsmon_ext_test -t '>1s' \| jq -r '.time' \| head -1` |
+| **预期结果** | 时间戳含 `+08:00` 偏移 |
+
+## 2.3 sync_interval 验证
+
+### 2.3.1 daemon 日志显示 sync_interval
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | daemon 启动显示 sync_interval=5s |
+| **测试方法** | `grep sync_interval /tmp/fsmon.log` |
+| **预期结果** | `[DEBUG] sync_interval: 5s` |
+
+### 2.3.2 强制 kill 后事件不丢失
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | sync_interval 保证 kill -9 前最多丢失 5s 内事件 |
+| **测试方法** | `touch /tmp/fsmon_ext_test/sync_test_1 /tmp/fsmon_ext_test/sync_test_2 /tmp/fsmon_ext_test/sync_test_3`<br/>立即 `sudo kill -9 $(pgrep -f "fsmon daemon")`<br/>然后 `cat /tmp/fsmon_custom_logs/_global_log.jsonl \| jq 'select(.path \| startswith("/tmp/fsmon_ext_test/sync_test"))'` |
+| **预期结果** | 三个 sync_test 文件的事件都在日志中（最多丢失最近 5s 内的最后事件，如果刚好在 sync 间隔内）<br/>**注意**: 此测试会杀死 daemon，需要随后重启 |
+
+## 2.4 disk_min_free 验证
+
+### 2.4.1 daemon 启动时检查磁盘空间
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | daemon 启动日志显示磁盘空间检查 |
+| **测试方法** | `grep -i "disk\|free" /tmp/fsmon.log \| head -5` |
+| **预期结果** | 若 `/tmp` 所在分区空间充足则无警告；空间不足时有 warning 输出 |
+
+---
+
+# 阶段三：禁用文件日志 + 自定义 cache + 自定义 socket 路径
+
+> **需要修改 fsmon.toml 并重启 daemon**
+
+### 修改配置
+
+编辑 `~/.config/fsmon/fsmon.toml`：
+
+```toml
+[monitored]
+path = "~/.local/share/fsmon/monitored.jsonl"
+
+# [logging]   ← 整个 logging 段注释掉或删除
+# path = ...
+
+[socket]
+# 自定义 socket 路径测试
+path = "/tmp/fsmon_test_custom.sock"
+
+[cache]
+dir_capacity = 50000
+dir_ttl_secs = 1800
+file_size_capacity = 5000
+proc_ttl_secs = 300
+stats_interval_secs = 30
+```
+
+注意：logging 段**必须注释掉或删除**才能禁用文件日志。
+
+### 重启 daemon
+
+```bash
+sudo pkill -f "fsmon daemon"
+# 如果之前阶段二 kill -9 过，确保没有僵尸进程
+sudo fsmon daemon --debug 2>&1 | tee /tmp/fsmon.log &
+```
+
+## 3.1 禁用日志验证
+
+### 3.1.1 daemon 日志显示 logging disabled
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | daemon 启动日志显示日志功能已禁用 |
+| **测试方法** | `grep "Event logs" /tmp/fsmon.log` |
+| **预期结果** | `Event logs: disabled (path not configured)` |
+
+### 3.1.2 不产生 JSONL 日志文件
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 触发事件后不写日志文件 |
+| **测试方法** | `touch /tmp/fsmon_ext_test/no_log_test && sleep 0.5`<br/>`ls ~/.local/state/fsmon/_global_log.jsonl 2>/dev/null \|\| echo "NO FILE"`<br/>`ls /tmp/fsmon_custom_logs/_global_log.jsonl 2>/dev/null \|\| echo "NO FILE"` |
+| **预期结果** | 两个路径都不应有新的日志文件或内容增长 |
+
+### 3.1.3 subscribe 在无日志模式下仍正常工作
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 禁用文件日志不影响实时订阅流 |
+| **测试方法** | `echo 'cmd = "subscribe"' \| socat - UNIX-CONNECT:/tmp/fsmon_test_custom.sock 2>&1 \| head -5 &`<br/>`sleep 0.5 && touch /tmp/fsmon_ext_test/no_log_sub_test && sleep 0.5` |
+| **预期结果** | socat 首先收到 `ok = true` 的 TOML 响应，随后收到 JSONL 事件流 |
+
+## 3.2 自定义 socket 路径
+
+### 3.2.1 新 socket 路径生效
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | CLI 自动连接新的 socket 路径 |
+| **测试方法** | `fsmon health` |
+| **预期结果** | 正常返回健康信息（说明 daemon 自动读取了新 socket 路径）<br/>**daemon日志** `Command socket: /tmp/fsmon_test_custom.sock` |
+
+### 3.2.2 旧 socket 路径被清理
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 旧 socket 文件不再存在 |
+| **测试方法** | `ls /tmp/fsmon-1000.sock 2>/dev/null \|\| echo "CLEANED"` |
+| **预期结果** | 旧 socket 不存在（daemon 启动时删除旧文件并绑定新路径） |
+
+## 3.3 自定义 cache 配置
+
+### 3.3.1 daemon 日志显示自定义 cache 值
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | daemon 启动日志显示自定义的 cache 配置 |
+| **测试方法** | `grep "cache configuration" -A 8 /tmp/fsmon.log` |
+| **预期结果** | dir_capacity=50000, dir_ttl_secs=1800, file_size_capacity=5000, proc_ttl_secs=300, stats_interval_secs=30 |
+
+### 3.3.2 cache stats 以30秒间隔输出
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | stats_interval_secs=30 → 每30秒一次 stats |
+| **测试方法** | `grep "cache stats" /tmp/fsmon.log` 看时间间隔 |
+| **预期结果** | 两次 `--- cache stats ---` 之间约 30 秒 |
+
+---
+
+# 阶段四：Extensios 扩展测试
+
+> **不依赖具体配置**，只要有 daemon 在运行即可。在阶段一或阶段三（文件日志禁用时略有不同）。
+
+## 4.1 日志读取扩展
+
+### 4.1.1 `read-jsonl.sh`
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | bash 脚本能正确读取和格式化 JSONL 日志 |
+| **测试方法** | `bash /home/pilot/.projects/fsmon/extensions/examples/read-jsonl.sh` |
+| **预期结果** | 输出 `=== recent 5 events ===` 及最近事件摘要（如果日志路径下有文件）；若无日志文件则显示错误提示 |
+
+### 4.1.2 `read-jsonl.py`
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | Python 脚本能正确读取 JSONL 日志 |
+| **测试方法** | `python3 /home/pilot/.projects/fsmon/extensions/examples/read-jsonl.py` |
+| **预期结果** | 输出 `=== last 5 events ===` 及事件详情（含 time/event_type/cmd/path） |
+
+## 4.2 实时订阅扩展
+
+### 4.2.1 `subscribe.sh` (socat 模式)
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | bash subscribe 脚本通过 socket 接收事件流 |
+| **测试方法** | 终端A: `bash /home/pilot/.projects/fsmon/extensions/examples/subscribe.sh`<br/>终端B: `touch /tmp/fsmon_ext_test/sub_sh_test` |
+| **预期结果** | 终端A 先显示 `[subscribed] ok = true`，然后收到 touch 事件的 JSONL |
+
+### 4.2.2 `subscribe.py`
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | Python subscribe 脚本独立订阅 |
+| **测试方法** | 终端A: `python3 /home/pilot/.projects/fsmon/extensions/examples/subscribe.py \| jq '.'`<br/>终端B: `echo "py test" > /tmp/fsmon_ext_test/sub_py_test` |
+| **预期结果** | 终端A 输出 `[subscribed] ok = true`，然后收到事件的 JSON |
+
+### 4.2.3 subscribe 带 cmd 过滤
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | subscribe 时按 track_cmd 过滤事件 |
+| **测试方法** | `python3 -c "`<br/>`import socket, os;`<br/>`s = socket.socket(socket.AF_UNIX);`<br/>`s.connect('/tmp/fsmon-$(id -u).sock');`<br/>`s.sendall(b'cmd = \"subscribe\"\ntrack_cmd = \"touch\"\n\n');`<br/>`print(s.makefile().readline())" &`<br/>`PID=$!; sleep 0.5; touch /tmp/fsmon_ext_test/sub_cmd_test; sleep 0.5; kill $PID 2>/dev/null` |
+| **预期结果** | 收到的事件 cmd 均为 "touch"（或其他触发进程） |
+
+---
+
+# 阶段五：边界 & 异常场景
+
+> **可在任意阶段执行**
+
+## 5.1 并发文件操作
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 大量并发 touch 不丢事件 |
+| **测试方法** | `for i in $(seq 1 20); do touch "/tmp/fsmon_ext_test/conc_$i" & done; wait; sleep 1`<br/>`fsmon query _global -p /tmp/fsmon_ext_test \| jq -r '.path' \| grep "conc_" \| sort -u \| wc -l` |
+| **预期结果** | 输出 20（20 个唯一路径都有事件） |
+
+## 5.2 监视路径本身被删除 (DELETE_SELF)
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 监控目录被删除 → daemon 不崩溃 |
+| **测试方法** | `mkdir /tmp/fsmon_self && fsmon add _global --path /tmp/fsmon_self -r`<br/>`rmdir /tmp/fsmon_self`<br/>`fsmon health` |
+| **预期结果** | 捕获 DELETE_SELF 事件；health 正常返回 |
+
+## 5.3 SIGHUP 重载
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | SIGHUP 信号触发重新加载 monitored.jsonl |
+| **测试方法** | `sudo kill -HUP $(pgrep -f "fsmon daemon") && sleep 1`<br/>`grep reload_config /tmp/fsmon.log \| tail -3` |
+| **预期结果** | daemon 日志出现 `[DEBUG] reload_config`，不崩溃 |
+
+## 5.4 daemon 单例锁
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 第二个 daemon 实例被拒绝 |
+| **测试方法** | `sudo fsmon daemon --debug 2>&1 \| head -5` |
+| **预期结果** | 输出 `Another fsmon daemon is already running`，立即退出 |
+
+## 5.5 日志目录与监控路径冲突检测
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 不能监控日志目录自身 |
+| **测试方法** | 阶段二中: `fsmon add _global --path /tmp/fsmon_custom_logs -r` |
+| **预期结果** | 报错 `Cannot monitor ... log directory` |
+
+## 5.6 CLI 空参数错误处理
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 必填参数缺失时给出明确错误 |
+| **测试方法** | `fsmon query`（不带 CMD）<br/>`fsmon clean`（不带 CMD）<br/>`fsmon add --path /tmp/x`（不带 CMD） |
+| **预期结果** | 均有错误提示说明 CMD is required 及如何使用 `_global` |
+
+## 5.7 大日志文件查询
+
+| 项目 | 内容 |
+|------|------|
+| **测试内容** | 大日志文件 query 行数正确 |
+| **测试方法** | `wc -l ~/.local/state/fsmon/_global_log.jsonl`<br/>`fsmon query _global \| wc -l` |
+| **预期结果** | 两者行数一致（已有日志源文件行数 == query 输出行数） |
+
+---
+
+# 阶段六：恢复默认配置并清理
+
+```bash
+# 恢复默认 fsmon.toml
+cp ~/.config/fsmon/fsmon.toml ~/.config/fsmon/fsmon.toml.bak
+# 重新用 fsmon init 生成(或手动恢复注释版本)
+
+# 清理测试路径
+fsmon remove _global --path /tmp/fsmon_dyn_add
+fsmon remove _global --path /tmp/fsmon_pending
+fsmon remove _global --path /tmp/fsmon_type_filter
+fsmon remove _global --path /tmp/fsmon_size_filter
+fsmon remove _global --path /tmp/fsmon_multi
+fsmon remove _global --path /tmp/fsmon_self
 fsmon remove myapp
 fsmon remove testapp
 
 # 删除测试目录
-rm -rf /tmp/fsmon_ext_test
-rm -rf /tmp/fsmon_live_add /tmp/fsmon_pending_test /tmp/fsmon_nonexist_test
-rm -rf /tmp/fsmon_type_test /tmp/fsmon_size_test /tmp/fsmon_group_test
-rm -rf /tmp/fsmon_self_test
+rm -rf /tmp/fsmon_{dyn_add,pending,type_filter,size_filter,multi,self,group_test}
+rm -rf /tmp/fsmon_custom_logs /tmp/fsmon_test_custom.sock
 
-# 确认监控路径恢复初始状态
-fsmon monitored
+# 重启 daemon 恢复默认
+sudo pkill -f "fsmon daemon"
+sudo fsmon daemon --debug 2>&1 | tee /tmp/fsmon.log &
 ```
 
 ---
 
-## 执行顺序建议
+# 执行顺序总览
 
 ```
-一（CLI 基础） → 二（事件捕获） → 三（进程追踪）
-→ 四（动态路径管理） → 八（边界） → 五（订阅流）
-→ 六（extensions） → 七（日志验证） → 九（清理）
+阶段一（默认配置）─→ 阶段二（自定义日志+local_time+sync+disk）
+  → 阶段三（禁用日志+自定义cache+socket）→ 阶段四（extensions）
+  → 阶段五（边界场景）→ 阶段六（清理恢复）
 ```
 
-**注意**: 测试四（动态路径管理）和测试八（边界场景）会修改 daemon 的监控配置，建议在基础功能验证完成后执行。
+每个阶段间的「重启 daemon」是必要操作，因为日志路径、cache 配置、socket 路径在 daemon 启动时一次性加载。
