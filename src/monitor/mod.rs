@@ -30,7 +30,6 @@ use crate::proc_cache::{self, PID_TREE_CAP, PROC_CACHE_CAP, PidTree, ProcCache, 
 use crate::socket::{SocketCmd, SocketResp};
 use crate::utils::format_size;
 use crate::FileEvent;
-use crate::EventType;
 
 // ---- Submodules ----
 
@@ -693,18 +692,8 @@ impl Monitor {
                     self.patch_pending_events(&mut pending);
                     // 5. Send to broadcast
                     self.send_pending_events(&pending);
-                    // 6. On delete-type events: check for stale canonical paths
-                    //    (fanotify FAN_DELETE_SELF unreliable in FID mode) and
-                    //    retry pending paths in case deleted dirs were recreated.
-                    let has_delete = pending.iter().any(|pe| {
-                        matches!(
-                            pe.event.event_type,
-                            EventType::Delete | EventType::DeleteSelf | EventType::MovedFrom
-                        )
-                    });
-                    if has_delete {
-                        self.check_stale_canonical_paths();
-                    }
+                    // 6. Retry pending paths (inotify handles the primary
+                    //    delete→pending transition via DELETE_SELF).
                     self.check_pending();
                     if self.debug && self.cache_config.stats_interval_secs > 0
                         && last_cache_stats.elapsed() >= std::time::Duration::from_secs(self.cache_config.stats_interval_secs)
