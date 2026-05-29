@@ -46,11 +46,20 @@ import argparse
 import csv
 import io
 import json
+import logging
+import os
+import signal
 import socket
 import sys
-import logging
 import time
 from datetime import datetime, timezone
+
+_shutdown = False
+
+
+def _on_sigterm(signum, frame):
+    global _shutdown
+    _shutdown = True
 
 
 def subscribe(socket_path: str, track_cmd: str | None = None,
@@ -58,15 +67,20 @@ def subscribe(socket_path: str, track_cmd: str | None = None,
     """Yield fsmon events with auto-reconnect and error logging."""
     _log = logging.getLogger("fsmon.subscribe")
     delay = 1.0
-    while True:
+    while not _shutdown:
         try:
             yield from _subscribe_inner(socket_path, track_cmd, type_filter)
+            delay = 1.0
         except (ConnectionRefusedError, FileNotFoundError, BrokenPipeError,
                 ConnectionError, socket.timeout, OSError) as e:
+            if _shutdown:
+                return
             _log.warning("disconnected, reconnecting in %.0fs... (%s)", delay, e)
             time.sleep(delay)
             delay = min(delay * 2, 60)
         else:
+            if _shutdown:
+                return
             _log.warning("daemon closed connection, reconnecting in %.0fs...", delay)
             time.sleep(delay)
             delay = min(delay * 2, 60)
@@ -214,17 +228,42 @@ FORMATTERS = {
 }
 
 
+def _get_socket_path() -> str:
+    sudo_uid = os.environ.get("SUDO_UID")
+    uid = sudo_uid if sudo_uid else str(os.getuid())
+    return f"/tmp/fsmon-{uid}.sock"
+
+
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
     parser = argparse.ArgumentParser(description="fsmon -> custom format converter")
-    parser.add_argument("--socket", default="/tmp/fsmon-1000.sock")
+    parser.add_argument("--socket", default=None, help="fsmon daemon socket (auto-detected)")
     parser.add_argument("--track-cmd", help="Filter by cmd group")
     parser.add_argument("--types", help="Comma-separated event types")
     parser.add_argument("--format", default="human", choices=list(FORMATTERS.keys()), help="Output format")
     args = parser.parse_args()
 
+    socket_path = args.socket or _get_socket_path()
+    signal.signal(signal.SIGTERM, _on_sigterm)
+    logging.info("listening on %s -> format=%s", socket_path, args.format)
+    if args.track_cmd:
+        logging.info("  cmd filter: %s", args.track_cmd)
+    if args.types:
+        logging.info("  type filter: %s", args.types)
+
     fmt = FORMATTERS[args.format]
-    for ev in subscribe(args.socket, args.track_cmd, args.types):
-        print(fmt(ev), flush=True)
+    try:
+        for ev in subscribe(socket_path, args.track_cmd, args.types):
+            print(fmt(ev), flush=True)
+    except KeyboardInterrupt:
+        logging.info("stopped.")
+    except ConnectionError as e:
+        logging.error("%s", e)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -21,9 +21,17 @@ import argparse
 import json
 import logging
 import os
+import signal
 import socket
 import sys
 import time
+
+_shutdown = False
+
+
+def _on_sigterm(signum, frame):
+    global _shutdown
+    _shutdown = True
 
 # ── Socket path ─────────────────────────────────────────────────────
 
@@ -40,15 +48,20 @@ def subscribe(socket_path: str, track_cmd: str | None = None,
     """Yield fsmon events with auto-reconnect and error logging."""
     _log = logging.getLogger("fsmon.subscribe")
     delay = 1.0
-    while True:
+    while not _shutdown:
         try:
             yield from _subscribe_inner(socket_path, track_cmd, type_filter)
+            delay = 1.0
         except (ConnectionRefusedError, FileNotFoundError, BrokenPipeError,
                 ConnectionError, socket.timeout, OSError) as e:
+            if _shutdown:
+                return
             _log.warning("disconnected, reconnecting in %.0fs... (%s)", delay, e)
             time.sleep(delay)
             delay = min(delay * 2, 60)
         else:
+            if _shutdown:
+                return
             _log.warning("daemon closed connection, reconnecting in %.0fs...", delay)
             time.sleep(delay)
             delay = min(delay * 2, 60)
@@ -135,6 +148,7 @@ def main() -> None:
 
     socket_path = args.socket or get_socket_path()
     logging.info("fsmon-subscribe-demo starting on %s", socket_path)
+    signal.signal(signal.SIGTERM, _on_sigterm)
 
     try:
         for ev in subscribe(socket_path, args.track_cmd, args.types):

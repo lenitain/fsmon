@@ -24,12 +24,20 @@ Usage:
 
 import argparse
 import json
+import logging
 import os
+import signal
 import socket
 import sys
 import time
-import logging
 from datetime import datetime, timezone
+
+_shutdown = False
+
+
+def _on_sigterm(signum, frame):
+    global _shutdown
+    _shutdown = True
 
 try:
     import boto3
@@ -43,15 +51,20 @@ def subscribe(socket_path: str, track_cmd: str | None = None,
     """Yield fsmon events with auto-reconnect and error logging."""
     _log = logging.getLogger("fsmon.subscribe")
     delay = 1.0
-    while True:
+    while not _shutdown:
         try:
             yield from _subscribe_inner(socket_path, track_cmd, type_filter)
+            delay = 1.0
         except (ConnectionRefusedError, FileNotFoundError, BrokenPipeError,
                 ConnectionError, socket.timeout, OSError) as e:
+            if _shutdown:
+                return
             _log.warning("disconnected, reconnecting in %.0fs... (%s)", delay, e)
             time.sleep(delay)
             delay = min(delay * 2, 60)
         else:
+            if _shutdown:
+                return
             _log.warning("daemon closed connection, reconnecting in %.0fs...", delay)
             time.sleep(delay)
             delay = min(delay * 2, 60)
@@ -168,6 +181,7 @@ def main():
     s3 = boto3.client("s3")
     prefix = args.prefix.rstrip("/") + "/"
     logging.info("listening on %s -> S3 s3://%s/%s", socket_path, args.bucket, prefix)
+    signal.signal(signal.SIGTERM, _on_sigterm)
     if args.track_cmd:
         logging.info("  cmd filter: %s", args.track_cmd)
     if args.types:
