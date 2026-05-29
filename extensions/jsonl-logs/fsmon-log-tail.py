@@ -20,11 +20,11 @@ No external dependencies (stdlib only).
 
 ── Quick Start ─────────────────────────────────────────────────────
   # Prerequisites: install fsmon (https://github.com/xxx/fsmon)
-  # Daemon running and logging
-  sudo fsmon daemon --log-dir /var/log/fsmon
+  # Daemon running and logging (default: ~/.local/state/fsmon/)
+  sudo fsmon daemon
 
   # Tail all log files (like tail -f *.jsonl)
-  uv run extensions/jsonl-logs/fsmon-log-tail.py --log-dir <LOG_DIR>
+  uv run extensions/jsonl-logs/fsmon-log-tail.py --log-dir ~/.local/state/fsmon
 
   # Only show DELETE events
   uv run extensions/jsonl-logs/fsmon-log-tail.py --log-dir <LOG_DIR> --type DELETE
@@ -283,7 +283,7 @@ Examples:
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--log-dir", default="/var/log/fsmon",
+    parser.add_argument("--log-dir", default=os.path.expanduser("~/.local/state/fsmon"),
                         help="Directory containing *_log.jsonl files")
     parser.add_argument("--cmd", help="Filter by command group name (e.g. nginx)")
     parser.add_argument("--type", dest="event_type", help="Filter by event type (e.g. DELETE)")
