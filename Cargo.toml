@@ -12,7 +12,6 @@ categories = ["filesystem", "command-line-utilities"]
 authors = ["lenitain <xt.zhu@qq.com>"]
 
 include = [
-
     "Cargo.toml",
     "LICENSE",
     "README.md",
