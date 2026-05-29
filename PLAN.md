@@ -60,25 +60,6 @@ stdlib-only 脚本（metrics, log-tail, admin, subscribe-demo, webhook, custom-f
 # ///
 ```
 
-### 用户使用方式
-
-```bash
-# stdlib 脚本 —— 直接运行
-uv run extensions/subscribe-stream/fsmon-subscribe-demo.py
-
-# Kafka bridge —— uv 自动创建 venv + 安装 kafka-python
-uv run extensions/subscribe-stream/fsmon-kafka.py --broker localhost:9092
-
-# 或赋予执行权限后直接 ./script.py（shebang 包含 uv run）
-chmod +x extensions/subscribe-stream/fsmon-kafka.py
-./extensions/subscribe-stream/fsmon-kafka.py --broker localhost:9092
-
-# 复制到其他项目也照常工作
-cp extensions/subscribe-stream/fsmon-kafka.py /other/project/
-cd /other/project
-uv run fsmon-kafka.py --broker localhost:9092
-```
-
 ### 需新增/修改
 
 | 文件 | 操作 | 说明 |
