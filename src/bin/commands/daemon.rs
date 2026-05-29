@@ -55,9 +55,8 @@ pub async fn cmd_daemon(
     set_socket_permissions(&socket_path)?;
 
     // Chown store parent dir to the original user (daemon runs as root)
-    let (uid, gid) = fsmon::config::resolve_uid_gid();
     if let Some(parent) = cfg.monitored.path.parent() {
-        chown_path(parent, uid, gid);
+        fsmon::config::chown_to_original_user(parent);
     }
 
     // Merge cache config: CLI > fsmon.toml > code defaults
@@ -148,17 +147,6 @@ pub async fn cmd_daemon(
 
     monitor.run().await?;
     Ok(())
-}
-
-/// Chown a path to the given uid:gid (daemon runs as root, needs to give files back to the user).
-pub fn chown_path(path: &Path, uid: u32, gid: u32) {
-    if let Ok(cpath) = std::ffi::CString::new(path.to_string_lossy().as_bytes()) {
-        let _ = nix::unistd::chown(
-            cpath.as_c_str(),
-            Some(nix::unistd::Uid::from_raw(uid)),
-            Some(nix::unistd::Gid::from_raw(gid)),
-        );
-    }
 }
 
 /// Set socket permissions to 0666 so non-root users can communicate with the daemon.

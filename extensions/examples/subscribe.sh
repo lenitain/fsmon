@@ -1,12 +1,39 @@
 #!/usr/bin/env bash
-# Connect to fsmon socket and filter events
+# Subscribe to fsmon daemon event stream.
+#
+# Protocol: send TOML → receive TOML OK → stream JSONL events.
+# Pipe to jq for filtering.
 set -euo pipefail
 
 SOCKET="/tmp/fsmon-$(id -u).sock"
 [ -S "$SOCKET" ] || { echo "daemon not running? missing $SOCKET" >&2; exit 1; }
 
-echo "=== all events (first 5) ==="
-nc -U "$SOCKET" | head -5
+# Method 1: if socat is available (recommended)
+if command -v socat &>/dev/null; then
+    echo 'cmd = "subscribe"' | socat - "UNIX-CONNECT:$SOCKET" | {
+        read -r ok_line
+        echo "[subscribed] $ok_line" >&2
+        jq --unbuffered '.'
+    }
+    exit 0
+fi
 
-echo "=== nginx CREATE events only ==="
-nc -U "$SOCKET" | jq --unbuffered 'select(.cmd == "nginx" and .event_type == "CREATE")'
+# Method 2: fallback — embedded python helper (same as subscribe.py)
+python3 -c '
+import os, socket, sys
+sock = socket.socket(socket.AF_UNIX)
+sock.connect(sys.argv[1])
+sock.sendall(b"cmd = \"subscribe\"\n\n")
+resp = b""
+while True:
+    c = sock.recv(1)
+    if c == b"\n": break
+    resp += c
+import json
+print(f"[subscribed] {resp.decode().strip()}", file=sys.stderr)
+for line in sock.makefile("r"):
+    try:
+        print(json.dumps(json.loads(line)))
+    except json.JSONDecodeError:
+        print(line.rstrip())
+' "$SOCKET" | jq --unbuffered '.'

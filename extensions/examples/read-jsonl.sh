@@ -1,14 +1,25 @@
 #!/usr/bin/env bash
-# fsmon JSONL 文件读取示例
-# 查看文件事件的两种方式：tail 实时流 + jq 过滤
+# fsmon JSONL log file query examples
+# Uses standard tools: tail, jq
 set -euo pipefail
 
 LOGDIR="${XDG_STATE_HOME:-$HOME/.local/state}/fsmon"
 
-echo "=== 查看最近 5 条事件 ==="
-jq -s '.[-5:]' "$LOGDIR"/*_log.jsonl
+if [ ! -d "$LOGDIR" ]; then
+    echo "log directory not found: $LOGDIR" >&2
+    echo "Tip: start the daemon first: sudo fsmon daemon &" >&2
+    exit 1
+fi
+
+echo "=== recent 5 events (last line of each log) ==="
+for f in "$LOGDIR"/*_log.jsonl; do
+    [ -f "$f" ] || continue
+    name=$(basename "$f")
+    echo "  [$name]"
+    tail -1 "$f" | jq -r '"    \(.time)  \(.event_type)  \(.path)"'
+done
 
 echo
-echo "=== 实时 tail（类似 tail -f） ==="
-echo "按 Ctrl+C 退出"
-tail -n0 -f "$LOGDIR"/*_log.jsonl | jq --unbuffered 'select(.cmd == "nginx")'
+echo "=== real-time tail (nginx only) ==="
+echo "  tail -f \"$LOGDIR\"/nginx_log.jsonl | jq --unbuffered '.'  # Ctrl+C to stop"
+echo "  # or use: fsmon query nginx -t '>1h'"
