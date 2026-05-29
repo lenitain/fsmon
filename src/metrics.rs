@@ -16,8 +16,6 @@ use std::sync::{Arc, RwLock};
 #[derive(Clone)]
 pub struct CounterVec {
     inner: Arc<RwLock<CounterVecInner>>,
-    name: Arc<String>,
-    help: Arc<String>,
 }
 
 struct CounterVecInner {
@@ -25,13 +23,11 @@ struct CounterVecInner {
 }
 
 impl CounterVec {
-    pub fn new(name: &str, help: &str) -> Self {
+    pub fn new() -> Self {
         Self {
             inner: Arc::new(RwLock::new(CounterVecInner {
                 counters: HashMap::new(),
             })),
-            name: Arc::new(name.to_string()),
-            help: Arc::new(help.to_string()),
         }
     }
 
@@ -68,15 +64,6 @@ impl CounterVec {
         }
         result
     }
-
-    /// Prometheus metric name.
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn help(&self) -> &str {
-        &self.help
-    }
 }
 
 // ── IntGauge ────────────────────────────────────────────────────────
@@ -85,16 +72,12 @@ impl CounterVec {
 #[derive(Clone)]
 pub struct IntGauge {
     value: Arc<AtomicI64>,
-    name: Arc<String>,
-    help: Arc<String>,
 }
 
 impl IntGauge {
-    pub fn new(name: &str, help: &str) -> Self {
+    pub fn new() -> Self {
         Self {
             value: Arc::new(AtomicI64::new(0)),
-            name: Arc::new(name.to_string()),
-            help: Arc::new(help.to_string()),
         }
     }
 
@@ -112,14 +95,6 @@ impl IntGauge {
 
     pub fn get(&self) -> i64 {
         self.value.load(Ordering::Relaxed)
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn help(&self) -> &str {
-        &self.help
     }
 }
 
@@ -146,30 +121,12 @@ impl Default for MetricsRegistry {
 impl MetricsRegistry {
     pub fn new() -> Self {
         Self {
-            events_total: CounterVec::new(
-                "fsmon_events_total",
-                "Total file system events processed by fsmon",
-            ),
-            subscribers: IntGauge::new(
-                "fsmon_subscribers",
-                "Current number of active subscribe connections",
-            ),
-            monitored_paths: IntGauge::new(
-                "fsmon_monitored_paths",
-                "Current number of monitored path entries",
-            ),
-            reader_groups: IntGauge::new(
-                "fsmon_reader_groups",
-                "Current number of fanotify fd groups",
-            ),
-            pending_paths: IntGauge::new(
-                "fsmon_pending_paths",
-                "Current number of paths pending creation",
-            ),
-            disk_buffer_events: IntGauge::new(
-                "fsmon_disk_buffer_events",
-                "Current number of buffered events (disk full)",
-            ),
+            events_total: CounterVec::new(),
+            subscribers: IntGauge::new(),
+            monitored_paths: IntGauge::new(),
+            reader_groups: IntGauge::new(),
+            pending_paths: IntGauge::new(),
+            disk_buffer_events: IntGauge::new(),
         }
     }
 
@@ -217,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_counter_vec_inc() {
-        let cv = CounterVec::new("test_total", "Test counter");
+        let cv = CounterVec::new();
         cv.inc(&["CREATE", "nginx"]);
         cv.inc(&["CREATE", "nginx"]);
         cv.inc(&["MODIFY", "global"]);
@@ -238,7 +195,7 @@ mod tests {
     #[test]
     fn test_counter_vec_concurrent() {
         use std::thread;
-        let cv = CounterVec::new("test_total", "Test counter");
+        let cv = CounterVec::new();
         let cv2 = cv.clone();
         let h = thread::spawn(move || {
             for _ in 0..1000 {
@@ -259,7 +216,7 @@ mod tests {
 
     #[test]
     fn test_int_gauge() {
-        let g = IntGauge::new("test_gauge", "Test gauge");
+        let g = IntGauge::new();
         assert_eq!(g.get(), 0);
         g.inc();
         assert_eq!(g.get(), 1);

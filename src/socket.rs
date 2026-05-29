@@ -7,8 +7,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
-use tokio::net::UnixListener;
 
 use crate::monitored::PathEntry;
 
@@ -155,83 +153,6 @@ pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResp> {
     let resp: SocketResp =
         toml::from_str(response.trim()).with_context(|| "Failed to parse daemon response")?;
     Ok(resp)
-}
-
-/// Read a complete TOML message (separated by blank line) from an async buffered reader.
-async fn read_toml_message(
-    reader: &mut AsyncBufReader<tokio::net::unix::OwnedReadHalf>,
-) -> Result<String> {
-    let mut message = String::new();
-    loop {
-        let mut line = String::new();
-        let bytes = reader.read_line(&mut line).await?;
-        if bytes == 0 {
-            break; // EOF
-        }
-        if line.trim().is_empty() && !message.is_empty() {
-            break; // blank line ends the message
-        }
-        message.push_str(&line);
-    }
-    Ok(message)
-}
-
-/// Listen for client connections on a unix socket, parse commands,
-/// call handler for each, and send back responses.
-pub async fn listen(
-    socket_path: &Path,
-    handler: impl Fn(SocketCmd) -> Result<SocketResp>,
-) -> Result<()> {
-    if socket_path.exists() {
-        std::fs::remove_file(socket_path).with_context(|| {
-            format!("Failed to remove existing socket {}", socket_path.display())
-        })?;
-    }
-
-    let listener = UnixListener::bind(socket_path)
-        .with_context(|| format!("Failed to bind socket at {}", socket_path.display()))?;
-
-    loop {
-        match listener.accept().await {
-            Ok((stream, _addr)) => {
-                let (reader, mut writer) = stream.into_split();
-                let mut buf_reader = AsyncBufReader::new(reader);
-
-                match read_toml_message(&mut buf_reader).await {
-                    Ok(message) if message.trim().is_empty() => continue,
-                    Ok(message) => {
-                        let resp = match toml::from_str::<SocketCmd>(message.trim()) {
-                            Ok(cmd) => match handler(cmd) {
-                                Ok(resp) => resp,
-                                Err(e) => SocketResp::err(e.to_string()),
-                            },
-                            Err(e) => SocketResp::err(format!("Invalid command: {e}")),
-                        };
-
-                        let resp_toml = match toml::to_string(&resp) {
-                            Ok(t) => t,
-                            Err(e) => {
-                                eprintln!("Failed to serialize response: {e}");
-                                continue;
-                            }
-                        };
-
-                        // Write TOML response followed by blank line delimiter
-                        let resp_bytes = format!("{resp_toml}\n");
-                        if let Err(e) = writer.write_all(resp_bytes.as_bytes()).await {
-                            eprintln!("Failed to write response: {e}");
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to read from socket: {e}");
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("Failed to accept connection: {e}");
-            }
-        }
-    }
 }
 
 #[cfg(test)]

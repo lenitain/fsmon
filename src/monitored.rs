@@ -67,15 +67,7 @@ pub struct PathEntry {
     pub size: Option<String>,
 }
 
-impl PathParams {
-    pub fn new(recursive: Option<bool>, types: Option<Vec<String>>, size: Option<String>) -> Self {
-        PathParams {
-            recursive,
-            types,
-            size,
-        }
-    }
-}
+impl PathParams {}
 
 impl From<&PathEntry> for PathParams {
     fn from(e: &PathEntry) -> Self {
@@ -450,7 +442,7 @@ mod tests {
                         let mut m = BTreeMap::new();
                         m.insert(
                             PathBuf::from("/tmp"),
-                            PathParams::new(Some(true), None, None),
+                            PathParams { recursive: Some(true), types: None, size: None },
                         );
                         m
                     },
@@ -468,7 +460,7 @@ mod tests {
                 cmd: CMD_GLOBAL.into(),
                 paths: {
                     let mut m = BTreeMap::new();
-                    m.insert(PathBuf::from("/a"), PathParams::new(None, None, None));
+                    m.insert(PathBuf::from("/a"), PathParams { recursive: None, types: None, size: None });
                     m
                 },
             }],
