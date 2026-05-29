@@ -2,7 +2,6 @@ use anyhow::{Result, bail};
 use fsmon::config::Config;
 use fsmon::monitored::{CMD_GLOBAL, Monitored, PathEntry};
 use fsmon::socket::{self, SocketCmd};
-use path_clean::PathClean;
 use std::path::PathBuf;
 
 use crate::AddArgs;
@@ -43,29 +42,11 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             bail!("Invalid path: contains null byte");
         }
 
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-        let expanded = fsmon::config::expand_tilde(raw_path, &home);
-        let cleaned = expanded.clean();
-
-        let resolved = match cleaned.canonicalize() {
-            Ok(c) => c,
-            Err(_) => {
-                if cleaned.components().count() == 0 {
-                    bail!(
-                        "Invalid path (empty after normalization): {}",
-                        raw_path.display()
-                    );
-                }
-                // Resolve relative paths against current directory
-                let abs = if cleaned.is_relative() {
-                    std::env::current_dir()?.join(&cleaned)
-                } else {
-                    cleaned.clone()
-                };
-                eprintln!("[Note] path does not exist yet — will start monitoring when created.");
-                abs
-            }
-        };
+        let resolved = super::resolve_path_arg(raw_path);
+        let exists = resolved.exists();
+        if !exists {
+            eprintln!("[Note] path does not exist yet — will start monitoring when created.");
+        }
 
         if let Some(ref log_path) = cfg.logging.path {
             let log_dir_canon = log_path

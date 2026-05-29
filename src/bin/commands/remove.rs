@@ -8,10 +8,10 @@ pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
 
-    // Resolve relative paths to absolute (mirrors add behavior)
+    // Resolve relative paths to absolute (shared helper)
     let paths: Vec<PathBuf> = paths
         .into_iter()
-        .map(|p| fsmon::filters::resolve_recursion_check(&p))
+        .map(|p| super::resolve_path_arg(&p))
         .collect();
 
     let mut store = Monitored::load(&cfg.monitored.path)?;

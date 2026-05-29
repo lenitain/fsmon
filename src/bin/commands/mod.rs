@@ -127,3 +127,25 @@ pub fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
         cmd,
     })
 }
+
+/// Resolve a user-provided path to absolute.
+/// Tilde expansion → path clean → canonicalize if exists,
+/// otherwise join relative paths with cwd.
+pub fn resolve_path_arg(raw: &std::path::Path) -> std::path::PathBuf {
+    use path_clean::PathClean;
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+    let expanded = fsmon::config::expand_tilde(raw, &home);
+    let cleaned = expanded.clean();
+    match cleaned.canonicalize() {
+        Ok(c) => c,
+        Err(_) => {
+            if cleaned.is_relative() {
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(&cleaned))
+                    .unwrap_or(cleaned)
+            } else {
+                cleaned
+            }
+        }
+    }
+}
