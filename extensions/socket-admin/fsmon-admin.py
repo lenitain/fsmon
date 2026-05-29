@@ -79,7 +79,10 @@ import json
 import os
 import socket
 import sys
-from typing import Optional
+
+
+class FsmonError(Exception):
+    """Connection or protocol error with fsmon daemon."""
 
 
 # ── Socket helpers ──────────────────────────────────────────────────
@@ -97,11 +100,13 @@ def get_socket_path() -> str:
     return f"/tmp/fsmon-{uid}.sock"
 
 
-def send_cmd(cmd_dict: dict, socket_path: str = None) -> dict:
+def send_cmd(cmd_dict: dict, socket_path: str | None = None) -> dict:
     """Send a TOML command to the daemon and return the parsed response.
-    
-    Returns a dict with at least {"ok": bool}. On error, prints to stderr
-    and exits.
+
+    Returns a dict with at least {"ok": bool}.
+
+    Raises:
+        FsmonError: connection failed, timeout, or empty response.
     """
     if socket_path is None:
         socket_path = get_socket_path()
@@ -129,22 +134,17 @@ def send_cmd(cmd_dict: dict, socket_path: str = None) -> dict:
         s.connect(socket_path)
         s.sendall(payload.encode())
     except FileNotFoundError:
-        print(
-            f"Error: socket not found at {socket_path}\n"
-            f"Is the daemon running? Start with: sudo fsmon daemon",
-            file=sys.stderr,
+        raise FsmonError(
+            f"socket not found: {socket_path}\n"
+            f"Is the daemon running? Start with: sudo fsmon daemon"
         )
-        sys.exit(1)
     except ConnectionRefusedError:
-        print(
-            f"Error: connection refused at {socket_path}\n"
-            f"The daemon may have stopped. Restart with: sudo fsmon daemon",
-            file=sys.stderr,
+        raise FsmonError(
+            f"connection refused: {socket_path}\n"
+            f"The daemon may have stopped. Restart with: sudo fsmon daemon"
         )
-        sys.exit(1)
     except socket.timeout:
-        print("Error: connection timed out", file=sys.stderr)
-        sys.exit(1)
+        raise FsmonError(f"connection timed out: {socket_path}")
 
     # Read response
     reader = s.makefile("r")
@@ -152,8 +152,7 @@ def send_cmd(cmd_dict: dict, socket_path: str = None) -> dict:
     s.close()
 
     if not response.strip():
-        print("Error: empty response from daemon", file=sys.stderr)
-        sys.exit(1)
+        raise FsmonError("empty response from daemon")
 
     # Parse TOML response manually for zero-dependency operation
     result = _parse_toml_response(response)
@@ -409,7 +408,13 @@ Examples:
         "remove": cmd_remove,
         "health": cmd_health,
     }
-    commands[args.command](args)
+    try:
+        commands[args.command](args)
+    except FsmonError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)
 
 
 if __name__ == "__main__":

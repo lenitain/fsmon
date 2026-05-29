@@ -53,6 +53,7 @@ No external dependencies (stdlib only).
 
 import argparse
 import json
+import logging
 import os
 import re
 import sys
@@ -63,11 +64,14 @@ from datetime import datetime, timezone, timedelta
 
 # ── File discovery ──────────────────────────────────────────────────
 
+class FsmonLogError(Exception):
+    """Error reading fsmon log files."""
+
+
 def find_log_files(log_dir: str, cmd_filter: str = None) -> list:
     """Find all *_log.jsonl files in log_dir, optionally filtered by cmd name."""
     if not os.path.isdir(log_dir):
-        print(f"Error: log directory not found: {log_dir}", file=sys.stderr)
-        sys.exit(1)
+        raise FsmonLogError(f"log directory not found: {log_dir}")
 
     files = sorted(
         os.path.join(log_dir, f)
@@ -79,8 +83,7 @@ def find_log_files(log_dir: str, cmd_filter: str = None) -> list:
         files = [f for f in files if os.path.basename(f) == target]
 
     if not files:
-        print(f"No *_log.jsonl files found in {log_dir}", file=sys.stderr)
-        sys.exit(1)
+        raise FsmonLogError(f"No *_log.jsonl files found in {log_dir}")
     return files
 
 
@@ -124,9 +127,8 @@ def read_events(files: list, type_filter: str = None, since: datetime = None):
                     try:
                         ev = json.loads(line)
                     except json.JSONDecodeError:
+                        logging.warning("JSON decode error: %.120s", line)
                         continue
-
-                    # Time filter
                     if since:
                         ev_time = parse_event_time(ev)
                         if ev_time < since:
@@ -156,6 +158,7 @@ def tail_events(log_dir: str, cmd_filter: str = None, type_filter: str = None):
                 try:
                     ev = json.loads(line)
                 except json.JSONDecodeError:
+                    logging.warning("JSON decode error: %.120s", line)
                     continue
                 if type_filter and ev.get("event_type") != type_filter:
                     continue
@@ -182,6 +185,7 @@ def tail_events(log_dir: str, cmd_filter: str = None, type_filter: str = None):
                             try:
                                 ev = json.loads(line)
                             except json.JSONDecodeError:
+                                logging.warning("JSON decode error: %.120s", line)
                                 continue
                             if type_filter and ev.get("event_type") != type_filter:
                                 continue
@@ -260,6 +264,11 @@ def aggregate_events(files: list, since: datetime = None):
 # ── Main ────────────────────────────────────────────────────────────
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
     parser = argparse.ArgumentParser(
         description="fsmon log file reader — read and analyze JSONL event logs",
         epilog="""
@@ -291,12 +300,20 @@ Examples:
         since = datetime.now(timezone.utc) - parse_duration(args.last)
 
     if args.aggregate:
-        files = find_log_files(args.log_dir, args.cmd)
+        try:
+            files = find_log_files(args.log_dir, args.cmd)
+        except FsmonLogError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
         aggregate_events(files, since)
         return
 
     if args.no_follow:
-        files = find_log_files(args.log_dir, args.cmd)
+        try:
+            files = find_log_files(args.log_dir, args.cmd)
+        except FsmonLogError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
         for ev in read_events(files, args.event_type, since):
             print(format_event(ev))
             if args.show_chain:
@@ -318,6 +335,9 @@ Examples:
                 chain = format_chain(ev)
                 if chain:
                     print(chain)
+    except FsmonLogError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
     except KeyboardInterrupt:
         print("\nStopped.")
 
