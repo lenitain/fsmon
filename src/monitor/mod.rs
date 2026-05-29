@@ -408,13 +408,10 @@ impl Monitor {
 
             let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
             let recursive = opts.is_some_and(|o| o.recursive) && canonical.is_dir();
-            let is_fs_mark = match self.add_mark_fs_upward(&new_fd, path_mask, canonical, recursive) {
-                Some(v) => v,
-                None => {
-                    drop(new_fd);
-                    continue;
-                }
-            };
+            if self.add_mark_fs_upward(&new_fd, path_mask, canonical, recursive).is_none() {
+                drop(new_fd);
+                continue;
+            }
 
             // Open directory fd for open_by_handle_at
             let mount_fd = match Self::open_dir(canonical) {
@@ -433,7 +430,7 @@ impl Monitor {
             let gi = self.fs_groups.len();
             self.fs_groups.push(FsGroup {
                 dev_id,
-                is_fs_mark,
+                is_fs_mark: false, // always inode-based; watchdog fs mark is separate
                 fan_fd: new_fd,
                 mount_fd,
                 ref_count: 1,

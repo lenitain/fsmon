@@ -245,10 +245,9 @@ impl Monitor {
                 )
             })?;
 
-            let is_fs_mark = match self.add_mark_fs_upward(&new_fd, path_mask, &canonical, recursive) {
-                Some(v) => v,
-                None => bail!("Failed to mark {}: both filesystem and inode marks failed", canonical.display()),
-            };
+            if self.add_mark_fs_upward(&new_fd, path_mask, &canonical, recursive).is_none() {
+                bail!("Failed to mark {}: inode mark failed", canonical.display());
+            }
 
             // Open directory fd for handle resolution
             let mount_fd = Self::open_dir(&canonical)?;
@@ -256,7 +255,7 @@ impl Monitor {
             let idx = self.fs_groups.len();
             self.fs_groups.push(FsGroup {
                 dev_id,
-                is_fs_mark,
+                is_fs_mark: false, // always inode-based; watchdog fs mark is separate
                 fan_fd: new_fd,
                 mount_fd,
                 ref_count: 1,
@@ -288,10 +287,10 @@ impl Monitor {
         Ok(())
     }
 
-    /// Try adding a filesystem mark, walking up the directory tree until
-    /// one succeeds.  Falls back to an inode mark if no filesystem mark works.
-    /// Returns `Some(true)` for fs mark, `Some(false)` for inode mark,
-    /// `None` if both failed.
+    /// Set up primary (inode) monitoring and a lightweight watchdog filesystem
+    /// mark for self-deletion detection.
+    /// Returns `Some(true)` if a watchdog fs mark was added, `Some(false)` if
+    /// only the inode mark is active, `None` if even the inode mark failed.
     pub(crate) fn add_mark_fs_upward(
         &self,
         new_fd: &OwnedFd,
@@ -299,32 +298,55 @@ impl Monitor {
         canonical: &std::path::Path,
         recursive: bool,
     ) -> Option<bool> {
-        use fanotify_fid::consts::{FAN_MARK_ADD, FAN_MARK_FILESYSTEM, AT_FDCWD};
+        use fanotify_fid::consts::{AT_FDCWD, FAN_DELETE, FAN_MARK_ADD, FAN_MARK_FILESYSTEM, FAN_MOVED_FROM};
         use fanotify_fid::prelude::fanotify_mark;
 
-        // Strategy: try / first (broadest), then walk up from the monitored path.
+        // 1. Always add inode mark — this is the primary monitoring.
+        match mark_directory(new_fd, path_mask, canonical) {
+            Ok(()) => {
+                eprintln!(
+                    "[INFO] Monitoring {} (inode mark) on fd {}",
+                    canonical.display(),
+                    new_fd.as_raw_fd()
+                );
+                if recursive && canonical.is_dir() {
+                    mark_recursive(new_fd, path_mask, canonical);
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "[WARNING] Cannot monitor {} (inode mark): {:#}",
+                    canonical.display(),
+                    e
+                );
+                return None;
+            }
+        }
+
+        // 2. Try a lightweight watchdog filesystem mark (DELETE-only) for
+        //    self-deletion detection.  Start at / then walk up from the path.
+        let watchdog_mask = FAN_DELETE | FAN_MOVED_FROM;
         let mut try_path = std::path::PathBuf::from("/");
         let mut phase = 0; // 0 = /, 1 = walk up from canonical
         loop {
             match fanotify_mark(
                 new_fd,
                 FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
-                path_mask,
+                watchdog_mask,
                 AT_FDCWD,
                 &try_path,
             ) {
                 Ok(()) => {
                     eprintln!(
-                        "[INFO] Monitoring {} (fs mark at {}) on fd {}",
-                        canonical.display(),
+                        "[INFO] Watchdog fs mark at {} for {} (fd {})",
                         try_path.display(),
+                        canonical.display(),
                         new_fd.as_raw_fd()
                     );
                     return Some(true);
                 }
                 Err(FanotifyError::Mark(code)) if code == libc::EXDEV => {
                     if phase == 0 {
-                        // / failed, start walking up from the monitored path
                         phase = 1;
                         try_path = canonical.to_path_buf();
                         continue;
@@ -337,28 +359,13 @@ impl Monitor {
             }
         }
 
-        // Filesystem mark failed at all levels — fall back to inode mark.
-        match mark_directory(new_fd, path_mask, canonical) {
-            Ok(()) => {
-                eprintln!(
-                    "[INFO] Monitoring {} (inode mark) on fd {}",
-                    canonical.display(),
-                    new_fd.as_raw_fd()
-                );
-                if recursive && canonical.is_dir() {
-                    mark_recursive(new_fd, path_mask, canonical);
-                }
-                Some(false)
-            }
-            Err(e) => {
-                eprintln!(
-                    "[WARNING] Cannot monitor {} (inode mark): {:#}",
-                    canonical.display(),
-                    e
-                );
-                None
-            }
+        if self.debug {
+            eprintln!(
+                "[DEBUG] No watchdog fs mark for {} (will rely on inotify)",
+                canonical.display()
+            );
         }
+        Some(false)
     }
 
     pub fn remove_path(&mut self, path: &Path, cmd: Option<&str>) -> anyhow::Result<()> {
