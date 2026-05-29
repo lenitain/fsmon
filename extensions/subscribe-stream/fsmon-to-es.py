@@ -14,10 +14,10 @@ Dependency:
   pip install elasticsearch
 
 Usage:
-  python3 extensions/subscribe-stream/fsmon-to-es.py --host localhost:9200 --index fsmon-events
+  uv run extensions/subscribe-stream/fsmon-to-es.py --host localhost:9200 --index fsmon-events
 
   # With authentication
-  python3 extensions/subscribe-stream/fsmon-to-es.py --host https://es.example.com:9200 --user admin --pass secret
+  uv run extensions/subscribe-stream/fsmon-to-es.py --host https://es.example.com:9200 --user admin --pass secret
 """
 
 import argparse
@@ -134,22 +134,11 @@ def _dict_to_toml(d: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def to_es_doc(ev: dict) -> dict:
-    """Convert fsmon event to ES document with timestamp index."""
+def to_es_doc(ev: dict[str, Any]) -> dict[str, Any]:
+    """Convert fsmon event to ES document with all fields preserved."""
     return {
         "_index": None,  # set by caller
-        "_source": {
-            "time": ev["time"],
-            "event_type": ev["event_type"],
-            "path": ev["path"],
-            "pid": ev.get("pid"),
-            "cmd": ev.get("cmd", ""),
-            "user": ev.get("user", ""),
-            "file_size": ev.get("file_size", 0),
-            "ppid": ev.get("ppid"),
-            "tgid": ev.get("tgid"),
-            "chain": ev.get("chain", ""),
-        }
+        "_source": {k: v for k, v in ev.items()},
     }
 
 
@@ -191,6 +180,8 @@ def main() -> None:
     parser.add_argument("--user", help="ES username")
     parser.add_argument("--pass", dest="pwd", help="ES password")
     parser.add_argument("--index", default="fsmon-events", help="ES index name (date-rolled)")
+    parser.add_argument("--index-granularity", default="daily", choices=["daily", "hourly"],
+                        help="Index rotation granularity")
     parser.add_argument("--flush-secs", type=int, default=5, help="Bulk flush interval")
     parser.add_argument("--flush-count", type=int, default=1000, help="Bulk flush count")
     parser.add_argument("--dlq-dir", default=None,
@@ -265,7 +256,8 @@ def main() -> None:
                 ts = datetime.fromisoformat(ev["time"])
             except (ValueError, KeyError):
                 ts = datetime.now(timezone.utc)
-            idx = f"{args.index}-{ts:%Y.%m.%d}"
+            idx = f"{args.index}-{ts:%Y.%m.%d}" if args.index_granularity == "daily" \
+                else f"{args.index}-{ts:%Y.%m.%d.%H}"
             doc = to_es_doc(ev)
             doc["_index"] = idx
             doc["_id"] = f"{ts.timestamp()}-{ev.get('pid', 0)}-{hash(ev.get('path', ''))}"

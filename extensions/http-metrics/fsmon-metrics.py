@@ -14,17 +14,18 @@ Both return the same Prometheus text format. The socket layer is always
 available; the TCP layer requires --metrics-listen at daemon startup.
 
 ── Quick Start ─────────────────────────────────────────────────────
-  # Prerequisites: start daemon with TCP metrics endpoint
+  # Prerequisites: install fsmon (https://github.com/xxx/fsmon)
+  # Start daemon with TCP metrics endpoint
   sudo fsmon daemon --metrics-listen 127.0.0.1:9845
 
   # Pull metrics once via socket (always available, no --metrics-listen needed)
-  python3 extensions/http-metrics/fsmon-metrics.py
+  uv run extensions/http-metrics/fsmon-metrics.py
 
   # Human-readable summary
-  python3 extensions/http-metrics/fsmon-metrics.py --summary
+  uv run extensions/http-metrics/fsmon-metrics.py --summary
 
   # Watch mode: pull every 15s (like a lightweight Prometheus scraper)
-  python3 extensions/http-metrics/fsmon-metrics.py --watch 15
+  uv run extensions/http-metrics/fsmon-metrics.py --watch 15
 
   # Or point Prometheus directly at the TCP endpoint:
   # See prometheus.yml in this directory for scrape config.
@@ -94,6 +95,9 @@ def parse_summary(text: str) -> dict:
     return info
 
 
+_GAUGE_KEYS = {"subscribers", "monitored_paths", "reader_groups", "pending_paths", "disk_buf"}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Pull fsmon metrics via Unix socket")
     parser.add_argument("--socket", default=None, help="Socket path (auto-detected)")
@@ -112,7 +116,7 @@ def main() -> None:
 
             if args.summary:
                 info = parse_summary(text)
-                total = sum(v for k, v in info.items() if isinstance(v, int) and k.startswith(("CREATE", "MODIFY", "DELETE", "ACCESS", "OPEN", "CLOSE", "MOVE", "ATTRIB", "FS_ERROR")))
+                total = sum(v for k, v in info.items() if isinstance(v, int) and k not in _GAUGE_KEYS)
                 print(f"\n[{time.strftime('%H:%M:%S')}] events_total={total}  subscribers={info.get('subscribers', '?')}  paths={info.get('monitored_paths', '?')}", flush=True)
             else:
                 print(text, end="")
@@ -134,7 +138,7 @@ def main() -> None:
             print(f"Disk buffer:       {info.get('disk_buf', 0)}")
             print("\nEvent counts:")
             for k, v in sorted(info.items()):
-                if isinstance(v, int) and k not in {"subscribers", "monitored_paths", "reader_groups", "pending_paths", "disk_buf"}:
+                if isinstance(v, int) and k not in _GAUGE_KEYS:
                     print(f"  {k:30s} {v}")
         else:
             print(text, end="")

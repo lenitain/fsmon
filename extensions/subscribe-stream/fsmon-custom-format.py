@@ -18,21 +18,21 @@ various text-based output formats. No external dependencies (stdlib only).
   human    Human-readable one-line summary (default)
 
 ── Quick Start ─────────────────────────────────────────────────────
-  # Prerequisites: start the daemon
+  # Prerequisites: install fsmon (https://github.com/xxx/fsmon)
+  # Start the daemon
   sudo fsmon daemon
 
   # CSV output → pipe to file or another tool
-  python3 extensions/subscribe-stream/fsmon-custom-format.py --format csv > events.csv
+  uv run extensions/subscribe-stream/fsmon-custom-format.py --format csv > events.csv
 
   # Syslog format → forward to local syslog via logger command
-  python3 extensions/subscribe-stream/fsmon-custom-format.py --format syslog | logger -t fsmon
+  uv run extensions/subscribe-stream/fsmon-custom-format.py --format syslog | logger -t fsmon
 
-  # Loki format → send to Loki's push API
-  python3 extensions/subscribe-stream/fsmon-custom-format.py --format loki \
-      | curl -H "Content-Type: text/plain" --data-binary @- http://loki:3100/loki/api/v1/push
+  # Loki format → use Promtail or pipe to Loki log driver
+  uv run extensions/subscribe-stream/fsmon-custom-format.py --format loki
 
   # Only nginx events in syslog format
-  python3 extensions/subscribe-stream/fsmon-custom-format.py \
+  uv run extensions/subscribe-stream/fsmon-custom-format.py \
       --format syslog --track-cmd nginx
 
 ── Bridge To ────────────────────────────────────────────────────────

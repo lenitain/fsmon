@@ -21,26 +21,27 @@ shows how to call them programmatically — useful for:
 No external dependencies (stdlib only).
 
 ── Quick Start ─────────────────────────────────────────────────────
-  # Prerequisites: daemon must be running
+  # Prerequisites: install fsmon (https://github.com/xxx/fsmon)
+  # Daemon must be running
   sudo fsmon daemon
 
   # List monitored paths
-  python3 extensions/socket-admin/fsmon-admin.py list
+  uv run extensions/socket-admin/fsmon-admin.py list
 
   # Add a new path to monitor (all events, recursive)
-  python3 extensions/socket-admin/fsmon-admin.py add /var/www --recursive
+  uv run extensions/socket-admin/fsmon-admin.py add /var/www --recursive
 
   # Add path with filter: only nginx CLOSE_WRITE events
-  python3 extensions/socket-admin/fsmon-admin.py add /var/log/nginx --track-cmd nginx --types CLOSE_WRITE
+  uv run extensions/socket-admin/fsmon-admin.py add /var/log/nginx --track-cmd nginx --types CLOSE_WRITE
 
   # Remove a path
-  python3 extensions/socket-admin/fsmon-admin.py remove /var/log/nginx
+  uv run extensions/socket-admin/fsmon-admin.py remove /var/log/nginx
 
   # Health check
-  python3 extensions/socket-admin/fsmon-admin.py health
+  uv run extensions/socket-admin/fsmon-admin.py health
 
   # Health check with JSON output (for monitoring systems)
-  python3 extensions/socket-admin/fsmon-admin.py health --json
+  uv run extensions/socket-admin/fsmon-admin.py health --json
 
 ── Protocol ────────────────────────────────────────────────────────
   The socket protocol is TOML-over-Unix-stream:

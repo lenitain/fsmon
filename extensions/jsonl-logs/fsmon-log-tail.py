@@ -19,23 +19,24 @@ This script demonstrates common patterns:
 No external dependencies (stdlib only).
 
 ── Quick Start ─────────────────────────────────────────────────────
-  # Prerequisites: daemon running and logging
+  # Prerequisites: install fsmon (https://github.com/xxx/fsmon)
+  # Daemon running and logging
   sudo fsmon daemon --log-dir /var/log/fsmon
 
   # Tail all log files (like tail -f *.jsonl)
-  python3 extensions/jsonl-logs/fsmon-log-tail.py --log-dir /var/log/fsmon
+  uv run extensions/jsonl-logs/fsmon-log-tail.py --log-dir <LOG_DIR>
 
   # Only show DELETE events
-  python3 extensions/jsonl-logs/fsmon-log-tail.py --log-dir /var/log/fsmon --type DELETE
+  uv run extensions/jsonl-logs/fsmon-log-tail.py --log-dir <LOG_DIR> --type DELETE
 
   # Show events from last 5 minutes
-  python3 extensions/jsonl-logs/fsmon-log-tail.py --log-dir /var/log/fsmon --last 5m
+  uv run extensions/jsonl-logs/fsmon-log-tail.py --log-dir <LOG_DIR> --last 5m
 
   # Aggregate: count events by type
-  python3 extensions/jsonl-logs/fsmon-log-tail.py --log-dir /var/log/fsmon --aggregate
+  uv run extensions/jsonl-logs/fsmon-log-tail.py --log-dir <LOG_DIR> --aggregate
 
   # Watch a specific command group's log
-  python3 extensions/jsonl-logs/fsmon-log-tail.py --log-dir /var/log/fsmon --cmd nginx
+  uv run extensions/jsonl-logs/fsmon-log-tail.py --log-dir <LOG_DIR> --cmd nginx
 
 ── How It Works ────────────────────────────────────────────────────
   The daemon writes one JSON line per event to files named {cmd}_log.jsonl.

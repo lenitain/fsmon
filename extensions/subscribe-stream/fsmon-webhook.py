@@ -16,24 +16,25 @@ as JSON to any HTTP webhook URL. No external dependencies (stdlib only).
   - Audit trail forwarding to a central collector
 
 ── Quick Start ─────────────────────────────────────────────────────
-  # Prerequisites: start the daemon
+  # Prerequisites: install fsmon (https://github.com/xxx/fsmon)
+  # Start the daemon
   sudo fsmon daemon
 
   # Forward ALL events to a webhook receiver
-  python3 extensions/subscribe-stream/fsmon-webhook.py \
+  uv run extensions/subscribe-stream/fsmon-webhook.py \
       --webhook http://localhost:8080/alert
 
   # Only nginx write events → webhook
-  python3 extensions/subscribe-stream/fsmon-webhook.py \
+  uv run extensions/subscribe-stream/fsmon-webhook.py \
       --track-cmd nginx --types MODIFY,CLOSE_WRITE \
       --webhook https://hooks.slack.com/services/xxx
 
   # Also print events to stdout for debugging
-  python3 extensions/subscribe-stream/fsmon-webhook.py \
+  uv run extensions/subscribe-stream/fsmon-webhook.py \
       --webhook http://localhost:8080/alert --print
 
 ── Slack Example ───────────────────────────────────────────────────
-  python3 extensions/subscribe-stream/fsmon-webhook.py \
+  uv run extensions/subscribe-stream/fsmon-webhook.py \
       --track-cmd nginx \
       --types DELETE \
       --webhook https://hooks.slack.com/services/T.../B.../xxx
