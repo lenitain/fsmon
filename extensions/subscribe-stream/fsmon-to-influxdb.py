@@ -172,6 +172,14 @@ def _write_dlq(directory: str, item: dict) -> None:
         logging.error("dead-letter write failed: %s", exc)
 
 
+def _print_stats(count: int, errors: int) -> None:
+    print(json.dumps({
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "events": count,
+        "errors": errors,
+    }), file=sys.stderr, flush=True)
+
+
 def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -216,6 +224,7 @@ def main():
 
     count = 0
     errors = 0
+    last_stats = time.time()
     try:
         for ev in subscribe(socket_path, args.track_cmd, args.types):
             try:
@@ -240,6 +249,10 @@ def main():
             count += 1
             if count % 1000 == 0:
                 logging.info("wrote %d points (%d errors)", count, errors)
+            now = time.time()
+            if now - last_stats >= 30:
+                _print_stats(count, errors)
+                last_stats = now
     except KeyboardInterrupt:
         logging.info("stopped. total: %d points, %d errors", count, errors)
     except ConnectionError as e:

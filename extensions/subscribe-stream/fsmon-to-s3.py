@@ -150,6 +150,14 @@ def _write_dlq(directory: str, item: dict) -> None:
         logging.error("dead-letter write failed: %s", exc)
 
 
+def _print_stats(count: int, errors: int) -> None:
+    print(json.dumps({
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "events": count,
+        "errors": errors,
+    }), file=sys.stderr, flush=True)
+
+
 def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -190,11 +198,12 @@ def main():
 
     buffer: list[dict] = []
     last_flush = time.time()
+    last_stats = time.time()
     uploaded = 0
     errors = 0
 
     def flush():
-        nonlocal last_flush, uploaded, errors
+        nonlocal last_flush, last_stats, uploaded, errors
         if not buffer:
             return
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -219,6 +228,10 @@ def main():
                     for ev in buffer:
                         _write_dlq(dlq_dir, {"event": ev, "error": str(e), "key": key})
                     errors += len(buffer)
+        now = time.time()
+        if now - last_stats >= 30:
+            _print_stats(uploaded, errors)
+            last_stats = now
         buffer.clear()
         last_flush = time.time()
 

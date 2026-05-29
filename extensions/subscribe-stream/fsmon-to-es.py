@@ -224,11 +224,12 @@ def main():
 
     buffer: list[dict] = []
     last_flush = time.time()
+    last_stats = time.time()
     errors = 0
     indexed = 0
 
     def flush():
-        nonlocal last_flush, errors, indexed
+        nonlocal last_flush, errors, indexed, last_stats
         if not buffer:
             return
         failed: list[dict] = []
@@ -237,7 +238,6 @@ def main():
                 indexed += 1
             else:
                 failed.append(info)
-        # Retry failed docs individually
         for doc_info in failed:
             try:
                 es.index(index=doc_info.get("_index", ""),
@@ -249,7 +249,11 @@ def main():
                 _write_dlq(dlq_dir, {"doc": doc_info, "error": str(e)})
                 errors += 1
         if indexed > 0 or errors > 0:
-            logging.info("indexed +%d docs (%d errors)", len(buffer) - len(failed) + indexed - (indexed - len(failed)), errors)
+            logging.info("indexed %d docs (%d errors)", indexed, errors)
+        now = time.time()
+        if now - last_stats >= 30:
+            _print_stats(indexed, errors)
+            last_stats = now
         buffer.clear()
         last_flush = time.time()
 
