@@ -46,7 +46,7 @@ No external dependencies (stdlib only).
 
 ── Bridge To ────────────────────────────────────────────────────────
   - grep/jq for ad-hoc investigation
-  - logrotate + S3/GCS archival
+  - logrotate + archival
   - logstash / filebeat → Elasticsearch
   - cron job that aggregates hourly stats → Slack
   - any tool that can read JSON lines from disk

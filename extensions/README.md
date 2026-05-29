@@ -64,7 +64,6 @@ uv run extensions/subscribe-stream/fsmon-subscribe-demo.py
 | `fsmon-kafka.py` | kafka-python | 发布到 Kafka topic |
 | `fsmon-to-es.py` | elasticsearch | 索引到 Elasticsearch |
 | `fsmon-to-influxdb.py` | influxdb-client | 写入 InfluxDB 时序数据库 |
-| `fsmon-to-s3.py` | boto3 | 归档到 S3 对象存储 |
 | `fsmon-custom-format.py` | stdlib | 转换为 CSV/TSV/syslog/Loki/JSON 格式 |
 
 ### socket-admin/ — 管理命令
@@ -117,14 +116,6 @@ cd /opt/bridges
 ```bash
 ./fsmon-webhook.py --webhook https://hooks.slack.com/services/T.../B.../xxx \
     --track-cmd nginx --types DELETE
-```
-
-### S3 归档
-
-```bash
-export AWS_ACCESS_KEY_ID=xxx
-export AWS_SECRET_ACCESS_KEY=xxx
-./fsmon-to-s3.py --bucket my-audit-bucket --prefix fsmon/nginx/
 ```
 
 ## 运维

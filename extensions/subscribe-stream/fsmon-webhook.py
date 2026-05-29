@@ -44,7 +44,6 @@ as JSON to any HTTP webhook URL. No external dependencies (stdlib only).
 ── Bridge To ────────────────────────────────────────────────────────
   - Any HTTP webhook receiver (Slack, Discord, Teams, custom)
   - CI/CD triggers (Jenkins, GitHub Actions via repository_dispatch)
-  - Serverless functions (AWS Lambda URL, Cloud Functions)
 """
 
 import argparse
