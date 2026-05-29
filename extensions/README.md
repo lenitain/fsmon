@@ -1,39 +1,59 @@
-# fsmon Extensions
+# fsmon Extensions — 示例
 
-Extra tooling for common fsmon integration patterns.
+fsmon 的文件事件以标准 **JSONL** 格式导出。以下示例展示如何使用已有工具对接。
 
-## 文件事件对接
+## 出口 ①：JSONL 文件
 
-fsmon 的事件出口全部使用标准 **JSONL** 格式，下游可以用任意已有工具消费。
-
-```
-fanotify 事件 → JSONL 格式
-    │
-    ├── JSONL 文件 (可选)  →  Filebeat / Vector / fluent-bit → Kafka / ES / ...
-    │                         tail / jq / grep 直接查看
-    │
-    └── Unix socket        →  nc -U /tmp/fsmon-$(id -u).sock | jq
-                                nc -U socket | kafkacat -b broker -t topic
-```
-
-### JSONL 文件
-
-默认写入 `~/.local/state/fsmon/*_log.jsonl`。可通过 `[logging].path` 配置或设为 `none` 关闭。
-
-### Unix socket 实时流
-
-连接 daemon socket 后自动推送 JSONL 事件，无需握手：
+默认写入 `~/.local/state/fsmon/*_log.jsonl`。
 
 ```bash
 # 终端查看
-nc -U /tmp/fsmon-$(id -u).sock | jq
+jq 'select(.cmd == "nginx")' ~/.local/state/fsmon/*_log.jsonl
 
-# 转发到 Kafka（需安装 kafkacat）
-nc -U /tmp/fsmon-$(id -u).sock | kafkacat -b localhost:9092 -t fsmon-events
+# 实时 tail
+tail -f ~/.local/state/fsmon/*_log.jsonl | jq --unbuffered 'select(.event_type == "CREATE")'
+
+# Filebeat → Kafka/ES（filebeat.yml）
+filebeat.inputs:
+  - type: log
+    paths: ["/home/*/.local/state/fsmon/*_log.jsonl"]
+    json.keys_under_root: true
+
+# Vector → 任意目标
 ```
 
-Socket 路径规则：`/tmp/fsmon-<UID>.sock`
+## 出口 ②：Unix socket（连接即流）
 
-### 无额外依赖
+连接 daemon socket 直接收 JSONL 事件，无需握手协议。
 
-不需要 Python 脚本、不需要安装额外包。`nc` 系统自带，`jq` 可选（用于格式化过滤）。
+```bash
+# 所有事件
+nc -U /tmp/fsmon-$(id -u).sock
+
+# 过滤（用 jq）
+nc -U /tmp/fsmon-$(id -u).sock | jq 'select(.cmd == "nginx")'
+
+# 转发到 Kafka
+nc -U /tmp/fsmon-$(id -u).sock | kafkacat -b localhost:9092 -t fsmon-events
+
+# 转发到 Webhook
+nc -U /tmp/fsmon-$(id -u).sock |
+  while read -r line; do
+    curl -s -X POST -d "$line" https://hooks.example.com/fsmon
+  done
+```
+
+## examples/
+
+```bash
+# 查看 JSONL 文件示例
+bash extensions/examples/read-jsonl.sh
+
+# socket 实时流示例
+bash extensions/examples/subscribe-socket.sh
+
+# 转发到 Kafka 示例
+bash extensions/examples/forward-to-kafka.sh localhost:9092 fsmon-events
+```
+
+Socket 路径规则：`/tmp/fsmon-<UID>.sock`（和 daemon 同一用户的 UID）。
