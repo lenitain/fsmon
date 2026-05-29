@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.11"
 # ///
-
+"""
 fsmon Subscribe Demo — real-time event stream consumer.
 
 Connect to fsmon daemon's Unix socket, subscribe to the event stream,

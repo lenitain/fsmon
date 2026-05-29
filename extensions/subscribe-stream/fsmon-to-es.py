@@ -22,10 +22,11 @@ Usage:
 
 import argparse
 import json
+import logging
+import os
 import socket
 import sys
 import time
-import logging
 from datetime import datetime, timezone
 
 try:
@@ -137,9 +138,30 @@ def to_es_doc(ev: dict) -> dict:
     }
 
 
+def _get_socket_path() -> str:
+    sudo_uid = os.environ.get("SUDO_UID")
+    uid = sudo_uid if sudo_uid else str(os.getuid())
+    return f"/tmp/fsmon-{uid}.sock"
+
+
+def _write_dlq(directory: str, item: dict) -> None:
+    today = time.strftime("%Y-%m-%d")
+    path = os.path.join(directory, f"dlq-{today}.jsonl")
+    try:
+        with open(path, "a") as f:
+            f.write(json.dumps(item, default=str) + "\n")
+    except OSError as exc:
+        logging.error("dead-letter write failed: %s", exc)
+
+
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
     parser = argparse.ArgumentParser(description="fsmon -> Elasticsearch bridge")
-    parser.add_argument("--socket", default="/tmp/fsmon-1000.sock")
+    parser.add_argument("--socket", default=None, help="fsmon daemon socket (auto-detected)")
     parser.add_argument("--track-cmd", help="Filter by cmd group")
     parser.add_argument("--types", help="Comma-separated event types")
     parser.add_argument("--host", default="http://localhost:9200", help="ES host URL")
@@ -148,43 +170,69 @@ def main():
     parser.add_argument("--index", default="fsmon-events", help="ES index name (date-rolled)")
     parser.add_argument("--flush-secs", type=int, default=5, help="Bulk flush interval")
     parser.add_argument("--flush-count", type=int, default=1000, help="Bulk flush count")
+    parser.add_argument("--dlq-dir", default=None,
+                        help="Dead letter queue directory (default: $TMPDIR/fsmon-dlq)")
     args = parser.parse_args()
 
     if not HAS_ES:
-        print("Error: elasticsearch required. Install: pip install elasticsearch", file=sys.stderr)
+        logging.error("elasticsearch required. Install: pip install elasticsearch")
         sys.exit(1)
 
-    # ES connection
-    es_kwargs = {"hosts": [args.host]}
+    socket_path = args.socket or _get_socket_path()
+    dlq_dir = args.dlq_dir or os.path.join(
+        os.environ.get("TMPDIR", "/tmp"), "fsmon-dlq"
+    )
+    os.makedirs(dlq_dir, exist_ok=True)
+
+    es_kwargs: dict = {"hosts": [args.host]}
     if args.user:
         es_kwargs["basic_auth"] = (args.user, args.pwd or "")
     es = Elasticsearch(**es_kwargs)
 
     if not es.ping():
-        print(f"Error: cannot connect to ES {args.host}", file=sys.stderr)
+        logging.error("cannot connect to ES %s", args.host)
         sys.exit(1)
 
-    print(f"Listening on {args.socket} -> ES {args.host}/{args.index}-YYYY.MM.DD")
+    logging.info("listening on %s -> ES %s/%s-YYYY.MM.DD", socket_path, args.host, args.index)
+    if args.track_cmd:
+        logging.info("  cmd filter: %s", args.track_cmd)
+    if args.types:
+        logging.info("  type filter: %s", args.types)
+    logging.info("  dlq: %s", dlq_dir)
 
-    buffer = []
+    buffer: list[dict] = []
     last_flush = time.time()
+    errors = 0
+    indexed = 0
 
     def flush():
-        nonlocal last_flush
+        nonlocal last_flush, errors, indexed
         if not buffer:
             return
-        done = 0
+        failed: list[dict] = []
         for ok, info in helpers.streaming_bulk(es, buffer, raise_on_error=False):
             if ok:
-                done += 1
-        if done > 0:
-            print(f"[es] indexed {done} docs", flush=True)
+                indexed += 1
+            else:
+                failed.append(info)
+        # Retry failed docs individually
+        for doc_info in failed:
+            try:
+                es.index(index=doc_info.get("_index", ""),
+                         id=doc_info.get("_id"),
+                         body=doc_info.get("_source"),
+                         timeout="5s")
+                indexed += 1
+            except Exception as e:
+                _write_dlq(dlq_dir, {"doc": doc_info, "error": str(e)})
+                errors += 1
+        if indexed > 0 or errors > 0:
+            logging.info("indexed +%d docs (%d errors)", len(buffer) - len(failed) + indexed - (indexed - len(failed)), errors)
         buffer.clear()
         last_flush = time.time()
 
     try:
-        for ev in subscribe(args.socket, args.track_cmd, args.types):
-            # Daily index: fsmon-events-2026.05.27
+        for ev in subscribe(socket_path, args.track_cmd, args.types):
             try:
                 ts = datetime.fromisoformat(ev["time"])
             except (ValueError, KeyError):
@@ -194,11 +242,16 @@ def main():
             doc["_index"] = idx
             doc["_id"] = f"{ts.timestamp()}-{ev.get('pid', 0)}-{hash(ev.get('path', ''))}"
             buffer.append(doc)
-
             if len(buffer) >= args.flush_count or time.time() - last_flush >= args.flush_secs:
                 flush()
+    except KeyboardInterrupt:
+        logging.info("stopped.")
+    except ConnectionError as e:
+        logging.error("%s", e)
+        sys.exit(1)
     finally:
         flush()
+        logging.info("done. indexed: %d docs, errors: %d", indexed, errors)
 
 
 if __name__ == "__main__":

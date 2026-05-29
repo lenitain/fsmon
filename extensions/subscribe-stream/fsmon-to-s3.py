@@ -121,50 +121,106 @@ def _dict_to_toml(d: dict) -> str:
     return "\n".join(lines)
 
 
+def _get_socket_path() -> str:
+    sudo_uid = os.environ.get("SUDO_UID")
+    uid = sudo_uid if sudo_uid else str(os.getuid())
+    return f"/tmp/fsmon-{uid}.sock"
+
+
+def _write_dlq(directory: str, item: dict) -> None:
+    today = time.strftime("%Y-%m-%d")
+    path = os.path.join(directory, f"dlq-{today}.jsonl")
+    try:
+        with open(path, "a") as f:
+            f.write(json.dumps(item, default=str) + "\n")
+    except OSError as exc:
+        logging.error("dead-letter write failed: %s", exc)
+
+
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
     parser = argparse.ArgumentParser(description="fsmon -> S3 archiver")
-    parser.add_argument("--socket", default="/tmp/fsmon-1000.sock")
+    parser.add_argument("--socket", default=None, help="fsmon daemon socket (auto-detected)")
     parser.add_argument("--track-cmd", help="Filter by cmd group")
     parser.add_argument("--types", help="Comma-separated event types")
     parser.add_argument("--bucket", required=True, help="S3 bucket name")
     parser.add_argument("--prefix", default="fsmon/", help="S3 object key prefix")
     parser.add_argument("--flush-secs", type=int, default=60, help="Upload interval in seconds")
     parser.add_argument("--flush-count", type=int, default=10000, help="Upload after N events")
+    parser.add_argument("--dlq-dir", default=None,
+                        help="Dead letter queue directory (default: $TMPDIR/fsmon-dlq)")
     args = parser.parse_args()
 
     if not HAS_S3:
-        print("Error: boto3 required. Install: pip install boto3", file=sys.stderr)
+        logging.error("boto3 required. Install: pip install boto3")
         sys.exit(1)
+
+    socket_path = args.socket or _get_socket_path()
+    dlq_dir = args.dlq_dir or os.path.join(
+        os.environ.get("TMPDIR", "/tmp"), "fsmon-dlq"
+    )
+    os.makedirs(dlq_dir, exist_ok=True)
 
     s3 = boto3.client("s3")
     prefix = args.prefix.rstrip("/") + "/"
-    print(f"Listening on {args.socket} -> S3 s3://{args.bucket}/{prefix}")
+    logging.info("listening on %s -> S3 s3://%s/%s", socket_path, args.bucket, prefix)
+    if args.track_cmd:
+        logging.info("  cmd filter: %s", args.track_cmd)
+    if args.types:
+        logging.info("  type filter: %s", args.types)
+    logging.info("  dlq: %s", dlq_dir)
 
-    buffer = []
+    buffer: list[dict] = []
     last_flush = time.time()
+    uploaded = 0
+    errors = 0
 
     def flush():
-        nonlocal last_flush
+        nonlocal last_flush, uploaded, errors
         if not buffer:
             return
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         key = f"{prefix}{ts}.jsonl"
         body = "\n".join(json.dumps(ev) for ev in buffer) + "\n"
-        try:
-            s3.put_object(Bucket=args.bucket, Key=key, Body=body.encode(), ContentType="application/x-ndjson")
-            print(f"[s3] uploaded {len(buffer)} events -> s3://{args.bucket}/{key}", flush=True)
-        except Exception as e:
-            print(f"[s3] upload failed: {e}", file=sys.stderr)
+        for attempt in range(3):
+            try:
+                s3.put_object(
+                    Bucket=args.bucket, Key=key,
+                    Body=body.encode(), ContentType="application/x-ndjson"
+                )
+                uploaded += len(buffer)
+                logging.info("uploaded %d events -> s3://%s/%s", len(buffer), args.bucket, key)
+                break
+            except Exception as e:
+                if attempt < 2:
+                    delay = 2 ** attempt
+                    logging.warning("s3 upload attempt %d/3 failed: %s", attempt + 1, e)
+                    time.sleep(delay)
+                else:
+                    logging.error("s3 upload failed: %s", e)
+                    for ev in buffer:
+                        _write_dlq(dlq_dir, {"event": ev, "error": str(e), "key": key})
+                    errors += len(buffer)
         buffer.clear()
         last_flush = time.time()
 
     try:
-        for ev in subscribe(args.socket, args.track_cmd, args.types):
+        for ev in subscribe(socket_path, args.track_cmd, args.types):
             buffer.append(ev)
             if len(buffer) >= args.flush_count or time.time() - last_flush >= args.flush_secs:
                 flush()
+    except KeyboardInterrupt:
+        logging.info("stopped.")
+    except ConnectionError as e:
+        logging.error("%s", e)
+        sys.exit(1)
     finally:
         flush()
+        logging.info("done. uploaded: %d events, errors: %d", uploaded, errors)
 
 
 if __name__ == "__main__":

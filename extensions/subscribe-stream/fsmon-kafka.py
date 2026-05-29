@@ -26,6 +26,8 @@ Prometheus / Grafana can consume the fsmon_events_total counter from Kafka.
 
 import argparse
 import json
+import logging
+import os
 import socket
 import sys
 import time
@@ -122,22 +124,51 @@ def _dict_to_toml(d: dict) -> str:
     return "\n".join(lines)
 
 
+def _get_socket_path() -> str:
+    sudo_uid = os.environ.get("SUDO_UID")
+    uid = sudo_uid if sudo_uid else str(os.getuid())
+    return f"/tmp/fsmon-{uid}.sock"
+
+
+def _write_dlq(directory: str, item: dict) -> None:
+    """Append a failed item to the daily dead-letter file."""
+    today = time.strftime("%Y-%m-%d")
+    path = os.path.join(directory, f"dlq-{today}.jsonl")
+    try:
+        with open(path, "a") as f:
+            f.write(json.dumps(item, default=str) + "\n")
+    except OSError as exc:
+        logging.error("dead-letter write failed: %s", exc)
+
+
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
     parser = argparse.ArgumentParser(description="fsmon -> Kafka bridge")
-    parser.add_argument("--socket", default="/tmp/fsmon-1000.sock")
+    parser.add_argument("--socket", default=None, help="fsmon daemon socket (auto-detected)")
     parser.add_argument("--track-cmd", help="Filter by cmd group")
     parser.add_argument("--types", help="Comma-separated event types")
     parser.add_argument("--broker", default="localhost:9092", help="Kafka broker address")
     parser.add_argument("--topic", default="fsmon-events", help="Kafka topic")
+    parser.add_argument("--dlq-dir", default=None,
+                        help="Dead letter queue directory (default: $TMPDIR/fsmon-dlq)")
     args = parser.parse_args()
 
     if not HAS_KAFKA:
-        print("Error: kafka-python required. Install: pip install kafka-python", file=sys.stderr)
+        logging.error("kafka-python required. Install: pip install kafka-python")
         sys.exit(1)
 
-    print(f"Connecting to Kafka: {args.broker} topic={args.topic}")
+    socket_path = args.socket or _get_socket_path()
+    dlq_dir = args.dlq_dir or os.path.join(
+        os.environ.get("TMPDIR", "/tmp"), "fsmon-dlq"
+    )
+    os.makedirs(dlq_dir, exist_ok=True)
 
-    # Create producer
+    logging.info("connecting to Kafka: %s topic=%s", args.broker, args.topic)
+
     try:
         producer = KafkaProducer(
             bootstrap_servers=args.broker,
@@ -147,26 +178,49 @@ def main():
             retries=3,
         )
     except NoBrokersAvailable:
-        print(f"Error: cannot connect to Kafka broker {args.broker}", file=sys.stderr)
+        logging.error("cannot connect to Kafka broker %s", args.broker)
         sys.exit(1)
 
-    print(f"Listening on {args.socket} -> Kafka topic {args.topic}")
+    logging.info("listening on %s -> Kafka topic %s", socket_path, args.topic)
     if args.track_cmd:
-        print(f"  cmd filter: {args.track_cmd}")
+        logging.info("  cmd filter: %s", args.track_cmd)
     if args.types:
-        print(f"  type filter: {args.types}")
+        logging.info("  type filter: %s", args.types)
+    logging.info("  dlq: %s", dlq_dir)
 
     count = 0
-    for ev in subscribe(args.socket, args.track_cmd, args.types):
-        # Use cmd+event_type as key to keep same-key events in order
-        key = f"{ev.get('cmd', '?')}:{ev['event_type']}"
-        producer.send(args.topic, value=ev, key=key)
-        count += 1
-        if count % 1000 == 0:
-            print(f"[kafka] sent {count} events", flush=True)
-
-    producer.flush()
-    producer.close()
+    errors = 0
+    try:
+        for ev in subscribe(socket_path, args.track_cmd, args.types):
+            key = f"{ev.get('cmd', '?')}:{ev['event_type']}"
+            future = producer.send(args.topic, value=ev, key=key)
+            # Confirm delivery with retry
+            for attempt in range(3):
+                try:
+                    future.get(timeout=5)
+                    break
+                except Exception as e:
+                    if attempt < 2:
+                        delay = 2 ** attempt
+                        logging.warning("kafka send attempt %d/3 failed: %s", attempt + 1, e)
+                        time.sleep(delay)
+                    else:
+                        logging.error("kafka send failed: %s", e)
+                        _write_dlq(dlq_dir, {"event": ev, "error": str(e)})
+                        errors += 1
+            count += 1
+            if count % 1000 == 0:
+                logging.info("sent %d events (%d errors)", count, errors)
+    except KeyboardInterrupt:
+        logging.info("shutting down...")
+    except ConnectionError as e:
+        logging.error("%s", e)
+        sys.exit(1)
+    finally:
+        logging.info("flushing producer...")
+        producer.flush()
+        producer.close()
+        logging.info("done. total: %d events, %d errors", count, errors)
 
 
 if __name__ == "__main__":

@@ -118,54 +118,121 @@ def _dict_to_toml(d: dict) -> str:
     return "\n".join(lines)
 
 
+# ── InfluxDB line protocol escaping ──────────────────────────────
+
+def _escape_tag(value: str) -> str:
+    """Escape a tag value for InfluxDB line protocol."""
+    return value.replace("\\", "\\\\").replace(" ", "\\ ").replace(",", "\\,").replace("=", "\\=")
+
+
+def _to_line_protocol(ev: dict, timestamp_ns: int) -> str:
+    """Convert a fsmon event to InfluxDB line protocol with proper escaping."""
+    event_type = _escape_tag(ev.get("event_type", "?"))
+    cmd_name = _escape_tag(ev.get("cmd", "?"))
+    path = _escape_tag(ev.get("path", "?"))
+    pid = ev.get("pid", 0)
+    file_size = ev.get("file_size", 0)
+    return (
+        f"fsmon_events,"
+        f"event_type={event_type},"
+        f"cmd={cmd_name},"
+        f"path={path} "
+        f"pid={pid}i,"
+        f"file_size={file_size}i "
+        f"{timestamp_ns}"
+    )
+
+
+def _get_socket_path() -> str:
+    sudo_uid = os.environ.get("SUDO_UID")
+    uid = sudo_uid if sudo_uid else str(os.getuid())
+    return f"/tmp/fsmon-{uid}.sock"
+
+
+def _write_dlq(directory: str, item: dict) -> None:
+    today = time.strftime("%Y-%m-%d")
+    path = os.path.join(directory, f"dlq-{today}.jsonl")
+    try:
+        with open(path, "a") as f:
+            f.write(json.dumps(item, default=str) + "\n")
+    except OSError as exc:
+        logging.error("dead-letter write failed: %s", exc)
+
+
 def main():
-    parser = argparse.ArgumentParser(description="fsmon -> InfluxDB bridge (EXAMPLE)")
-    parser.add_argument("--socket", default="/tmp/fsmon-1000.sock")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    parser = argparse.ArgumentParser(description="fsmon -> InfluxDB bridge")
+    parser.add_argument("--socket", default=None, help="fsmon daemon socket (auto-detected)")
     parser.add_argument("--track-cmd", help="Filter by cmd group")
     parser.add_argument("--types", help="Comma-separated event types")
     parser.add_argument("--url", default="http://localhost:8086", help="InfluxDB URL")
     parser.add_argument("--org", default=os.environ.get("INFLUXDB_ORG", "my-org"), help="InfluxDB org")
     parser.add_argument("--bucket", default="fsmon", help="InfluxDB bucket")
     parser.add_argument("--token", default=os.environ.get("INFLUXDB_TOKEN", ""), help="InfluxDB token")
+    parser.add_argument("--dlq-dir", default=None,
+                        help="Dead letter queue directory (default: $TMPDIR/fsmon-dlq)")
     args = parser.parse_args()
 
     if not HAS_INFLUX:
-        print("Error: influxdb-client required. Install: pip install influxdb-client", file=sys.stderr)
+        logging.error("influxdb-client required. Install: pip install influxdb-client")
+        sys.exit(1)
+    if not args.token:
+        logging.error("set INFLUXDB_TOKEN or pass --token")
         sys.exit(1)
 
-    if not args.token:
-        print("Error: set INFLUXDB_TOKEN or pass --token", file=sys.stderr)
-        sys.exit(1)
+    socket_path = args.socket or _get_socket_path()
+    dlq_dir = args.dlq_dir or os.path.join(
+        os.environ.get("TMPDIR", "/tmp"), "fsmon-dlq"
+    )
+    os.makedirs(dlq_dir, exist_ok=True)
 
     client = InfluxDBClient(url=args.url, token=args.token, org=args.org)
     write_api = client.write_api(write_options=SYNCHRONOUS)
 
-    print(f"Listening on {args.socket} -> InfluxDB {args.url}/{args.bucket}")
+    logging.info("listening on %s -> InfluxDB %s/%s", socket_path, args.url, args.bucket)
+    if args.track_cmd:
+        logging.info("  cmd filter: %s", args.track_cmd)
+    if args.types:
+        logging.info("  type filter: %s", args.types)
+    logging.info("  dlq: %s", dlq_dir)
 
     count = 0
-    for ev in subscribe(args.socket, args.track_cmd, args.types):
-        try:
-            ts = datetime.fromisoformat(ev["time"])
-        except (ValueError, KeyError):
-            ts = datetime.now(timezone.utc)
-
-        # InfluxDB line protocol:
-        # measurement,tag1=val1,tag2=val2 field1=val1,field2=val2 timestamp
-        line = (
-            f"fsmon_events,"
-            f"event_type={ev.get('event_type','?')},"
-            f"cmd={ev.get('cmd','?')},"
-            f"path={ev.get('path','?').replace(' ', '\\ ').replace(',', '\\,')} "
-            f"pid={ev.get('pid',0)}i,"
-            f"file_size={ev.get('file_size',0)}i "
-            f"{int(ts.timestamp() * 1_000_000_000)}"
-        )
-        write_api.write(bucket=args.bucket, record=line)
-        count += 1
-        if count % 1000 == 0:
-            print(f"[influx] wrote {count} points", flush=True)
-
-    client.close()
+    errors = 0
+    try:
+        for ev in subscribe(socket_path, args.track_cmd, args.types):
+            try:
+                ts = datetime.fromisoformat(ev["time"])
+            except (ValueError, KeyError):
+                ts = datetime.now(timezone.utc)
+            timestamp_ns = int(ts.timestamp() * 1_000_000_000)
+            line = _to_line_protocol(ev, timestamp_ns)
+            for attempt in range(3):
+                try:
+                    write_api.write(bucket=args.bucket, record=line)
+                    break
+                except Exception as e:
+                    if attempt < 2:
+                        delay = 2 ** attempt
+                        logging.warning("influx write attempt %d/3 failed: %s", attempt + 1, e)
+                        time.sleep(delay)
+                    else:
+                        logging.error("influx write failed: %s", e)
+                        _write_dlq(dlq_dir, {"event": ev, "error": str(e), "line": line})
+                        errors += 1
+            count += 1
+            if count % 1000 == 0:
+                logging.info("wrote %d points (%d errors)", count, errors)
+    except KeyboardInterrupt:
+        logging.info("stopped. total: %d points, %d errors", count, errors)
+    except ConnectionError as e:
+        logging.error("%s", e)
+        sys.exit(1)
+    finally:
+        client.close()
 
 
 if __name__ == "__main__":
