@@ -7,7 +7,7 @@ pub use fanotify_fid::types::HandleKey;
 /// Look up the file handle for a path, using [`fanotify_fid::handle::name_to_handle_at`].
 ///
 /// Returns the handle key bytes matching the file_handle format in fanotify FID events.
-pub fn path_to_handle_key(path: &Path) -> Option<HandleKey> {
+fn path_to_handle_key(path: &Path) -> Option<HandleKey> {
     fanotify_fid::handle::name_to_handle_at(path).ok()
 }
 

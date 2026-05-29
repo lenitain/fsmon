@@ -11,7 +11,7 @@ pub mod proc_cache;
 pub mod query;
 pub mod socket;
 pub mod utils;
-pub use utils::{DiskFreeThreshold, SizeFilter, SizeOp, TimeOp, TimeFilter, format_datetime, parse_disk_min_free, parse_size, parse_size_filter, parse_time, parse_time_filter};
+pub use utils::{SizeFilter, SizeOp, TimeOp, TimeFilter, format_datetime, parse_size, parse_size_filter, parse_time, parse_time_filter};
 
 use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
@@ -28,7 +28,6 @@ use std::path::PathBuf;
 pub struct DaemonLock {
     #[allow(dead_code)]
     file: fs::File,
-    _path: PathBuf,
 }
 
 impl DaemonLock {
@@ -67,7 +66,7 @@ impl DaemonLock {
         // Write PID for diagnostic purposes (not relied on for correctness)
         let _ = fs::write(&path, format!("{}", std::process::id()));
 
-        Ok(DaemonLock { file, _path: path })
+        Ok(DaemonLock { file })
     }
 }
 

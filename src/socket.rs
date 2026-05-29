@@ -115,16 +115,6 @@ impl SocketResp {
     }
 }
 
-/// Serialize a value to a single TOML document string.
-fn to_toml_string<T: Serialize>(value: &T) -> Result<String> {
-    Ok(toml::to_string(value)?)
-}
-
-/// Deserialize a value from a TOML document string.
-fn from_toml_str<T: serde::de::DeserializeOwned>(s: &str) -> Result<T> {
-    Ok(toml::from_str(s)?)
-}
-
 /// Send a command to the running daemon and get the response.
 pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResp> {
     let stream = UnixStream::connect(socket_path).with_context(|| {
@@ -135,7 +125,7 @@ pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResp> {
         )
     })?;
 
-    let toml = to_toml_string(cmd)?;
+    let toml = toml::to_string(cmd)?;
 
     {
         let mut writer = stream.try_clone()?;
@@ -163,7 +153,7 @@ pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResp> {
     }
 
     let resp: SocketResp =
-        from_toml_str(response.trim()).with_context(|| "Failed to parse daemon response")?;
+        toml::from_str(response.trim()).with_context(|| "Failed to parse daemon response")?;
     Ok(resp)
 }
 
@@ -210,7 +200,7 @@ pub async fn listen(
                 match read_toml_message(&mut buf_reader).await {
                     Ok(message) if message.trim().is_empty() => continue,
                     Ok(message) => {
-                        let resp = match from_toml_str::<SocketCmd>(message.trim()) {
+                        let resp = match toml::from_str::<SocketCmd>(message.trim()) {
                             Ok(cmd) => match handler(cmd) {
                                 Ok(resp) => resp,
                                 Err(e) => SocketResp::err(e.to_string()),
@@ -218,7 +208,7 @@ pub async fn listen(
                             Err(e) => SocketResp::err(format!("Invalid command: {e}")),
                         };
 
-                        let resp_toml = match to_toml_string(&resp) {
+                        let resp_toml = match toml::to_string(&resp) {
                             Ok(t) => t,
                             Err(e) => {
                                 eprintln!("Failed to serialize response: {e}");
