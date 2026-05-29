@@ -43,39 +43,11 @@ impl Monitor {
             let event_types = mask_to_event_types(raw.mask);
             let matched_path = self.matching_path(&raw.path).cloned();
 
-            // If a monitored directory was deleted, move to pending_paths
+            // Detect canonical root DELETE_SELF — needs cleanup after recording.
             let is_delete_self = event_types.contains(&EventType::DeleteSelf)
                 || event_types.contains(&EventType::MovedFrom);
             let is_canonical_root = is_delete_self
                 && self.canonical_paths.iter().any(|cp| cp == &raw.path);
-            if is_canonical_root {
-                if self.debug {
-                    eprintln!("[DEBUG] monitored directory deleted: {}", raw.path.display());
-                }
-                if let Some(ref path) = matched_path {
-                    // Preserve ALL cmd groups before removing
-                    let all_opts: Vec<PathOptions> = self.opts_for_path(path).into_iter().cloned().collect();
-                    if let Err(e) = self.remove_path(path, None) {
-                        eprintln!("[WARNING] Failed to remove deleted path '{}': {e}", path.display());
-                    }
-                    for opts in all_opts {
-                        self.pending_paths.push((
-                            path.clone(),
-                            PathEntry {
-                                path: path.clone(),
-                                recursive: Some(opts.recursive),
-                                types: opts.event_types.as_ref().map(
-                                    |v| v.iter().map(|t| t.to_string()).collect()
-                                ),
-                                size: opts.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes))),
-                                cmd: opts.cmd,
-                            },
-                        ));
-                    }
-                    self.setup_inotify_watches();
-                }
-                continue;
-            }
 
             let event_pid = raw.pid.unsigned_abs();
 
@@ -87,7 +59,9 @@ impl Monitor {
                 continue;
             }
 
-            // Match event against ALL cmd groups for this path
+            // Match event against ALL cmd groups for this path.
+            // Computed BEFORE canonical-root cleanup — DELETE_SELF must be
+            // recorded before the path is removed from monitored_entries.
             let matching_entries = self.matching_opts_for_event(&raw.path);
             if self.debug && matching_entries.is_empty() {
                 eprintln!("[DEBUG] event on {} (pid={}): no matching entries",
@@ -139,6 +113,37 @@ impl Monitor {
                             pid: event_pid,
                         });
                     }
+                }
+            }
+
+            // After recording DELETE_SELF events: remove the deleted
+            // monitored directory from active monitoring and move to
+            // pending_paths so it can be re-monitored if recreated.
+            if is_canonical_root {
+                if self.debug {
+                    eprintln!("[DEBUG] monitored directory deleted: {}", raw.path.display());
+                }
+                if let Some(ref path) = matched_path {
+                    // Preserve ALL cmd groups before removing
+                    let all_opts: Vec<PathOptions> = self.opts_for_path(path).into_iter().cloned().collect();
+                    if let Err(e) = self.remove_path(path, None) {
+                        eprintln!("[WARNING] Failed to remove deleted path '{}': {e}", path.display());
+                    }
+                    for opts in all_opts {
+                        self.pending_paths.push((
+                            path.clone(),
+                            PathEntry {
+                                path: path.clone(),
+                                recursive: Some(opts.recursive),
+                                types: opts.event_types.as_ref().map(
+                                    |v| v.iter().map(|t| t.to_string()).collect()
+                                ),
+                                size: opts.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes))),
+                                cmd: opts.cmd,
+                            },
+                        ));
+                    }
+                    self.setup_inotify_watches();
                 }
             }
         }

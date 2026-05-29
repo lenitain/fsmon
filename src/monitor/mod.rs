@@ -78,7 +78,8 @@ pub struct Monitor {
     /// inotify instance watching parent dirs of pending paths
     pub(crate) inotify: Option<inotify::Inotify>,
     /// Watch descriptors kept alive so watches stay active
-    pub(crate) _inotify_watches: Vec<inotify::WatchDescriptor>,
+    /// (watched_path, watch_descriptor) — maps wd back to the directory we're watching.
+    pub(crate) _inotify_watches: Vec<(PathBuf, inotify::WatchDescriptor)>,
     /// PID of the fsmon daemon itself — events from this PID (or its children)
     /// are discarded to prevent self-triggering feedback loops.
     pub(crate) daemon_pid: u32,
@@ -206,7 +207,7 @@ impl Monitor {
             shared_dir_cache: None,
             pending_paths: Vec::new(),
             inotify: None,
-            _inotify_watches: Vec::new(),
+            _inotify_watches: Vec::new(), // (path, wd)
             daemon_pid: std::process::id(),
             reader_death_rx,
             reader_death_tx,
@@ -797,11 +798,7 @@ impl Monitor {
                     }
                 } => {
                     if let Ok(mut guard) = inotify_ready {
-                        if let Some(ref mut inotify) = self.inotify {
-                            let mut buf = [0u8; 4096];
-                            let _ = inotify.read_events(&mut buf);
-                            self.check_pending();
-                        }
+                        self.handle_inotify_events();
                         guard.clear_ready();
                     }
                 }

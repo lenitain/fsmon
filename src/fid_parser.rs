@@ -139,6 +139,21 @@ pub fn read_fid_events_cached(
         Err(_) => return vec![],
     };
 
+    // ---- Phase 0.5: strip " (deleted)" from Phase 0 resolved paths ----
+    // When open_by_handle_at resolves a deleted-but-not-reclaimed directory,
+    // readlink("/proc/self/fd/N") appends " (deleted)" (kernel behavior).
+    // Without cleanup, dirty paths like "/dir (deleted)/file.txt" are non-empty
+    // and skip Phase 1/2 entirely, propagating the dirty suffix to output.
+    for ev in events.iter_mut() {
+        if ev.path.as_os_str().is_empty() {
+            continue;
+        }
+        let clean = ev.path.to_string_lossy();
+        if let Some(stripped) = clean.strip_suffix(" (deleted)") {
+            ev.path = PathBuf::from(stripped);
+        }
+    }
+
     // ---- Phase 1: seed local handle_map from resolved events ----
     // Collect all handle→path knowledge from events whose paths resolved
     // directly via open_by_handle_at in the parse phase.

@@ -516,27 +516,185 @@ impl Monitor {
         }
     }
 
-    /// Set up inotify watches on parent directories of all pending paths.
-    /// Removes stale watches first.
+    /// Set up inotify watches on:
+    /// 1. Parent directories of pending paths (retry when created)
+    /// 2. Recursively-monitored directories with inode marks and all their
+    ///    existing subdirectories (detect new subdirs created after startup).
+    ///    Full recursive walk — re-discovers subdirs on each call so watches
+    ///    survive `setup_inotify_watches` → `clear()` cycles triggered by
+    ///    `check_pending` / canonical-root cleanup.
     pub(crate) fn setup_inotify_watches(&mut self) {
         use inotify::WatchMask;
 
         // Drop old watches
         self._inotify_watches.clear();
 
-        let inotify = match self.inotify.as_ref() {
+        let inotify = self.inotify.as_ref();
+        let watches = &mut self._inotify_watches;
+
+        let ino = match inotify {
             Some(ino) => ino,
             None => return,
         };
 
+        let mask = WatchMask::CREATE | WatchMask::MOVED_TO;
+
+        // 1. Watch parent dirs of pending paths
         for (path, _) in &self.pending_paths {
             if let Some(parent) = Self::nearest_existing_ancestor(path)
-                && let Ok(wd) = inotify
-                    .watches()
-                    .add(&parent, WatchMask::CREATE | WatchMask::MOVED_TO)
+                && let Ok(wd) = ino.watches().add(&parent, mask)
             {
-                self._inotify_watches.push(wd);
+                watches.push((parent, wd));
             }
+        }
+
+        // 2. Watch recursively-monitored directory roots only (inode marks).
+        //    Watching just the roots is sufficient — on_new_subdirectory adds
+        //    watches for newly created subdirs as they appear.  Recursively
+        //    walking ~25k subdirs at startup would add excessive latency.
+        for (path, opts) in &self.monitored_entries {
+            if !opts.recursive || !path.is_dir() {
+                continue;
+            }
+            if let Some(&gi) = self.path_to_group.get(path)
+                && self.fs_groups[gi].is_fs_mark
+            {
+                continue;
+            }
+            if !watches.iter().any(|(p, _)| p == path)
+                && let Ok(wd) = ino.watches().add(path, mask)
+            {
+                watches.push((path.clone(), wd));
+            }
+        }
+    }
+
+    /// Add inotify watches for `dir` and all existing subdirectories.
+    /// Used only for newly detected subdirectories (not at startup).
+    fn watch_recursive(
+        inotify: &inotify::Inotify,
+        mask: inotify::WatchMask,
+        dir: &std::path::Path,
+        watches: &mut Vec<(PathBuf, inotify::WatchDescriptor)>,
+    ) {
+        if watches.iter().any(|(p, _)| p == dir) {
+            return;
+        }
+        if let Ok(wd) = inotify.watches().add(dir, mask) {
+            watches.push((dir.to_path_buf(), wd));
+        }
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    Self::watch_recursive(inotify, mask, &path, watches);
+                }
+            }
+        }
+    }
+
+    /// Parse inotify events and handle new subdirectory creation under
+    /// recursively-monitored directories.  Also retries pending paths.
+    pub(crate) fn handle_inotify_events(&mut self) {
+        let inotify = match self.inotify.as_mut() {
+            Some(ino) => ino,
+            None => return,
+        };
+        let mut buf = [0u8; 4096];
+        let events = match inotify.read_events(&mut buf) {
+            Ok(ev) => ev,
+            Err(_) => {
+                self.check_pending();
+                return;
+            }
+        };
+
+        let dir_mask = inotify::EventMask::CREATE | inotify::EventMask::ISDIR;
+        let dir_moved = inotify::EventMask::MOVED_TO | inotify::EventMask::ISDIR;
+
+        for event in events {
+            let is_new_dir = event.mask.intersects(dir_mask)
+                || event.mask.intersects(dir_moved);
+            if !is_new_dir {
+                continue;
+            }
+            let Some(name) = event.name else { continue };
+
+            // Map wd → watched directory path
+            let Some(parent) = self._inotify_watches.iter()
+                .find(|(_, wd)| *wd == event.wd)
+                .map(|(p, _)| p.clone())
+            else { continue };
+
+            let new_dir = parent.join(name);
+            self.on_new_subdirectory(&new_dir);
+        }
+
+        self.check_pending();
+    }
+
+    /// Add fanotify inode mark + cache + inotify watch for a newly detected
+    /// subdirectory under a recursively-monitored path.
+    fn on_new_subdirectory(&mut self, path: &std::path::Path) {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        if !canonical.is_dir() {
+            return;
+        }
+        let dev_id = match std::fs::metadata(&canonical)
+            .map(|m| std::os::linux::fs::MetadataExt::st_dev(&m))
+        {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        let Some(gi) = self.fs_groups.iter().position(|g| g.dev_id == dev_id) else {
+            return;
+        };
+        // Filesystem marks cover everything — no need for extra inode marks
+        if self.fs_groups[gi].is_fs_mark {
+            return;
+        }
+
+        // Compute combined mask from all monitored entries
+        let path_mask = self
+            .monitored_entries
+            .iter()
+            .map(|(_, o)| path_mask_from_options(o))
+            .fold(0, |a, b| a | b);
+
+        if self.debug {
+            eprintln!(
+                "[DEBUG] new subdirectory under recursive watch: {} (dev={})",
+                canonical.display(),
+                dev_id
+            );
+        }
+
+        let fan_fd = &self.fs_groups[gi].fan_fd;
+        if mark_directory(fan_fd, path_mask, &canonical).is_err() {
+            return;
+        }
+
+        // Cache handle and mark/cache subdirectories recursively
+        if let Some(ref cache) = self.shared_dir_cache {
+            dir_cache::cache_dir_handle(cache, &canonical);
+        }
+        mark_recursive(fan_fd, path_mask, &canonical);
+        if let Some(ref cache) = self.shared_dir_cache {
+            dir_cache::cache_recursive(cache, &canonical);
+        }
+
+        // Watch the new directory and all its existing children so
+        // future grandchildren are detected without waiting for the next
+        // setup_inotify_watches()→clear() cycle.
+        let ino = self.inotify.as_ref();
+        let watches = &mut self._inotify_watches;
+        if let Some(inotify) = ino {
+            Self::watch_recursive(
+                inotify,
+                inotify::WatchMask::CREATE | inotify::WatchMask::MOVED_TO,
+                &canonical,
+                watches,
+            );
         }
     }
 
