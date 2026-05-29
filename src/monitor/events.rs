@@ -144,6 +144,9 @@ impl Monitor {
                         ));
                     }
                     self.setup_inotify_watches();
+                    // Path may have been recreated before the inotify watch was
+                    // established. Check immediately to avoid missing the window.
+                    self.check_pending();
                 }
             }
         }

@@ -709,9 +709,11 @@ impl Monitor {
         }
         let mut i = 0;
         while i < self.pending_paths.len() {
-            let (path, _) = &self.pending_paths[i];
-            if path.exists() {
-                let entry = self.pending_paths.swap_remove(i);
+            let path_exists = self.pending_paths[i].0.exists();
+            if path_exists {
+                // Use remove (not swap_remove) so that failed entries can be
+                // re-inserted without corrupting iteration order.
+                let entry = self.pending_paths.remove(i);
                 match self.add_path(&entry.1) {
                     Ok(()) => {
                         eprintln!(
@@ -724,7 +726,10 @@ impl Monitor {
                             "[WARNING] Path '{}' exists but monitoring setup failed: {e}",
                             entry.0.display()
                         );
-                        i += 1;
+                        // Re-insert so the entry will be retried on the next
+                        // check_pending invocation.
+                        self.pending_paths.push(entry);
+                        // Don't advance i: remove() already shifted elements left.
                     }
                 }
             } else {
