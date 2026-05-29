@@ -336,6 +336,11 @@ impl Monitor {
             eprintln!("[DEBUG] remove_path: path={} cmd={}", path.display(), label);
         }
 
+        // Save path options BEFORE removing entries from monitored_entries.
+        // first_opt_for_path() queries monitored_entries, so it must be called
+        // before the retain below.
+        let saved_opts = self.first_opt_for_path(path).cloned();
+
         // Remove matching entries from monitored_entries
         let before = self.monitored_entries.len();
         self.monitored_entries.retain(|(p, o)| {
@@ -359,10 +364,10 @@ impl Monitor {
         if !has_other {
             // No more entries for this path — tear down fanotify
             if let Some(pos) = self.paths.iter().position(|p| p == path) {
-                let canonical = &self.canonical_paths[pos];
-                if let Some(opts) = self.first_opt_for_path(path) {
+                if let Some(ref opts) = saved_opts {
                     let path_mask = path_mask_from_options(opts);
                     if let Some(&gi) = self.path_to_group.get(path) {
+                        let canonical = &self.canonical_paths[pos];
                         let fan_fd = &self.fs_groups[gi].fan_fd;
                         let _ = fanotify_mark(
                             fan_fd,
