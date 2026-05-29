@@ -5,10 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] - 2026-05-28
+## [0.4.0] - 2026-05-29
 
 ### Added
 
+- **`fsmon cd` flags**: `-m`/`--monitored` and `-l`/`--logging` flags to
+  cd directly to the monitored store or logging directory. `-m` auto-creates
+  the monitored directory and an empty store on first use.
 - **Unified broadcast event stream**: all events flow through a single
   `tokio::sync::broadcast` channel inside the daemon. File writing, subscribe,
   and metrics all consume from the same stream — no duplicated work, consistent
@@ -105,6 +108,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remaining `unknown` fields from now-populated caches → publish to broadcast.
   This eliminates the race at the architecture level rather than patching
   events after they're emitted.
+- **Monitored directory deletion recovery**: When a monitored directory is
+  deleted (`rm -rf`) and later recreated (`mkdir`), the daemon now detects
+  both transitions and re-establishes monitoring on the new inode.
+  inotify `DELETE_SELF` is the primary trigger (fanotify `FAN_DELETE_SELF`
+  is unreliable in FID mode). After deletion, a temporary fanotify inode
+  mark is placed on the nearest existing ancestor directory to capture events
+  during the recreate window. `check_pending()` retries path re-monitoring
+  when the directory reappears. Steady-state overhead is zero (fast-path
+  returns immediately when nothing is pending).
+- **Recursive monitoring post-startup gap**: new subdirectories created under
+  recursively-monitored paths after daemon startup are now detected via
+  inotify and automatically get fanotify inode marks. Previously only
+  subdirectories existing at startup were monitored.
+- **`rm -rf` recursive delete event preservation**: child file events are no
+  longer lost during recursive directory removal. Handle propagation across
+  event batches resolves paths from sibling subdirectory deletions.
+- **`(deleted)` suffix stripping**: paths resolved via `resolve_file_handle`
+  with trailing ` (deleted)` marker now have the suffix stripped from *all*
+  path components, fixing display for deeply nested deleted paths.
+- **Fanotify edge-triggered epoll draining**: reader tasks drain all queued
+  events per edge notification using `retain_ready()`, preventing event loss
+  when multiple events arrive between epoll wakeups.
+- **`remove_path` PathOptions ordering**: `PathOptions` are now saved *before*
+  the `retain` call in `remove_path`, ensuring correct fanotify mark teardown
+  even when the same path has entries across multiple cmd groups.
+- **`fsmon add/remove` path resolution**: relative paths now resolve to
+  absolute before storage in the monitored database.
+- **`fsmon cd -m`**: always goes to the store directory root, not the first
+  monitored path. Auto-creates directory + empty store on first use.
+- **`check_pending` fast path**: when no paths are pending and no temporary
+  marks exist, the function returns immediately (2 `is_empty()` checks)
+  instead of re-adding all inotify watches (N syscalls).
+
+### Removed
+
+- **Watchdog filesystem mark**: removed the lightweight `FAN_DELETE |
+  FAN_MOVED_FROM` filesystem mark that was added alongside every inode mark
+  as a fallback for deletion detection. The inotify `DELETE_SELF` mechanism
+  is now the sole and reliable primary detector. This simplifies `add_mark`
+  from ~80 lines of directory-tree-walking fs mark fallback logic to ~20
+  lines of inode mark only, and removes the `FsGroup.is_fs_mark` field and
+  all associated branching in 7 call sites.
 
 ### Architecture
 
