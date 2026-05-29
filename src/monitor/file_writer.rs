@@ -3,8 +3,8 @@ use std::fs::{self, OpenOptions};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::metrics::MetricsRegistry;
 use crate::FileEvent;
+use crate::metrics::MetricsRegistry;
 
 // ---- FileLogWriter: unified event stream consumer for disk persistence ----
 
@@ -66,11 +66,10 @@ impl FileLogWriter {
                 result = rx.recv() => {
                     match result {
                         Ok((event, cmd_name)) => {
-                            if let Err(e) = self.write_event(&event, &cmd_name) {
-                                if self.debug {
+                            if let Err(e) = self.write_event(&event, &cmd_name)
+                                && self.debug {
                                     eprintln!("[DEBUG] FileLogWriter write error: {}", e);
                                 }
-                            }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                             eprintln!("[WARNING] FileLogWriter dropped {} events (disk too slow)", n);
@@ -116,10 +115,7 @@ impl FileLogWriter {
                 if e.kind() == std::io::ErrorKind::NotFound {
                     let _ = fs::create_dir_all(&self.log_dir);
                     let _ = crate::fid_parser::chown_to_user(&self.log_dir);
-                    OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&log_path)
+                    OpenOptions::new().create(true).append(true).open(&log_path)
                 } else {
                     Err(e)
                 }
@@ -159,7 +155,8 @@ impl FileLogWriter {
                     self.disk_buf
                         .push_back((event.clone(), cmd_name.to_string()));
                 }
-                self.metrics.set_disk_buffer_events(self.disk_buf.len() as i64);
+                self.metrics
+                    .set_disk_buffer_events(self.disk_buf.len() as i64);
                 Err(e)
             }
         }
@@ -183,10 +180,7 @@ impl FileLogWriter {
                     if e.kind() == std::io::ErrorKind::NotFound {
                         let _ = fs::create_dir_all(&self.log_dir);
                         let _ = crate::fid_parser::chown_to_user(&self.log_dir);
-                        OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(&log_path)
+                        OpenOptions::new().create(true).append(true).open(&log_path)
                     } else {
                         Err(e)
                     }
@@ -207,7 +201,8 @@ impl FileLogWriter {
         self.disk_buf = remaining;
         self.disk_healthy = self.disk_buf.is_empty();
         self.last_disk_check = std::time::Instant::now();
-        self.metrics.set_disk_buffer_events(self.disk_buf.len() as i64);
+        self.metrics
+            .set_disk_buffer_events(self.disk_buf.len() as i64);
     }
 
     /// Sync all dirty log files to disk via fdatasync.
@@ -220,11 +215,7 @@ impl FileLogWriter {
             match std::fs::OpenOptions::new().write(true).open(path) {
                 Ok(file) => {
                     if let Err(e) = file.sync_data() {
-                        eprintln!(
-                            "[WARNING] fdatasync failed for '{}': {}",
-                            path.display(),
-                            e
-                        );
+                        eprintln!("[WARNING] fdatasync failed for '{}': {}", path.display(), e);
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}

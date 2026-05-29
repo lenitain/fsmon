@@ -1,36 +1,17 @@
-# fsmon Extensions — Bridge Examples
+# fsmon extensions
 
-fsmon daemon exposes **4 data exit points**. This directory is organized by exit point,
-each subdirectory provides example code showing how to bridge fsmon to your existing tools.
+Minimal examples for fsmon's two JSONL data exits.
 
-```
-fanotify kernel events
-       │
-       ▼
-  fsmon daemon
-       │
-       ├── ① jsonl-logs/         Disk log files    → grep / aggregate / replay
-       ├── ② subscribe-stream/   Real-time stream  → Webhook / Kafka / ES / S3 / ...
-       ├── ③ socket-admin/       Management cmds   → programmatic add/remove/list/health
-       └── ④ http-metrics/       Metrics endpoint  → Prometheus / Grafana / any TCP consumer
-```
+## ① JSONL file — persistent on-disk events
 
-## Quick Navigation
+- `examples/read-jsonl.sh` — jq queries, recent events
+- `examples/read-jsonl.py` — same in Python
 
-| I want to... | Go to |
-|-------------|-------|
-| Analyze logs after the fact, grep specific events | `jsonl-logs/` |
-| Push real-time events to Webhook / Kafka / ES / S3 | `subscribe-stream/` |
-| Dynamically add/remove monitored paths from code | `socket-admin/` |
-| Hook into Prometheus + Grafana for dashboards | `http-metrics/` |
+## ② Unix socket — zero-disk real-time stream
 
-## Naming Convention
+Subscribe protocol: send TOML command → receive TOML OK → stream JSONL.
 
-All example scripts are prefixed with `fsmon-`. They are **example code** (not production-ready).
-Adapt parameters to your environment before deploying.
+- `examples/subscribe.sh` — socat + jq (python fallback)
+- `examples/subscribe.py` — socket programming in 25 lines
 
-## Dependencies
-
-All examples use Python 3 stdlib (`socket`, `json`, `argparse`) as the baseline.
-Some advanced examples (Kafka, ES, etc.) require extra `pip install` — the scripts
-print install instructions if the dependency is missing.
+Adapt them to your downstream of choice.

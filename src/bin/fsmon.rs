@@ -86,11 +86,12 @@ pub enum Commands {
         #[arg(long)]
         local_time: bool,
 
-        /// TCP address for Prometheus HTTP /metrics endpoint.
-        /// e.g. "127.0.0.1:9845". Omit to disable TCP (socket metrics
-        /// command remains available). Takes precedence over config.
-        #[arg(long, value_name = "ADDRESS")]
-        metrics_listen: Option<String>,
+        /// Metrics report interval in seconds (default: disabled).
+        /// When set to N > 0, prints a one-line status report to stderr every N seconds.
+        /// Report includes: uptime, RSS (MB), events processed/written,
+        /// cache sizes, and reader task health.
+        #[arg(long, value_name = "SECS")]
+        metrics_interval: Option<u64>,
     },
 
     /// Add a path to the monitoring list
@@ -124,7 +125,8 @@ pub enum Commands {
     #[command(about = help::about(HelpTopic::Changes), long_about = help::long_about(HelpTopic::Changes))]
     Changes(ChangesArgs),
 
-    /// Initialize log and monitored data directories.
+    /// Create the config file. Directories are created on first use by
+    /// other commands (monitored: fsmon add; logs: fsmon daemon / fsmon cd).
     /// With --service, also create a systemd service file.
     #[command(about = help::about(HelpTopic::Init), long_about = help::long_about(HelpTopic::Init))]
     Init {
@@ -137,10 +139,20 @@ pub enum Commands {
     #[command(about = help::about(HelpTopic::Cd), long_about = help::long_about(HelpTopic::Cd))]
     Cd {
         /// cd to the monitored store directory
-        #[arg(short = 'm', long, conflicts_with = "logging", required_unless_present = "logging")]
+        #[arg(
+            short = 'm',
+            long,
+            conflicts_with = "logging",
+            required_unless_present = "logging"
+        )]
         monitored: bool,
         /// cd to the log directory (same as old `fsmon cd`)
-        #[arg(short = 'l', long, conflicts_with = "monitored", required_unless_present = "monitored")]
+        #[arg(
+            short = 'l',
+            long,
+            conflicts_with = "monitored",
+            required_unless_present = "monitored"
+        )]
         logging: bool,
     },
 
@@ -279,10 +291,9 @@ mod tests {
 
     #[test]
     fn test_add_types_mixed() {
-        let args = AddArgs::try_parse_from([
-            "add", "--path", "/tmp", "-t", "MODIFY", "--types", "CREATE",
-        ])
-        .unwrap();
+        let args =
+            AddArgs::try_parse_from(["add", "--path", "/tmp", "-t", "MODIFY", "--types", "CREATE"])
+                .unwrap();
         assert_eq!(args.types, vec!["MODIFY", "CREATE"]);
     }
 
@@ -399,8 +410,7 @@ mod tests {
 
     #[test]
     fn test_query_time_repeatable() {
-        let args =
-            QueryArgs::try_parse_from(["query", "--time", ">1h", "--time", "<now"]).unwrap();
+        let args = QueryArgs::try_parse_from(["query", "--time", ">1h", "--time", "<now"]).unwrap();
         assert_eq!(args.time, vec![">1h".to_string(), "<now".to_string()]);
     }
 
@@ -417,9 +427,7 @@ mod tests {
     fn test_daemon_sync_interval() {
         let cli = Cli::try_parse_from(["fsmon", "daemon", "--sync-interval", "5"]).unwrap();
         match cli.command {
-            Commands::Daemon {
-                sync_interval, ..
-            } => {
+            Commands::Daemon { sync_interval, .. } => {
                 assert_eq!(sync_interval, Some(5));
             }
             _ => panic!("expected Daemon"),
@@ -430,9 +438,7 @@ mod tests {
     fn test_daemon_sync_interval_default() {
         let cli = Cli::try_parse_from(["fsmon", "daemon"]).unwrap();
         match cli.command {
-            Commands::Daemon {
-                sync_interval, ..
-            } => {
+            Commands::Daemon { sync_interval, .. } => {
                 assert_eq!(sync_interval, None);
             }
             _ => panic!("expected Daemon"),
@@ -451,10 +457,8 @@ mod tests {
 
     #[test]
     fn test_changes_with_time_and_path() {
-        let args = ChangesArgs::try_parse_from([
-            "changes", "nginx", "-p", "/var/www", "-t", ">1h",
-        ])
-        .unwrap();
+        let args = ChangesArgs::try_parse_from(["changes", "nginx", "-p", "/var/www", "-t", ">1h"])
+            .unwrap();
         assert_eq!(args.cmd, Some("nginx".to_string()));
         assert_eq!(args.path, vec![PathBuf::from("/var/www")]);
         assert_eq!(args.time, vec![">1h".to_string()]);
@@ -462,15 +466,8 @@ mod tests {
 
     #[test]
     fn test_changes_path_repeatable() {
-        let args = ChangesArgs::try_parse_from([
-            "changes",
-            "_global",
-            "-p",
-            "/etc",
-            "-p",
-            "/home",
-        ])
-        .unwrap();
+        let args = ChangesArgs::try_parse_from(["changes", "_global", "-p", "/etc", "-p", "/home"])
+            .unwrap();
         assert_eq!(
             args.path,
             vec![PathBuf::from("/etc"), PathBuf::from("/home")]
@@ -479,15 +476,8 @@ mod tests {
 
     #[test]
     fn test_changes_time_repeatable() {
-        let args = ChangesArgs::try_parse_from([
-            "changes",
-            "_global",
-            "-t",
-            ">1h",
-            "-t",
-            "<now",
-        ])
-        .unwrap();
+        let args =
+            ChangesArgs::try_parse_from(["changes", "_global", "-t", ">1h", "-t", "<now"]).unwrap();
         assert_eq!(args.time, vec![">1h".to_string(), "<now".to_string()]);
     }
 
@@ -988,7 +978,7 @@ mod tests {
         // because clap will fail due to missing positional. But we can still
         // verify the handler rejects it by calling with None.
         use fsmon::query::Query;
-        let q = Query::new(PathBuf::from("/nonexistent"), None, None, vec![]);
+        let q = Query::new(PathBuf::from("/nonexistent"), None, None, vec![], false);
         assert!(q.resolve_log_files().unwrap().is_empty());
     }
 
@@ -1001,6 +991,7 @@ mod tests {
                 Some("ghost".into()),
                 None,
                 vec![],
+                false,
             );
             // No log files should be found
             let files = q.resolve_log_files().unwrap();
@@ -1075,7 +1066,7 @@ mod tests {
             // Query _global should find both events
             {
                 use fsmon::query::Query;
-                let q = Query::new(log_dir.clone(), Some("_global".into()), None, vec![]);
+                let q = Query::new(log_dir.clone(), Some("_global".into()), None, vec![], false);
                 let files = q.resolve_log_files().unwrap();
                 assert_eq!(files.len(), 1, "should find _global_log.jsonl");
             }

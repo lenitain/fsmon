@@ -15,7 +15,7 @@ pub const fn about(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::Root => "Lightweight high-performance file change tracking tool",
         HelpTopic::Daemon => "Run the fsmon daemon (requires sudo for fanotify)",
-        HelpTopic::Init => "Initialize log and monitored data directories",
+        HelpTopic::Init => "Create the config file (directories created on first use)",
         HelpTopic::Cd => "Open a subshell in the monitored path or log directory",
         HelpTopic::Add => "Add a path to the monitoring list",
         HelpTopic::Remove => "Remove one or more paths from the monitoring list",
@@ -41,7 +41,6 @@ Usage:
   sudo fsmon daemon --debug               Enable debug output
   sudo fsmon daemon --disk-min-free 10%       Warn when disk < 10% free
   sudo fsmon daemon --sync-interval 5         fdatasync log files every 5s
-  sudo fsmon daemon --metrics-listen 127.0.0.1:9845  With Prometheus endpoint
   sudo fsmon daemon --local-time              Use local timezone in timestamps
   sudo fsmon daemon --buffer-size 65536       Fanotify read buffer
   sudo fsmon daemon --channel-capacity 1024   Event channel cap (default: unbounded)
@@ -121,7 +120,7 @@ Examples:
         HelpTopic::Remove => {
             r#"Remove one or more paths from the monitoring list.
 
-Without --path, removes the entire cmd group (including the null group).
+Without --path, removes the entire cmd group.
 With --path, removes only the specified paths. Multiple paths are atomic:
 all must exist, or nothing is removed.
 
@@ -252,7 +251,6 @@ Setup (no sudo needed):
 
 Daemon (requires sudo):
   sudo fsmon daemon &               Start daemon in background
-  sudo fsmon daemon --metrics-listen 127.0.0.1:9845  With Prometheus endpoint
   sudo systemctl start fsmon        Start via systemd (if installed)
   sudo systemctl stop fsmon         Stop via systemd
   journalctl -u fsmon -f           View daemon logs via systemd
@@ -278,9 +276,9 @@ Config:  ~/.config/fsmon/fsmon.toml (created by fsmon init, defaults apply witho
 Monitor: ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
 Logs:    ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].path)
 
-4 data exit points:
+3 data exit points:
   ① JSONL log files (on by default, configurable via [logging].path)
-  ② Unix socket subscribe — real-time JSONL stream (extensions/subscribe-stream/)
-  ③ Unix socket admin — add/remove/list/health (extensions/socket-admin/)
-  ④ HTTP /metrics — Prometheus scrape (opt-in via --metrics-listen)"#
+  ② Unix socket subscribe — real-time JSONL stream (examples/)
+  ③ Unix socket admin — add/remove/list/health (examples/)
+"#
 }

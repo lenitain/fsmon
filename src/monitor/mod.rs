@@ -11,12 +11,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use lru::LruCache;
-use tokio::io::unix::AsyncFd;
 use tokio::io::AsyncBufReadExt;
+use tokio::io::unix::AsyncFd;
 use tokio::signal::unix::{SignalKind, signal};
 
 use moka::sync::Cache;
 
+use crate::FileEvent;
 use crate::config::ResolvedCacheConfig;
 use crate::dir_cache;
 use crate::fid_parser::{
@@ -26,10 +27,11 @@ use crate::fid_parser::{
 use crate::filters::{self, PathOptions};
 use crate::metrics::MetricsRegistry;
 use crate::monitored::PathEntry;
-use crate::proc_cache::{self, PID_TREE_CAP, PROC_CACHE_CAP, PidTree, ProcCache, snapshot_process_tree};
+use crate::proc_cache::{
+    self, PID_TREE_CAP, PROC_CACHE_CAP, PidTree, ProcCache, snapshot_process_tree,
+};
 use crate::socket::{SocketCmd, SocketResp};
 use crate::utils::format_size;
-use crate::FileEvent;
 
 // ---- Submodules ----
 
@@ -41,13 +43,13 @@ mod live_path;
 mod reader;
 mod socket_handler;
 
-pub(crate) use channel::{EventSender, EventReceiver};
+pub(crate) use channel::{EventReceiver, EventSender};
 pub(crate) use events::PendingEvent;
 pub(crate) use file_writer::{FileLogWriter, notify_sd_ready};
 pub(crate) use reader::ReaderState;
-pub(crate) use socket_handler::tokio_io_oneshot;
 #[cfg(test)]
 pub(crate) use socket_handler::chains_contain;
+pub(crate) use socket_handler::tokio_io_oneshot;
 
 // ---- Monitor ----
 
@@ -98,6 +100,8 @@ pub struct Monitor {
     disk_min_free: Option<String>,
     /// Log file sync interval. None = disabled.
     sync_interval: Option<std::time::Duration>,
+    /// Metrics report interval. None = disabled.
+    metrics_interval: Option<std::time::Duration>,
 
     /// Unified event stream: broadcast channel for all consumers.
     /// Carries (FileEvent, cmd_name) — cmd_name is for file routing.
@@ -107,8 +111,6 @@ pub struct Monitor {
     pub(crate) local_time: bool,
     /// Atomic metrics counters (thread-safe, cloneable).
     pub(crate) metrics: MetricsRegistry,
-    /// TCP listen address for HTTP /metrics (None = disabled).
-    metrics_listen: Option<String>,
     /// Temporary fanotify marks on parent directories of deleted-and-pending
     /// paths, so that events during the recreate window aren't lost.
     /// Maps: target_pending_path → (parent_path, group_idx in fs_groups)
@@ -129,7 +131,7 @@ impl Monitor {
         sync_interval: Option<std::time::Duration>,
         subscribe_buf: Option<usize>,
         local_time: bool,
-        metrics_listen: Option<String>,
+        metrics_interval: Option<u64>,
     ) -> Result<Self> {
         let cache_config = cache_config.unwrap_or_default();
         let buffer_size = buffer_size.unwrap_or(cache_config.buffer_size);
@@ -181,8 +183,7 @@ impl Monitor {
             monitored_entries.push((resolved.clone(), opts.clone()));
         }
 
-        let (reader_death_tx, reader_death_rx) =
-            tokio::sync::mpsc::unbounded_channel::<usize>();
+        let (reader_death_tx, reader_death_rx) = tokio::sync::mpsc::unbounded_channel::<usize>();
 
         let monitor = Self {
             paths,
@@ -218,6 +219,9 @@ impl Monitor {
             started_at: std::time::Instant::now(),
             disk_min_free,
             sync_interval,
+            metrics_interval: metrics_interval
+                .filter(|&n| n > 0)
+                .map(std::time::Duration::from_secs),
             event_stream_tx: {
                 let cap = subscribe_buf.unwrap_or(4096).max(1);
                 let (tx, _) = tokio::sync::broadcast::channel::<(FileEvent, String)>(cap);
@@ -225,7 +229,6 @@ impl Monitor {
             },
             local_time,
             metrics: MetricsRegistry::new(),
-            metrics_listen,
             temp_parent_marks: HashMap::new(),
         };
         if debug {
@@ -371,17 +374,17 @@ impl Monitor {
                         fan_fd.as_raw_fd(),
                         e
                     );
-                    } else {
-                        eprintln!(
-                            "[INFO] Added {} (inode mark) on existing fd {}",
-                            canonical.display(),
-                            fan_fd.as_raw_fd()
-                        );
-                        let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
-                        if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
-                            mark_recursive(fan_fd, path_mask, canonical);
-                        }
+                } else {
+                    eprintln!(
+                        "[INFO] Added {} (inode mark) on existing fd {}",
+                        canonical.display(),
+                        fan_fd.as_raw_fd()
+                    );
+                    let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
+                    if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
+                        mark_recursive(fan_fd, path_mask, canonical);
                     }
+                }
                 self.fs_groups[gi].ref_count += 1;
                 self.path_to_group.insert(self.paths[i].clone(), gi);
                 continue;
@@ -406,7 +409,10 @@ impl Monitor {
 
             let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
             let recursive = opts.is_some_and(|o| o.recursive) && canonical.is_dir();
-            if self.add_mark_upward(&new_fd, path_mask, canonical, recursive).is_none() {
+            if self
+                .add_mark_upward(&new_fd, path_mask, canonical, recursive)
+                .is_none()
+            {
                 drop(new_fd);
                 continue;
             }
@@ -480,10 +486,10 @@ impl Monitor {
         }
 
         // Startup disk space check
-        if let Some(ref threshold_str) = self.disk_min_free {
-            if let Some(ref dir) = self.log_dir {
-                Self::check_disk_space(dir, threshold_str);
-            }
+        if let Some(ref threshold_str) = self.disk_min_free
+            && let Some(ref dir) = self.log_dir
+        {
+            Self::check_disk_space(dir, threshold_str);
         }
 
         println!("Starting file trace monitor...");
@@ -592,26 +598,14 @@ impl Monitor {
         let fw_debug = self.debug;
         let fw_local = self.local_time;
         let fw_metrics = self.metrics.clone();
-        if let Some(fw_log_dir) = fw_log_dir {
-            if let Some(ref tx) = self.event_stream_tx {
-                let fw_rx = tx.subscribe();
-                let fw = FileLogWriter::new(fw_log_dir, fw_sync, fw_debug, fw_local, fw_metrics);
-                tokio::spawn(async move {
-                    fw.run(fw_rx).await;
-                });
-            }
-        }
-
-        // Spawn TCP metrics HTTP server
-        if let Some(ref addr_str) = self.metrics_listen {
-            match addr_str.parse::<std::net::SocketAddr>() {
-                Ok(addr) => {
-                    let _ = crate::metrics::serve_metrics_tcp(addr, self.metrics.clone()).await;
-                }
-                Err(e) => {
-                    eprintln!("[WARNING] Invalid metrics listen address '{}': {}", addr_str, e);
-                }
-            }
+        if let Some(fw_log_dir) = fw_log_dir
+            && let Some(ref tx) = self.event_stream_tx
+        {
+            let fw_rx = tx.subscribe();
+            let fw = FileLogWriter::new(fw_log_dir, fw_sync, fw_debug, fw_local, fw_metrics);
+            tokio::spawn(async move {
+                fw.run(fw_rx).await;
+            });
         }
 
         let mut sigterm =
@@ -639,7 +633,6 @@ impl Monitor {
             }
         });
         let mut proc_buf = vec![0u8; 65536];
-        let mut last_cache_stats = std::time::Instant::now();
 
         // Move the reader death receiver out of self so tokio::select! can use it.
         let mut reader_death_rx = std::mem::replace(
@@ -649,6 +642,9 @@ impl Monitor {
 
         // Notify systemd
         notify_sd_ready();
+
+        let mut metrics_tick: Option<tokio::time::Interval> =
+            self.metrics_interval.map(tokio::time::interval);
 
         loop {
             tokio::select! {
@@ -695,16 +691,6 @@ impl Monitor {
                     // 6. Retry pending paths (inotify handles the primary
                     //    delete→pending transition via DELETE_SELF).
                     self.check_pending();
-                    if self.debug && self.cache_config.stats_interval_secs > 0
-                        && last_cache_stats.elapsed() >= std::time::Duration::from_secs(self.cache_config.stats_interval_secs)
-                    {
-                        eprintln!("[DEBUG] --- cache stats ---");
-                        eprintln!("[DEBUG]   dir_cache:        {}/{} entries", dir_cache.entry_count(), DIR_CACHE_CAP);
-                        eprintln!("[DEBUG]   proc_cache:       {}/{} entries", proc_cache.entry_count(), PROC_CACHE_CAP);
-                        eprintln!("[DEBUG]   pid_tree:         {}/{} entries", pid_tree.entry_count(), PID_TREE_CAP);
-                        eprintln!("[DEBUG]   file_size_cache:  {}/{} entries", self.file_size_cache.len(), self.file_size_cache.cap());
-                        last_cache_stats = std::time::Instant::now();
-                    }
                 }
                 _ = tokio::signal::ctrl_c() => {
                     while let Ok(events) = event_rx.try_recv() {
@@ -726,6 +712,27 @@ impl Monitor {
                     if let Err(e) = self.reload_config() {
                         eprintln!("Config reload error: {e}");
                     }
+                }
+
+                _ = async {
+                    match metrics_tick.as_mut() {
+                        Some(t) => t.tick().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    let report = self.collect_metrics(&dir_cache, &proc_cache, &pid_tree);
+                    eprintln!(
+                        "[metrics] uptime={}s rss={:.1}MB caches(d/p/t/f)={}/{}/{}/{} readers={}/{}/{}",
+                        report.uptime_secs,
+                        report.rss_mb,
+                        report.dir_cache_entries,
+                        report.proc_cache_entries,
+                        report.pid_tree_entries,
+                        report.file_size_cache_entries,
+                        report.reader_groups_total,
+                        report.reader_groups_alive,
+                        report.reader_groups_gave_up,
+                    );
                 }
 
                 proc_readable = async {
@@ -805,11 +812,6 @@ impl Monitor {
                             };
                             if cmd.cmd == "subscribe" {
                                 self.handle_subscribe(writer, &cmd);
-                            } else if cmd.cmd == "metrics" {
-                                let m = self.metrics.clone();
-                                tokio::spawn(async move {
-                                    crate::metrics::handle_metrics_socket(writer, &m).await;
-                                });
                             } else {
                                 let resp = self.handle_socket_cmd(cmd);
                                 if let Ok(toml_str) = toml::to_string(&resp) {
@@ -832,6 +834,38 @@ impl Monitor {
         Ok(())
     }
 
+    /// Collect runtime metrics for periodic reporting.
+    pub(crate) fn collect_metrics(
+        &self,
+        dir_cache: &moka::sync::Cache<fanotify_fid::types::HandleKey, std::path::PathBuf>,
+        proc_cache: &crate::proc_cache::ProcCache,
+        pid_tree: &crate::proc_cache::PidTree,
+    ) -> MetricsReport {
+        let reader_groups_alive = self
+            .reader_states
+            .iter()
+            .filter(|s| s.as_ref().is_some_and(|s| !s.gave_up))
+            .count() as u64;
+        let reader_groups_gave_up = self
+            .reader_states
+            .iter()
+            .filter(|s| s.as_ref().is_some_and(|s| s.gave_up))
+            .count() as u64;
+
+        MetricsReport {
+            uptime_secs: self.started_at.elapsed().as_secs(),
+            rss_mb: get_rss_mb(),
+            dir_cache_entries: dir_cache.entry_count(),
+            proc_cache_entries: proc_cache.entry_count(),
+            pid_tree_entries: pid_tree.entry_count(),
+            file_size_cache_entries: self.file_size_cache.len() as u64,
+            reader_groups_total: self.fs_groups.len() as u64,
+            reader_groups_alive,
+            reader_groups_gave_up,
+            subscribers: self.metrics.subscribers() as u64,
+        }
+    }
+
     /// Publish pending events to the broadcast stream.
     fn send_pending_events(&self, pending: &[PendingEvent]) {
         if let Some(ref tx) = self.event_stream_tx {
@@ -840,6 +874,34 @@ impl Monitor {
             }
         }
     }
+}
+
+/// Snapshot of daemon runtime metrics for periodic reporting.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) struct MetricsReport {
+    pub uptime_secs: u64,
+    pub rss_mb: f64,
+    pub dir_cache_entries: u64,
+    pub proc_cache_entries: u64,
+    pub pid_tree_entries: u64,
+    pub file_size_cache_entries: u64,
+    pub reader_groups_total: u64,
+    pub reader_groups_alive: u64,
+    pub reader_groups_gave_up: u64,
+    pub subscribers: u64,
+}
+
+/// Read current RSS in MB from /proc/self/statm.
+fn get_rss_mb() -> f64 {
+    std::fs::read_to_string("/proc/self/statm")
+        .ok()
+        .and_then(|s| {
+            let parts: Vec<&str> = s.split_whitespace().collect();
+            parts.get(1).and_then(|p| p.parse::<u64>().ok())
+        })
+        .map(|pages| (pages * 4096) as f64 / (1024.0 * 1024.0))
+        .unwrap_or(0.0)
 }
 
 #[cfg(test)]

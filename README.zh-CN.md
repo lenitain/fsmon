@@ -23,7 +23,6 @@
 - **进程树追踪**（`<CMD>` 位置参数）：指定进程名（如 `openclaw`），自动追踪它及其所有子进程（fork/exec），每条事件附带完整的进程祖先链
 - **递归监控**: 监控整个目录树，自动追踪新建子目录
 - **完整删除捕获**: 通过持久化目录句柄缓存，完整捕获 `rm -rf` 中的每个文件
-- **高性能**: Rust + Tokio，内存占用 <5MB，零拷贝 FID 事件解析，二分查找日志查询
 - **捕获时过滤**: 按事件类型、文件大小过滤 — daemon 进程内完成，纳秒级，无 fork 开销
 - **热更新**: 运行时添加/移除路径，无需重启
 
@@ -193,9 +192,7 @@ sudo fsmon daemon &                           # 后台启动守护进程
 sudo fsmon daemon --debug                     # 启用调试输出（事件匹配 + 缓存指标）
 sudo fsmon daemon --disk-min-free 10%         # 磁盘空间不足时告警
 sudo fsmon daemon --sync-interval 5           # 每 5s fdatasync 日志文件
-sudo fsmon daemon --metrics-listen 127.0.0.1:9845  # 带 Prometheus 端点
 sudo fsmon daemon --local-time                # 时间戳使用本地时区
-sudo fsmon daemon --metrics-listen 127.0.0.1:9845  # 启用 Prometheus TCP /metrics
 sudo fsmon daemon --buffer-size 65536         # Fanotify 读取缓冲区（默认 32768）
 sudo fsmon daemon --channel-capacity 1024     # 事件通道上限（默认无界）
 sudo fsmon daemon --subscribe-buf 8192        # Subscribe 广播缓冲（默认 4096）
@@ -211,13 +208,9 @@ sudo fsmon daemon --cache-stats-interval 0    # 禁用缓存统计输出（默�
 | 模式 | 协议 | 默认 | 用途 |
 |------|------|------|------|
 | 文件 | JSONL 写入 `~/.local/state/fsmon/` | ✅ 开启 | 持久存储，供 query/clean 工具使用 |
-| Push | Unix socket subscribe（JSONL 流） | ✅ 始终可用 | 实时：Kafka、S3、webhook、Elasticsearch |
-| Pull | Socket `metrics` 命令（Prometheus text） | ✅ 始终可用 | 监控：Prometheus、Grafana |
-| Pull TCP | HTTP `/metrics` 端点 | ❌ 需 `--metrics-listen` 开启 | Prometheus 直接 scrape |
+| Socket | Unix socket — 连接即收 JSONL 流 | ✅ 始终可用 | 实时，nc / kafkacat / 任何工具直接接 |
 
 通过 `[logging].path` 配置项控制文件输出（默认开启）。
-
-参见 `extensions/README.md` 了解按数据出口组织的目录结构。
 
 ### add
 
@@ -387,12 +380,9 @@ dir_ttl_secs = 3600
 file_size_capacity = 10000
 proc_ttl_secs = 600
 stats_interval_secs = 60
-buffer_size = 32768             # Fanotify 读取缓冲区（最小 4096，最大 1048576）
+buffer_size = 32768             # Fanotify 读取缓冲区（仅 CLI：--buffer-size）
 channel_capacity = 1024         # 事件通道上限（不设置 = 无界）
 subscribe_buf = 4096            # Subscribe 消费者的广播缓冲
-
-[metrics]
-listen = "127.0.0.1:9845"       # TCP HTTP /metrics（注释掉或不设置 = 禁用）
 ```
 
 ### 覆盖优先级
@@ -402,7 +392,7 @@ CLI 参数 > fsmon.toml > 代码默认值
 
 CLI 参数优先级最高：
 ```bash
-sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536 --metrics-listen 127.0.0.1:9845
+sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536
 ```
 
 ## 事件类型
@@ -514,46 +504,35 @@ src/
 └── help.rs             # 帮助文本常量
 ```
 
-## 集成 (`extensions/`)
+## 集成
 
-**所有扩展脚本均为示例 — 非生产就绪，部署前请自行适配。**
+fsmon 的文件事件以标准 **JSONL** 格式导出 — 每行一条事件，无自定义格式。
 
-参见 `extensions/README.md` 了解完整目录结构和快速导航。
+### JSONL 文件（持久化）
 
-### ① JSONL 日志文件 — `extensions/jsonl-logs/`
+事件写入 `~/.local/state/fsmon/*_log.jsonl`。任何日志转发工具均可直接使用：
 
-| 脚本 | 目标消费者 |
-|------|----------|
-| `fsmon-log-tail.py` | 对磁盘 JSONL 文件做 grep、聚合、回放 |
+```bash
+# 终端查看
+jq 'select(.cmd == "nginx")' ~/.local/state/fsmon/*_log.jsonl
 
-### ② 订阅流 — `extensions/subscribe-stream/`
+# Filebeat → ES/Kafka（filebeat.yml）
+filebeat.inputs:
+  - type: log
+    paths: ["/home/*/.local/state/fsmon/*_log.jsonl"]
+    json.keys_under_root: true
 
-| 脚本 | 目标消费者 |
-|------|----------|
-| `fsmon-subscribe-demo.py` | 终端预览 |
-| `fsmon-webhook.py` | HTTP webhook（Slack、Discord、自定义服务器） |
-| `fsmon-kafka.py` | Kafka topic |
-| `fsmon-to-s3.py` | S3 / MinIO 批量归档 |
-| `fsmon-to-es.py` | Elasticsearch + Kibana |
-| `fsmon-to-influxdb.py` | InfluxDB / Telegraf |
-| `fsmon-custom-format.py` | CSV、TSV、syslog、Loki/Grafana、JSON |
+# Vector → 任意目标
+```
 
-### ③ Socket 管理 — `extensions/socket-admin/`
+### Unix socket（实时，无磁盘）
 
-| 脚本 | 目标消费者 |
-|------|----------|
-| `fsmon-admin.py` | 编程式 add/remove/list/health |
+连接 daemon socket 即可接收同样的 JSONL 事件：
 
-### ④ HTTP 指标 — `extensions/http-metrics/`
-
-| 文件 | 目标消费者 |
-|------|----------|
-| `fsmon-metrics.py` | Cron、systemd timer、Telegraf exec、Nagios check、手动拉取 |
-| `prometheus.yml` | Prometheus scrape 配置 + 4 条告警规则 |
-| `fsmon-grafana.json` | Grafana 大盘（导入 JSON，8 个面板） |
-| — | VictoriaMetrics、Thanos、Alertmanager、Grafana Agent、OpenTelemetry Collector |
-
-所有兼容 Prometheus 的系统均可直接 scrape TCP `/metrics` 端点。
+```bash
+nc -U /tmp/fsmon-$(id -u).sock | jq 'select(.cmd == "nginx")'
+nc -U /tmp/fsmon-$(id -u).sock | kafkacat -b broker:9092 -t fsmon-events
+```
 
 ## 许可证
 

@@ -1,0 +1,38 @@
+name: Benchmark
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bench:
+    name: Release build + smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Measure binary size
+        run: |
+          echo "=== Before strip ==="
+          ls -lh target/release/fsmon
+          strip target/release/fsmon
+          echo "=== After strip ==="
+          ls -lh target/release/fsmon
+
+      - name: Smoke test
+        run: |
+          ./target/release/fsmon --version
+          ./target/release/fsmon --help

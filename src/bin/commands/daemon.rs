@@ -14,7 +14,7 @@ pub async fn cmd_daemon(
     disk_min_free: Option<String>,
     sync_interval: Option<u64>,
     local_time: bool,
-    metrics_listen: Option<String>,
+    metrics_interval: Option<u64>,
 ) -> Result<()> {
     // Acquire singleton lock first — only one daemon instance allowed
     let (uid, _gid) = fsmon::config::resolve_uid_gid();
@@ -37,17 +37,6 @@ pub async fn cmd_daemon(
     }
     eprintln!("  Command socket: {}", cfg.socket.path.display());
 
-    // Merge metrics_listen: CLI > config > disabled
-    let metrics_listen = metrics_listen
-        .or_else(|| cfg.metrics.as_ref().and_then(|m| m.listen.clone()));
-    if let Some(ref addr) = metrics_listen {
-        if !addr.is_empty() {
-            eprintln!("  Metrics TCP:    http://{}/metrics", addr);
-        }
-    } else {
-        eprintln!("  Metrics TCP:    disabled");
-    }
-
     let store = Monitored::load(&cfg.monitored.path)?;
 
     let socket_path = cfg.socket.path.clone();
@@ -67,9 +56,8 @@ pub async fn cmd_daemon(
     set_socket_permissions(&socket_path)?;
 
     // Chown store parent dir to the original user (daemon runs as root)
-    let (uid, gid) = fsmon::config::resolve_uid_gid();
     if let Some(parent) = cfg.monitored.path.parent() {
-        chown_path(parent, uid, gid);
+        fsmon::config::chown_to_original_user(parent);
     }
 
     // Merge cache config: CLI > fsmon.toml > code defaults
@@ -94,9 +82,15 @@ pub async fn cmd_daemon(
         eprintln!("[DEBUG] --- cache configuration ---");
         eprintln!("[DEBUG]   dir_capacity:       {}", cache_cfg.dir_capacity);
         eprintln!("[DEBUG]   dir_ttl_secs:       {}", cache_cfg.dir_ttl_secs);
-        eprintln!("[DEBUG]   file_size_capacity: {}", cache_cfg.file_size_capacity);
+        eprintln!(
+            "[DEBUG]   file_size_capacity: {}",
+            cache_cfg.file_size_capacity
+        );
         eprintln!("[DEBUG]   proc_ttl_secs:      {}", cache_cfg.proc_ttl_secs);
-        eprintln!("[DEBUG]   stats_interval_secs: {}", cache_cfg.stats_interval_secs);
+        eprintln!(
+            "[DEBUG]   stats_interval_secs: {}",
+            cache_cfg.stats_interval_secs
+        );
         eprintln!("[DEBUG]   buffer_size:        {}", cache_cfg.buffer_size);
         match cache_cfg.channel_capacity {
             Some(cap) => eprintln!("[DEBUG]   channel_capacity:   {} (bounded)", cap),
@@ -107,8 +101,7 @@ pub async fn cmd_daemon(
     let paths_and_options = parse_path_entries(&store.flatten())?;
 
     // Merge disk_min_free: CLI > config > None
-    let disk_min_free = disk_min_free
-        .or_else(|| cfg.logging.disk_min_free.clone());
+    let disk_min_free = disk_min_free.or_else(|| cfg.logging.disk_min_free.clone());
 
     // Merge sync_interval: CLI > config > None (disabled)
     let sync_interval = sync_interval
@@ -128,7 +121,14 @@ pub async fn cmd_daemon(
     let subscribe_buf = cache_cfg.subscribe_buf;
     let log_dir = log_path;
     if debug {
-        eprintln!("[DEBUG]   local logging:      {}", if log_dir.is_some() { "enabled" } else { "disabled" });
+        eprintln!(
+            "[DEBUG]   local logging:      {}",
+            if log_dir.is_some() {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
     }
     let mut monitor = Monitor::new(
         paths_and_options,
@@ -142,7 +142,7 @@ pub async fn cmd_daemon(
         sync_interval,
         Some(subscribe_buf),
         local_time || cfg.logging.local_time.unwrap_or(false),
-        metrics_listen.filter(|a| !a.is_empty()),
+        metrics_interval,
     )?;
 
     if !store.is_empty() {
@@ -161,17 +161,6 @@ pub async fn cmd_daemon(
 
     monitor.run().await?;
     Ok(())
-}
-
-/// Chown a path to the given uid:gid (daemon runs as root, needs to give files back to the user).
-pub fn chown_path(path: &Path, uid: u32, gid: u32) {
-    if let Ok(cpath) = std::ffi::CString::new(path.to_string_lossy().as_bytes()) {
-        let _ = nix::unistd::chown(
-            cpath.as_c_str(),
-            Some(nix::unistd::Uid::from_raw(uid)),
-            Some(nix::unistd::Gid::from_raw(gid)),
-        );
-    }
 }
 
 /// Set socket permissions to 0666 so non-root users can communicate with the daemon.

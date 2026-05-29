@@ -16,12 +16,12 @@ mod query;
 mod remove;
 
 pub use add::cmd_add;
+pub use changes::cmd_changes;
 pub use clean::cmd_clean;
 pub use daemon::cmd_daemon;
 pub use health::cmd_health;
 pub use init_cd::{cmd_cd, cmd_init};
 pub use monitored::{cmd_list_monitored_paths, cmd_monitored};
-pub use changes::cmd_changes;
 pub use query::cmd_query;
 pub use remove::cmd_remove;
 
@@ -42,7 +42,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
             disk_min_free,
             sync_interval,
             local_time,
-            metrics_listen,
+            metrics_interval,
         } => {
             let cli_cache = fsmon::config::CliCacheOverride {
                 dir_capacity: cache_dir_cap,
@@ -54,7 +54,15 @@ pub fn run(command: crate::Commands) -> Result<()> {
                 channel_capacity,
                 subscribe_buf,
             };
-            cmd_daemon(debug, cli_cache, disk_min_free, sync_interval, local_time, metrics_listen).await_()
+            cmd_daemon(
+                debug,
+                cli_cache,
+                disk_min_free,
+                sync_interval,
+                local_time,
+                metrics_interval,
+            )
+            .await_()
         }
         Add(args) => cmd_add(args),
         Remove { cmd, path } => cmd_remove(cmd, path),

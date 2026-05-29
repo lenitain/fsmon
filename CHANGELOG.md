@@ -5,6 +5,99 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-06-01
+
+### Added
+
+- **Independent integration test suite** (`tests/`) with shared `tests/common/` harness
+  - `p1_cli.rs` — 22 CLI end-to-end tests (add/monitored/remove/query/changes/clean)
+  - `p1_monitor.rs` — 8 event parsing, serialization, and EventType completeness tests
+  - `p1_crash_recovery.rs` — 12 crash recovery tests (DaemonLock, atomic writes, config resilience, log truncation)
+  - `p1_utils.rs` — 16 utility function tests (parse_size, parse_size_filter, parse_time_filter)
+  - `tests/README.md` — test index with run commands and layering guide
+- **GitHub Actions CI workflow** (`.github/workflows/ci.yml`)
+  - Build + unit tests + integration tests on every push/PR
+  - `cargo fmt --check` and `cargo clippy -- -D warnings`
+- **GitHub Actions Benchmark workflow** (`.github/workflows/bench.yml`)
+  - Release build + binary size measurement + smoke test
+- **`--metrics` daemon flag**: periodic one-line status report to stderr
+  - Reports uptime, RSS (MB), cache sizes (dir/proc/pid-tree/file-size), and reader task health (total/alive/gave-up)
+  - Independent of `--debug`; designed for production monitoring via grep/awk
+- **`p1_metrics.rs`** — 3 output format validation tests
+
+### Changed
+
+- **Cache stats moved from `--debug` to `--metrics`**
+  - `--debug` now only controls event-level tracing (matching, routing, reader lifecycle)
+  - `--cache-stats-interval` and `--debug` no longer required for periodic cache reporting
+- `cargo fmt` applied to all source files for consistent formatting
+
+## [0.4.1] - 2026-05-30
+
+### Added
+
+- **Minimal extension examples**: 4 scripts covering the 2 data exit points —
+  `read-jsonl.{sh,py}` for persistent JSONL files and `subscribe.{sh,py}` for
+  real-time Unix socket streaming. Each exit point has symmetric Shell and Python
+  implementations under `examples/`.
+
+### Changed
+
+- **Extensions reorganized**: removed all downstream bridge scripts (Kafka
+  producer, Elasticsearch bulk indexer, InfluxDB line protocol, S3 archiver)
+  and the TCP /metrics HTTP listener. Extensions consolidated from 4
+  subdirectories into a single `examples/` directory with 4 minimal scripts.
+  Simplifies the project surface to its core: JSONL file output and Unix socket
+  subscribe stream.
+- **`extensions/README.md`**: simplified to English-only, documenting the 2
+  data exit points with minimal examples.
+- **clippy clean**: fixed all clippy warnings across all source files
+  (`collapsible_if`, `new_without_default`, `redundant_closure`, `for_kv_map`,
+  `unnecessary_sort_by`, `let_and_return`, `useless_vec`). Zero warnings on
+  `cargo clippy --all-targets`.
+
+### Fixed
+
+- **subscribe.py buffering bug**: the extension example `subscribe.py` mixed
+  `sock.recv(1)` with `sock.makefile("r")`, which caused the buffered reader to
+  miss JSONL events that arrived after the TOML handshake. Replaced with unified
+  `sock.makefile("rb")` for both response parsing and event streaming.
+- **query/changes ignore `local_time` config**: `fsmon query` and `fsmon changes`
+  always output UTC timestamps regardless of the `logging.local_time` setting.
+  Fixed by threading the `local_time` flag through `Query::new()` and using
+  `to_jsonl_string_local()` when enabled. Now query, changes, log files, and
+  subscribe streams all consistently respect the configured timezone.
+- **monitored.jsonl non-atomic save**: `Monitored::save()` used `File::create`
+  which truncates the file before writing, leaving a corrupted store on crash,
+  power loss, or `kill -9`. Replaced with temp-file + `sync_all` + `rename` —
+  POSIX guarantees atomic rename, so the original file stays intact until the
+  new content is fully written and synced.
+- **Extension script bugfixes**: corrected subscribe protocol handshake in both
+  Shell (`subscribe.sh`) and Python (`subscribe.py`) examples; fixed
+  `Elasticsearch()` constructor exception on ES 9.x with try/except wrapper;
+  fixed `s3 client` hang with `connect_timeout` when no AWS credentials present;
+  fixed `admin.py --socket` parameter being silently ignored; fixed
+  `fsmon-log-tail.py` default log path from `/var/log/fsmon` to
+  `~/.local/state/fsmon`.
+- **Subscribe protocol**: runtime validation fixes for subscribe command payload
+  and TOML header parsing.
+
+### Removed
+
+- **TCP /metrics HTTP listener**: `--metrics-listen` CLI flag and `[metrics]`
+  config section removed. The socket `cmd="metrics"` command still returns
+  Prometheus text format — just not via a separate TCP port. This simplifies
+  the daemon's network surface.
+- **All downstream bridge extensions**: Kafka, Elasticsearch, InfluxDB, and S3
+  bridge scripts removed. These were downstream-specific and better maintained
+  separately. The 2 data exits (JSONL files + Unix socket subscribe) are
+  universal and tool-agnostic.
+- **`regex` dependency**: removed unused crate from `Cargo.toml`.
+- **Dead code**: removed `EXIT_CONFIG` constant, `format_prometheus` function,
+  `new_cache`/`new_pid_tree` methods, `CounterVec::name`/`help` and
+  `IntGauge::name`/`help` fields, `socket::listen`, `PathParams::new`, unused
+  field, redundant re-export, and unnecessary thin wrappers.
+
 ## [0.4.0] - 2026-05-29
 
 ### Added

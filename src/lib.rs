@@ -11,7 +11,10 @@ pub mod proc_cache;
 pub mod query;
 pub mod socket;
 pub mod utils;
-pub use utils::{DiskFreeThreshold, SizeFilter, SizeOp, TimeOp, TimeFilter, format_datetime, parse_disk_min_free, parse_size, parse_size_filter, parse_time, parse_time_filter};
+pub use utils::{
+    SizeFilter, SizeOp, TimeFilter, TimeOp, format_datetime, parse_size, parse_size_filter,
+    parse_time, parse_time_filter,
+};
 
 use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
@@ -28,7 +31,6 @@ use std::path::PathBuf;
 pub struct DaemonLock {
     #[allow(dead_code)]
     file: fs::File,
-    _path: PathBuf,
 }
 
 impl DaemonLock {
@@ -67,7 +69,7 @@ impl DaemonLock {
         // Write PID for diagnostic purposes (not relied on for correctness)
         let _ = fs::write(&path, format!("{}", std::process::id()));
 
-        Ok(DaemonLock { file, _path: path })
+        Ok(DaemonLock { file })
     }
 }
 
@@ -80,8 +82,6 @@ use std::str::FromStr;
 
 pub const DEFAULT_KEEP_DAYS: u32 = 30;
 pub const DEFAULT_MAX_SIZE: &str = ">=1GB";
-
-pub const EXIT_CONFIG: i32 = 78;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -255,13 +255,25 @@ mod tests {
         let local = ev.to_jsonl_string_local();
 
         fn field_names(s: &str) -> Vec<String> {
-            s[1..s.len()-1].split(',')
+            s[1..s.len() - 1]
+                .split(',')
                 .map(|p| p.split(':').next().unwrap().trim_matches('"').to_string())
                 .collect()
         }
-        assert_eq!(field_names(&normal), field_names(&local), "field order must be identical");
+        assert_eq!(
+            field_names(&normal),
+            field_names(&local),
+            "field order must be identical"
+        );
 
-        assert!(normal.contains("\"time\":\"") && normal.contains("Z\""), "normal uses UTC Z");
-        assert!(local.contains("+"), "local time should have +HH:MM offset, got: {}", &local[..local.len().min(120)]);
+        assert!(
+            normal.contains("\"time\":\"") && normal.contains("Z\""),
+            "normal uses UTC Z"
+        );
+        assert!(
+            local.contains("+"),
+            "local time should have +HH:MM offset, got: {}",
+            &local[..local.len().min(120)]
+        );
     }
 }

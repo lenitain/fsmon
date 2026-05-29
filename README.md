@@ -23,7 +23,6 @@
 - **Process Tree Tracking** (`<CMD>` positional arg): Pinpoint a specific process (e.g., `openclaw`) and fsmon will track it plus all its descendants (fork/exec children), building a complete ancestry chain per event.
 - **Recursive Monitoring**: Watch entire directory trees with automatic tracking of newly created subdirectories
 - **Complete Deletion Capture**: Captures every file deleted during `rm -rf` via persistent directory handle cache
-- **High Performance**: Rust + Tokio, <5MB memory footprint, zero-copy FID event parsing, binary-search log querying
 - **Capture-time Filtering**: Filter by event type and file size — in-process, nanosecond-fast, no fork.
 - **Live Updates**: Add/remove paths while daemon runs — no restart needed.
 
@@ -165,8 +164,6 @@ via `SUDO_UID` + `getpwuid_r`, so it writes to `/home/<you>/...` not `/root/...`
 > don't support this. Logs remain owned by root. If `fsmon clean` fails as a normal user,
 > run `sudo fsmon clean` or use the Unix tools directly on the `.jsonl` files.
 
-### Auto-start on Boot (Optional)
-
 ### Auto-start on boot (optional — systemd recommended)
 
 Recommended (systemd):
@@ -200,7 +197,6 @@ sudo fsmon daemon &                           # Start daemon in background
 sudo fsmon daemon --debug                     # Enable debug output (event matching + cache stats)
 sudo fsmon daemon --disk-min-free 10%         # Warn when disk space drops below threshold
 sudo fsmon daemon --sync-interval 5           # fdatasync log files every 5s
-sudo fsmon daemon --metrics-listen 127.0.0.1:9845  # With Prometheus endpoint
 sudo fsmon daemon --local-time                # Use local timezone in timestamps
 sudo fsmon daemon --buffer-size 65536         # Fanotify read buffer (default: 32768)
 sudo fsmon daemon --channel-capacity 1024     # Event channel bound (default: unbounded)
@@ -217,13 +213,9 @@ sudo fsmon daemon --cache-stats-interval 0    # Disable periodic cache stats (de
 | Mode | Protocol | Default | Purpose |
 |------|----------|---------|---------|
 | File | JSONL to `~/.local/state/fsmon/` | ✅ on (config-only) | Persistent storage, query/clean tools |
-| Push | Unix socket subscribe (JSONL stream) | ✅ always available | Real-time: Kafka, S3, webhook, Elasticsearch |
-| Pull | Socket `metrics` command (Prometheus text) | ✅ always available | Monitoring: Prometheus, Grafana |
-| Pull TCP | HTTP `/metrics` endpoint | ❌ opt-in via `--metrics-listen` | Direct Prometheus scrape |
+| Socket | Unix socket — connect and receive JSONL stream | ✅ always available | Real-time, nc / kafkacat / any tool |
 
 Configure file output via `[logging].path` in config (enabled by default).
-
-See `extensions/` for example scripts organized by data exit point.
 
 ### add
 
@@ -395,12 +387,9 @@ dir_ttl_secs = 3600
 file_size_capacity = 10000
 proc_ttl_secs = 600
 stats_interval_secs = 60
-buffer_size = 32768             # Fanotify read buffer (min 4096, max 1048576)
+buffer_size = 32768             # Fanotify read buffer (CLI only: --buffer-size)
 channel_capacity = 1024         # Event channel bound (omit = unbounded)
 subscribe_buf = 4096            # Broadcast buffer for subscribe consumers
-
-[metrics]
-listen = "127.0.0.1:9845"       # TCP HTTP /metrics (omit/comment-out = disabled)
 ```
 
 ### Override priority
@@ -410,7 +399,7 @@ CLI args > fsmon.toml > code defaults
 
 CLI flags override both config file and defaults:
 ```bash
-sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536 --metrics-listen 127.0.0.1:9845
+sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536
 ```
 
 ## Event Types
@@ -522,46 +511,35 @@ src/
 └── help.rs             # Help text constants
 ```
 
-## Integrations (`extensions/`)
+## Integrations
 
-**All extension scripts are examples — not production-ready. Adapt before deploying.**
+fsmon exports file events as standard **JSONL** — one event per line, no custom format.
 
-See `extensions/README.md` for the full directory structure and quick navigation.
+### JSONL files (persistent)
 
-### ① JSONL Log Files — `extensions/jsonl-logs/`
+Events written to `~/.local/state/fsmon/*_log.jsonl`. Use any log shipper:
 
-| Script | Target consumer |
-|--------|----------------|
-| `fsmon-log-tail.py` | grep, aggregate, replay on-disk JSONL files |
+```bash
+# Terminal
+jq 'select(.cmd == "nginx")' ~/.local/state/fsmon/*_log.jsonl
 
-### ② Subscribe Stream — `extensions/subscribe-stream/`
+# Filebeat → ES/Kafka (filebeat.yml)
+filebeat.inputs:
+  - type: log
+    paths: ["/home/*/.local/state/fsmon/*_log.jsonl"]
+    json.keys_under_root: true
 
-| Script | Target consumer |
-|--------|----------------|
-| `fsmon-subscribe-demo.py` | Terminal preview |
-| `fsmon-webhook.py` | HTTP webhook (Slack, Discord, custom server) |
-| `fsmon-kafka.py` | Kafka topic |
-| `fsmon-to-s3.py` | S3 / MinIO batch archive |
-| `fsmon-to-es.py` | Elasticsearch + Kibana |
-| `fsmon-to-influxdb.py` | InfluxDB / Telegraf |
-| `fsmon-custom-format.py` | CSV, TSV, syslog, Loki/Grafana, JSON |
+# Vector → any destination
+```
 
-### ③ Socket Admin — `extensions/socket-admin/`
+### Unix socket (real-time, no disk)
 
-| Script | Target consumer |
-|--------|----------------|
-| `fsmon-admin.py` | Programmatic add/remove/list/health |
+Connect to `cmd = "subscribe"` socket — receives the same JSONL events in real time:
 
-### ④ HTTP Metrics — `extensions/http-metrics/`
-
-| File | Target consumer |
-|------|----------------|
-| `fsmon-metrics.py` | Cron, systemd timer, Telegraf exec, Nagios check, manual pull |
-| `prometheus.yml` | Prometheus scrape config + 4 alerting rules |
-| `fsmon-grafana.json` | Grafana dashboard (import JSON, 8 panels) |
-| — | VictoriaMetrics, Thanos, Alertmanager, Grafana Agent, OpenTelemetry Collector |
-
-All Prometheus-compatible systems can scrape the TCP `/metrics` endpoint directly.
+```bash
+nc -U /tmp/fsmon-$(id -u).sock | jq 'select(.cmd == "nginx")'
+nc -U /tmp/fsmon-$(id -u).sock | kafkacat -b broker:9092 -t fsmon-events
+```
 
 ## License
 

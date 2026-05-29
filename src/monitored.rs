@@ -67,15 +67,7 @@ pub struct PathEntry {
     pub size: Option<String>,
 }
 
-impl PathParams {
-    pub fn new(recursive: Option<bool>, types: Option<Vec<String>>, size: Option<String>) -> Self {
-        PathParams {
-            recursive,
-            types,
-            size,
-        }
-    }
-}
+impl PathParams {}
 
 impl From<&PathEntry> for PathParams {
     fn from(e: &PathEntry) -> Self {
@@ -149,18 +141,26 @@ impl Monitored {
     }
 
     /// Save Monitored to file (JSONL format). Creates parent directories if needed.
+    /// Uses atomic write (temp file + rename) to prevent corruption on crash/kill.
     pub fn save(&self, path: &Path) -> Result<()> {
         let parent = path.parent().context("Monitored path has no parent")?;
         fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create directory {}", parent.display()))?;
-        let mut file = fs::File::create(path)
-            .with_context(|| format!("Failed to create store {}", path.display()))?;
-        chown_to_original_user(path);
         chown_to_original_user(parent);
-        for group in &self.groups {
-            let line = serde_json::to_string(group).context("Failed to serialize store group")?;
-            writeln!(file, "{}", line).context("Failed to write store group")?;
+        let tmp = path.with_extension("tmp");
+        {
+            let mut file = fs::File::create(&tmp)
+                .with_context(|| format!("Failed to create store {}", tmp.display()))?;
+            for group in &self.groups {
+                let line =
+                    serde_json::to_string(group).context("Failed to serialize store group")?;
+                writeln!(file, "{}", line).context("Failed to write store group")?;
+            }
+            file.sync_all().context("Failed to sync store temp file")?;
         }
+        fs::rename(&tmp, path)
+            .with_context(|| format!("Failed to rename {} to {}", tmp.display(), path.display()))?;
+        chown_to_original_user(path);
         Ok(())
     }
 
@@ -450,7 +450,11 @@ mod tests {
                         let mut m = BTreeMap::new();
                         m.insert(
                             PathBuf::from("/tmp"),
-                            PathParams::new(Some(true), None, None),
+                            PathParams {
+                                recursive: Some(true),
+                                types: None,
+                                size: None,
+                            },
                         );
                         m
                     },
@@ -468,7 +472,14 @@ mod tests {
                 cmd: CMD_GLOBAL.into(),
                 paths: {
                     let mut m = BTreeMap::new();
-                    m.insert(PathBuf::from("/a"), PathParams::new(None, None, None));
+                    m.insert(
+                        PathBuf::from("/a"),
+                        PathParams {
+                            recursive: None,
+                            types: None,
+                            size: None,
+                        },
+                    );
                     m
                 },
             }],

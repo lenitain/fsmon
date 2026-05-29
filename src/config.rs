@@ -19,7 +19,6 @@ pub struct Config {
     pub logging: LoggingConfig,
     pub socket: SocketConfig,
     pub cache: Option<CacheConfig>,
-    pub metrics: Option<MetricsConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,17 +51,6 @@ pub struct LoggingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SocketConfig {
     pub path: PathBuf,
-}
-
-/// Prometheus metrics endpoint configuration.
-///
-/// Socket `metrics` command is always available (zero overhead).
-/// TCP HTTP `/metrics` is optional — only enabled when `listen` is set.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MetricsConfig {
-    /// TCP address for HTTP `/metrics` endpoint.
-    /// e.g. "127.0.0.1:9845". None / absent → TCP disabled.
-    pub listen: Option<String>,
 }
 
 /// Cache configuration (optional — missing fields use code defaults).
@@ -219,13 +207,12 @@ pub fn resolve_uid_gid() -> (u32, u32) {
     // 2. Running as root → use $HOME directory owner
     //    (works for systemd, sudo without SUDO_UID, or any root-launched context
     //     where HOME is set to the target user's directory)
-    if nix::unistd::geteuid().is_root() {
-        if let Ok(home) = std::env::var("HOME") {
-            if let Ok(meta) = std::fs::metadata(&home) {
-                use std::os::linux::fs::MetadataExt;
-                return (meta.st_uid(), meta.st_gid());
-            }
-        }
+    if nix::unistd::geteuid().is_root()
+        && let Ok(home) = std::env::var("HOME")
+        && let Ok(meta) = std::fs::metadata(&home)
+    {
+        use std::os::linux::fs::MetadataExt;
+        return (meta.st_uid(), meta.st_gid());
     }
 
     // 3. Running as normal user
@@ -263,13 +250,12 @@ pub fn resolve_uid() -> u32 {
     }
 
     // 2. Running as root → $HOME owner
-    if nix::unistd::geteuid().is_root() {
-        if let Ok(home) = std::env::var("HOME") {
-            if let Ok(meta) = std::fs::metadata(&home) {
-                use std::os::linux::fs::MetadataExt;
-                return meta.st_uid();
-            }
-        }
+    if nix::unistd::geteuid().is_root()
+        && let Ok(home) = std::env::var("HOME")
+        && let Ok(meta) = std::fs::metadata(&home)
+    {
+        use std::os::linux::fs::MetadataExt;
+        return meta.st_uid();
     }
 
     // 3. Current process UID
@@ -343,7 +329,6 @@ impl Default for Config {
                 path: PathBuf::from("/tmp/fsmon-<UID>.sock"),
             },
             cache: None,
-            metrics: None,
         }
     }
 }
@@ -488,21 +473,12 @@ path = "/tmp/fsmon-<UID>.sock"
 #   Cache stats output interval in debug mode (default: 60).
 #   CLI: --cache-stats-interval 30
 # stats_interval_secs = 60
-#   Fanotify read buffer size in bytes (default: 32768).
-#   CLI: --buffer-size 65536
-# buffer_size = 32768
 #   Event channel capacity. Default: unbounded.
 #   CLI: --channel-capacity 1024
 # channel_capacity = 1024
 #   Subscribe event stream buffer capacity. Default: 4096.
 #   CLI: --subscribe-buf 8192
 # subscribe_buf = 4096
-
-# [metrics]
-#   TCP HTTP /metrics endpoint address. Socket "metrics" command is always
-#   available; this enables Prometheus direct scrape.
-#   CLI: --metrics-listen 127.0.0.1:9845
-# listen = "127.0.0.1:9845"
 "#
         .to_string()
     }

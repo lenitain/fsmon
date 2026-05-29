@@ -1,16 +1,16 @@
 use crate::EventType;
 use crate::filters::PathOptions;
 use anyhow::{Context, Result};
-use moka::sync::Cache;
 use fanotify_fid::consts::{
     AT_FDCWD, FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE,
     FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_FS_ERROR, FAN_MARK_ADD, FAN_MODIFY, FAN_MOVE_SELF,
     FAN_MOVED_FROM, FAN_MOVED_TO, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC,
 };
 use fanotify_fid::handle::resolve_file_handle;
-use libc;
 use fanotify_fid::prelude::*;
 use fanotify_fid::types::{FidEvent, HandleKey};
+use libc;
+use moka::sync::Cache;
 use std::ffi::CString;
 use std::fs;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
@@ -160,7 +160,10 @@ pub fn read_fid_events_cached(
             return vec![];
         }
         Err(err) => {
-            eprintln!("[WARNING] fanotify read error on fd {}: {err}", fan_fd.as_raw_fd());
+            eprintln!(
+                "[WARNING] fanotify read error on fd {}: {err}",
+                fan_fd.as_raw_fd()
+            );
             return vec![];
         }
     };
@@ -181,7 +184,9 @@ pub fn read_fid_events_cached(
         }
         // self_handle → full path of the object itself
         if let Some(ref key) = ev.self_handle {
-            handle_map.entry(key.clone()).or_insert_with(|| ev.path.clone());
+            handle_map
+                .entry(key.clone())
+                .or_insert_with(|| ev.path.clone());
         }
         // dfid_name_handle → parent directory path
         if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
@@ -235,7 +240,9 @@ pub fn read_fid_events_cached(
                     };
                     // Newly resolved → extract its handles for other events
                     if let Some(ref sk) = ev.self_handle {
-                        handle_map.entry(sk.clone()).or_insert_with(|| ev.path.clone());
+                        handle_map
+                            .entry(sk.clone())
+                            .or_insert_with(|| ev.path.clone());
                     }
                     made_progress = true;
                 }
@@ -252,20 +259,24 @@ pub fn read_fid_events_cached(
                     .get(key)
                     .cloned()
                     .or_else(|| dir_cache.get(key))
-                    .or_else(|| resolve_file_handle(mount_fds, key.as_slice()).map(|p| {
-                        let clean = p.to_string_lossy();
-                        if let Some(stripped) = clean.strip_suffix(" (deleted)") {
-                            PathBuf::from(stripped)
-                        } else {
-                            p
-                        }
-                    }))
+                    .or_else(|| {
+                        resolve_file_handle(mount_fds, key.as_slice()).map(|p| {
+                            let clean = p.to_string_lossy();
+                            if let Some(stripped) = clean.strip_suffix(" (deleted)") {
+                                PathBuf::from(stripped)
+                            } else {
+                                p
+                            }
+                        })
+                    })
                 {
                     ev.path = path;
                     // Newly resolved → seed handle_map so child events can
                     // find this directory via their dfid_name_handle
                     if let Some(ref sk) = ev.self_handle {
-                        handle_map.entry(sk.clone()).or_insert_with(|| ev.path.clone());
+                        handle_map
+                            .entry(sk.clone())
+                            .or_insert_with(|| ev.path.clone());
                     }
                     made_progress = true;
                 }
@@ -576,10 +587,7 @@ mod tests {
     #[test]
     fn test_strip_deleted_suffix_basic() {
         let p = PathBuf::from("/home/user/dir (deleted)");
-        assert_eq!(
-            strip_deleted_suffix(&p),
-            PathBuf::from("/home/user/dir")
-        );
+        assert_eq!(strip_deleted_suffix(&p), PathBuf::from("/home/user/dir"));
     }
 
     #[test]
@@ -606,10 +614,7 @@ mod tests {
         // Parent resolved with (deleted), joined with child filename.
         let parent = PathBuf::from("/home/user/dir (deleted)");
         let dirty = parent.join("file.txt");
-        assert_eq!(
-            dirty,
-            PathBuf::from("/home/user/dir (deleted)/file.txt")
-        );
+        assert_eq!(dirty, PathBuf::from("/home/user/dir (deleted)/file.txt"));
         // Now strip_deleted_suffix handles embedded occurrences too.
         assert_eq!(
             strip_deleted_suffix(&dirty),
