@@ -188,7 +188,9 @@ def main() -> None:
     )
     os.makedirs(dlq_dir, exist_ok=True)
 
-    s3 = boto3.client("s3")
+    s3 = boto3.client("s3", config=boto3.session.Config(
+        connect_timeout=5, retries={"max_attempts": 1}
+    ))
     prefix = args.prefix.rstrip("/") + "/"
     logging.info("listening on %s -> S3 s3://%s/%s", socket_path, args.bucket, prefix)
     signal.signal(signal.SIGTERM, _on_sigterm)
