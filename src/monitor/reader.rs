@@ -102,7 +102,14 @@ impl Monitor {
         let raw_fd = owned_fan_fd.as_raw_fd();
         let mfds = Arc::new(vec![owned_mount_fd]);
 
+        if debug {
+            eprintln!("[DEBUG] spawning reader for group {} (fd {})", group_idx, raw_fd);
+        }
+
         tokio::spawn(async move {
+            if debug {
+                eprintln!("[DEBUG] reader task spawned for group {} (fd {})", group_idx, raw_fd);
+            }
             let afd = match AsyncFd::new(owned_fan_fd) {
                 Ok(a) => a,
                 Err(e) => {
@@ -122,6 +129,9 @@ impl Monitor {
                     }
                 };
                 let events = read_fid_events_cached(afd.get_ref(), &mfds, &dc, &mut buf);
+                if debug {
+                    eprintln!("[DEBUG] fd {} reader: got {} event(s)", raw_fd, events.len());
+                }
                 if !events.is_empty() {
                     let send_err = match &tx {
                         EventSender::Unbounded(tx) => tx.send(events).is_err(),
@@ -130,8 +140,13 @@ impl Monitor {
                     if send_err {
                         break;
                     }
+                    // Edge-triggered epoll: retain readiness so the next
+                    // readable().await resolves immediately if more events
+                    // are still queued (e.g. DELETE → DELETE_SELF batch).
+                    guard.retain_ready();
+                } else {
+                    guard.clear_ready();
                 }
-                guard.clear_ready();
             }
             if debug {
                 eprintln!(

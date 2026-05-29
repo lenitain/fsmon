@@ -155,7 +155,10 @@ pub fn read_fid_events_cached(
     // Phase 0: raw read + parse (fanotify-fid resolves paths via open_by_handle_at)
     let mut events = match fanotify_fid::read::read_fid_events(fan_fd, mount_fds, buf, None) {
         Ok(e) => e,
-        Err(_) => return vec![],
+        Err(err) => {
+            eprintln!("[WARNING] fanotify read error on fd {}: {err}", fan_fd.as_raw_fd());
+            return vec![];
+        }
     };
 
     // ---- Phase 0.5: strip " (deleted)" from Phase 0 resolved paths ----
