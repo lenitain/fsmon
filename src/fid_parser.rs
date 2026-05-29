@@ -98,16 +98,20 @@ pub fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
 /// Strip the " (deleted)" suffix that the kernel appends to paths resolved
 /// via `open_by_handle_at` + `readlink(/proc/self/fd/N)` for deleted-but-
 /// not-yet-reclaimed files and directories.
+///
+/// When a file inside a deleted directory is resolved, the kernel appends
+/// " (deleted)" to the intermediate directory component (e.g.
+/// `/dir (deleted)/file.txt`), not just at the end.  Strip every occurrence.
 pub(crate) fn strip_deleted_suffix(path: &Path) -> PathBuf {
     if path.as_os_str().is_empty() {
         return PathBuf::new();
     }
     let clean = path.to_string_lossy();
-    if let Some(stripped) = clean.strip_suffix(" (deleted)") {
-        PathBuf::from(stripped)
-    } else {
-        path.to_path_buf()
-    }
+    // Replace ALL occurrences, not just the trailing one.
+    // The kernel convention uses " (deleted)" exclusively for disconnected
+    // dentries, so a real file-system name never contains this pattern.
+    let cleaned = clean.replace(" (deleted)", "");
+    PathBuf::from(cleaned)
 }
 
 /// Read and parse FID events, using a moka cache for path recovery.
@@ -584,25 +588,25 @@ mod tests {
     }
 
     #[test]
-    fn test_strip_deleted_suffix_only_at_end() {
-        // " (deleted)" in the middle is NOT stripped
+    fn test_strip_deleted_suffix_mid_component() {
+        // " (deleted)" anywhere in the path is stripped.
         let p = PathBuf::from("/home (deleted)/user/dir");
-        assert_eq!(strip_deleted_suffix(&p), p);
+        assert_eq!(strip_deleted_suffix(&p), PathBuf::from("/home/user/dir"));
     }
 
     #[test]
     fn test_strip_deleted_suffix_nested_join() {
-        // Simulates the problematic case: parent resolved with (deleted),
-        // then joined with child filename
+        // Parent resolved with (deleted), joined with child filename.
         let parent = PathBuf::from("/home/user/dir (deleted)");
         let dirty = parent.join("file.txt");
         assert_eq!(
             dirty,
             PathBuf::from("/home/user/dir (deleted)/file.txt")
         );
-        // strip_deleted_suffix should NOT clean this — it only strips
-        // the suffix of the full path, not embedded occurrences.
-        // Phase 0.5 strips BEFORE join, so this case is prevented upstream.
-        assert_eq!(strip_deleted_suffix(&dirty), dirty);
+        // Now strip_deleted_suffix handles embedded occurrences too.
+        assert_eq!(
+            strip_deleted_suffix(&dirty),
+            PathBuf::from("/home/user/dir/file.txt")
+        );
     }
 }
