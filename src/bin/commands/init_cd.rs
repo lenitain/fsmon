@@ -101,17 +101,36 @@ fn install_service() -> Result<()> {
 
 pub fn cmd_cd(monitored: bool) -> Result<()> {
     let dir = if monitored {
-        // cd to first configured monitored path
+        // cd to the monitored store directory.
+        // If no monitored paths are configured yet, create the directory
+        // and seed an empty store file (mirrors -l auto-creating log dir).
         let mut cfg = fsmon::config::Config::load()?;
         cfg.resolve_paths()?;
-        let store = fsmon::monitored::Monitored::load(&cfg.monitored.path)?;
+        let store_file = cfg.monitored.path.clone();
+        let store_dir = store_file
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| store_file.clone());
+
+        let store = fsmon::monitored::Monitored::load(&store_file)?;
         let entries = store.flatten();
-        let first = entries.first().ok_or_else(|| {
-            anyhow::anyhow!(
-                "No monitored paths configured. Add one first: fsmon add <cmd> --path <dir>"
-            )
-        })?;
-        first.path.clone()
+        if let Some(first) = entries.first() {
+            first.path.clone()
+        } else {
+            // No entries yet — seed the directory and empty store
+            if !store_dir.exists() {
+                std::fs::create_dir_all(&store_dir).with_context(|| {
+                    format!("Failed to create monitored directory: {}", store_dir.display())
+                })?;
+                fsmon::config::chown_to_original_user(&store_dir);
+                eprintln!("Created monitored directory: {}", store_dir.display());
+            }
+            // Write an empty valid store if file doesn't exist
+            if !store_file.exists() {
+                store.save(&store_file)?;
+            }
+            store_dir
+        }
     } else {
         // -l: cd to log directory (identical to old `fsmon cd`)
         let mut cfg = fsmon::config::Config::load()?;
