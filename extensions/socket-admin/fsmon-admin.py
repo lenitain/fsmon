@@ -263,7 +263,7 @@ def _parse_toml_value(value: str):
 
 def cmd_list(args):
     """List all monitored paths."""
-    resp = send_cmd({"cmd": "list"})
+    resp = send_cmd({"cmd": "list"}, args.socket)
     if not resp.get("ok"):
         print(f"Error: {resp.get('error', 'unknown')}", file=sys.stderr)
         sys.exit(1)
@@ -312,7 +312,7 @@ def cmd_add(args):
     if args.types:
         cmd["types"] = args.types.split(",")
 
-    resp = send_cmd(cmd)
+    resp = send_cmd(cmd, args.socket)
     if resp.get("ok"):
         print(f"✓ Added: {args.path}")
         if args.track_cmd:
@@ -335,7 +335,7 @@ def cmd_remove(args):
     if args.track_cmd:
         cmd["track_cmd"] = args.track_cmd
 
-    resp = send_cmd(cmd)
+    resp = send_cmd(cmd, args.socket)
     if resp.get("ok"):
         print(f"✓ Removed: {args.path}")
     else:
@@ -346,7 +346,7 @@ def cmd_remove(args):
 
 def cmd_health(args):
     """Get daemon health status."""
-    resp = send_cmd({"cmd": "health"})
+    resp = send_cmd({"cmd": "health"}, args.socket)
     health = resp.get("health")
     if not health:
         print(f"Error: no health data in response", file=sys.stderr)
