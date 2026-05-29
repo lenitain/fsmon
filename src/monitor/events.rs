@@ -44,8 +44,13 @@ impl Monitor {
             let matched_path = self.matching_path(&raw.path).cloned();
 
             // Detect canonical root DELETE_SELF — needs cleanup after recording.
+            // Also handle FAN_DELETE from the watchdog fs mark — when the inode
+            // mark's DELETE_SELF is lost (queue overflow) or arrives in a later
+            // batch, the watchdog's DELETE is the only signal that the monitored
+            // directory was removed.
             let is_delete_self = event_types.contains(&EventType::DeleteSelf)
-                || event_types.contains(&EventType::MovedFrom);
+                || event_types.contains(&EventType::MovedFrom)
+                || event_types.contains(&EventType::Delete);
             let is_canonical_root = is_delete_self
                 && self.canonical_paths.iter().any(|cp| cp == &raw.path);
 
