@@ -56,8 +56,14 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
                         raw_path.display()
                     );
                 }
+                // Resolve relative paths against current directory
+                let abs = if cleaned.is_relative() {
+                    std::env::current_dir()?.join(&cleaned)
+                } else {
+                    cleaned.clone()
+                };
                 eprintln!("[Note] path does not exist yet — will start monitoring when created.");
-                cleaned
+                abs
             }
         };
 
@@ -180,7 +186,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
 
     match result {
         Ok(resp) if resp.ok => {
-            println!("Entry added into monitored");
+            println!("Entry added: {}", entry.path.display());
         }
         Ok(resp) => {
             if resp.error_kind == Some(fsmon::socket::ErrorKind::Permanent) {
@@ -189,12 +195,12 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
                 store.save(&cfg.monitored.path)?;
                 eprintln!("Error: {}", resp.error.unwrap_or_default());
             } else {
-                println!("Entry added into monitored");
+                println!("Entry added: {}", entry.path.display());
                 eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
             }
         }
         Err(_) => {
-            println!("Entry added into monitored");
+            println!("Entry added: {}", entry.path.display());
             eprintln!("Daemon is not running — will be monitored after daemon restart.");
         }
     }
