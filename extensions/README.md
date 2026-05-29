@@ -46,11 +46,12 @@ uv run extensions/subscribe-stream/fsmon-subscribe-demo.py
 
 ## 设计理念
 
-每个脚本**完全自包含**。你只需要下载**一个 .py 文件**，不需要 clone 整个仓库，不需要安装其他 bridge 的依赖。
+每个脚本**完全自包含**——不 import 其他 Python 文件、不依赖其他 bridge 的第三方包。你可以将单个 `.py` 复制到任意已安装 fsmon daemon 的机器即可运行。
 
 - **PEP 723 inline metadata**：脚本头部声明自身依赖，`uv run` 自动创建隔离 venv
 - **零跨文件 import**：所有逻辑内联在单个文件中
-- **独立可复制**：将 `fsmon-kafka.py` 复制到任意机器即可运行
+- **独立可复制**：将 `fsmon-kafka.py` 复制到任意已装 daemon 的机器即可运行
+- **前提**：脚本连接 fsmon daemon Unix socket，目标机器必须先装好 fsmon
 
 ## 所有 Bridge 一览
 
@@ -89,12 +90,15 @@ uv run extensions/subscribe-stream/fsmon-subscribe-demo.py
 ### Kafka bridge
 
 ```bash
-# 方式 A: clone 了整个仓库，从 extensions/ 运行
-uv run extensions/subscribe-stream/fsmon-kafka.py --broker kafka.internal:9092 --topic fsmon-events
+# daemon 已安装的前提下，从仓库直接运行
+uv run extensions/subscribe-stream/fsmon-kafka.py \
+    --broker kafka.internal:9092 --topic fsmon-events
 
-# 方式 B: 只下载这一个脚本（无需 clone 仓库）
-curl -O https://raw.githubusercontent.com/xxx/fsmon/main/extensions/subscribe-stream/fsmon-kafka.py
-chmod +x fsmon-kafka.py
+# 或者只复制这一个 .py 到其他机器
+# （前提：目标机器已安装 fsmon daemon + uv）
+scp extensions/subscribe-stream/fsmon-kafka.py other-host:/opt/bridges/
+ssh other-host
+cd /opt/bridges
 ./fsmon-kafka.py --broker kafka.internal:9092 --topic fsmon-events
 
 # 筛选特定事件
