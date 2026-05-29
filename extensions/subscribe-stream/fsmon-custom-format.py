@@ -97,7 +97,7 @@ def _subscribe_inner(socket_path: str, track_cmd: str | None,
         cmd["track_cmd"] = track_cmd
     if type_filter:
         cmd["types"] = [t.strip() for t in type_filter.split(",")]
-    payload = _dict_to_toml(cmd) + "\n"
+    payload = _dict_to_toml(cmd) + "\n\n"
 
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
         s.settimeout(30)

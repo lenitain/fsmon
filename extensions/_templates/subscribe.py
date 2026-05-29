@@ -78,7 +78,7 @@ def _subscribe_inner(
     if types_filter:
         cmd["types"] = [t.strip() for t in types_filter.split(",")]
 
-    payload = _dict_to_toml(cmd) + "\n"
+    payload = _dict_to_toml(cmd) + "\n\n"
 
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
         s.settimeout(30)  # read timeout — daemon sends keepalive on idle

@@ -169,19 +169,45 @@ def _parse_toml_response(text: str) -> dict:
     result = {"ok": False}
     current_path = None
     in_paths = False
+    current_table: str | None = None
 
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
 
-        # Array of tables header: [[paths]]
-        if line.startswith("[[paths]]"):
-            in_paths = True
-            if "paths" not in result:
-                result["paths"] = []
-            current_path = {}
-            result["paths"].append(current_path)
+        # Regular table header: [health]
+        if line.startswith("[") and not line.startswith("[["):
+            table_name = line[1:-1]
+            current_table = table_name
+            result[table_name] = {}
+            in_paths = False
+            continue
+
+        # Array of tables header: [[paths]] or [[health.readers]]
+        if line.startswith("[["):
+            table_path = line[2:-2]
+            parts = table_path.split(".")
+            if len(parts) == 1:
+                # [[paths]]
+                in_paths = True
+                current_table = None
+                if table_path not in result:
+                    result[table_path] = []
+                current_path = {}
+                result[table_path].append(current_path)
+            else:
+                # [[health.readers]] → nested under result["health"]["readers"]
+                parent = parts[0]
+                child = parts[1]
+                if parent not in result:
+                    result[parent] = {}
+                if child not in result[parent]:
+                    result[parent][child] = []
+                current_path = {}
+                result[parent][child].append(current_path)
+                current_table = None
+                in_paths = True
             continue
 
         # Key = value
@@ -195,6 +221,8 @@ def _parse_toml_response(text: str) -> dict:
 
             if in_paths and current_path is not None:
                 current_path[key] = parsed
+            elif current_table is not None:
+                result[current_table][key] = parsed
             else:
                 result[key] = parsed
                 if key != "paths":

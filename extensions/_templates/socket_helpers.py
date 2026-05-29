@@ -68,7 +68,7 @@ def send_cmd(cmd: dict[str, Any], socket_path: str | None = None) -> dict[str, A
         socket_path = get_socket_path()
 
     # Build TOML payload (copy dict_to_toml from _templates/toml_helpers.py)
-    toml_payload = _dict_to_toml(cmd) + "\n"
+    toml_payload = _dict_to_toml(cmd) + "\n\n"
 
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
