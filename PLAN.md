@@ -64,16 +64,14 @@ stdlib-only 脚本（metrics, log-tail, admin, subscribe-demo, webhook, custom-f
 
 | 文件 | 操作 | 说明 |
 |------|------|------|
-| `extensions/pyproject.toml` | 新建 | 仅 dev dependencies (pytest, mypy)，不声明运行时依赖 |
-| `extensions/.python-version` | 新建 | `3.11` |
+| `extensions/pyproject.toml` | 新建 | dev dependencies (pytest, mypy) + requires-python >= 3.11 |
 | 全部 10 个 `.py` | 修改 | 顶部加 PEP 723 block |
 
 ### .python-version & pyproject.toml
 
 ```
 extensions/
-├── .python-version    # "3.11"
-├── pyproject.toml     # dev-only: pytest, mypy
+├── pyproject.toml     # dev-only: pytest, mypy, requires-python >= 3.11
 ├── _templates/        # canonical 实现片段（阶段 1）
 ├── tests/             # 测试文件（阶段 1）
 └── ...
@@ -533,7 +531,7 @@ extensions/_templates/
 | 操作 | 文件 | 阶段 |
 |------|------|------|
 | **新建** | `extensions/pyproject.toml` | 1 |
-| **新建** | `extensions/.python-version` | 1 |
+
 | **新建** | `extensions/_templates/subscribe.py` | 1 |
 | **新建** | `extensions/_templates/socket_helpers.py` | 1 |
 | **新建** | `extensions/_templates/toml_helpers.py` | 1 |

@@ -1,0 +1,20 @@
+[project]
+name = "fsmon-extensions-dev"
+version = "0.1.0"
+description = "Development dependencies for fsmon bridge scripts"
+requires-python = ">=3.11"
+
+requires-python = ">=3.11"
+
+[tool.uv]
+dev-dependencies = [
+    "mypy>=1.0",
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"

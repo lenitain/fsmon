@@ -1,7 +1,9 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["boto3>=1.30"]
+# ///
 """
-EXAMPLE ONLY — NOT FOR PRODUCTION USE.
-Adapt this script to your environment before deploying.
 
 fsmon -> S3 archiver bridge
 

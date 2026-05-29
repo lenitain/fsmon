@@ -1,7 +1,9 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["influxdb-client>=1.40"]
+# ///
 """
-EXAMPLE ONLY — NOT FOR PRODUCTION USE.
-Adapt this script to your environment before deploying.
 
 fsmon -> InfluxDB bridge (line protocol).
 

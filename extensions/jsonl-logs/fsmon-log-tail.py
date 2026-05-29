@@ -1,7 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
+# /// script
+# requires-python = ">=3.11"
+# ///
 """
-EXAMPLE ONLY — NOT FOR PRODUCTION USE.
-Adapt this script to your environment before deploying.
 
 fsmon Log File Reader — process JSONL log files produced by fsmon daemon.
 
