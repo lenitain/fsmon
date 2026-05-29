@@ -327,6 +327,74 @@ fn test_add_path_and_remove_path() {
     assert!(result.is_err());
 }
 
+// ---- DELETE_SELF canonical root ordering test ----
+
+#[test]
+fn test_delete_self_canonical_root_is_recorded() {
+    use fanotify_fid::types::FidEvent;
+
+    let mut m = Monitor::new(
+        vec![(
+            std::path::PathBuf::from("/tmp/fsmon_test_delete_self"),
+            PathOptions {
+                size_filter: None,
+                event_types: None,
+                recursive: true,
+                cmd: None,
+            },
+        )],
+        None,
+        None,
+        None,
+        None,
+        false,
+        None,
+        None,
+        None,
+        None,
+        false,
+        None,
+    )
+    .unwrap();
+
+    // simulate what run() does: canonicalize the path
+    m.canonical_paths = vec![std::path::PathBuf::from("/tmp/fsmon_test_delete_self")];
+
+    // Synthetic DELETE_SELF FidEvent matching the canonical root
+    let event = FidEvent {
+        mask: fanotify_fid::consts::FAN_DELETE_SELF,
+        pid: 1234,
+        path: std::path::PathBuf::from("/tmp/fsmon_test_delete_self"),
+        dfid_name_handle: None,
+        dfid_name_filename: None,
+        self_handle: None,
+    };
+
+    let pending = m.process_event_batch(&[event]);
+
+    // DELETE_SELF event should be recorded (not silently dropped)
+    assert!(
+        pending.iter().any(|pe| pe.event.event_type == crate::EventType::DeleteSelf),
+        "DELETE_SELF for canonical root should be recorded"
+    );
+
+    // Path should be moved to pending_paths after cleanup
+    assert!(
+        m.pending_paths
+            .iter()
+            .any(|(p, _)| p == &std::path::PathBuf::from("/tmp/fsmon_test_delete_self")),
+        "canonical root should move to pending_paths after DELETE_SELF"
+    );
+
+    // Path should be removed from active monitoring
+    assert!(
+        !m.monitored_entries
+            .iter()
+            .any(|(p, _)| p == &std::path::PathBuf::from("/tmp/fsmon_test_delete_self")),
+        "canonical root should be removed from monitored_entries"
+    );
+}
+
 fn make_event(path: &str, event_type: EventType, pid: u32, size: u64) -> FileEvent {
     FileEvent {
         time: chrono::Utc::now(),

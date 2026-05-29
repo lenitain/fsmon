@@ -95,6 +95,21 @@ pub fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
         .collect()
 }
 
+/// Strip the " (deleted)" suffix that the kernel appends to paths resolved
+/// via `open_by_handle_at` + `readlink(/proc/self/fd/N)` for deleted-but-
+/// not-yet-reclaimed files and directories.
+pub(crate) fn strip_deleted_suffix(path: &Path) -> PathBuf {
+    if path.as_os_str().is_empty() {
+        return PathBuf::new();
+    }
+    let clean = path.to_string_lossy();
+    if let Some(stripped) = clean.strip_suffix(" (deleted)") {
+        PathBuf::from(stripped)
+    } else {
+        path.to_path_buf()
+    }
+}
+
 /// Read and parse FID events, using a moka cache for path recovery.
 ///
 /// # Design
@@ -140,18 +155,8 @@ pub fn read_fid_events_cached(
     };
 
     // ---- Phase 0.5: strip " (deleted)" from Phase 0 resolved paths ----
-    // When open_by_handle_at resolves a deleted-but-not-reclaimed directory,
-    // readlink("/proc/self/fd/N") appends " (deleted)" (kernel behavior).
-    // Without cleanup, dirty paths like "/dir (deleted)/file.txt" are non-empty
-    // and skip Phase 1/2 entirely, propagating the dirty suffix to output.
     for ev in events.iter_mut() {
-        if ev.path.as_os_str().is_empty() {
-            continue;
-        }
-        let clean = ev.path.to_string_lossy();
-        if let Some(stripped) = clean.strip_suffix(" (deleted)") {
-            ev.path = PathBuf::from(stripped);
-        }
+        ev.path = strip_deleted_suffix(&ev.path);
     }
 
     // ---- Phase 1: seed local handle_map from resolved events ----
@@ -553,5 +558,51 @@ mod tests {
             assert!(FILE_SIZE_CACHE_CAP > 0, "FILE_SIZE_CACHE_CAP should be > 0");
             assert!(DEFAULT_EVENT_MASK > 0, "DEFAULT_EVENT_MASK should be > 0");
         };
+    }
+
+    // ---- strip_deleted_suffix ----
+
+    #[test]
+    fn test_strip_deleted_suffix_basic() {
+        let p = PathBuf::from("/home/user/dir (deleted)");
+        assert_eq!(
+            strip_deleted_suffix(&p),
+            PathBuf::from("/home/user/dir")
+        );
+    }
+
+    #[test]
+    fn test_strip_deleted_suffix_no_change() {
+        let p = PathBuf::from("/home/user/dir");
+        assert_eq!(strip_deleted_suffix(&p), p);
+    }
+
+    #[test]
+    fn test_strip_deleted_suffix_empty() {
+        let p = PathBuf::new();
+        assert_eq!(strip_deleted_suffix(&p), PathBuf::new());
+    }
+
+    #[test]
+    fn test_strip_deleted_suffix_only_at_end() {
+        // " (deleted)" in the middle is NOT stripped
+        let p = PathBuf::from("/home (deleted)/user/dir");
+        assert_eq!(strip_deleted_suffix(&p), p);
+    }
+
+    #[test]
+    fn test_strip_deleted_suffix_nested_join() {
+        // Simulates the problematic case: parent resolved with (deleted),
+        // then joined with child filename
+        let parent = PathBuf::from("/home/user/dir (deleted)");
+        let dirty = parent.join("file.txt");
+        assert_eq!(
+            dirty,
+            PathBuf::from("/home/user/dir (deleted)/file.txt")
+        );
+        // strip_deleted_suffix should NOT clean this — it only strips
+        // the suffix of the full path, not embedded occurrences.
+        // Phase 0.5 strips BEFORE join, so this case is prevented upstream.
+        assert_eq!(strip_deleted_suffix(&dirty), dirty);
     }
 }
