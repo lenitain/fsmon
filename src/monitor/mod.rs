@@ -695,6 +695,11 @@ impl Monitor {
                     self.patch_pending_events(&mut pending);
                     // 5. Send to broadcast
                     self.send_pending_events(&pending);
+                    // 6. Check for stale canonical paths (directories deleted without
+                    //    proper DELETE_SELF — fanotify FID mode unreliable).
+                    //    Also retry pending paths in case they were recreated.
+                    self.check_stale_canonical_paths();
+                    self.check_pending();
                     if self.debug && self.cache_config.stats_interval_secs > 0
                         && last_cache_stats.elapsed() >= std::time::Duration::from_secs(self.cache_config.stats_interval_secs)
                     {
@@ -757,6 +762,9 @@ impl Monitor {
                         None => std::future::pending().await,
                     }
                 } => {
+                    if self.debug {
+                        eprintln!("[DEBUG] inotify fd became readable");
+                    }
                     if let Ok(mut guard) = inotify_ready {
                         self.handle_inotify_events();
                         guard.clear_ready();

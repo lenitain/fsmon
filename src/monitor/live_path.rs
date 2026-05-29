@@ -614,6 +614,9 @@ impl Monitor {
             if !watches.iter().any(|(p, _)| p == path)
                 && let Ok(wd) = ino.watches().add(path, dir_root_mask)
             {
+                if self.debug {
+                    eprintln!("[DEBUG] inotify watch added on {} (mask: CREATE|MOVED_TO|DELETE_SELF|MOVE_SELF)", path.display());
+                }
                 watches.push((path.clone(), wd));
             }
         }
@@ -663,10 +666,16 @@ impl Monitor {
             Some(ino) => ino,
             None => return,
         };
+        if self.debug {
+            eprintln!("[DEBUG] handle_inotify_events: called");
+        }
         let mut buf = [0u8; 4096];
         let events = match inotify.read_events(&mut buf) {
             Ok(ev) => ev,
-            Err(_) => {
+            Err(e) => {
+                if self.debug {
+                    eprintln!("[DEBUG] handle_inotify_events: read_events error: {e}");
+                }
                 self.check_pending();
                 return;
             }
@@ -1058,6 +1067,69 @@ impl Monitor {
                     self.temp_parent_marks.insert(tgt, val);
                 }
             }
+        }
+    }
+
+    /// Check all actively monitored canonical paths.  If a path no longer
+    /// exists (deleted without a proper DELETE_SELF notification — common
+    /// in fanotify FID mode), move it to pending_paths for automatic
+    /// re-monitoring when the directory is recreated.
+    pub(crate) fn check_stale_canonical_paths(&mut self) {
+        // Collect stale (path, canonical) pairs upfront to avoid borrow
+        // conflicts with subsequent mutable self operations.
+        let stale_pairs: Vec<(PathBuf, PathBuf)> = {
+            let mut pairs = Vec::new();
+            for (i, canonical) in self.canonical_paths.iter().enumerate() {
+                if !canonical.exists() {
+                    pairs.push((self.paths[i].clone(), canonical.clone()));
+                }
+            }
+            pairs
+        };
+
+        if stale_pairs.is_empty() {
+            return;
+        }
+
+        for (path, canonical) in &stale_pairs {
+            if self.debug {
+                eprintln!(
+                    "[DEBUG] stale canonical path: {} (no longer exists)",
+                    canonical.display()
+                );
+            }
+
+            // Preserve ALL cmd group options before removing
+            let all_opts: Vec<PathOptions> =
+                self.opts_for_path(path).into_iter().cloned().collect();
+
+            if let Err(e) = self.remove_path(path, None) {
+                eprintln!(
+                    "[WARNING] Failed to remove stale path '{}': {e}",
+                    path.display()
+                );
+            }
+
+            for opts in all_opts {
+                self.pending_paths.push((
+                    path.clone(),
+                    PathEntry {
+                        path: path.clone(),
+                        recursive: Some(opts.recursive),
+                        types: opts.event_types.as_ref().map(|v| {
+                            v.iter().map(|t| t.to_string()).collect()
+                        }),
+                        size: opts
+                            .size_filter
+                            .map(|f| format!("{}{}", f.op, crate::utils::format_size(f.bytes))),
+                        cmd: opts.cmd,
+                    },
+                ));
+            }
+
+            // Add a temporary fanotify mark on the nearest existing
+            // ancestor so events during the recreate window aren't lost.
+            self.add_temp_parent_mark(path);
         }
     }
 }

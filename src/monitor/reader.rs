@@ -111,7 +111,12 @@ impl Monitor {
                 eprintln!("[DEBUG] reader task spawned for group {} (fd {})", group_idx, raw_fd);
             }
             let afd = match AsyncFd::new(owned_fan_fd) {
-                Ok(a) => a,
+                Ok(a) => {
+                    if debug {
+                        eprintln!("[DEBUG] reader {} AsyncFd created, entering loop", raw_fd);
+                    }
+                    a
+                }
                 Err(e) => {
                     eprintln!("[ERROR] AsyncFd for fd {}: {}", raw_fd, e);
                     let _ = death_tx.send(group_idx);
