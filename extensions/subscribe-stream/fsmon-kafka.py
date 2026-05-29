@@ -154,6 +154,15 @@ def _write_dlq(directory: str, item: dict) -> None:
         logging.error("dead-letter write failed: %s", exc)
 
 
+def _print_stats(count: int, errors: int) -> None:
+    """Emit JSON stats line to stderr for monitoring."""
+    print(json.dumps({
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "events": count,
+        "errors": errors,
+    }), file=sys.stderr, flush=True)
+
+
 def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -204,6 +213,7 @@ def main():
 
     count = 0
     errors = 0
+    last_stats = time.time()
     try:
         for ev in subscribe(socket_path, args.track_cmd, args.types):
             key = f"{ev.get('cmd', '?')}:{ev['event_type']}"
@@ -225,6 +235,10 @@ def main():
             count += 1
             if count % 1000 == 0:
                 logging.info("sent %d events (%d errors)", count, errors)
+            now = time.time()
+            if now - last_stats >= 30:
+                _print_stats(count, errors)
+                last_stats = now
     except KeyboardInterrupt:
         logging.info("shutting down...")
     except ConnectionError as e:

@@ -50,9 +50,11 @@ import argparse
 import json
 import logging
 import os
+import queue
 import signal
 import socket
 import sys
+import threading
 import time
 import urllib.request
 from datetime import datetime, timezone
@@ -203,9 +205,33 @@ def send_webhook(url: str, event: dict, dlq: DeadLetterQueue | None = None) -> b
     return False
 
 
+# ── Async webhook worker ─────────────────────────────────────────
+
+def _webhook_worker(url: str, q: queue.Queue, dlq: DeadLetterQueue) -> None:
+    """Worker thread: pull events from queue and send to webhook."""
+    while True:
+        item = q.get()
+        if item is None:  # shutdown sentinel
+            q.task_done()
+            break
+        event = item
+        send_webhook(url, event, dlq)
+        q.task_done()
+
+
 def format_for_print(ev):
     ts = datetime.fromisoformat(ev["time"])
     return f"[{ts:%H:%M:%S}] {ev['event_type']:12s} {ev['path']}  pid={ev['pid']}  cmd={ev['cmd']}"
+
+
+def _print_stats(count: int, errors: int) -> None:
+    """Emit JSON stats line to stderr for monitoring consumption."""
+    import json as _json
+    print(_json.dumps({
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "events": count,
+        "errors": errors,
+    }), file=sys.stderr, flush=True)
 
 
 def main():
@@ -240,20 +266,35 @@ def main():
 
     count = 0
     errors = 0
+    last_stats = time.time()
+    event_queue: queue.Queue = queue.Queue()
+    worker = threading.Thread(
+        target=_webhook_worker,
+        args=(args.webhook, event_queue, dlq),
+        daemon=True,
+    )
+    worker.start()
     try:
         for ev in subscribe(socket_path, args.track_cmd, args.types):
             count += 1
-            if not send_webhook(args.webhook, ev, dlq):
-                errors += 1
+            event_queue.put(ev)
             if args.print:
                 print(format_for_print(ev))
             if count % 100 == 0:
                 logging.info("sent %d events (%d errors)", count, errors)
+            now = time.time()
+            if now - last_stats >= 30:
+                _print_stats(count, errors)
+                last_stats = now
     except KeyboardInterrupt:
         logging.info("stopped. total: %d events, %d errors", count, errors)
     except ConnectionError as e:
         logging.error("%s", e)
         sys.exit(1)
+    finally:
+        event_queue.put(None)  # shutdown sentinel
+        worker.join(timeout=10)
+        logging.info("done. total: %d events, %d errors", count, errors)
 
 
 if __name__ == "__main__":
