@@ -21,8 +21,15 @@ fanotify kernel events
 
 ### 前置条件
 
-- **[fsmon](https://github.com/xxx/fsmon)** — 文件系统监控 daemon
 - **[uv](https://docs.astral.sh/uv/)** — Python 包管理器（`curl -LsSf https://astral.sh/uv/install.sh | sh`）
+- **fsmon daemon** — 本项目已包含，一行安装：
+
+```bash
+# 在本仓库根目录
+git clone https://github.com/xxx/fsmon
+cd fsmon
+cargo install --path .
+```
 
 ### 三步跑起来
 
@@ -30,7 +37,7 @@ fanotify kernel events
 # 1. 启动 daemon
 sudo fsmon daemon
 
-# 2. 添加监控路径（以 nginx 日志为例）
+# 2. 添加监控路径
 sudo fsmon add /var/log/nginx --track-cmd nginx --types CLOSE_WRITE
 
 # 3. 运行任意 bridge 脚本
@@ -82,11 +89,12 @@ uv run extensions/subscribe-stream/fsmon-subscribe-demo.py
 ### Kafka bridge
 
 ```bash
-# 下载脚本（单文件即可）
+# 方式 A: clone 了整个仓库，从 extensions/ 运行
+uv run extensions/subscribe-stream/fsmon-kafka.py --broker kafka.internal:9092 --topic fsmon-events
+
+# 方式 B: 只下载这一个脚本（无需 clone 仓库）
 curl -O https://raw.githubusercontent.com/xxx/fsmon/main/extensions/subscribe-stream/fsmon-kafka.py
 chmod +x fsmon-kafka.py
-
-# 运行 —— uv 自动安装 kafka-python
 ./fsmon-kafka.py --broker kafka.internal:9092 --topic fsmon-events
 
 # 筛选特定事件
