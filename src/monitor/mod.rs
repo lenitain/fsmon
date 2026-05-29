@@ -107,8 +107,6 @@ pub struct Monitor {
     pub(crate) local_time: bool,
     /// Atomic metrics counters (thread-safe, cloneable).
     pub(crate) metrics: MetricsRegistry,
-    /// TCP listen address for HTTP /metrics (None = disabled).
-    metrics_listen: Option<String>,
     /// Temporary fanotify marks on parent directories of deleted-and-pending
     /// paths, so that events during the recreate window aren't lost.
     /// Maps: target_pending_path → (parent_path, group_idx in fs_groups)
@@ -129,7 +127,6 @@ impl Monitor {
         sync_interval: Option<std::time::Duration>,
         subscribe_buf: Option<usize>,
         local_time: bool,
-        metrics_listen: Option<String>,
     ) -> Result<Self> {
         let cache_config = cache_config.unwrap_or_default();
         let buffer_size = buffer_size.unwrap_or(cache_config.buffer_size);
@@ -225,7 +222,6 @@ impl Monitor {
             },
             local_time,
             metrics: MetricsRegistry::new(),
-            metrics_listen,
             temp_parent_marks: HashMap::new(),
         };
         if debug {
@@ -602,18 +598,6 @@ impl Monitor {
             }
         }
 
-        // Spawn TCP metrics HTTP server
-        if let Some(ref addr_str) = self.metrics_listen {
-            match addr_str.parse::<std::net::SocketAddr>() {
-                Ok(addr) => {
-                    let _ = crate::metrics::serve_metrics_tcp(addr, self.metrics.clone()).await;
-                }
-                Err(e) => {
-                    eprintln!("[WARNING] Invalid metrics listen address '{}': {}", addr_str, e);
-                }
-            }
-        }
-
         let mut sigterm =
             signal(SignalKind::terminate()).context("failed to create SIGTERM signal handler")?;
         let mut sighup =
@@ -805,11 +789,6 @@ impl Monitor {
                             };
                             if cmd.cmd == "subscribe" {
                                 self.handle_subscribe(writer, &cmd);
-                            } else if cmd.cmd == "metrics" {
-                                let m = self.metrics.clone();
-                                tokio::spawn(async move {
-                                    crate::metrics::handle_metrics_socket(writer, &m).await;
-                                });
                             } else {
                                 let resp = self.handle_socket_cmd(cmd);
                                 if let Ok(toml_str) = toml::to_string(&resp) {

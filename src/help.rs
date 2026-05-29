@@ -41,7 +41,6 @@ Usage:
   sudo fsmon daemon --debug               Enable debug output
   sudo fsmon daemon --disk-min-free 10%       Warn when disk < 10% free
   sudo fsmon daemon --sync-interval 5         fdatasync log files every 5s
-  sudo fsmon daemon --metrics-listen 127.0.0.1:9845  With Prometheus endpoint
   sudo fsmon daemon --local-time              Use local timezone in timestamps
   sudo fsmon daemon --buffer-size 65536       Fanotify read buffer
   sudo fsmon daemon --channel-capacity 1024   Event channel cap (default: unbounded)
@@ -252,7 +251,6 @@ Setup (no sudo needed):
 
 Daemon (requires sudo):
   sudo fsmon daemon &               Start daemon in background
-  sudo fsmon daemon --metrics-listen 127.0.0.1:9845  With Prometheus endpoint
   sudo systemctl start fsmon        Start via systemd (if installed)
   sudo systemctl stop fsmon         Stop via systemd
   journalctl -u fsmon -f           View daemon logs via systemd
@@ -282,5 +280,5 @@ Logs:    ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].path)
   ① JSONL log files (on by default, configurable via [logging].path)
   ② Unix socket subscribe — real-time JSONL stream (extensions/subscribe-stream/)
   ③ Unix socket admin — add/remove/list/health (extensions/socket-admin/)
-  ④ HTTP /metrics — Prometheus scrape (opt-in via --metrics-listen)"#
+"#
 }

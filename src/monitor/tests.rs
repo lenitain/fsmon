@@ -107,7 +107,6 @@ fn make_monitor(
         None,
         None,
         false,
-        None,
     )
     .unwrap()
 }
@@ -234,7 +233,6 @@ fn test_reject_cmd_fsmon_at_startup() {
         None,
         None,
         false,
-        None,
     );
     assert!(result.is_err(), "Monitor::new() should reject cmd=fsmon");
     let err = result.err().unwrap().to_string();
@@ -261,7 +259,6 @@ fn test_monitor_buffer_size_validation() {
         None,
         None,
         false,
-        None,
     );
     assert!(result.is_err());
     assert!(result.err().unwrap().to_string().contains("at least 4096"));
@@ -278,7 +275,6 @@ fn test_monitor_buffer_size_validation() {
         None,
         None,
         false,
-        None,
     );
     assert!(result.is_err());
     assert!(result.err().unwrap().to_string().contains("not exceed"));
@@ -295,14 +291,13 @@ fn test_monitor_buffer_size_validation() {
         None,
         None,
         false,
-        None,
     );
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_add_path_and_remove_path() {
-    let mut m = Monitor::new(vec![], None, None, None, None, false, None, None, None, None, false, None).unwrap();
+    let mut m = Monitor::new(vec![], None, None, None, None, false, None, None, None, None, false).unwrap();
 
     let entry = PathEntry {
         cmd: None,
@@ -353,7 +348,6 @@ fn test_delete_self_canonical_root_is_recorded() {
         None,
         None,
         false,
-        None,
     )
     .unwrap();
 

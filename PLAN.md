@@ -1,48 +1,33 @@
-# Extensions 测试最终报告
+# 清理完成
 
-## 运行时验证结果
+## 已删除
 
-### ✅ 完整通过（连接 daemon，处理真实事件）
+### 扩展脚本（6 个 Python 桥接脚本）
+- `extensions/subscribe-stream/` — fsmon-kafka.py, fsmon-to-es.py, fsmon-to-influxdb.py, fsmon-webhook.py, fsmon-custom-format.py, fsmon-subscribe-demo.py
+- `extensions/http-metrics/` — fsmon-metrics.py, prometheus.yml, fsmon-grafana.json
+- `extensions/jsonl-logs/` — fsmon-log-tail.py
+- `extensions/socket-admin/` — fsmon-admin.py
+- `extensions/_templates/` — 参考实现模板
+- `extensions/tests/` — 空测试目录
+- `extensions/pyproject.toml` — 开发依赖
 
-| 脚本 | 验证项 |
-|------|--------|
-| `fsmon-metrics.py` | socket ✅ TCP curl ✅ --summary ✅ --watch ✅ |
-| `fsmon-admin.py` | list ✅ health ✅ health --json ✅ add/remove ✅ --socket 修复 ✅ |
-| `fsmon-subscribe-demo.py` | 连接 ✅ 事件接收 ✅ --types 过滤 ✅ |
-| `fsmon-webhook.py` | 异步队列 ✅ 3次重试 ✅ DLQ 写入 ✅ |
-| `fsmon-custom-format.py` | csv ✅ tsv ✅ syslog ✅ loki ✅ json ✅ human ✅ |
-| `fsmon-log-tail.py` | --no-follow ✅ --aggregate ✅ --type ✅ --last ✅ tail ✅ |
+### Rust 代码删除
+- `--metrics-listen` CLI 参数
+- `MetricsConfig` 配置结构体
+- `serve_metrics_tcp()` TCP HTTP 服务器
+- `handle_metrics_socket()` socket 命令处理器
+- 对应的全部 TCP 集成测试
 
-### ⚠️ 部分通过（无后端，仅验证连接拒绝和参数校验）
+## 保留的架构
 
-| 脚本 | 已验证 | 未验证 |
-|------|--------|--------|
-| `fsmon-kafka.py` | clean error | 写入 topic、key 分区、重试+DLQ |
-| `fsmon-to-es.py` | clean error | bulk 索引、--index-granularity、重试+DLQ |
-| `fsmon-to-influxdb.py` | 连接成功 | line protocol 转义、写入、重试+DLQ |
-
-### ❌ 已删除
-
-`fsmon-to-s3.py` — 依赖 AWS，boto3 下载超时。
-
-## 待补测
-
-```bash
-docker run -d --name kafka -p 9092:9092 apache/kafka
-docker run -d --name es -p 9200:9200 elasticsearch:8
-docker run -d --name influxdb -p 8086:8086 influxdb:2
-
-touch /tmp/fsmon_ext_test/kafka_event
-touch /tmp/fsmon_ext_test/es_event
-touch /tmp/fsmon_ext_test/influx_event
-
-# 验证数据落盘 + 容错（停后端→DLQ、杀 daemon→重连）
+```
+fanotify 事件 → JSONL 格式
+    │
+    ├── ① JSONL 文件 (可选)
+    │       持久化，Filebeat/Vector/jq
+    │
+    └── ② Unix socket (连接即流)
+            nc -U socket | jq
 ```
 
-## 修复的 bug
-
-1. subscribe payload `\n`→`\n\n`
-2. TOML `[health]` 表头解析
-3. ES 9.x 构造函数崩溃
-4. admin.py `--socket` 被忽略
-5. log-tail 默认路径 `/var/log/fsmon`→`~/.local/state/fsmon`
+两个出口，同一种数据（JSONL），无自定义协议。
