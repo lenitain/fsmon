@@ -16,7 +16,7 @@ pub const fn about(topic: HelpTopic) -> &'static str {
         HelpTopic::Root => "Lightweight high-performance file change tracking tool",
         HelpTopic::Daemon => "Run the fsmon daemon (requires sudo for fanotify)",
         HelpTopic::Init => "Initialize log and monitored data directories",
-        HelpTopic::Cd => "Open a subshell in the log directory",
+        HelpTopic::Cd => "Open a subshell in the monitored path or log directory",
         HelpTopic::Add => "Add a path to the monitoring list",
         HelpTopic::Remove => "Remove one or more paths from the monitoring list",
         HelpTopic::Monitored => "List all monitored paths with their configuration",
@@ -69,7 +69,7 @@ Creates:
 
 Directories are created on first use:
   - Monitored dir: by 'fsmon add' on first run
-  - Log dir: by 'fsmon daemon' or 'fsmon cd' on first run
+  - Log dir: by 'fsmon daemon' or 'fsmon cd -l' on first run
 
 With --service, also installs a systemd service for automatic crash recovery:
   sudo fsmon init --service
@@ -78,14 +78,14 @@ Examples:
   fsmon init"#
         }
         HelpTopic::Cd => {
-            r#"Open a subshell in the log directory.
+            r#"Open a subshell in the monitored path or log directory.
 
-Spawns a new shell (using $SHELL, fallback /bin/sh) inside the
-log directory. Type 'exit' to return to the original directory.
+Spawns a new shell (using $SHELL, fallback /bin/sh).
+Type 'exit' to return to the original directory.
 
 Examples:
-  fsmon cd                       Enter log directory in subshell
-  fsmon cd && ls                 List log files, then exit"#
+  fsmon cd -l                     Enter log directory in subshell
+  fsmon cd -m                     Enter first monitored path directory"#
         }
         HelpTopic::Add => {
             r#"Add a path or process to the monitoring list.
@@ -248,7 +248,8 @@ pub const fn after_help() -> &'static str {
 Setup (no sudo needed):
   fsmon init                        Create config file (directories created on first use)
   sudo fsmon init --service         Also install systemd service (auto-start on crash)
-  fsmon cd                          Open subshell in log directory
+  fsmon cd -l                       Open subshell in log directory
+  fsmon cd -m                       Open subshell in first monitored path
 
 Daemon (requires sudo):
   sudo fsmon daemon &               Start daemon in background

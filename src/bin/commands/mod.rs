@@ -1,6 +1,5 @@
 use anyhow::Result;
 use fsmon::EventType;
-use fsmon::config::Config;
 use fsmon::filters::PathOptions;
 use fsmon::monitored::PathEntry;
 use fsmon::utils::parse_size_filter;
@@ -64,12 +63,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
         Changes(args) => cmd_changes(args).await_(),
         Clean(args) => cmd_clean(args).await_(),
         Init { service } => cmd_init(service),
-        Cd { monitored, logging } => {
-            let store = fsmon::monitored::Monitored::load(
-                &Config::load()?.monitored.path
-            )?;
-            cmd_cd(monitored, logging, &store)
-        },
+        Cd { monitored, .. } => cmd_cd(monitored),
         Health => cmd_health(),
         ListMonitoredPaths => cmd_list_monitored_paths(),
     }

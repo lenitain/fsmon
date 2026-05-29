@@ -99,19 +99,21 @@ fn install_service() -> Result<()> {
     Ok(())
 }
 
-pub fn cmd_cd(monitored: bool, logging: Option<PathBuf>, store: &fsmon::monitored::Monitored) -> Result<()> {
+pub fn cmd_cd(monitored: bool) -> Result<()> {
     let dir = if monitored {
         // cd to first configured monitored path
+        let mut cfg = fsmon::config::Config::load()?;
+        cfg.resolve_paths()?;
+        let store = fsmon::monitored::Monitored::load(&cfg.monitored.path)?;
         let entries = store.flatten();
         let first = entries.first().ok_or_else(|| {
-            anyhow::anyhow!("No monitored paths configured. Add one first: fsmon add <cmd> --path <dir>")
+            anyhow::anyhow!(
+                "No monitored paths configured. Add one first: fsmon add <cmd> --path <dir>"
+            )
         })?;
         first.path.clone()
-    } else if let Some(custom) = logging {
-        // cd to custom log directory
-        custom
     } else {
-        // cd to configured log directory
+        // -l: cd to log directory (identical to old `fsmon cd`)
         let mut cfg = fsmon::config::Config::load()?;
         cfg.resolve_paths()?;
         cfg.logging.path.unwrap_or_else(|| {
