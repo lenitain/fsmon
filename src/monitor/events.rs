@@ -64,6 +64,21 @@ impl Monitor {
             // Computed BEFORE canonical-root cleanup — DELETE_SELF must be
             // recorded before the path is removed from monitored_entries.
             let matching_entries = self.matching_opts_for_event(&raw.path);
+
+            // Immediately add fanotify marks for newly created subdirectories
+            // under recursively-monitored paths.  Waiting for inotify would
+            // create a race window where events inside the new subdirectory
+            // arrive before the mark is placed.
+            let is_new_dir = event_types.contains(&EventType::Create)
+                || event_types.contains(&EventType::MovedTo);
+            if is_new_dir && raw.path.is_dir() {
+                for (monitored, opts) in &matching_entries {
+                    if opts.recursive && raw.path != *monitored {
+                        self.on_new_subdirectory(&raw.path);
+                        break;
+                    }
+                }
+            }
             if self.debug && matching_entries.is_empty() {
                 eprintln!("[DEBUG] event on {} (pid={}): no matching entries",
                     raw.path.display(), event_pid);

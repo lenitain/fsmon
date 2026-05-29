@@ -684,7 +684,7 @@ impl Monitor {
 
     /// Add fanotify inode mark + cache + inotify watch for a newly detected
     /// subdirectory under a recursively-monitored path.
-    fn on_new_subdirectory(&mut self, path: &std::path::Path) {
+    pub(crate) fn on_new_subdirectory(&mut self, path: &std::path::Path) {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         if !canonical.is_dir() {
             return;
