@@ -110,6 +110,10 @@ pub struct Monitor {
     pub(crate) metrics: MetricsRegistry,
     /// TCP listen address for HTTP /metrics (None = disabled).
     metrics_listen: Option<String>,
+    /// Temporary fanotify marks on parent directories of deleted-and-pending
+    /// paths, so that events during the recreate window aren't lost.
+    /// Maps: target_pending_path → (parent_path, group_idx in fs_groups)
+    pub(crate) temp_parent_marks: HashMap<PathBuf, (PathBuf, usize)>,
 }
 
 impl Monitor {
@@ -223,6 +227,7 @@ impl Monitor {
             local_time,
             metrics: MetricsRegistry::new(),
             metrics_listen,
+            temp_parent_marks: HashMap::new(),
         };
         if debug {
             eprintln!(

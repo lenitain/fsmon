@@ -742,8 +742,210 @@ impl Monitor {
             }
         }
 
+        // Clean up any temp parent marks whose target path is now being
+        // actively monitored (added by add_path above).
+        self.cleanup_temp_parent_marks();
+
         // Refresh inotify watches for remaining pending paths
         self.setup_inotify_watches();
         self.metrics.set_pending_paths(self.pending_paths.len() as i64);
+    }
+
+    // ---- Temporary parent marks ----
+
+    /// Add a temporary fanotify inode mark on the nearest existing ancestor
+    /// of `target_path`, so that events during the recreate window are
+    /// captured.  Returns `true` if a mark was added.
+    pub(crate) fn add_temp_parent_mark(&mut self, target_path: &std::path::Path) -> bool {
+        let parent = match Self::nearest_existing_ancestor(target_path) {
+            Some(p) => p,
+            None => return false,
+        };
+        if parent == *target_path {
+            // target_path itself exists — no need for a temp mark
+            return false;
+        }
+
+        let canonical = parent.canonicalize().unwrap_or_else(|_| parent.clone());
+
+        // Compute the combined mask (same as the original monitored entry)
+        let saved_entries: Vec<_> = self
+            .monitored_entries
+            .iter()
+            .filter(|(p, _)| p == target_path)
+            .cloned()
+            .collect();
+        // Also check pending_paths for the target (entries were moved there)
+        let pending_opts: Vec<PathOptions> = self
+            .pending_paths
+            .iter()
+            .filter(|(p, _)| p == target_path)
+            .map(|(_, entry)| {
+                let types = entry.types.as_ref().map(|t| {
+                    t.iter().filter_map(|s| s.parse::<crate::EventType>().ok()).collect()
+                });
+                PathOptions {
+                    size_filter: None,
+                    event_types: types,
+                    recursive: entry.recursive.unwrap_or(false),
+                    cmd: entry.cmd.clone().and_then(|c| {
+                        if c == crate::monitored::CMD_GLOBAL { None } else { Some(c) }
+                    }),
+                }
+            })
+            .collect();
+
+        if saved_entries.is_empty() && pending_opts.is_empty() {
+            return false;
+        }
+
+        let path_mask: u64 = saved_entries
+            .iter()
+            .map(|(_, o)| path_mask_from_options(o))
+            .chain(pending_opts.iter().map(|o| path_mask_from_options(o)))
+            .fold(0, |a, b| a | b);
+
+        if path_mask == 0 {
+            return false;
+        }
+
+        // Determine filesystem device ID for dedup
+        let dev_id = std::fs::metadata(&canonical)
+            .ok()
+            .map(|m| std::os::linux::fs::MetadataExt::st_dev(&m))
+            .unwrap_or(0);
+
+        // Try to reuse an existing FsGroup on the same filesystem
+        let group_idx = if let Some(idx) = self.fs_groups.iter().position(|g| g.dev_id == dev_id) {
+            // Reuse — add inode mark on parent
+            if !self.fs_groups[idx].is_fs_mark {
+                let fan_fd = &self.fs_groups[idx].fan_fd;
+                if mark_directory(fan_fd, path_mask, &canonical).is_err() {
+                    return false;
+                }
+            }
+            self.fs_groups[idx].ref_count += 1;
+            idx
+        } else {
+            // Create a new fanotify fd for the parent
+            use fanotify_fid::consts::{
+                FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_NONBLOCK,
+                FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
+            };
+            let new_fd = match fanotify_fid::prelude::fanotify_init(
+                FAN_CLOEXEC | FAN_NONBLOCK | FAN_CLASS_NOTIF
+                    | FAN_REPORT_FID | FAN_REPORT_DIR_FID | FAN_REPORT_NAME,
+                (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
+            ) {
+                Ok(fd) => fd,
+                Err(_) => return false,
+            };
+            if mark_directory(&new_fd, path_mask, &canonical).is_err() {
+                drop(new_fd);
+                return false;
+            }
+            let mount_fd = match Self::open_dir(&canonical) {
+                Ok(fd) => fd,
+                Err(_) => {
+                    drop(new_fd);
+                    return false;
+                }
+            };
+            let idx = self.fs_groups.len();
+            self.fs_groups.push(FsGroup {
+                dev_id,
+                is_fs_mark: false,
+                fan_fd: new_fd,
+                mount_fd,
+                ref_count: 1,
+            });
+            self.spawn_fd_reader(idx);
+            idx
+        };
+
+        if self.debug {
+            eprintln!(
+                "[DEBUG] temp parent mark: {} ← watching for {}",
+                canonical.display(),
+                target_path.display()
+            );
+        }
+        self.temp_parent_marks
+            .insert(target_path.to_path_buf(), (parent, group_idx));
+        true
+    }
+
+    /// Remove all temporary parent marks whose target path is now being
+    /// actively monitored (i.e. is in `self.paths`).
+    fn cleanup_temp_parent_marks(&mut self) {
+        let mut to_remove: Vec<PathBuf> = Vec::new();
+        for (target, _) in &self.temp_parent_marks {
+            if self.paths.contains(target) {
+                to_remove.push(target.clone());
+            }
+        }
+        for target in &to_remove {
+            self.remove_temp_parent_mark(target);
+        }
+    }
+
+    /// Remove a single temporary parent mark and tear down its fanotify
+    /// resources.  The caller must ensure `target_path` is in
+    /// `temp_parent_marks`.
+    fn remove_temp_parent_mark(&mut self, target_path: &std::path::Path) {
+        let Some((parent, gi)) = self.temp_parent_marks.remove(target_path) else {
+            return;
+        };
+
+        let canonical = parent.canonicalize().unwrap_or_else(|_| parent.clone());
+
+        // Remove the fanotify mark(s) on the parent directory
+        if gi < self.fs_groups.len() {
+            let fan_fd_raw = self.fs_groups[gi].fan_fd.as_raw_fd();
+            let _ = fanotify_fid::prelude::fanotify_mark(
+                &self.fs_groups[gi].fan_fd,
+                fanotify_fid::consts::FAN_MARK_REMOVE
+                    | fanotify_fid::consts::FAN_MARK_FILESYSTEM,
+                0,
+                fanotify_fid::consts::AT_FDCWD,
+                &canonical,
+            );
+            let _ = fanotify_fid::prelude::fanotify_mark(
+                &self.fs_groups[gi].fan_fd,
+                fanotify_fid::consts::FAN_MARK_REMOVE,
+                0,
+                fanotify_fid::consts::AT_FDCWD,
+                &canonical,
+            );
+
+            self.fs_groups[gi].ref_count =
+                self.fs_groups[gi].ref_count.saturating_sub(1);
+            if self.fs_groups[gi].ref_count == 0 {
+                if self.debug {
+                    eprintln!(
+                        "[DEBUG] temp parent mark removed, freeing FsGroup {} (fd {})",
+                        gi, fan_fd_raw
+                    );
+                }
+                self.fs_groups.remove(gi);
+                self.path_to_group
+                    .iter_mut()
+                    .for_each(|(_, idx)| {
+                        if *idx > gi {
+                            *idx -= 1;
+                        }
+                    });
+                // Also fix up temp_parent_marks indices
+                let mut updates: Vec<(PathBuf, (PathBuf, usize))> = Vec::new();
+                for (tgt, (p, idx)) in self.temp_parent_marks.iter() {
+                    if *idx > gi {
+                        updates.push((tgt.clone(), (p.clone(), *idx - 1)));
+                    }
+                }
+                for (tgt, val) in updates {
+                    self.temp_parent_marks.insert(tgt, val);
+                }
+            }
+        }
     }
 }
