@@ -12,6 +12,9 @@ fanotify kernel events
        ├── ② subscribe-stream/   Real-time stream  → Webhook / Kafka / ES / S3 / ...
        ├── ③ socket-admin/       Management cmds   → programmatic add/remove/list/health
        └── ④ http-metrics/       Metrics endpoint  → Prometheus / Grafana / any TCP consumer
+
+  _templates/                     Canonical reference implementations (dev only)
+  tests/                          Test suite
 ```
 
 ## 快速开始
