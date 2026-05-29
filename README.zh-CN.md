@@ -264,6 +264,25 @@ fsmon monitored                显示所有监控路径组
 
 每行是一个包含 `cmd` 和 `paths` 字段的 JSON 对象。可管道给 `jq` 过滤。
 
+### changes
+
+显示每个路径的最新事件 — 去重摘要。与 `query` 使用相同的过滤器，
+但每个路径只显示最新一条事件，按时间降序排列。
+
+```
+fsmon changes _global -t '>1h'          # 最近一小时改了什么？
+fsmon changes _global -t '>2026-05-01'    # 从指定日期开始
+fsmon changes _global --path /var/www     # 按路径前缀过滤
+```
+
+### health
+
+通过 Unix socket 查询守护进程健康状态。
+
+```
+fsmon health
+```
+
 ### query
 
 查询历史事件日志。输出 JSONL — 管道给 `jq` 过滤。
