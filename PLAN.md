@@ -512,6 +512,9 @@ class RetryWriter:
 
 | 操作 | 文件 |
 |------|------|
+| **新建** | `extensions/pyproject.toml` |
+| **新建** | `extensions/.python-version` |
+| **新建** | `extensions/uv.lock` |
 | **新建** | `extensions/lib/__init__.py` |
 | **新建** | `extensions/lib/fsmon_client.py` |
 | **新建** | `extensions/lib/retry_writer.py` |
@@ -533,10 +536,22 @@ class RetryWriter:
 
 | 测试 | 覆盖 |
 |------|------|
+| `uv sync --extra all` 无错误 | 依赖解析 + lock 文件正确 |
 | `test_fsmon_client.py` | `get_socket_path()`, `send_cmd()`, TOML 序列化/反序列化, 异常层次 |
 | `test_retry_writer.py` | 重试逻辑、退避时间、死信队列写入 |
 | `test_influxdb_escape.py` | line protocol 转义边界情况 |
-| 各 bridge 脚本的 import 测试 | 确保 import 路径正确 |
+| 各 bridge 脚本的 import 测试 | 确保 import 路径正确（stdlib + optional） |
+
+## 实施顺序
+
+| 顺序 | 阶段 | 产出 |
+|------|------|------|
+| 1 | 阶段 0 | `pyproject.toml`, `.python-version`, `uv.lock`, README 更新 |
+| 2 | 阶段 1 | `lib/fsmon_client.py`, 7 文件重构引公共模块 |
+| 3 | 阶段 2 | `lib/retry_writer.py`, 各 bridge 添加重试 + 错误日志 |
+| 4 | 阶段 3 | signal handler, health 端点, logging 框架 |
+| 5 | 阶段 4 | 类型标注, 输入校验, 常量集中 |
+| 6 | 阶段 5 | docstring 修正, Loki 格式修正, ES 动态映射 |
 
 ---
 
@@ -544,7 +559,9 @@ class RetryWriter:
 
 | 阶段 | 预估 |
 |------|------|
-| P0（公共模块 + 数据安全） | 主要工作 |
-| P1（可靠性 + 可观测性） | 中等 |
-| P2（代码质量） | 较快 |
-| P3（文档） | 快速 |
+| 阶段 0（uv 环境） | 快速（文件创建 + uv sync） |
+| 阶段 1（公共模块） | 主要工作 |
+| 阶段 2（数据安全） | 主要工作 |
+| 阶段 3（可靠性 + 可观测性） | 中等 |
+| 阶段 4（代码质量） | 较快 |
+| 阶段 5（文档） | 快速 |
