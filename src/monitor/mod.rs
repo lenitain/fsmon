@@ -361,17 +361,16 @@ impl Monitor {
             }
 
             if let Some(gi) = reuse_idx {
-                // Same filesystem — just add mark (inode) if group uses inode marks
+                // Same filesystem — just add inode mark
                 let group = &self.fs_groups[gi];
-                if !group.is_fs_mark {
-                    let fan_fd = &group.fan_fd;
-                    if let Err(e) = mark_directory(fan_fd, path_mask, canonical) {
-                        eprintln!(
-                            "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
-                            canonical.display(),
-                            fan_fd.as_raw_fd(),
-                            e
-                        );
+                let fan_fd = &group.fan_fd;
+                if let Err(e) = mark_directory(fan_fd, path_mask, canonical) {
+                    eprintln!(
+                        "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
+                        canonical.display(),
+                        fan_fd.as_raw_fd(),
+                        e
+                    );
                     } else {
                         eprintln!(
                             "[INFO] Added {} (inode mark) on existing fd {}",
@@ -383,7 +382,6 @@ impl Monitor {
                             mark_recursive(fan_fd, path_mask, canonical);
                         }
                     }
-                }
                 self.fs_groups[gi].ref_count += 1;
                 self.path_to_group.insert(self.paths[i].clone(), gi);
                 continue;
@@ -408,7 +406,7 @@ impl Monitor {
 
             let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
             let recursive = opts.is_some_and(|o| o.recursive) && canonical.is_dir();
-            if self.add_mark_fs_upward(&new_fd, path_mask, canonical, recursive).is_none() {
+            if self.add_mark_upward(&new_fd, path_mask, canonical, recursive).is_none() {
                 drop(new_fd);
                 continue;
             }
@@ -430,7 +428,6 @@ impl Monitor {
             let gi = self.fs_groups.len();
             self.fs_groups.push(FsGroup {
                 dev_id,
-                is_fs_mark: false, // always inode-based; watchdog fs mark is separate
                 fan_fd: new_fd,
                 mount_fd,
                 ref_count: 1,

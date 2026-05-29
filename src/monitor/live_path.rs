@@ -3,7 +3,7 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 
 use fanotify_fid::consts::{
-    AT_FDCWD, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_MARK_ADD, FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE,
+    AT_FDCWD, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE,
     FAN_NONBLOCK, FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
 };
 use fanotify_fid::prelude::*;
@@ -80,17 +80,7 @@ impl Monitor {
                     .position(|p| p == &path)
                     .and_then(|i| self.canonical_paths.get(i).cloned())
                     .unwrap_or_else(|| path.clone());
-                if self.fs_groups[gi].is_fs_mark {
-                    let _ = fanotify_mark(
-                        fan_fd,
-                        FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
-                        new_mask,
-                        AT_FDCWD,
-                        &canonical,
-                    );
-                } else {
-                    let _ = mark_directory(fan_fd, new_mask, &canonical);
-                }
+                let _ = mark_directory(fan_fd, new_mask, &canonical);
                 if self.debug {
                     eprintln!("[DEBUG]   updated fanotify mask to {:#x}", new_mask);
                 }
@@ -204,20 +194,18 @@ impl Monitor {
         let existing_idx = self.fs_groups.iter().position(|g| g.dev_id == dev_id);
 
         let group_idx = if let Some(idx) = existing_idx {
-            // Reuse existing group — just add inode mark if needed
-            if !self.fs_groups[idx].is_fs_mark {
-                let fan_fd = &self.fs_groups[idx].fan_fd;
-                if let Err(e) = mark_directory(fan_fd, path_mask, &canonical) {
-                    eprintln!(
-                        "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
-                        canonical.display(),
-                        fan_fd.as_raw_fd(),
-                        e
-                    );
-                } else {
-                    if recursive && canonical.is_dir() {
-                        mark_recursive(fan_fd, path_mask, &canonical);
-                    }
+            // Reuse existing group — add inode mark
+            let fan_fd = &self.fs_groups[idx].fan_fd;
+            if let Err(e) = mark_directory(fan_fd, path_mask, &canonical) {
+                eprintln!(
+                    "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
+                    canonical.display(),
+                    fan_fd.as_raw_fd(),
+                    e
+                );
+            } else {
+                if recursive && canonical.is_dir() {
+                    mark_recursive(fan_fd, path_mask, &canonical);
                 }
             }
             self.fs_groups[idx].ref_count += 1;
@@ -245,7 +233,7 @@ impl Monitor {
                 )
             })?;
 
-            if self.add_mark_fs_upward(&new_fd, path_mask, &canonical, recursive).is_none() {
+            if self.add_mark_upward(&new_fd, path_mask, &canonical, recursive).is_none() {
                 bail!("Failed to mark {}: inode mark failed", canonical.display());
             }
 
@@ -255,7 +243,6 @@ impl Monitor {
             let idx = self.fs_groups.len();
             self.fs_groups.push(FsGroup {
                 dev_id,
-                is_fs_mark: false, // always inode-based; watchdog fs mark is separate
                 fan_fd: new_fd,
                 mount_fd,
                 ref_count: 1,
@@ -287,21 +274,15 @@ impl Monitor {
         Ok(())
     }
 
-    /// Set up primary (inode) monitoring and a lightweight watchdog filesystem
-    /// mark for self-deletion detection.
-    /// Returns `Some(true)` if a watchdog fs mark was added, `Some(false)` if
-    /// only the inode mark is active, `None` if even the inode mark failed.
-    pub(crate) fn add_mark_fs_upward(
+    /// Set up inode-based fanotify monitoring for a directory.
+    /// Returns `Some(())` on success, `None` if the inode mark failed.
+    pub(crate) fn add_mark_upward(
         &self,
         new_fd: &OwnedFd,
         path_mask: u64,
         canonical: &std::path::Path,
         recursive: bool,
-    ) -> Option<bool> {
-        use fanotify_fid::consts::{AT_FDCWD, FAN_DELETE, FAN_MARK_ADD, FAN_MARK_FILESYSTEM, FAN_MOVED_FROM};
-        use fanotify_fid::prelude::fanotify_mark;
-
-        // 1. Always add inode mark — this is the primary monitoring.
+    ) -> Option<()> {
         match mark_directory(new_fd, path_mask, canonical) {
             Ok(()) => {
                 eprintln!(
@@ -312,6 +293,7 @@ impl Monitor {
                 if recursive && canonical.is_dir() {
                     mark_recursive(new_fd, path_mask, canonical);
                 }
+                Some(())
             }
             Err(e) => {
                 eprintln!(
@@ -319,53 +301,9 @@ impl Monitor {
                     canonical.display(),
                     e
                 );
-                return None;
+                None
             }
         }
-
-        // 2. Try a lightweight watchdog filesystem mark (DELETE-only) for
-        //    self-deletion detection.  Start at / then walk up from the path.
-        let watchdog_mask = FAN_DELETE | FAN_MOVED_FROM;
-        let mut try_path = std::path::PathBuf::from("/");
-        let mut phase = 0; // 0 = /, 1 = walk up from canonical
-        loop {
-            match fanotify_mark(
-                new_fd,
-                FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
-                watchdog_mask,
-                AT_FDCWD,
-                &try_path,
-            ) {
-                Ok(()) => {
-                    eprintln!(
-                        "[INFO] Watchdog fs mark at {} for {} (fd {})",
-                        try_path.display(),
-                        canonical.display(),
-                        new_fd.as_raw_fd()
-                    );
-                    return Some(true);
-                }
-                Err(FanotifyError::Mark(code)) if code == libc::EXDEV => {
-                    if phase == 0 {
-                        phase = 1;
-                        try_path = canonical.to_path_buf();
-                        continue;
-                    }
-                    if !try_path.pop() {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-
-        if self.debug {
-            eprintln!(
-                "[DEBUG] No watchdog fs mark for {} (will rely on inotify)",
-                canonical.display()
-            );
-        }
-        Some(false)
     }
 
     pub fn remove_path(&mut self, path: &Path, cmd: Option<&str>) -> anyhow::Result<()> {
@@ -449,17 +387,7 @@ impl Monitor {
                     .position(|p| p == path)
                     .and_then(|i| self.canonical_paths.get(i).cloned())
                     .unwrap_or_else(|| path.to_path_buf());
-                if self.fs_groups[gi].is_fs_mark {
-                    let _ = fanotify_mark(
-                        fan_fd,
-                        FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
-                        new_mask,
-                        AT_FDCWD,
-                        &canonical,
-                    );
-                } else {
-                    let _ = mark_directory(fan_fd, new_mask, &canonical);
-                }
+                let _ = mark_directory(fan_fd, new_mask, &canonical);
             }
             if self.debug {
                 eprintln!(
@@ -604,11 +532,6 @@ impl Monitor {
         //    walking ~25k subdirs at startup would add excessive latency.
         for (path, opts) in &self.monitored_entries {
             if !opts.recursive || !path.is_dir() {
-                continue;
-            }
-            if let Some(&gi) = self.path_to_group.get(path)
-                && self.fs_groups[gi].is_fs_mark
-            {
                 continue;
             }
             if !watches.iter().any(|(p, _)| p == path)
@@ -775,11 +698,6 @@ impl Monitor {
         let Some(gi) = self.fs_groups.iter().position(|g| g.dev_id == dev_id) else {
             return;
         };
-        // Filesystem marks cover everything — no need for extra inode marks
-        if self.fs_groups[gi].is_fs_mark {
-            return;
-        }
-
         // Compute combined mask from all monitored entries
         let path_mask = self
             .monitored_entries
@@ -939,11 +857,9 @@ impl Monitor {
         // Try to reuse an existing FsGroup on the same filesystem
         let group_idx = if let Some(idx) = self.fs_groups.iter().position(|g| g.dev_id == dev_id) {
             // Reuse — add inode mark on parent
-            if !self.fs_groups[idx].is_fs_mark {
-                let fan_fd = &self.fs_groups[idx].fan_fd;
-                if mark_directory(fan_fd, path_mask, &canonical).is_err() {
-                    return false;
-                }
+            let fan_fd = &self.fs_groups[idx].fan_fd;
+            if mark_directory(fan_fd, path_mask, &canonical).is_err() {
+                return false;
             }
             self.fs_groups[idx].ref_count += 1;
             idx
@@ -975,7 +891,6 @@ impl Monitor {
             let idx = self.fs_groups.len();
             self.fs_groups.push(FsGroup {
                 dev_id,
-                is_fs_mark: false,
                 fan_fd: new_fd,
                 mount_fd,
                 ref_count: 1,

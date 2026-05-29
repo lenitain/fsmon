@@ -34,7 +34,6 @@ impl AsRawFd for FanFd {
 /// One fanotify fd + one directory fd per filesystem, shared by all paths on it.
 pub struct FsGroup {
     pub dev_id: u64,
-    pub is_fs_mark: bool,
     pub fan_fd: OwnedFd,
     pub mount_fd: OwnedFd,
     pub ref_count: usize,
