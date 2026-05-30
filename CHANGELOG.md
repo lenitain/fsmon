@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-05-30
+
+### Fixed
+
+- **subscribe.py buffering bug**: the extension example `subscribe.py` mixed
+  `sock.recv(1)` with `sock.makefile("r")`, which caused the buffered reader to
+  miss JSONL events that arrived after the TOML handshake. Replaced with unified
+  `sock.makefile("rb")` for both response parsing and event streaming.
+- **query/changes ignore `local_time` config**: `fsmon query` and `fsmon changes`
+  always output UTC timestamps regardless of the `logging.local_time` setting.
+  Fixed by threading the `local_time` flag through `Query::new()` and using
+  `to_jsonl_string_local()` when enabled. Now query, changes, log files, and
+  subscribe streams all consistently respect the configured timezone.
+- **monitored.jsonl non-atomic save**: `Monitored::save()` used `File::create`
+  which truncates the file before writing, leaving a corrupted store on crash,
+  power loss, or `kill -9`. Replaced with temp-file + `sync_all` + `rename` —
+  POSIX guarantees atomic rename, so the original file stays intact until the
+  new content is fully written and synced.
+
+### Changed
+
+- **clippy clean**: fixed all 17 clippy warnings across 10 source files
+  (`collapsible_if`, `new_without_default`, `redundant_closure`, `for_kv_map`,
+  `unnecessary_sort_by`, `let_and_return`, `useless_vec`). Zero warnings on
+  `cargo clippy --all-targets`.
+
 ## [0.4.0] - 2026-05-29
 
 ### Added
