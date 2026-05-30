@@ -846,7 +846,7 @@ impl Monitor {
         let path_mask: u64 = saved_entries
             .iter()
             .map(|(_, o)| path_mask_from_options(o))
-            .chain(pending_opts.iter().map(|o| path_mask_from_options(o)))
+            .chain(pending_opts.iter().map(path_mask_from_options))
             .fold(0, |a, b| a | b);
 
         if path_mask == 0 {
@@ -920,7 +920,7 @@ impl Monitor {
     /// actively monitored (i.e. is in `self.paths`).
     fn cleanup_temp_parent_marks(&mut self) {
         let mut to_remove: Vec<PathBuf> = Vec::new();
-        for (target, _) in &self.temp_parent_marks {
+        for target in self.temp_parent_marks.keys() {
             if self.paths.contains(target) {
                 to_remove.push(target.clone());
             }

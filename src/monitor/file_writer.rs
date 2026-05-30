@@ -66,11 +66,10 @@ impl FileLogWriter {
                 result = rx.recv() => {
                     match result {
                         Ok((event, cmd_name)) => {
-                            if let Err(e) = self.write_event(&event, &cmd_name) {
-                                if self.debug {
+                            if let Err(e) = self.write_event(&event, &cmd_name)
+                                && self.debug {
                                     eprintln!("[DEBUG] FileLogWriter write error: {}", e);
                                 }
-                            }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                             eprintln!("[WARNING] FileLogWriter dropped {} events (disk too slow)", n);

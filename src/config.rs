@@ -208,14 +208,12 @@ pub fn resolve_uid_gid() -> (u32, u32) {
     // 2. Running as root → use $HOME directory owner
     //    (works for systemd, sudo without SUDO_UID, or any root-launched context
     //     where HOME is set to the target user's directory)
-    if nix::unistd::geteuid().is_root() {
-        if let Ok(home) = std::env::var("HOME") {
-            if let Ok(meta) = std::fs::metadata(&home) {
+    if nix::unistd::geteuid().is_root()
+        && let Ok(home) = std::env::var("HOME")
+            && let Ok(meta) = std::fs::metadata(&home) {
                 use std::os::linux::fs::MetadataExt;
                 return (meta.st_uid(), meta.st_gid());
             }
-        }
-    }
 
     // 3. Running as normal user
     (
@@ -252,14 +250,12 @@ pub fn resolve_uid() -> u32 {
     }
 
     // 2. Running as root → $HOME owner
-    if nix::unistd::geteuid().is_root() {
-        if let Ok(home) = std::env::var("HOME") {
-            if let Ok(meta) = std::fs::metadata(&home) {
+    if nix::unistd::geteuid().is_root()
+        && let Ok(home) = std::env::var("HOME")
+            && let Ok(meta) = std::fs::metadata(&home) {
                 use std::os::linux::fs::MetadataExt;
                 return meta.st_uid();
             }
-        }
-    }
 
     // 3. Current process UID
     nix::unistd::geteuid().as_raw()

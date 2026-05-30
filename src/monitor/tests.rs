@@ -653,7 +653,7 @@ async fn test_subscriber_task_filters_by_type() {
     // Test the type filter logic: subscriber_task checks if event.event_type
     // is in the allowed types list. We verify by checking a broadcast receiver
     // with the same filter pattern.
-    let allowed = vec![EventType::Delete, EventType::CloseWrite];
+    let allowed = [EventType::Delete, EventType::CloseWrite];
 
     let create_event = FileEvent {
         time: chrono::Utc::now(),

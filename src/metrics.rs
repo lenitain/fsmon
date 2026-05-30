@@ -22,6 +22,12 @@ struct CounterVecInner {
     counters: HashMap<Vec<String>, Arc<AtomicU64>>,
 }
 
+impl Default for CounterVec {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CounterVec {
     pub fn new() -> Self {
         Self {
@@ -72,6 +78,12 @@ impl CounterVec {
 #[derive(Clone)]
 pub struct IntGauge {
     value: Arc<AtomicI64>,
+}
+
+impl Default for IntGauge {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl IntGauge {

@@ -163,11 +163,10 @@ impl Monitor {
                     // Add a temporary fanotify mark on the nearest existing
                     // ancestor directory so that events during the recreate
                     // window (mkdir, touch, etc.) are not lost.
-                    if self.add_temp_parent_mark(path) {
-                        if self.debug {
+                    if self.add_temp_parent_mark(path)
+                        && self.debug {
                             eprintln!("[DEBUG] temp parent mark active for {}", path.display());
                         }
-                    }
                     // Path may have been recreated before the inotify watch was
                     // established. Check immediately to avoid missing the window.
                     self.check_pending();
@@ -185,8 +184,8 @@ impl Monitor {
             let ev = &mut pe.event;
             if ev.cmd == "unknown" || ev.user == "unknown" || ev.ppid == 0 || ev.tgid == 0 {
                 // Try proc_cache (now populated by the second drain)
-                if let Some(ref cache) = self.proc_cache {
-                    if let Some(info) = cache.get(&pe.pid) {
+                if let Some(ref cache) = self.proc_cache
+                    && let Some(info) = cache.get(&pe.pid) {
                         if ev.cmd == "unknown" {
                             ev.cmd = info.cmd.clone();
                         }
@@ -200,10 +199,9 @@ impl Monitor {
                             ev.tgid = info.tgid;
                         }
                     }
-                }
                 // Also try PidTree for cmd/ppid
-                if let Some(ref tree) = self.pid_tree {
-                    if let Some(node) = tree.get(&pe.pid) {
+                if let Some(ref tree) = self.pid_tree
+                    && let Some(node) = tree.get(&pe.pid) {
                         if ev.cmd == "unknown" && !node.cmd.is_empty() {
                             ev.cmd = node.cmd.clone();
                         }
@@ -211,7 +209,6 @@ impl Monitor {
                             ev.ppid = node.ppid;
                         }
                     }
-                }
             }
         }
     }

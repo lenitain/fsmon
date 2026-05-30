@@ -286,11 +286,10 @@ pub(crate) async fn subscriber_task(
                     }
                 }
                 // Optional filter by event type
-                if let Some(ref allowed) = type_filter {
-                    if !allowed.contains(&event.event_type) {
+                if let Some(ref allowed) = type_filter
+                    && !allowed.contains(&event.event_type) {
                         continue;
                     }
-                }
 
                 let line = if local_time {
                     event.to_jsonl_string_local() + "\n"

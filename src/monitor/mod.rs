@@ -476,11 +476,10 @@ impl Monitor {
         }
 
         // Startup disk space check
-        if let Some(ref threshold_str) = self.disk_min_free {
-            if let Some(ref dir) = self.log_dir {
+        if let Some(ref threshold_str) = self.disk_min_free
+            && let Some(ref dir) = self.log_dir {
                 Self::check_disk_space(dir, threshold_str);
             }
-        }
 
         println!("Starting file trace monitor...");
         if !self.canonical_paths.is_empty() {
@@ -588,15 +587,14 @@ impl Monitor {
         let fw_debug = self.debug;
         let fw_local = self.local_time;
         let fw_metrics = self.metrics.clone();
-        if let Some(fw_log_dir) = fw_log_dir {
-            if let Some(ref tx) = self.event_stream_tx {
+        if let Some(fw_log_dir) = fw_log_dir
+            && let Some(ref tx) = self.event_stream_tx {
                 let fw_rx = tx.subscribe();
                 let fw = FileLogWriter::new(fw_log_dir, fw_sync, fw_debug, fw_local, fw_metrics);
                 tokio::spawn(async move {
                     fw.run(fw_rx).await;
                 });
             }
-        }
 
         let mut sigterm =
             signal(SignalKind::terminate()).context("failed to create SIGTERM signal handler")?;

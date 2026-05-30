@@ -243,11 +243,10 @@ impl Query {
             let events = self.read_events_from(log_file, since_time, until_time)?;
             for event in events {
                 // Apply path filters
-                if let Some(ref path_filters) = self.path_filters {
-                    if !path_filters.iter().any(|pf| event.path.starts_with(pf)) {
+                if let Some(ref path_filters) = self.path_filters
+                    && !path_filters.iter().any(|pf| event.path.starts_with(pf)) {
                         continue;
                     }
-                }
 
                 match latest_by_path.entry(event.path.clone()) {
                     std::collections::hash_map::Entry::Occupied(mut entry) => {
@@ -264,7 +263,7 @@ impl Query {
 
         // Sort by time descending (newest first)
         let mut all_events: Vec<FileEvent> = latest_by_path.into_values().collect();
-        all_events.sort_by(|a, b| b.time.cmp(&a.time));
+        all_events.sort_by_key(|b| std::cmp::Reverse(b.time));
 
         // Output JSONL
         self.output_events(&all_events)?;
@@ -872,7 +871,7 @@ mod tests {
 
         // Sort by time descending (same logic as execute_changes)
         let mut sorted: Vec<&FileEvent> = latest_by_path.values().collect();
-        sorted.sort_by(|a, b| b.time.cmp(&a.time));
+        sorted.sort_by_key(|b| std::cmp::Reverse(b.time));
 
         assert_eq!(sorted.len(), 3);
         assert_eq!(sorted[0].path, PathBuf::from("/recent"));
@@ -970,11 +969,10 @@ mod tests {
         let path_filters: Option<Vec<PathBuf>> = Some(vec![PathBuf::from("/home")]);
         let mut latest_by_path: HashMap<PathBuf, FileEvent> = HashMap::new();
         for event in events {
-            if let Some(ref pfs) = path_filters {
-                if !pfs.iter().any(|pf| event.path.starts_with(pf)) {
+            if let Some(ref pfs) = path_filters
+                && !pfs.iter().any(|pf| event.path.starts_with(pf)) {
                     continue;
                 }
-            }
             match latest_by_path.entry(event.path.clone()) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {
                     if event.time > entry.get().time {

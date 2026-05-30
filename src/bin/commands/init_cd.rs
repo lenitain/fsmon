@@ -107,11 +107,11 @@ pub fn cmd_cd(monitored: bool) -> Result<()> {
         // cd to the monitored store directory (where monitored.jsonl lives).
         // Mirror of -l which cds to the log directory.
         let store_file = cfg.monitored.path.clone();
-        let store_dir = store_file
+        
+        store_file
             .parent()
             .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| store_file.clone());
-        store_dir
+            .unwrap_or_else(|| store_file.clone())
     } else {
         // -l: cd to log directory (identical to old `fsmon cd`)
         let mut cfg = fsmon::config::Config::load()?;
