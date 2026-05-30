@@ -13,8 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `read-jsonl.{sh,py}` for persistent JSONL files and `subscribe.{sh,py}` for
   real-time Unix socket streaming. Each exit point has symmetric Shell and Python
   implementations under `examples/`.
-- **TEST_PLAN.md**: comprehensive test plan with 6 configuration stages and 35+
-  test cases, organized by daemon configuration phase.
 
 ### Changed
 
@@ -26,9 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subscribe stream.
 - **`extensions/README.md`**: simplified to English-only, documenting the 2
   data exit points with minimal examples.
-- **Config template cleaned**: removed `buffer_size` (CLI-only, not parseable
-  from `[cache]`) and removed the `[metrics]` section (TCP HTTP listener
-  removed; socket `cmd="metrics"` remains).
 - **clippy clean**: fixed all clippy warnings across all source files
   (`collapsible_if`, `new_without_default`, `redundant_closure`, `for_kv_map`,
   `unnecessary_sort_by`, `let_and_return`, `useless_vec`). Zero warnings on
