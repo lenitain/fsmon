@@ -18,13 +18,11 @@ sock.connect(SOCKET)
 # Send subscribe command (TOML, blank line terminated)
 sock.sendall(b'cmd = "subscribe"\n\n')
 
-# Read TOML response (single line)
-resp = b""
-while True:
-    c = sock.recv(1)
-    if c == b"\n":
-        break
-    resp += c
+# Use a single buffered reader for both TOML response and JSONL stream.
+# (Avoid mixing sock.recv() and sock.makefile() — recv consumes bytes
+#  that makefile can't see, causing event loss.)
+f = sock.makefile("rb")
+resp = f.readline()
 
 resp_str = resp.decode().strip()
 print(f"[subscribed] {resp_str}", file=sys.stderr)
@@ -33,11 +31,14 @@ if not resp_str.startswith("ok = true"):
     sys.exit(f"subscribe failed: {resp_str}")
 
 # Stream JSONL events to stdout
-for line in sock.makefile("r"):
+for line in f:
+    line = line.decode().strip()
+    if not line:
+        continue
     try:
         ev = json.loads(line)
         # Filter examples — uncomment or pipe to jq:
         # if ev.get("cmd") == "nginx":
-        print(json.dumps(ev))
+        print(json.dumps(ev), flush=True)
     except json.JSONDecodeError:
-        print(line.rstrip())
+        print(line)
