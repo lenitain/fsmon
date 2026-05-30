@@ -15,7 +15,7 @@ pub const fn about(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::Root => "Lightweight high-performance file change tracking tool",
         HelpTopic::Daemon => "Run the fsmon daemon (requires sudo for fanotify)",
-        HelpTopic::Init => "Initialize log and monitored data directories",
+        HelpTopic::Init => "Create the config file (directories created on first use)",
         HelpTopic::Cd => "Open a subshell in the monitored path or log directory",
         HelpTopic::Add => "Add a path to the monitoring list",
         HelpTopic::Remove => "Remove one or more paths from the monitoring list",
@@ -120,7 +120,7 @@ Examples:
         HelpTopic::Remove => {
             r#"Remove one or more paths from the monitoring list.
 
-Without --path, removes the entire cmd group (including the null group).
+Without --path, removes the entire cmd group.
 With --path, removes only the specified paths. Multiple paths are atomic:
 all must exist, or nothing is removed.
 
@@ -276,9 +276,9 @@ Config:  ~/.config/fsmon/fsmon.toml (created by fsmon init, defaults apply witho
 Monitor: ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
 Logs:    ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].path)
 
-4 data exit points:
+3 data exit points:
   ① JSONL log files (on by default, configurable via [logging].path)
-  ② Unix socket subscribe — real-time JSONL stream (extensions/subscribe-stream/)
-  ③ Unix socket admin — add/remove/list/health (extensions/socket-admin/)
+  ② Unix socket subscribe — real-time JSONL stream (examples/)
+  ③ Unix socket admin — add/remove/list/health (examples/)
 "#
 }

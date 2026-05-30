@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.1] - 2026-05-30
 
+### Added
+
+- **Minimal extension examples**: 4 scripts covering the 2 data exit points —
+  `read-jsonl.{sh,py}` for persistent JSONL files and `subscribe.{sh,py}` for
+  real-time Unix socket streaming. Each exit point has symmetric Shell and Python
+  implementations under `examples/`.
+- **TEST_PLAN.md**: comprehensive test plan with 6 configuration stages and 35+
+  test cases, organized by daemon configuration phase.
+
+### Changed
+
+- **Extensions reorganized**: removed all downstream bridge scripts (Kafka
+  producer, Elasticsearch bulk indexer, InfluxDB line protocol, S3 archiver)
+  and the TCP /metrics HTTP listener. Extensions consolidated from 4
+  subdirectories into a single `examples/` directory with 4 minimal scripts.
+  Simplifies the project surface to its core: JSONL file output and Unix socket
+  subscribe stream.
+- **`extensions/README.md`**: simplified to English-only, documenting the 2
+  data exit points with minimal examples.
+- **Config template cleaned**: removed `buffer_size` (CLI-only, not parseable
+  from `[cache]`) and removed the `[metrics]` section (TCP HTTP listener
+  removed; socket `cmd="metrics"` remains).
+- **clippy clean**: fixed all clippy warnings across all source files
+  (`collapsible_if`, `new_without_default`, `redundant_closure`, `for_kv_map`,
+  `unnecessary_sort_by`, `let_and_return`, `useless_vec`). Zero warnings on
+  `cargo clippy --all-targets`.
+
 ### Fixed
 
 - **subscribe.py buffering bug**: the extension example `subscribe.py` mixed
@@ -23,13 +50,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   power loss, or `kill -9`. Replaced with temp-file + `sync_all` + `rename` —
   POSIX guarantees atomic rename, so the original file stays intact until the
   new content is fully written and synced.
+- **Extension script bugfixes**: corrected subscribe protocol handshake in both
+  Shell (`subscribe.sh`) and Python (`subscribe.py`) examples; fixed
+  `Elasticsearch()` constructor exception on ES 9.x with try/except wrapper;
+  fixed `s3 client` hang with `connect_timeout` when no AWS credentials present;
+  fixed `admin.py --socket` parameter being silently ignored; fixed
+  `fsmon-log-tail.py` default log path from `/var/log/fsmon` to
+  `~/.local/state/fsmon`.
+- **Subscribe protocol**: runtime validation fixes for subscribe command payload
+  and TOML header parsing.
 
-### Changed
+### Removed
 
-- **clippy clean**: fixed all 17 clippy warnings across 10 source files
-  (`collapsible_if`, `new_without_default`, `redundant_closure`, `for_kv_map`,
-  `unnecessary_sort_by`, `let_and_return`, `useless_vec`). Zero warnings on
-  `cargo clippy --all-targets`.
+- **TCP /metrics HTTP listener**: `--metrics-listen` CLI flag and `[metrics]`
+  config section removed. The socket `cmd="metrics"` command still returns
+  Prometheus text format — just not via a separate TCP port. This simplifies
+  the daemon's network surface.
+- **All downstream bridge extensions**: Kafka, Elasticsearch, InfluxDB, and S3
+  bridge scripts removed. These were downstream-specific and better maintained
+  separately. The 2 data exits (JSONL files + Unix socket subscribe) are
+  universal and tool-agnostic.
+- **`regex` dependency**: removed unused crate from `Cargo.toml`.
+- **Dead code**: removed `EXIT_CONFIG` constant, `format_prometheus` function,
+  `new_cache`/`new_pid_tree` methods, `CounterVec::name`/`help` and
+  `IntGauge::name`/`help` fields, `socket::listen`, `PathParams::new`, unused
+  field, redundant re-export, and unnecessary thin wrappers.
 
 ## [0.4.0] - 2026-05-29
 

@@ -472,21 +472,12 @@ path = "/tmp/fsmon-<UID>.sock"
 #   Cache stats output interval in debug mode (default: 60).
 #   CLI: --cache-stats-interval 30
 # stats_interval_secs = 60
-#   Fanotify read buffer size in bytes (default: 32768).
-#   CLI: --buffer-size 65536
-# buffer_size = 32768
 #   Event channel capacity. Default: unbounded.
 #   CLI: --channel-capacity 1024
 # channel_capacity = 1024
 #   Subscribe event stream buffer capacity. Default: 4096.
 #   CLI: --subscribe-buf 8192
 # subscribe_buf = 4096
-
-# [metrics]
-#   TCP HTTP /metrics endpoint address. Socket "metrics" command is always
-#   available; this enables Prometheus direct scrape.
-#   CLI: --metrics-listen 127.0.0.1:9845
-# listen = "127.0.0.1:9845"
 "#
         .to_string()
     }

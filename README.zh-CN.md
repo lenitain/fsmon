@@ -381,7 +381,7 @@ dir_ttl_secs = 3600
 file_size_capacity = 10000
 proc_ttl_secs = 600
 stats_interval_secs = 60
-buffer_size = 32768             # Fanotify 读取缓冲区（最小 4096，最大 1048576）
+buffer_size = 32768             # Fanotify 读取缓冲区（仅 CLI：--buffer-size）
 channel_capacity = 1024         # 事件通道上限（不设置 = 无界）
 subscribe_buf = 4096            # Subscribe 消费者的广播缓冲
 ```
@@ -393,7 +393,7 @@ CLI 参数 > fsmon.toml > 代码默认值
 
 CLI 参数优先级最高：
 ```bash
-sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536 --metrics-listen 127.0.0.1:9845
+sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536
 ```
 
 ## 事件类型

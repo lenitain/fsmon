@@ -119,7 +119,8 @@ pub enum Commands {
     #[command(about = help::about(HelpTopic::Changes), long_about = help::long_about(HelpTopic::Changes))]
     Changes(ChangesArgs),
 
-    /// Initialize log and monitored data directories.
+    /// Create the config file. Directories are created on first use by
+    /// other commands (monitored: fsmon add; logs: fsmon daemon / fsmon cd).
     /// With --service, also create a systemd service file.
     #[command(about = help::about(HelpTopic::Init), long_about = help::long_about(HelpTopic::Init))]
     Init {

@@ -165,8 +165,6 @@ via `SUDO_UID` + `getpwuid_r`, so it writes to `/home/<you>/...` not `/root/...`
 > don't support this. Logs remain owned by root. If `fsmon clean` fails as a normal user,
 > run `sudo fsmon clean` or use the Unix tools directly on the `.jsonl` files.
 
-### Auto-start on Boot (Optional)
-
 ### Auto-start on boot (optional — systemd recommended)
 
 Recommended (systemd):
@@ -390,7 +388,7 @@ dir_ttl_secs = 3600
 file_size_capacity = 10000
 proc_ttl_secs = 600
 stats_interval_secs = 60
-buffer_size = 32768             # Fanotify read buffer (min 4096, max 1048576)
+buffer_size = 32768             # Fanotify read buffer (CLI only: --buffer-size)
 channel_capacity = 1024         # Event channel bound (omit = unbounded)
 subscribe_buf = 4096            # Broadcast buffer for subscribe consumers
 ```
@@ -402,7 +400,7 @@ CLI args > fsmon.toml > code defaults
 
 CLI flags override both config file and defaults:
 ```bash
-sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536 --metrics-listen 127.0.0.1:9845
+sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536
 ```
 
 ## Event Types
