@@ -983,7 +983,7 @@ mod tests {
         // because clap will fail due to missing positional. But we can still
         // verify the handler rejects it by calling with None.
         use fsmon::query::Query;
-        let q = Query::new(PathBuf::from("/nonexistent"), None, None, vec![]);
+        let q = Query::new(PathBuf::from("/nonexistent"), None, None, vec![], false);
         assert!(q.resolve_log_files().unwrap().is_empty());
     }
 
@@ -996,7 +996,7 @@ mod tests {
                 Some("ghost".into()),
                 None,
                 vec![],
-            );
+    false);
             // No log files should be found
             let files = q.resolve_log_files().unwrap();
             assert!(files.is_empty(), "nonexistent cmd should yield no files");
@@ -1070,7 +1070,7 @@ mod tests {
             // Query _global should find both events
             {
                 use fsmon::query::Query;
-                let q = Query::new(log_dir.clone(), Some("_global".into()), None, vec![]);
+                let q = Query::new(log_dir.clone(), Some("_global".into()), None, vec![], false);
                 let files = q.resolve_log_files().unwrap();
                 assert_eq!(files.len(), 1, "should find _global_log.jsonl");
             }

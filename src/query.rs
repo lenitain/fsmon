@@ -16,6 +16,8 @@ pub struct Query {
     /// Path prefix filters applied to event.path (None = no path filter).
     path_filters: Option<Vec<PathBuf>>,
     time_filters: Vec<TimeFilter>,
+    /// Output timestamps in local time instead of UTC.
+    local_time: bool,
 }
 
 impl Query {
@@ -24,12 +26,14 @@ impl Query {
         cmd_filter: Option<String>,
         path_filters: Option<Vec<PathBuf>>,
         time_filters: Vec<TimeFilter>,
+        local_time: bool,
     ) -> Self {
         Self {
             log_dir,
             cmd_filter,
             path_filters,
             time_filters,
+            local_time,
         }
     }
 
@@ -267,10 +271,15 @@ impl Query {
         Ok(())
     }
 
-    /// Output events as JSONL to stdout
+    /// Output events as JSONL to stdout, respecting local_time preference.
     fn output_events(&self, events: &[FileEvent]) -> Result<()> {
         for event in events {
-            println!("{}", event.to_jsonl_string());
+            let line = if self.local_time {
+                event.to_jsonl_string_local()
+            } else {
+                event.to_jsonl_string()
+            };
+            println!("{}", line);
         }
         Ok(())
     }
@@ -358,7 +367,7 @@ mod tests {
         ];
         let log_path = create_log_file(&dir, &events);
         let log_dir = log_path.parent().unwrap().to_path_buf();
-        let q = Query::new(log_dir, None, None, vec![]);
+        let q = Query::new(log_dir, None, None, vec![], false);
         let result = q.read_events_from(&log_path, None, None).unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].pid, 100);
@@ -372,7 +381,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let log_path = create_log_file(&dir, &[]);
         let log_dir = log_path.parent().unwrap().to_path_buf();
-        let q = Query::new(log_dir, None, None, vec![]);
+        let q = Query::new(log_dir, None, None, vec![], false);
         let result = q.read_events_from(&log_path, None, None).unwrap();
         assert!(result.is_empty());
         let _ = fs::remove_dir_all(&dir);
@@ -387,7 +396,7 @@ mod tests {
         let mut f = fs::File::create(&log_path).unwrap();
         writeln!(f, "{{\"time\":\"2025-01-01T00:00:00Z\",\"event_type\":\"CREATE\",\"path\":\"/a\",\"pid\":1,\"cmd\":\"openclaw\",\"user\":\"r\",\"file_size\":0,\"ppid\":0,\"tgid\":0,\"chain\":\"\"}}").unwrap();
 
-        let q = Query::new(dir.clone(), Some("openclaw".into()), None, vec![]);
+        let q = Query::new(dir.clone(), Some("openclaw".into()), None, vec![], false);
         let files = q.resolve_log_files().unwrap();
         assert_eq!(files.len(), 1);
         assert!(files[0].to_string_lossy().contains("openclaw_log.jsonl"));
@@ -398,7 +407,7 @@ mod tests {
     fn test_resolve_log_files_nonexistent_cmd() {
         let dir = std::env::temp_dir().join("fsmon_query_test_nonexistent_cmd");
         fs::create_dir_all(&dir).unwrap();
-        let q = Query::new(dir.clone(), Some("nonexistent".into()), None, vec![]);
+        let q = Query::new(dir.clone(), Some("nonexistent".into()), None, vec![], false);
         let files = q.resolve_log_files().unwrap();
         assert!(
             files.is_empty(),
@@ -445,7 +454,7 @@ mod tests {
         let log_path = create_log_file(&dir, &events);
         let since = now - chrono::Duration::hours(1);
         let log_dir = log_path.parent().unwrap().to_path_buf();
-        let q = Query::new(log_dir, None, None, vec![]);
+        let q = Query::new(log_dir, None, None, vec![], false);
         let result = q.read_events_from(&log_path, Some(since), None).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].pid, 200);
@@ -488,7 +497,7 @@ mod tests {
         let log_path = create_log_file(&dir, &events);
         let until = now - chrono::Duration::hours(1);
         let log_dir = log_path.parent().unwrap().to_path_buf();
-        let q = Query::new(log_dir, None, None, vec![]);
+        let q = Query::new(log_dir, None, None, vec![], false);
         let result = q.read_events_from(&log_path, None, Some(until)).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].pid, 100);
@@ -543,7 +552,7 @@ mod tests {
         ];
         let log_path = create_log_file(&dir, &events);
         let log_dir = log_path.parent().unwrap().to_path_buf();
-        let q = Query::new(log_dir, None, None, vec![]);
+        let q = Query::new(log_dir, None, None, vec![], false);
         // range: between 2.5h ago and 1.5h ago (only t2 at 2h ago fits)
         let since = now - chrono::Duration::minutes(150);
         let until = now - chrono::Duration::minutes(90);
@@ -572,7 +581,7 @@ mod tests {
                 op: TimeOp::Gt,
                 time: t1,
             }],
-        );
+    false);
         assert!(q.extract_since().is_some());
         assert!(q.extract_until().is_none());
 
@@ -585,7 +594,7 @@ mod tests {
                 op: TimeOp::Lt,
                 time: t2,
             }],
-        );
+    false);
         assert!(q.extract_since().is_none());
         assert!(q.extract_until().is_some());
 
@@ -604,12 +613,12 @@ mod tests {
                     time: t2,
                 },
             ],
-        );
+    false);
         assert!(q.extract_since().is_some());
         assert!(q.extract_until().is_some());
 
         // empty
-        let q = Query::new(PathBuf::from("/tmp"), None, None, vec![]);
+        let q = Query::new(PathBuf::from("/tmp"), None, None, vec![], false);
         assert!(q.extract_since().is_none());
         assert!(q.extract_until().is_none());
     }
@@ -634,7 +643,7 @@ mod tests {
                     time: t_late,
                 },
             ],
-        );
+    false);
         let s = q.extract_since().unwrap();
         assert_eq!(s, t_late, "should pick the later/more-restrictive time");
     }
@@ -659,7 +668,7 @@ mod tests {
                     time: t_early,
                 },
             ],
-        );
+    false);
         let u = q.extract_until().unwrap();
         assert_eq!(u, t_early, "should pick the earlier/more-restrictive time");
     }
@@ -699,7 +708,7 @@ mod tests {
         let log_path = create_log_file(&dir, &events);
         let log_dir = log_path.parent().unwrap().to_path_buf();
         // Filter by /home → should only get first event
-        let q = Query::new(log_dir, None, Some(vec![PathBuf::from("/home")]), vec![]);
+        let q = Query::new(log_dir, None, Some(vec![PathBuf::from("/home")]), vec![], false);
         let result = q.read_events_from(&log_path, None, None).unwrap();
         assert_eq!(
             result.len(),
@@ -725,7 +734,7 @@ mod tests {
             None,
             Some(vec![PathBuf::from("/home")]),
             vec![],
-        );
+    false);
         // Can't call execute() easily in test (it prints to stdout),
         // but we can verify resolve_log_files finds the file
         let files = q.resolve_log_files().unwrap();
@@ -768,7 +777,7 @@ mod tests {
         writeln!(f, "{}", recent.to_jsonl_string()).unwrap();
         drop(f);
 
-        let q = Query::new(dir.clone(), Some("_global".into()), None, vec![]);
+        let q = Query::new(dir.clone(), Some("_global".into()), None, vec![], false);
 
         // read_events_from returns all 3 (no dedup yet)
         let events = q.read_events_from(&log_path, None, None).unwrap();
@@ -841,7 +850,7 @@ mod tests {
         writeln!(f, "{}", recent.to_jsonl_string()).unwrap();
         drop(f);
 
-        let q = Query::new(dir.clone(), Some("_global".into()), None, vec![]);
+        let q = Query::new(dir.clone(), Some("_global".into()), None, vec![], false);
         let events = q.read_events_from(&log_path, None, None).unwrap();
         assert_eq!(events.len(), 3);
 
@@ -894,7 +903,7 @@ mod tests {
         }
         drop(f);
 
-        let q = Query::new(dir.clone(), Some("_global".into()), None, vec![]);
+        let q = Query::new(dir.clone(), Some("_global".into()), None, vec![], false);
         let events = q.read_events_from(&log_path, None, None).unwrap();
         assert_eq!(events.len(), 5);
 
@@ -951,7 +960,7 @@ mod tests {
 
         // With path filter for /home — only /home/a survives dedup
         let path_filters = Some(vec![PathBuf::from("/home")]);
-        let q = Query::new(dir.clone(), Some("_global".into()), path_filters, vec![]);
+        let q = Query::new(dir.clone(), Some("_global".into()), path_filters, vec![], false);
 
         let events = q.read_events_from(&log_path, None, None).unwrap();
         assert_eq!(events.len(), 2, "read_events_from ignores path filters");
@@ -994,7 +1003,7 @@ mod tests {
         let log_path = dir.join("nginx_log.jsonl");
         fs::File::create(&log_path).unwrap();
 
-        let q = Query::new(dir.clone(), Some("nginx".into()), None, vec![]);
+        let q = Query::new(dir.clone(), Some("nginx".into()), None, vec![], false);
         let files = q.resolve_log_files().unwrap();
         assert_eq!(files.len(), 1);
         assert!(files[0].to_string_lossy().ends_with("nginx_log.jsonl"));

@@ -33,6 +33,7 @@ pub async fn cmd_query(args: QueryArgs) -> Result<()> {
         Some(cmd.to_string()),
         path_filters,
         time_filters,
+        cfg.logging.local_time.unwrap_or(false),
     );
 
     query.execute().await?;
