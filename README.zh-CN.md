@@ -522,6 +522,8 @@ filebeat.inputs:
   - type: log
     paths: ["/home/*/.local/state/fsmon/*_log.jsonl"]
     json.keys_under_root: true
+
+# Vector → 任意目标
 ```
 
 ### Unix socket（实时，无磁盘）
