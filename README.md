@@ -542,10 +542,6 @@ nc -U /tmp/fsmon-$(id -u).sock | jq 'select(.cmd == "nginx")'
 nc -U /tmp/fsmon-$(id -u).sock | kafkacat -b broker:9092 -t fsmon-events
 ```
 
-### No extra tools needed
-
-`nc` is built into every Linux system. Everything else is optional.
-
 ## License
 
 [MIT License](./LICENSE)

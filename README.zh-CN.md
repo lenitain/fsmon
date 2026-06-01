@@ -535,10 +535,6 @@ nc -U /tmp/fsmon-$(id -u).sock | jq 'select(.cmd == "nginx")'
 nc -U /tmp/fsmon-$(id -u).sock | kafkacat -b broker:9092 -t fsmon-events
 ```
 
-### 无需额外工具
-
-`nc` 是所有 Linux 系统的内置命令。其余均为可选。
-
 ## 许可证
 
 [MIT License](./LICENSE)
