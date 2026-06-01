@@ -85,6 +85,13 @@ pub enum Commands {
         /// instead of Z suffix.
         #[arg(long)]
         local_time: bool,
+
+        /// Metrics report interval in seconds (default: disabled).
+        /// When set to N > 0, prints a one-line status report to stderr every N seconds.
+        /// Report includes: uptime, RSS (MB), events processed/written,
+        /// cache sizes, and reader task health.
+        #[arg(long, value_name = "SECS")]
+        metrics_interval: Option<u64>,
     },
 
     /// Add a path to the monitoring list

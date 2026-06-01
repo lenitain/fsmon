@@ -100,6 +100,8 @@ pub struct Monitor {
     disk_min_free: Option<String>,
     /// Log file sync interval. None = disabled.
     sync_interval: Option<std::time::Duration>,
+    /// Metrics report interval. None = disabled.
+    metrics_interval: Option<std::time::Duration>,
 
     /// Unified event stream: broadcast channel for all consumers.
     /// Carries (FileEvent, cmd_name) — cmd_name is for file routing.
@@ -129,6 +131,7 @@ impl Monitor {
         sync_interval: Option<std::time::Duration>,
         subscribe_buf: Option<usize>,
         local_time: bool,
+        metrics_interval: Option<u64>,
     ) -> Result<Self> {
         let cache_config = cache_config.unwrap_or_default();
         let buffer_size = buffer_size.unwrap_or(cache_config.buffer_size);
@@ -216,6 +219,9 @@ impl Monitor {
             started_at: std::time::Instant::now(),
             disk_min_free,
             sync_interval,
+            metrics_interval: metrics_interval
+                .filter(|&n| n > 0)
+                .map(std::time::Duration::from_secs),
             event_stream_tx: {
                 let cap = subscribe_buf.unwrap_or(4096).max(1);
                 let (tx, _) = tokio::sync::broadcast::channel::<(FileEvent, String)>(cap);
@@ -638,6 +644,9 @@ impl Monitor {
         // Notify systemd
         notify_sd_ready();
 
+        let mut metrics_tick: Option<tokio::time::Interval> =
+            self.metrics_interval.map(tokio::time::interval);
+
         loop {
             tokio::select! {
                 Some(events) = event_rx.recv() => {
@@ -714,6 +723,27 @@ impl Monitor {
                     if let Err(e) = self.reload_config() {
                         eprintln!("Config reload error: {e}");
                     }
+                }
+
+                _ = async {
+                    match metrics_tick.as_mut() {
+                        Some(t) => t.tick().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    let report = self.collect_metrics(&dir_cache, &proc_cache, &pid_tree);
+                    eprintln!(
+                        "[metrics] uptime={}s rss={:.1}MB caches(d/p/t/f)={}/{}/{}/{} readers={}/{}/{}",
+                        report.uptime_secs,
+                        report.rss_mb,
+                        report.dir_cache_entries,
+                        report.proc_cache_entries,
+                        report.pid_tree_entries,
+                        report.file_size_cache_entries,
+                        report.reader_groups_total,
+                        report.reader_groups_alive,
+                        report.reader_groups_gave_up,
+                    );
                 }
 
                 proc_readable = async {
@@ -815,6 +845,38 @@ impl Monitor {
         Ok(())
     }
 
+    /// Collect runtime metrics for periodic reporting.
+    pub(crate) fn collect_metrics(
+        &self,
+        dir_cache: &moka::sync::Cache<fanotify_fid::types::HandleKey, std::path::PathBuf>,
+        proc_cache: &crate::proc_cache::ProcCache,
+        pid_tree: &crate::proc_cache::PidTree,
+    ) -> MetricsReport {
+        let reader_groups_alive = self
+            .reader_states
+            .iter()
+            .filter(|s| s.as_ref().is_some_and(|s| !s.gave_up))
+            .count() as u64;
+        let reader_groups_gave_up = self
+            .reader_states
+            .iter()
+            .filter(|s| s.as_ref().is_some_and(|s| s.gave_up))
+            .count() as u64;
+
+        MetricsReport {
+            uptime_secs: self.started_at.elapsed().as_secs(),
+            rss_mb: get_rss_mb(),
+            dir_cache_entries: dir_cache.entry_count(),
+            proc_cache_entries: proc_cache.entry_count(),
+            pid_tree_entries: pid_tree.entry_count(),
+            file_size_cache_entries: self.file_size_cache.len() as u64,
+            reader_groups_total: self.fs_groups.len() as u64,
+            reader_groups_alive,
+            reader_groups_gave_up,
+            subscribers: self.metrics.subscribers() as u64,
+        }
+    }
+
     /// Publish pending events to the broadcast stream.
     fn send_pending_events(&self, pending: &[PendingEvent]) {
         if let Some(ref tx) = self.event_stream_tx {
@@ -823,6 +885,34 @@ impl Monitor {
             }
         }
     }
+}
+
+/// Snapshot of daemon runtime metrics for periodic reporting.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) struct MetricsReport {
+    pub uptime_secs: u64,
+    pub rss_mb: f64,
+    pub dir_cache_entries: u64,
+    pub proc_cache_entries: u64,
+    pub pid_tree_entries: u64,
+    pub file_size_cache_entries: u64,
+    pub reader_groups_total: u64,
+    pub reader_groups_alive: u64,
+    pub reader_groups_gave_up: u64,
+    pub subscribers: u64,
+}
+
+/// Read current RSS in MB from /proc/self/statm.
+fn get_rss_mb() -> f64 {
+    std::fs::read_to_string("/proc/self/statm")
+        .ok()
+        .and_then(|s| {
+            let parts: Vec<&str> = s.split_whitespace().collect();
+            parts.get(1).and_then(|p| p.parse::<u64>().ok())
+        })
+        .map(|pages| (pages * 4096) as f64 / (1024.0 * 1024.0))
+        .unwrap_or(0.0)
 }
 
 #[cfg(test)]
