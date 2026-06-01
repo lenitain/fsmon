@@ -633,7 +633,6 @@ impl Monitor {
             }
         });
         let mut proc_buf = vec![0u8; 65536];
-        let mut last_cache_stats = std::time::Instant::now();
 
         // Move the reader death receiver out of self so tokio::select! can use it.
         let mut reader_death_rx = std::mem::replace(
@@ -692,16 +691,6 @@ impl Monitor {
                     // 6. Retry pending paths (inotify handles the primary
                     //    delete→pending transition via DELETE_SELF).
                     self.check_pending();
-                    if self.debug && self.cache_config.stats_interval_secs > 0
-                        && last_cache_stats.elapsed() >= std::time::Duration::from_secs(self.cache_config.stats_interval_secs)
-                    {
-                        eprintln!("[DEBUG] --- cache stats ---");
-                        eprintln!("[DEBUG]   dir_cache:        {}/{} entries", dir_cache.entry_count(), DIR_CACHE_CAP);
-                        eprintln!("[DEBUG]   proc_cache:       {}/{} entries", proc_cache.entry_count(), PROC_CACHE_CAP);
-                        eprintln!("[DEBUG]   pid_tree:         {}/{} entries", pid_tree.entry_count(), PID_TREE_CAP);
-                        eprintln!("[DEBUG]   file_size_cache:  {}/{} entries", self.file_size_cache.len(), self.file_size_cache.cap());
-                        last_cache_stats = std::time::Instant::now();
-                    }
                 }
                 _ = tokio::signal::ctrl_c() => {
                     while let Ok(events) = event_rx.try_recv() {
