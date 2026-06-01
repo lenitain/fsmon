@@ -20,9 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `cargo fmt --check` and `cargo clippy -- -D warnings`
 - **GitHub Actions Benchmark workflow** (`.github/workflows/bench.yml`)
   - Release build + binary size measurement + smoke test
+- **`--metrics` daemon flag**: periodic one-line status report to stderr
+  - Reports uptime, RSS (MB), cache sizes (dir/proc/pid-tree/file-size), and reader task health (total/alive/gave-up)
+  - Independent of `--debug`; designed for production monitoring via grep/awk
+- **`p1_metrics.rs`** — 3 output format validation tests
 
 ### Changed
 
+- **Cache stats moved from `--debug` to `--metrics`**
+  - `--debug` now only controls event-level tracing (matching, routing, reader lifecycle)
+  - `--cache-stats-interval` and `--debug` no longer required for periodic cache reporting
 - `cargo fmt` applied to all source files for consistent formatting
 
 ## [0.4.1] - 2026-05-30
