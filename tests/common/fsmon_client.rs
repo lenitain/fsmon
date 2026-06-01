@@ -4,9 +4,9 @@
 
 #![allow(dead_code)]
 
+use fsmon::FileEvent;
 use std::path::PathBuf;
 use std::process::{Command, Output};
-use fsmon::FileEvent;
 
 /// Resolve the path to the `fsmon` binary in the Cargo target directory.
 /// Works for both `cargo test` (debug) and `cargo test --release`.
@@ -35,9 +35,7 @@ pub fn run_fsmon_success(args: &[&str]) -> String {
         let stderr = String::from_utf8_lossy(&out.stderr);
         panic!(
             "fsmon {:?} failed (status {}):\n{}",
-            args,
-            out.status,
-            stderr
+            args, out.status, stderr
         );
     }
     String::from_utf8(out.stdout).expect("valid utf8 stdout")

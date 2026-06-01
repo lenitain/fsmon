@@ -4,7 +4,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use crate::utils::{TimeOp, TimeFilter, cmd_to_log_name};
+use crate::utils::{TimeFilter, TimeOp, cmd_to_log_name};
 use crate::{FileEvent, parse_log_line_jsonl};
 
 const SCAN_BACK_BYTES: u64 = 4096;
@@ -244,9 +244,10 @@ impl Query {
             for event in events {
                 // Apply path filters
                 if let Some(ref path_filters) = self.path_filters
-                    && !path_filters.iter().any(|pf| event.path.starts_with(pf)) {
-                        continue;
-                    }
+                    && !path_filters.iter().any(|pf| event.path.starts_with(pf))
+                {
+                    continue;
+                }
 
                 match latest_by_path.entry(event.path.clone()) {
                     std::collections::hash_map::Entry::Occupied(mut entry) => {
@@ -580,7 +581,8 @@ mod tests {
                 op: TimeOp::Gt,
                 time: t1,
             }],
-    false);
+            false,
+        );
         assert!(q.extract_since().is_some());
         assert!(q.extract_until().is_none());
 
@@ -593,7 +595,8 @@ mod tests {
                 op: TimeOp::Lt,
                 time: t2,
             }],
-    false);
+            false,
+        );
         assert!(q.extract_since().is_none());
         assert!(q.extract_until().is_some());
 
@@ -612,7 +615,8 @@ mod tests {
                     time: t2,
                 },
             ],
-    false);
+            false,
+        );
         assert!(q.extract_since().is_some());
         assert!(q.extract_until().is_some());
 
@@ -642,7 +646,8 @@ mod tests {
                     time: t_late,
                 },
             ],
-    false);
+            false,
+        );
         let s = q.extract_since().unwrap();
         assert_eq!(s, t_late, "should pick the later/more-restrictive time");
     }
@@ -667,7 +672,8 @@ mod tests {
                     time: t_early,
                 },
             ],
-    false);
+            false,
+        );
         let u = q.extract_until().unwrap();
         assert_eq!(u, t_early, "should pick the earlier/more-restrictive time");
     }
@@ -707,7 +713,13 @@ mod tests {
         let log_path = create_log_file(&dir, &events);
         let log_dir = log_path.parent().unwrap().to_path_buf();
         // Filter by /home → should only get first event
-        let q = Query::new(log_dir, None, Some(vec![PathBuf::from("/home")]), vec![], false);
+        let q = Query::new(
+            log_dir,
+            None,
+            Some(vec![PathBuf::from("/home")]),
+            vec![],
+            false,
+        );
         let result = q.read_events_from(&log_path, None, None).unwrap();
         assert_eq!(
             result.len(),
@@ -733,7 +745,8 @@ mod tests {
             None,
             Some(vec![PathBuf::from("/home")]),
             vec![],
-    false);
+            false,
+        );
         // Can't call execute() easily in test (it prints to stdout),
         // but we can verify resolve_log_files finds the file
         let files = q.resolve_log_files().unwrap();
@@ -754,22 +767,37 @@ mod tests {
             time: now - chrono::Duration::hours(1),
             event_type: EventType::Modify,
             path: PathBuf::from("/a"),
-            pid: 1, cmd: "x".into(), user: "r".into(),
-            file_size: 0, ppid: 0, tgid: 0, chain: String::new(),
+            pid: 1,
+            cmd: "x".into(),
+            user: "r".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
         };
         let b = FileEvent {
             time: now - chrono::Duration::minutes(30),
             event_type: EventType::Delete,
             path: PathBuf::from("/b"),
-            pid: 3, cmd: "z".into(), user: "r".into(),
-            file_size: 0, ppid: 0, tgid: 0, chain: String::new(),
+            pid: 3,
+            cmd: "z".into(),
+            user: "r".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
         };
         let recent = FileEvent {
             time: now,
             event_type: EventType::Create,
             path: PathBuf::from("/a"),
-            pid: 2, cmd: "y".into(), user: "r".into(),
-            file_size: 0, ppid: 0, tgid: 0, chain: String::new(),
+            pid: 2,
+            cmd: "y".into(),
+            user: "r".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
         };
         writeln!(f, "{}", old.to_jsonl_string()).unwrap();
         writeln!(f, "{}", b.to_jsonl_string()).unwrap();
@@ -827,22 +855,37 @@ mod tests {
             time: now - chrono::Duration::hours(2),
             event_type: EventType::Create,
             path: PathBuf::from("/old"),
-            pid: 1, cmd: "x".into(), user: "r".into(),
-            file_size: 0, ppid: 0, tgid: 0, chain: String::new(),
+            pid: 1,
+            cmd: "x".into(),
+            user: "r".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
         };
         let mid = FileEvent {
             time: now - chrono::Duration::hours(1),
             event_type: EventType::Modify,
             path: PathBuf::from("/mid"),
-            pid: 2, cmd: "y".into(), user: "r".into(),
-            file_size: 0, ppid: 0, tgid: 0, chain: String::new(),
+            pid: 2,
+            cmd: "y".into(),
+            user: "r".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
         };
         let recent = FileEvent {
             time: now,
             event_type: EventType::Delete,
             path: PathBuf::from("/recent"),
-            pid: 3, cmd: "z".into(), user: "r".into(),
-            file_size: 0, ppid: 0, tgid: 0, chain: String::new(),
+            pid: 3,
+            cmd: "z".into(),
+            user: "r".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
         };
         writeln!(f, "{}", old.to_jsonl_string()).unwrap();
         writeln!(f, "{}", mid.to_jsonl_string()).unwrap();
@@ -895,8 +938,13 @@ mod tests {
                 time: now - chrono::Duration::hours(i),
                 event_type: EventType::Modify,
                 path: PathBuf::from("/a"),
-                pid: i as u32, cmd: "x".into(), user: "r".into(),
-                file_size: 0, ppid: 0, tgid: 0, chain: String::new(),
+                pid: i as u32,
+                cmd: "x".into(),
+                user: "r".into(),
+                file_size: 0,
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
             };
             writeln!(f, "{}", ev.to_jsonl_string()).unwrap();
         }
@@ -943,15 +991,25 @@ mod tests {
             time: now - chrono::Duration::minutes(10),
             event_type: EventType::Create,
             path: PathBuf::from("/home/a"),
-            pid: 1, cmd: "x".into(), user: "r".into(),
-            file_size: 0, ppid: 0, tgid: 0, chain: String::new(),
+            pid: 1,
+            cmd: "x".into(),
+            user: "r".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
         };
         let tmp = FileEvent {
             time: now,
             event_type: EventType::Modify,
             path: PathBuf::from("/tmp/b"),
-            pid: 2, cmd: "y".into(), user: "r".into(),
-            file_size: 0, ppid: 0, tgid: 0, chain: String::new(),
+            pid: 2,
+            cmd: "y".into(),
+            user: "r".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
         };
         writeln!(f, "{}", home.to_jsonl_string()).unwrap();
         writeln!(f, "{}", tmp.to_jsonl_string()).unwrap();
@@ -959,7 +1017,13 @@ mod tests {
 
         // With path filter for /home — only /home/a survives dedup
         let path_filters = Some(vec![PathBuf::from("/home")]);
-        let q = Query::new(dir.clone(), Some("_global".into()), path_filters, vec![], false);
+        let q = Query::new(
+            dir.clone(),
+            Some("_global".into()),
+            path_filters,
+            vec![],
+            false,
+        );
 
         let events = q.read_events_from(&log_path, None, None).unwrap();
         assert_eq!(events.len(), 2, "read_events_from ignores path filters");
@@ -970,9 +1034,10 @@ mod tests {
         let mut latest_by_path: HashMap<PathBuf, FileEvent> = HashMap::new();
         for event in events {
             if let Some(ref pfs) = path_filters
-                && !pfs.iter().any(|pf| event.path.starts_with(pf)) {
-                    continue;
-                }
+                && !pfs.iter().any(|pf| event.path.starts_with(pf))
+            {
+                continue;
+            }
             match latest_by_path.entry(event.path.clone()) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {
                     if event.time > entry.get().time {
@@ -987,7 +1052,10 @@ mod tests {
 
         assert_eq!(latest_by_path.len(), 1);
         assert_eq!(
-            latest_by_path.get(&PathBuf::from("/home/a")).unwrap().event_type,
+            latest_by_path
+                .get(&PathBuf::from("/home/a"))
+                .unwrap()
+                .event_type,
             EventType::Create
         );
 

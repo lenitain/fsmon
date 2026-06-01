@@ -79,7 +79,14 @@ impl Monitor {
         let sub_local = cmd.local_time.unwrap_or(self.local_time);
         let sub_metrics = self.metrics.clone();
         self.metrics.inc_subscribers();
-        tokio::spawn(subscriber_task(writer, rx, track_cmd, types, sub_local, sub_metrics));
+        tokio::spawn(subscriber_task(
+            writer,
+            rx,
+            track_cmd,
+            types,
+            sub_local,
+            sub_metrics,
+        ));
     }
 
     pub(crate) fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> SocketResp {
@@ -234,10 +241,7 @@ pub(crate) async fn write_resp_and_close(
 }
 
 /// Write bytes and close (for non-subscribe socket commands).
-pub(crate) async fn tokio_io_oneshot(
-    mut writer: tokio::net::unix::OwnedWriteHalf,
-    data: &str,
-) {
+pub(crate) async fn tokio_io_oneshot(mut writer: tokio::net::unix::OwnedWriteHalf, data: &str) {
     use tokio::io::AsyncWriteExt;
     let _ = writer.write_all(data.as_bytes()).await;
 }
@@ -287,9 +291,10 @@ pub(crate) async fn subscriber_task(
                 }
                 // Optional filter by event type
                 if let Some(ref allowed) = type_filter
-                    && !allowed.contains(&event.event_type) {
-                        continue;
-                    }
+                    && !allowed.contains(&event.event_type)
+                {
+                    continue;
+                }
 
                 let line = if local_time {
                     event.to_jsonl_string_local() + "\n"

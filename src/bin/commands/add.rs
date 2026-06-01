@@ -49,9 +49,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         }
 
         if let Some(ref log_path) = cfg.logging.path {
-            let log_dir_canon = log_path
-                .canonicalize()
-                .unwrap_or_else(|_| log_path.clone());
+            let log_dir_canon = log_path.canonicalize().unwrap_or_else(|_| log_path.clone());
             if args.recursive && log_dir_canon.starts_with(&resolved) || log_dir_canon == resolved {
                 bail!(
                     "Cannot monitor '{}': {}\n\
@@ -60,10 +58,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
                     if log_dir_canon == resolved {
                         "this path is the log directory itself".to_string()
                     } else {
-                        format!(
-                            "log directory '{}' is inside this path",
-                            log_path.display()
-                        )
+                        format!("log directory '{}' is inside this path", log_path.display())
                     }
                 );
             }
@@ -112,7 +107,12 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     let types: Option<Vec<String>> = if args.types.is_empty() {
         None
     } else if args.types.iter().any(|s| s.eq_ignore_ascii_case("all")) {
-        Some(fsmon::EventType::ALL.iter().map(|t| t.to_string()).collect())
+        Some(
+            fsmon::EventType::ALL
+                .iter()
+                .map(|t| t.to_string())
+                .collect(),
+        )
     } else {
         Some(args.types.clone())
     };

@@ -1,9 +1,9 @@
 use super::*;
 use crate::fid_parser::mask_to_event_types;
+use crate::filters::PathOptions;
 use crate::monitored::PathEntry;
 use crate::utils::{SizeFilter, SizeOp};
 use crate::{EventType, FileEvent};
-use crate::filters::PathOptions;
 use fanotify_fid::consts::{FAN_CREATE, FAN_DELETE, FAN_EVENT_ON_CHILD, FAN_MODIFY, FAN_ONDIR};
 use std::path::Path;
 use std::path::PathBuf;
@@ -37,8 +37,8 @@ fn test_mask_to_event_types_none() {
 #[test]
 fn test_mask_to_event_types_all() {
     use fanotify_fid::consts::{
-        FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE, FAN_DELETE_SELF,
-        FAN_FS_ERROR, FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO, FAN_OPEN, FAN_OPEN_EXEC,
+        FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE, FAN_DELETE_SELF, FAN_FS_ERROR,
+        FAN_MOVE_SELF, FAN_MOVED_FROM, FAN_MOVED_TO, FAN_OPEN, FAN_OPEN_EXEC,
     };
     let mask = FAN_ACCESS
         | FAN_MODIFY
@@ -297,7 +297,20 @@ fn test_monitor_buffer_size_validation() {
 
 #[test]
 fn test_add_path_and_remove_path() {
-    let mut m = Monitor::new(vec![], None, None, None, None, false, None, None, None, None, false).unwrap();
+    let mut m = Monitor::new(
+        vec![],
+        None,
+        None,
+        None,
+        None,
+        false,
+        None,
+        None,
+        None,
+        None,
+        false,
+    )
+    .unwrap();
 
     let entry = PathEntry {
         cmd: None,
@@ -368,7 +381,9 @@ fn test_delete_self_canonical_root_is_recorded() {
 
     // DELETE_SELF event should be recorded (not silently dropped)
     assert!(
-        pending.iter().any(|pe| pe.event.event_type == crate::EventType::DeleteSelf),
+        pending
+            .iter()
+            .any(|pe| pe.event.event_type == crate::EventType::DeleteSelf),
         "DELETE_SELF for canonical root should be recorded"
     );
 
@@ -498,22 +513,19 @@ fn test_fanotify_mark_null_byte_path_no_root() {
 
     // fanotify_mark needs an fd, but the null byte rejection happens
     // before any syscall. We just need a valid OwnedFd for the param.
-    let dev_null = std::fs::File::open("/dev/null")
-        .expect("/dev/null must exist on Linux");
+    let dev_null = std::fs::File::open("/dev/null").expect("/dev/null must exist on Linux");
     let dummy_fd: std::os::fd::OwnedFd = dev_null.into();
 
-    let result = fanotify_mark(
-        &dummy_fd,
-        FAN_MARK_ADD,
-        mask,
-        AT_FDCWD,
-        bad_path,
-    );
+    let result = fanotify_mark(&dummy_fd, FAN_MARK_ADD, mask, AT_FDCWD, bad_path);
 
     match result {
         Err(FanotifyError::Mark(code)) => {
-            assert_eq!(code, libc::EINVAL,
-                "null byte path should return EINVAL, got errno={}", code);
+            assert_eq!(
+                code,
+                libc::EINVAL,
+                "null byte path should return EINVAL, got errno={}",
+                code
+            );
         }
         other => panic!("expected Err(Mark(EINVAL)), got {:?}", other),
     }
@@ -713,7 +725,11 @@ async fn test_subscriber_task_handles_lagged() {
         }
         Ok(event) => {
             // Might get a recent event if buffer still has capacity
-            assert!(event.file_size >= 6, "should be a recent event, got file_size={}", event.file_size);
+            assert!(
+                event.file_size >= 6,
+                "should be a recent event, got file_size={}",
+                event.file_size
+            );
         }
         Err(e) => panic!("unexpected error: {:?}", e),
     }

@@ -4,7 +4,7 @@ use fsmon::clean::clean_logs;
 use fsmon::config::Config;
 use fsmon::monitored::CMD_GLOBAL;
 use fsmon::utils::{SizeFilter, parse_size_filter};
-use fsmon::{DEFAULT_KEEP_DAYS, DEFAULT_MAX_SIZE, TimeOp, TimeFilter, parse_time_filter};
+use fsmon::{DEFAULT_KEEP_DAYS, DEFAULT_MAX_SIZE, TimeFilter, TimeOp, parse_time_filter};
 
 use crate::CleanArgs;
 

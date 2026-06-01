@@ -3,19 +3,17 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 
 use fanotify_fid::consts::{
-    AT_FDCWD, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE,
-    FAN_NONBLOCK, FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
+    AT_FDCWD, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE, FAN_NONBLOCK,
+    FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
 };
 use fanotify_fid::prelude::*;
 
+use crate::EventType;
 use crate::dir_cache;
-use crate::fid_parser::{
-    FsGroup, mark_directory, mark_recursive, path_mask_from_options,
-};
+use crate::fid_parser::{FsGroup, mark_directory, mark_recursive, path_mask_from_options};
 use crate::filters::{self, PathOptions};
 use crate::monitored::PathEntry;
 use crate::utils::parse_size_filter;
-use crate::EventType;
 
 use super::Monitor;
 
@@ -92,7 +90,8 @@ impl Monitor {
                 path.display(),
                 recursive
             );
-            self.metrics.set_monitored_paths(self.monitored_entries.len() as i64);
+            self.metrics
+                .set_monitored_paths(self.monitored_entries.len() as i64);
             return Ok(());
         }
 
@@ -233,7 +232,10 @@ impl Monitor {
                 )
             })?;
 
-            if self.add_mark_upward(&new_fd, path_mask, &canonical, recursive).is_none() {
+            if self
+                .add_mark_upward(&new_fd, path_mask, &canonical, recursive)
+                .is_none()
+            {
                 bail!("Failed to mark {}: inode mark failed", canonical.display());
             }
 
@@ -270,7 +272,8 @@ impl Monitor {
             }
         }
 
-        self.metrics.set_monitored_paths(self.monitored_entries.len() as i64);
+        self.metrics
+            .set_monitored_paths(self.monitored_entries.len() as i64);
         Ok(())
     }
 
@@ -398,7 +401,8 @@ impl Monitor {
             let label = cmd.unwrap_or("?");
             println!("Removed entry: [{}] {}", label, path.display());
         }
-        self.metrics.set_monitored_paths(self.monitored_entries.len() as i64);
+        self.metrics
+            .set_monitored_paths(self.monitored_entries.len() as i64);
         self.metrics.set_reader_groups(self.fs_groups.len() as i64);
         Ok(())
     }
@@ -418,7 +422,11 @@ impl Monitor {
         let stat = match nix::sys::statvfs::statvfs(log_dir) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("[WARNING] Cannot stat filesystem for '{}': {}", log_dir.display(), e);
+                eprintln!(
+                    "[WARNING] Cannot stat filesystem for '{}': {}",
+                    log_dir.display(),
+                    e
+                );
                 return;
             }
         };
@@ -538,7 +546,10 @@ impl Monitor {
                 && let Ok(wd) = ino.watches().add(path, dir_root_mask)
             {
                 if self.debug {
-                    eprintln!("[DEBUG] inotify watch added on {} (mask: CREATE|MOVED_TO|DELETE_SELF|MOVE_SELF)", path.display());
+                    eprintln!(
+                        "[DEBUG] inotify watch added on {} (mask: CREATE|MOVED_TO|DELETE_SELF|MOVE_SELF)",
+                        path.display()
+                    );
                 }
                 watches.push((path.clone(), wd));
             }
@@ -620,10 +631,14 @@ impl Monitor {
                 continue;
             }
             // Map wd → watched directory path
-            let Some(watched) = self._inotify_watches.iter()
+            let Some(watched) = self
+                ._inotify_watches
+                .iter()
                 .find(|(_, wd)| *wd == event.wd)
                 .map(|(p, _)| p.clone())
-            else { continue };
+            else {
+                continue;
+            };
 
             // Only handle directories that are actively monitored
             if !self.paths.contains(&watched) {
@@ -633,11 +648,18 @@ impl Monitor {
         }
         for path in &deleted_paths {
             if self.debug {
-                eprintln!("[DEBUG] inotify: monitored directory deleted (self): {}", path.display());
+                eprintln!(
+                    "[DEBUG] inotify: monitored directory deleted (self): {}",
+                    path.display()
+                );
             }
-            let all_opts: Vec<PathOptions> = self.opts_for_path(path).into_iter().cloned().collect();
+            let all_opts: Vec<PathOptions> =
+                self.opts_for_path(path).into_iter().cloned().collect();
             if let Err(e) = self.remove_path(path, None) {
-                eprintln!("[WARNING] inotify delete-self: failed to remove path '{}': {e}", path.display());
+                eprintln!(
+                    "[WARNING] inotify delete-self: failed to remove path '{}': {e}",
+                    path.display()
+                );
             }
             for opts in all_opts {
                 self.pending_paths.push((
@@ -645,10 +667,13 @@ impl Monitor {
                     PathEntry {
                         path: path.clone(),
                         recursive: Some(opts.recursive),
-                        types: opts.event_types.as_ref().map(
-                            |v| v.iter().map(|t| t.to_string()).collect()
-                        ),
-                        size: opts.size_filter.map(|f| format!("{}{}", f.op, crate::utils::format_size(f.bytes))),
+                        types: opts
+                            .event_types
+                            .as_ref()
+                            .map(|v| v.iter().map(|t| t.to_string()).collect()),
+                        size: opts
+                            .size_filter
+                            .map(|f| format!("{}{}", f.op, crate::utils::format_size(f.bytes))),
                         cmd: opts.cmd,
                     },
                 ));
@@ -662,18 +687,21 @@ impl Monitor {
 
         // Second pass: handle new subdirectory creation.
         for event in events {
-            let is_new_dir = event.mask.intersects(dir_mask)
-                || event.mask.intersects(dir_moved);
+            let is_new_dir = event.mask.intersects(dir_mask) || event.mask.intersects(dir_moved);
             if !is_new_dir {
                 continue;
             }
             let Some(name) = event.name else { continue };
 
             // Map wd → watched directory path
-            let Some(parent) = self._inotify_watches.iter()
+            let Some(parent) = self
+                ._inotify_watches
+                .iter()
                 .find(|(_, wd)| *wd == event.wd)
                 .map(|(p, _)| p.clone())
-            else { continue };
+            else {
+                continue;
+            };
 
             let new_dir = parent.join(name);
             self.on_new_subdirectory(&new_dir);
@@ -792,7 +820,8 @@ impl Monitor {
 
         // Refresh inotify watches for remaining pending paths
         self.setup_inotify_watches();
-        self.metrics.set_pending_paths(self.pending_paths.len() as i64);
+        self.metrics
+            .set_pending_paths(self.pending_paths.len() as i64);
     }
 
     // ---- Temporary parent marks ----
@@ -826,14 +855,20 @@ impl Monitor {
             .filter(|(p, _)| p == target_path)
             .map(|(_, entry)| {
                 let types = entry.types.as_ref().map(|t| {
-                    t.iter().filter_map(|s| s.parse::<crate::EventType>().ok()).collect()
+                    t.iter()
+                        .filter_map(|s| s.parse::<crate::EventType>().ok())
+                        .collect()
                 });
                 PathOptions {
                     size_filter: None,
                     event_types: types,
                     recursive: entry.recursive.unwrap_or(false),
                     cmd: entry.cmd.clone().and_then(|c| {
-                        if c == crate::monitored::CMD_GLOBAL { None } else { Some(c) }
+                        if c == crate::monitored::CMD_GLOBAL {
+                            None
+                        } else {
+                            Some(c)
+                        }
                     }),
                 }
             })
@@ -871,12 +906,16 @@ impl Monitor {
         } else {
             // Create a new fanotify fd for the parent
             use fanotify_fid::consts::{
-                FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_NONBLOCK,
-                FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
+                FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_NONBLOCK, FAN_REPORT_DIR_FID, FAN_REPORT_FID,
+                FAN_REPORT_NAME,
             };
             let new_fd = match fanotify_fid::prelude::fanotify_init(
-                FAN_CLOEXEC | FAN_NONBLOCK | FAN_CLASS_NOTIF
-                    | FAN_REPORT_FID | FAN_REPORT_DIR_FID | FAN_REPORT_NAME,
+                FAN_CLOEXEC
+                    | FAN_NONBLOCK
+                    | FAN_CLASS_NOTIF
+                    | FAN_REPORT_FID
+                    | FAN_REPORT_DIR_FID
+                    | FAN_REPORT_NAME,
                 (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
             ) {
                 Ok(fd) => fd,
@@ -945,8 +984,7 @@ impl Monitor {
             let fan_fd_raw = self.fs_groups[gi].fan_fd.as_raw_fd();
             let _ = fanotify_fid::prelude::fanotify_mark(
                 &self.fs_groups[gi].fan_fd,
-                fanotify_fid::consts::FAN_MARK_REMOVE
-                    | fanotify_fid::consts::FAN_MARK_FILESYSTEM,
+                fanotify_fid::consts::FAN_MARK_REMOVE | fanotify_fid::consts::FAN_MARK_FILESYSTEM,
                 0,
                 fanotify_fid::consts::AT_FDCWD,
                 &canonical,
@@ -959,8 +997,7 @@ impl Monitor {
                 &canonical,
             );
 
-            self.fs_groups[gi].ref_count =
-                self.fs_groups[gi].ref_count.saturating_sub(1);
+            self.fs_groups[gi].ref_count = self.fs_groups[gi].ref_count.saturating_sub(1);
             if self.fs_groups[gi].ref_count == 0 {
                 if self.debug {
                     eprintln!(
@@ -969,13 +1006,11 @@ impl Monitor {
                     );
                 }
                 self.fs_groups.remove(gi);
-                self.path_to_group
-                    .iter_mut()
-                    .for_each(|(_, idx)| {
-                        if *idx > gi {
-                            *idx -= 1;
-                        }
-                    });
+                self.path_to_group.iter_mut().for_each(|(_, idx)| {
+                    if *idx > gi {
+                        *idx -= 1;
+                    }
+                });
                 // Also fix up temp_parent_marks indices
                 let mut updates: Vec<(PathBuf, (PathBuf, usize))> = Vec::new();
                 for (tgt, (p, idx)) in self.temp_parent_marks.iter() {

@@ -19,7 +19,6 @@ pub struct Config {
     pub logging: LoggingConfig,
     pub socket: SocketConfig,
     pub cache: Option<CacheConfig>,
-
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,10 +209,11 @@ pub fn resolve_uid_gid() -> (u32, u32) {
     //     where HOME is set to the target user's directory)
     if nix::unistd::geteuid().is_root()
         && let Ok(home) = std::env::var("HOME")
-            && let Ok(meta) = std::fs::metadata(&home) {
-                use std::os::linux::fs::MetadataExt;
-                return (meta.st_uid(), meta.st_gid());
-            }
+        && let Ok(meta) = std::fs::metadata(&home)
+    {
+        use std::os::linux::fs::MetadataExt;
+        return (meta.st_uid(), meta.st_gid());
+    }
 
     // 3. Running as normal user
     (
@@ -252,10 +252,11 @@ pub fn resolve_uid() -> u32 {
     // 2. Running as root → $HOME owner
     if nix::unistd::geteuid().is_root()
         && let Ok(home) = std::env::var("HOME")
-            && let Ok(meta) = std::fs::metadata(&home) {
-                use std::os::linux::fs::MetadataExt;
-                return meta.st_uid();
-            }
+        && let Ok(meta) = std::fs::metadata(&home)
+    {
+        use std::os::linux::fs::MetadataExt;
+        return meta.st_uid();
+    }
 
     // 3. Current process UID
     nix::unistd::geteuid().as_raw()

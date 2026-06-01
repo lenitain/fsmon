@@ -28,10 +28,7 @@ impl Monitor {
     /// Events are NOT sent to broadcast here — they are returned as PendingEvents
     /// so the caller can drain proc events and resolve "unknown" fields before
     /// publishing. Metrics are still incremented immediately.
-    pub(crate) fn process_event_batch(
-        &mut self,
-        events: &[FidEvent],
-    ) -> Vec<PendingEvent> {
+    pub(crate) fn process_event_batch(&mut self, events: &[FidEvent]) -> Vec<PendingEvent> {
         let mut pending: Vec<PendingEvent> = Vec::new();
 
         for raw in events {
@@ -47,8 +44,8 @@ impl Monitor {
             let is_delete_self = event_types.contains(&EventType::DeleteSelf)
                 || event_types.contains(&EventType::MovedFrom)
                 || event_types.contains(&EventType::Delete);
-            let is_canonical_root = is_delete_self
-                && self.canonical_paths.iter().any(|cp| cp == &raw.path);
+            let is_canonical_root =
+                is_delete_self && self.canonical_paths.iter().any(|cp| cp == &raw.path);
 
             let event_pid = raw.pid.unsigned_abs();
 
@@ -80,18 +77,27 @@ impl Monitor {
                 }
             }
             if self.debug && matching_entries.is_empty() {
-                eprintln!("[DEBUG] event on {} (pid={}): no matching entries",
-                    raw.path.display(), event_pid);
+                eprintln!(
+                    "[DEBUG] event on {} (pid={}): no matching entries",
+                    raw.path.display(),
+                    event_pid
+                );
             }
             for (_monitored_path, opts) in &matching_entries {
                 // Check process tree filter
                 let cmd_match = if let Some(ref cmd_name) = opts.cmd {
-                    let matched = self.pid_tree.as_ref()
+                    let matched = self
+                        .pid_tree
+                        .as_ref()
                         .map(|tree| crate::proc_cache::is_descendant(tree, event_pid, cmd_name))
                         .unwrap_or(false);
                     if self.debug {
-                        eprintln!("[DEBUG]   check cmd=\"{}\" pid={}: {}",
-                            cmd_name, event_pid, if matched { "MATCH" } else { "SKIP" });
+                        eprintln!(
+                            "[DEBUG]   check cmd=\"{}\" pid={}: {}",
+                            cmd_name,
+                            event_pid,
+                            if matched { "MATCH" } else { "SKIP" }
+                        );
                     }
                     matched
                 } else {
@@ -119,7 +125,9 @@ impl Monitor {
                             let cmd = opts.cmd.as_deref().unwrap_or("global");
                             eprintln!("[DEBUG]   -> {}_log.jsonl", cmd);
                         }
-                        let cmd_name = opts.cmd.as_deref()
+                        let cmd_name = opts
+                            .cmd
+                            .as_deref()
                             .unwrap_or(crate::monitored::CMD_GLOBAL)
                             .to_string();
                         self.metrics.inc_event(&event_type.to_string(), &cmd_name);
@@ -137,13 +145,20 @@ impl Monitor {
             // pending_paths so it can be re-monitored if recreated.
             if is_canonical_root {
                 if self.debug {
-                    eprintln!("[DEBUG] monitored directory deleted: {}", raw.path.display());
+                    eprintln!(
+                        "[DEBUG] monitored directory deleted: {}",
+                        raw.path.display()
+                    );
                 }
                 if let Some(ref path) = matched_path {
                     // Preserve ALL cmd groups before removing
-                    let all_opts: Vec<PathOptions> = self.opts_for_path(path).into_iter().cloned().collect();
+                    let all_opts: Vec<PathOptions> =
+                        self.opts_for_path(path).into_iter().cloned().collect();
                     if let Err(e) = self.remove_path(path, None) {
-                        eprintln!("[WARNING] Failed to remove deleted path '{}': {e}", path.display());
+                        eprintln!(
+                            "[WARNING] Failed to remove deleted path '{}': {e}",
+                            path.display()
+                        );
                     }
                     for opts in all_opts {
                         self.pending_paths.push((
@@ -151,10 +166,13 @@ impl Monitor {
                             PathEntry {
                                 path: path.clone(),
                                 recursive: Some(opts.recursive),
-                                types: opts.event_types.as_ref().map(
-                                    |v| v.iter().map(|t| t.to_string()).collect()
-                                ),
-                                size: opts.size_filter.map(|f| format!("{}{}", f.op, format_size(f.bytes))),
+                                types: opts
+                                    .event_types
+                                    .as_ref()
+                                    .map(|v| v.iter().map(|t| t.to_string()).collect()),
+                                size: opts
+                                    .size_filter
+                                    .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
                                 cmd: opts.cmd,
                             },
                         ));
@@ -163,10 +181,9 @@ impl Monitor {
                     // Add a temporary fanotify mark on the nearest existing
                     // ancestor directory so that events during the recreate
                     // window (mkdir, touch, etc.) are not lost.
-                    if self.add_temp_parent_mark(path)
-                        && self.debug {
-                            eprintln!("[DEBUG] temp parent mark active for {}", path.display());
-                        }
+                    if self.add_temp_parent_mark(path) && self.debug {
+                        eprintln!("[DEBUG] temp parent mark active for {}", path.display());
+                    }
                     // Path may have been recreated before the inotify watch was
                     // established. Check immediately to avoid missing the window.
                     self.check_pending();
@@ -185,30 +202,32 @@ impl Monitor {
             if ev.cmd == "unknown" || ev.user == "unknown" || ev.ppid == 0 || ev.tgid == 0 {
                 // Try proc_cache (now populated by the second drain)
                 if let Some(ref cache) = self.proc_cache
-                    && let Some(info) = cache.get(&pe.pid) {
-                        if ev.cmd == "unknown" {
-                            ev.cmd = info.cmd.clone();
-                        }
-                        if ev.user == "unknown" {
-                            ev.user = info.user.clone();
-                        }
-                        if ev.ppid == 0 {
-                            ev.ppid = info.ppid;
-                        }
-                        if ev.tgid == 0 {
-                            ev.tgid = info.tgid;
-                        }
+                    && let Some(info) = cache.get(&pe.pid)
+                {
+                    if ev.cmd == "unknown" {
+                        ev.cmd = info.cmd.clone();
                     }
+                    if ev.user == "unknown" {
+                        ev.user = info.user.clone();
+                    }
+                    if ev.ppid == 0 {
+                        ev.ppid = info.ppid;
+                    }
+                    if ev.tgid == 0 {
+                        ev.tgid = info.tgid;
+                    }
+                }
                 // Also try PidTree for cmd/ppid
                 if let Some(ref tree) = self.pid_tree
-                    && let Some(node) = tree.get(&pe.pid) {
-                        if ev.cmd == "unknown" && !node.cmd.is_empty() {
-                            ev.cmd = node.cmd.clone();
-                        }
-                        if ev.ppid == 0 {
-                            ev.ppid = node.ppid;
-                        }
+                    && let Some(node) = tree.get(&pe.pid)
+                {
+                    if ev.cmd == "unknown" && !node.cmd.is_empty() {
+                        ev.cmd = node.cmd.clone();
                     }
+                    if ev.ppid == 0 {
+                        ev.ppid = node.ppid;
+                    }
+                }
             }
         }
     }
@@ -321,20 +340,34 @@ impl Monitor {
             }
             // Convert PathEntry → PathOptions for matching/filtering
             let types = entry.types.as_ref().map(|t| {
-                t.iter().filter_map(|s| s.parse::<crate::EventType>().ok()).collect()
+                t.iter()
+                    .filter_map(|s| s.parse::<crate::EventType>().ok())
+                    .collect()
             });
-            let size_filter = entry.size.as_ref()
+            let size_filter = entry
+                .size
+                .as_ref()
                 .and_then(|s| crate::utils::parse_size_filter(s).ok());
             let cmd = entry.cmd.as_deref().and_then(|c| {
-                if c == crate::monitored::CMD_GLOBAL { None }
-                else { Some(c.to_string()) }
+                if c == crate::monitored::CMD_GLOBAL {
+                    None
+                } else {
+                    Some(c.to_string())
+                }
             });
-            let opts = PathOptions { size_filter, event_types: types, recursive, cmd };
+            let opts = PathOptions {
+                size_filter,
+                event_types: types,
+                recursive,
+                cmd,
+            };
             if self.debug {
                 let label = opts.cmd.as_deref().unwrap_or("global");
                 eprintln!(
                     "[DEBUG]   check {}/pending (cmd={}, recursive={}): MATCH",
-                    pending_path.display(), label, recursive
+                    pending_path.display(),
+                    label,
+                    recursive
                 );
             }
             result.push((pending_path.clone(), opts));

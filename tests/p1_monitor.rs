@@ -1,6 +1,6 @@
 //! P1 — Event parsing and serialization tests.
 
-use fsmon::{FileEvent, EventType, parse_log_line_jsonl};
+use fsmon::{EventType, FileEvent, parse_log_line_jsonl};
 
 #[test]
 fn parse_valid_jsonl_event() {
@@ -72,7 +72,8 @@ fn jsonl_local_time_has_offset_not_z() {
         &local[..local.len().min(120)]
     );
     assert!(
-        !local.contains("\"time\":\"") || !local[local.find("\"time\":\"").unwrap()..].contains('Z'),
+        !local.contains("\"time\":\"")
+            || !local[local.find("\"time\":\"").unwrap()..].contains('Z'),
         "local time should not end with Z"
     );
 }
@@ -93,10 +94,7 @@ fn jsonl_normal_uses_utc() {
         chain: String::new(),
     };
     let normal = ev.to_jsonl_string();
-    assert!(
-        normal.contains('Z'),
-        "normal time should use UTC Z suffix"
-    );
+    assert!(normal.contains('Z'), "normal time should use UTC Z suffix");
 }
 
 #[test]
@@ -107,11 +105,20 @@ fn event_type_all_covers_14_types() {
 #[test]
 fn event_type_to_string_round_trip() {
     let all_types = [
-        EventType::Access, EventType::Modify, EventType::CloseWrite,
-        EventType::CloseNowrite, EventType::Open, EventType::OpenExec,
-        EventType::Attrib, EventType::Create, EventType::Delete,
-        EventType::DeleteSelf, EventType::MovedFrom, EventType::MovedTo,
-        EventType::MoveSelf, EventType::FsError,
+        EventType::Access,
+        EventType::Modify,
+        EventType::CloseWrite,
+        EventType::CloseNowrite,
+        EventType::Open,
+        EventType::OpenExec,
+        EventType::Attrib,
+        EventType::Create,
+        EventType::Delete,
+        EventType::DeleteSelf,
+        EventType::MovedFrom,
+        EventType::MovedTo,
+        EventType::MoveSelf,
+        EventType::FsError,
     ];
     for et in &all_types {
         let s = et.to_string();

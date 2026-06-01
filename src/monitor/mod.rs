@@ -11,12 +11,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use lru::LruCache;
-use tokio::io::unix::AsyncFd;
 use tokio::io::AsyncBufReadExt;
+use tokio::io::unix::AsyncFd;
 use tokio::signal::unix::{SignalKind, signal};
 
 use moka::sync::Cache;
 
+use crate::FileEvent;
 use crate::config::ResolvedCacheConfig;
 use crate::dir_cache;
 use crate::fid_parser::{
@@ -26,10 +27,11 @@ use crate::fid_parser::{
 use crate::filters::{self, PathOptions};
 use crate::metrics::MetricsRegistry;
 use crate::monitored::PathEntry;
-use crate::proc_cache::{self, PID_TREE_CAP, PROC_CACHE_CAP, PidTree, ProcCache, snapshot_process_tree};
+use crate::proc_cache::{
+    self, PID_TREE_CAP, PROC_CACHE_CAP, PidTree, ProcCache, snapshot_process_tree,
+};
 use crate::socket::{SocketCmd, SocketResp};
 use crate::utils::format_size;
-use crate::FileEvent;
 
 // ---- Submodules ----
 
@@ -41,13 +43,13 @@ mod live_path;
 mod reader;
 mod socket_handler;
 
-pub(crate) use channel::{EventSender, EventReceiver};
+pub(crate) use channel::{EventReceiver, EventSender};
 pub(crate) use events::PendingEvent;
 pub(crate) use file_writer::{FileLogWriter, notify_sd_ready};
 pub(crate) use reader::ReaderState;
-pub(crate) use socket_handler::tokio_io_oneshot;
 #[cfg(test)]
 pub(crate) use socket_handler::chains_contain;
+pub(crate) use socket_handler::tokio_io_oneshot;
 
 // ---- Monitor ----
 
@@ -178,8 +180,7 @@ impl Monitor {
             monitored_entries.push((resolved.clone(), opts.clone()));
         }
 
-        let (reader_death_tx, reader_death_rx) =
-            tokio::sync::mpsc::unbounded_channel::<usize>();
+        let (reader_death_tx, reader_death_rx) = tokio::sync::mpsc::unbounded_channel::<usize>();
 
         let monitor = Self {
             paths,
@@ -367,17 +368,17 @@ impl Monitor {
                         fan_fd.as_raw_fd(),
                         e
                     );
-                    } else {
-                        eprintln!(
-                            "[INFO] Added {} (inode mark) on existing fd {}",
-                            canonical.display(),
-                            fan_fd.as_raw_fd()
-                        );
-                        let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
-                        if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
-                            mark_recursive(fan_fd, path_mask, canonical);
-                        }
+                } else {
+                    eprintln!(
+                        "[INFO] Added {} (inode mark) on existing fd {}",
+                        canonical.display(),
+                        fan_fd.as_raw_fd()
+                    );
+                    let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
+                    if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
+                        mark_recursive(fan_fd, path_mask, canonical);
                     }
+                }
                 self.fs_groups[gi].ref_count += 1;
                 self.path_to_group.insert(self.paths[i].clone(), gi);
                 continue;
@@ -402,7 +403,10 @@ impl Monitor {
 
             let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
             let recursive = opts.is_some_and(|o| o.recursive) && canonical.is_dir();
-            if self.add_mark_upward(&new_fd, path_mask, canonical, recursive).is_none() {
+            if self
+                .add_mark_upward(&new_fd, path_mask, canonical, recursive)
+                .is_none()
+            {
                 drop(new_fd);
                 continue;
             }
@@ -477,9 +481,10 @@ impl Monitor {
 
         // Startup disk space check
         if let Some(ref threshold_str) = self.disk_min_free
-            && let Some(ref dir) = self.log_dir {
-                Self::check_disk_space(dir, threshold_str);
-            }
+            && let Some(ref dir) = self.log_dir
+        {
+            Self::check_disk_space(dir, threshold_str);
+        }
 
         println!("Starting file trace monitor...");
         if !self.canonical_paths.is_empty() {
@@ -588,13 +593,14 @@ impl Monitor {
         let fw_local = self.local_time;
         let fw_metrics = self.metrics.clone();
         if let Some(fw_log_dir) = fw_log_dir
-            && let Some(ref tx) = self.event_stream_tx {
-                let fw_rx = tx.subscribe();
-                let fw = FileLogWriter::new(fw_log_dir, fw_sync, fw_debug, fw_local, fw_metrics);
-                tokio::spawn(async move {
-                    fw.run(fw_rx).await;
-                });
-            }
+            && let Some(ref tx) = self.event_stream_tx
+        {
+            let fw_rx = tx.subscribe();
+            let fw = FileLogWriter::new(fw_log_dir, fw_sync, fw_debug, fw_local, fw_metrics);
+            tokio::spawn(async move {
+                fw.run(fw_rx).await;
+            });
+        }
 
         let mut sigterm =
             signal(SignalKind::terminate()).context("failed to create SIGTERM signal handler")?;

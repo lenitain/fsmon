@@ -20,8 +20,11 @@ fn lock_acquire_and_reacquire() {
     let result = DaemonLock::acquire(uid);
     assert!(result.is_err());
     if let Err(e) = result {
-        assert!(e.to_string().contains("already running"),
-            "expected 'already running', got: {}", e);
+        assert!(
+            e.to_string().contains("already running"),
+            "expected 'already running', got: {}",
+            e
+        );
     }
 
     // Drop and re-acquire succeeds
@@ -60,9 +63,8 @@ fn monitored_load_missing_file_fails() {
     let _ = fs::remove_file(&path);
     let result = Monitored::load(&path);
     // Should return Err or create an empty one
-    match result {
-        Ok(store) => assert_eq!(store.entry_count(), 0),
-        Err(_) => {} // also acceptable
+    if let Ok(store) = result {
+        assert_eq!(store.entry_count(), 0);
     }
 }
 
@@ -75,14 +77,11 @@ fn config_loads_defaults_when_no_file() {
     let dir = std::env::temp_dir().join(format!("fsmon-config-{}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
 
-    temp_env::with_vars(
-        [("HOME", Some(dir.to_string_lossy().as_ref()))],
-        || {
-            let cfg = Config::load().unwrap_or_default();
-            // Default config should have monitored path set
-            let _ = &cfg.monitored.path; // just verify field exists
-        },
-    );
+    temp_env::with_vars([("HOME", Some(dir.to_string_lossy().as_ref()))], || {
+        let cfg = Config::load().unwrap_or_default();
+        // Default config should have monitored path set
+        let _ = &cfg.monitored.path; // just verify field exists
+    });
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -130,7 +129,10 @@ fn jsonl_multiple_complete_events_all_parse() {
         r#"{"time":"2026-06-01T10:02:00Z","event_type":"MODIFY","path":"/c","pid":3,"cmd":"z","user":"r","file_size":100,"ppid":0,"tgid":0,"chain":""}"#,
     );
 
-    let count = lines.lines().filter(|l| parse_log_line_jsonl(l).is_some()).count();
+    let count = lines
+        .lines()
+        .filter(|l| parse_log_line_jsonl(l).is_some())
+        .count();
     assert_eq!(count, 3);
 }
 

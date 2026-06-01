@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::config::chown_to_original_user;
 use crate::utils::{self, cmd_to_log_name};
-use crate::{SizeFilter, SizeOp, TimeOp, TimeFilter, parse_log_line_jsonl};
+use crate::{SizeFilter, SizeOp, TimeFilter, TimeOp, parse_log_line_jsonl};
 
 /// Check if `kept_bytes` exceeds the limit per the filter's operator.
 fn should_trim(kept_bytes: usize, filter: &SizeFilter) -> bool {
@@ -747,10 +747,7 @@ mod tests {
         ))
         .unwrap();
         let after = fs::read_to_string(&log_path).unwrap();
-        assert!(
-            !after.is_empty(),
-            "should not be empty after trimming"
-        );
+        assert!(!after.is_empty(), "should not be empty after trimming");
         assert!(
             after.len() <= 100000,
             "kept content should be ≤ 100000 bytes"

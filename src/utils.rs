@@ -23,7 +23,10 @@ pub enum DiskFreeThreshold {
 pub fn parse_disk_min_free(s: &str) -> Result<DiskFreeThreshold, String> {
     let s = s.trim();
     if let Some(pct) = s.strip_suffix('%') {
-        let val: f64 = pct.trim().parse().map_err(|e| format!("invalid percentage '{}': {}", pct, e))?;
+        let val: f64 = pct
+            .trim()
+            .parse()
+            .map_err(|e| format!("invalid percentage '{}': {}", pct, e))?;
         if val <= 0.0 || val > 100.0 {
             return Err(format!("percentage must be between 0 and 100, got {}", val));
         }
@@ -161,8 +164,8 @@ pub fn cmd_to_log_name(cmd: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Duration, Utc};
     use chrono::{Datelike, TimeZone, Timelike};
+    use chrono::{Duration, Utc};
 
     #[test]
     fn test_parse_time_relative_hours() {
@@ -345,7 +348,10 @@ mod tests {
     fn time_filter_now_uses_timeop() {
         // After timefilter integration, TimeFilter uses TimeOp not SizeOp
         fn check_op(op: TimeOp) -> bool {
-            matches!(op, TimeOp::Gt | TimeOp::Ge | TimeOp::Lt | TimeOp::Le | TimeOp::Eq)
+            matches!(
+                op,
+                TimeOp::Gt | TimeOp::Ge | TimeOp::Lt | TimeOp::Le | TimeOp::Eq
+            )
         }
         assert!(check_op(TimeOp::Gt));
         assert!(check_op(TimeOp::Eq));

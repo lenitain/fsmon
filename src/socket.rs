@@ -158,9 +158,9 @@ pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResp> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
     use tokio::net::{UnixListener as TokioUnixListener, UnixStream as TokioUnixStream};
-    use tempfile::TempDir;
 
     // ── SocketCmd TOML serialization round-trip ──
 
@@ -265,8 +265,16 @@ mod tests {
             monitored_paths: 5,
             reader_groups: 2,
             readers: vec![
-                ReaderHealth { alive: true, restarts: 0, fd: 4 },
-                ReaderHealth { alive: true, restarts: 3, fd: 5 },
+                ReaderHealth {
+                    alive: true,
+                    restarts: 0,
+                    fd: 4,
+                },
+                ReaderHealth {
+                    alive: true,
+                    restarts: 3,
+                    fd: 5,
+                },
             ],
         };
         let resp = SocketResp::health(health);
@@ -293,7 +301,11 @@ mod tests {
             // Consume client's command
             let mut buf = vec![0u8; 256];
             let n = stream.read(&mut buf).await.unwrap();
-            eprintln!("[server] read {} bytes: {:?}", n, String::from_utf8_lossy(&buf[..n]));
+            eprintln!(
+                "[server] read {} bytes: {:?}",
+                n,
+                String::from_utf8_lossy(&buf[..n])
+            );
 
             // Send TOML ok response then JSONL event
             let resp = SocketResp::ok();
@@ -314,7 +326,10 @@ mod tests {
         let n = tokio::time::timeout(
             std::time::Duration::from_secs(2),
             stream.read(&mut all_data),
-        ).await.unwrap().unwrap();
+        )
+        .await
+        .unwrap()
+        .unwrap();
         let response = String::from_utf8_lossy(&all_data[..n]).to_string();
         eprintln!("[client] received {} bytes: {:?}", n, response);
 
@@ -325,7 +340,11 @@ mod tests {
         assert!(resp.ok, "subscribe should return ok = true");
 
         let event_line = non_empty.get(1).expect("no event line");
-        assert!(event_line.contains("\"event_type\":\"CREATE\""), "got: {}", event_line);
+        assert!(
+            event_line.contains("\"event_type\":\"CREATE\""),
+            "got: {}",
+            event_line
+        );
         assert!(event_line.contains("/tmp/test.txt"));
 
         server.await.unwrap();
@@ -355,7 +374,10 @@ mod tests {
 
             let resp = SocketResp::ok();
             let resp_toml = toml::to_string(&resp).unwrap();
-            stream.write_all(format!("{}\n", resp_toml).as_bytes()).await.unwrap();
+            stream
+                .write_all(format!("{}\n", resp_toml).as_bytes())
+                .await
+                .unwrap();
         });
 
         let mut stream = TokioUnixStream::connect(&socket_path).await.unwrap();
@@ -369,13 +391,20 @@ mod tests {
             local_time: Some(false),
         };
         let toml_payload = toml::to_string(&subscribe_cmd).unwrap();
-        stream.write_all(format!("{}\n\n", toml_payload).as_bytes()).await.unwrap();
+        stream
+            .write_all(format!("{}\n\n", toml_payload).as_bytes())
+            .await
+            .unwrap();
 
         let mut reader = tokio::io::BufReader::new(&mut stream);
         let mut resp_line = String::new();
         reader.read_line(&mut resp_line).await.unwrap();
         let resp: SocketResp = toml::from_str(resp_line.trim()).unwrap();
-        assert!(resp.ok, "subscribe with filters should succeed, got: {}", resp_line);
+        assert!(
+            resp.ok,
+            "subscribe with filters should succeed, got: {}",
+            resp_line
+        );
 
         server.await.unwrap();
     }

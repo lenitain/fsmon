@@ -58,7 +58,10 @@ fn install_service() -> Result<()> {
     let service_path = Path::new("/etc/systemd/system/fsmon.service");
     if service_path.exists() {
         eprintln!("Exists systemd service: {}", service_path.display());
-        eprintln!("  (delete it first if you need to regenerate: sudo rm {})", service_path.display());
+        eprintln!(
+            "  (delete it first if you need to regenerate: sudo rm {})",
+            service_path.display()
+        );
         return Ok(());
     }
 
@@ -107,7 +110,7 @@ pub fn cmd_cd(monitored: bool) -> Result<()> {
         // cd to the monitored store directory (where monitored.jsonl lives).
         // Mirror of -l which cds to the log directory.
         let store_file = cfg.monitored.path.clone();
-        
+
         store_file
             .parent()
             .map(|p| p.to_path_buf())
@@ -123,9 +126,8 @@ pub fn cmd_cd(monitored: bool) -> Result<()> {
     };
 
     if !dir.exists() {
-        std::fs::create_dir_all(&dir).with_context(|| {
-            format!("Failed to create directory: {}", dir.display())
-        })?;
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("Failed to create directory: {}", dir.display()))?;
         fsmon::config::chown_to_original_user(&dir);
         eprintln!("Created directory: {}", dir.display());
     }
@@ -133,7 +135,10 @@ pub fn cmd_cd(monitored: bool) -> Result<()> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
 
     let label = if monitored { "monitored path" } else { "log" };
-    eprintln!("Entering fsmon {} directory (type 'exit' to return)...", label);
+    eprintln!(
+        "Entering fsmon {} directory (type 'exit' to return)...",
+        label
+    );
     eprintln!("  {}", dir.display());
     eprintln!();
 

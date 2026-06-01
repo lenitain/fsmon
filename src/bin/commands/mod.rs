@@ -16,12 +16,12 @@ mod query;
 mod remove;
 
 pub use add::cmd_add;
+pub use changes::cmd_changes;
 pub use clean::cmd_clean;
 pub use daemon::cmd_daemon;
 pub use health::cmd_health;
 pub use init_cd::{cmd_cd, cmd_init};
 pub use monitored::{cmd_list_monitored_paths, cmd_monitored};
-pub use changes::cmd_changes;
 pub use query::cmd_query;
 pub use remove::cmd_remove;
 

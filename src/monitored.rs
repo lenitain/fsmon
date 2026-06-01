@@ -152,7 +152,8 @@ impl Monitored {
             let mut file = fs::File::create(&tmp)
                 .with_context(|| format!("Failed to create store {}", tmp.display()))?;
             for group in &self.groups {
-                let line = serde_json::to_string(group).context("Failed to serialize store group")?;
+                let line =
+                    serde_json::to_string(group).context("Failed to serialize store group")?;
                 writeln!(file, "{}", line).context("Failed to write store group")?;
             }
             file.sync_all().context("Failed to sync store temp file")?;
@@ -449,7 +450,11 @@ mod tests {
                         let mut m = BTreeMap::new();
                         m.insert(
                             PathBuf::from("/tmp"),
-                            PathParams { recursive: Some(true), types: None, size: None },
+                            PathParams {
+                                recursive: Some(true),
+                                types: None,
+                                size: None,
+                            },
                         );
                         m
                     },
@@ -467,7 +472,14 @@ mod tests {
                 cmd: CMD_GLOBAL.into(),
                 paths: {
                     let mut m = BTreeMap::new();
-                    m.insert(PathBuf::from("/a"), PathParams { recursive: None, types: None, size: None });
+                    m.insert(
+                        PathBuf::from("/a"),
+                        PathParams {
+                            recursive: None,
+                            types: None,
+                            size: None,
+                        },
+                    );
                     m
                 },
             }],

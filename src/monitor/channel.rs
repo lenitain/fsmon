@@ -29,7 +29,9 @@ impl EventReceiver {
         }
     }
 
-    pub(crate) fn try_recv(&mut self) -> Result<Vec<FidEvent>, tokio::sync::mpsc::error::TryRecvError> {
+    pub(crate) fn try_recv(
+        &mut self,
+    ) -> Result<Vec<FidEvent>, tokio::sync::mpsc::error::TryRecvError> {
         match self {
             EventReceiver::Unbounded(rx) => rx.try_recv(),
             EventReceiver::Bounded(rx) => rx.try_recv(),

@@ -6,8 +6,8 @@ use tokio::io::unix::AsyncFd;
 
 use crate::fid_parser::read_fid_events_cached;
 
-use super::channel::EventSender;
 use super::Monitor;
+use super::channel::EventSender;
 
 // ---- Reader supervision ----
 
@@ -103,12 +103,18 @@ impl Monitor {
         let mfds = Arc::new(vec![owned_mount_fd]);
 
         if debug {
-            eprintln!("[DEBUG] spawning reader for group {} (fd {})", group_idx, raw_fd);
+            eprintln!(
+                "[DEBUG] spawning reader for group {} (fd {})",
+                group_idx, raw_fd
+            );
         }
 
         tokio::spawn(async move {
             if debug {
-                eprintln!("[DEBUG] reader task spawned for group {} (fd {})", group_idx, raw_fd);
+                eprintln!(
+                    "[DEBUG] reader task spawned for group {} (fd {})",
+                    group_idx, raw_fd
+                );
             }
             let afd = match AsyncFd::new(owned_fan_fd) {
                 Ok(a) => {
@@ -135,7 +141,11 @@ impl Monitor {
                 };
                 let events = read_fid_events_cached(afd.get_ref(), &mfds, &dc, &mut buf);
                 if debug {
-                    eprintln!("[DEBUG] fd {} reader: got {} event(s)", raw_fd, events.len());
+                    eprintln!(
+                        "[DEBUG] fd {} reader: got {} event(s)",
+                        raw_fd,
+                        events.len()
+                    );
                 }
                 if !events.is_empty() {
                     let send_err = match &tx {
@@ -169,7 +179,11 @@ impl Monitor {
         });
 
         // Track reader state for restart backoff
-        if let Some(state) = self.reader_states.get_mut(group_idx).and_then(|s| s.as_mut()) {
+        if let Some(state) = self
+            .reader_states
+            .get_mut(group_idx)
+            .and_then(|s| s.as_mut())
+        {
             state.restart_count += 1;
             state.last_restart = std::time::Instant::now();
             state.gave_up = false;
@@ -198,8 +212,7 @@ impl Monitor {
         let now = std::time::Instant::now();
         let state = self.reader_states.get(group_idx).and_then(|s| s.as_ref());
         if let Some(s) = state {
-            let in_window =
-                now.duration_since(s.last_restart) < BACKOFF_WINDOW;
+            let in_window = now.duration_since(s.last_restart) < BACKOFF_WINDOW;
             if in_window && s.restart_count >= MAX_RESTARTS {
                 eprintln!(
                     "[ERROR] Reader task for group {} has crashed {} times in \
@@ -210,7 +223,11 @@ impl Monitor {
                 );
                 // Mark gave_up so health() reports accurate alive/dead status.
                 // This will be reset when spawn_fd_reader is called again.
-                if let Some(s) = self.reader_states.get_mut(group_idx).and_then(|s| s.as_mut()) {
+                if let Some(s) = self
+                    .reader_states
+                    .get_mut(group_idx)
+                    .and_then(|s| s.as_mut())
+                {
                     s.gave_up = true;
                 }
                 return;

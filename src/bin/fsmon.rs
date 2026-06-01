@@ -85,7 +85,6 @@ pub enum Commands {
         /// instead of Z suffix.
         #[arg(long)]
         local_time: bool,
-
     },
 
     /// Add a path to the monitoring list
@@ -133,10 +132,20 @@ pub enum Commands {
     #[command(about = help::about(HelpTopic::Cd), long_about = help::long_about(HelpTopic::Cd))]
     Cd {
         /// cd to the monitored store directory
-        #[arg(short = 'm', long, conflicts_with = "logging", required_unless_present = "logging")]
+        #[arg(
+            short = 'm',
+            long,
+            conflicts_with = "logging",
+            required_unless_present = "logging"
+        )]
         monitored: bool,
         /// cd to the log directory (same as old `fsmon cd`)
-        #[arg(short = 'l', long, conflicts_with = "monitored", required_unless_present = "monitored")]
+        #[arg(
+            short = 'l',
+            long,
+            conflicts_with = "monitored",
+            required_unless_present = "monitored"
+        )]
         logging: bool,
     },
 
@@ -275,10 +284,9 @@ mod tests {
 
     #[test]
     fn test_add_types_mixed() {
-        let args = AddArgs::try_parse_from([
-            "add", "--path", "/tmp", "-t", "MODIFY", "--types", "CREATE",
-        ])
-        .unwrap();
+        let args =
+            AddArgs::try_parse_from(["add", "--path", "/tmp", "-t", "MODIFY", "--types", "CREATE"])
+                .unwrap();
         assert_eq!(args.types, vec!["MODIFY", "CREATE"]);
     }
 
@@ -395,8 +403,7 @@ mod tests {
 
     #[test]
     fn test_query_time_repeatable() {
-        let args =
-            QueryArgs::try_parse_from(["query", "--time", ">1h", "--time", "<now"]).unwrap();
+        let args = QueryArgs::try_parse_from(["query", "--time", ">1h", "--time", "<now"]).unwrap();
         assert_eq!(args.time, vec![">1h".to_string(), "<now".to_string()]);
     }
 
@@ -413,9 +420,7 @@ mod tests {
     fn test_daemon_sync_interval() {
         let cli = Cli::try_parse_from(["fsmon", "daemon", "--sync-interval", "5"]).unwrap();
         match cli.command {
-            Commands::Daemon {
-                sync_interval, ..
-            } => {
+            Commands::Daemon { sync_interval, .. } => {
                 assert_eq!(sync_interval, Some(5));
             }
             _ => panic!("expected Daemon"),
@@ -426,9 +431,7 @@ mod tests {
     fn test_daemon_sync_interval_default() {
         let cli = Cli::try_parse_from(["fsmon", "daemon"]).unwrap();
         match cli.command {
-            Commands::Daemon {
-                sync_interval, ..
-            } => {
+            Commands::Daemon { sync_interval, .. } => {
                 assert_eq!(sync_interval, None);
             }
             _ => panic!("expected Daemon"),
@@ -447,10 +450,8 @@ mod tests {
 
     #[test]
     fn test_changes_with_time_and_path() {
-        let args = ChangesArgs::try_parse_from([
-            "changes", "nginx", "-p", "/var/www", "-t", ">1h",
-        ])
-        .unwrap();
+        let args = ChangesArgs::try_parse_from(["changes", "nginx", "-p", "/var/www", "-t", ">1h"])
+            .unwrap();
         assert_eq!(args.cmd, Some("nginx".to_string()));
         assert_eq!(args.path, vec![PathBuf::from("/var/www")]);
         assert_eq!(args.time, vec![">1h".to_string()]);
@@ -458,15 +459,8 @@ mod tests {
 
     #[test]
     fn test_changes_path_repeatable() {
-        let args = ChangesArgs::try_parse_from([
-            "changes",
-            "_global",
-            "-p",
-            "/etc",
-            "-p",
-            "/home",
-        ])
-        .unwrap();
+        let args = ChangesArgs::try_parse_from(["changes", "_global", "-p", "/etc", "-p", "/home"])
+            .unwrap();
         assert_eq!(
             args.path,
             vec![PathBuf::from("/etc"), PathBuf::from("/home")]
@@ -475,15 +469,8 @@ mod tests {
 
     #[test]
     fn test_changes_time_repeatable() {
-        let args = ChangesArgs::try_parse_from([
-            "changes",
-            "_global",
-            "-t",
-            ">1h",
-            "-t",
-            "<now",
-        ])
-        .unwrap();
+        let args =
+            ChangesArgs::try_parse_from(["changes", "_global", "-t", ">1h", "-t", "<now"]).unwrap();
         assert_eq!(args.time, vec![">1h".to_string(), "<now".to_string()]);
     }
 
@@ -997,7 +984,8 @@ mod tests {
                 Some("ghost".into()),
                 None,
                 vec![],
-    false);
+                false,
+            );
             // No log files should be found
             let files = q.resolve_log_files().unwrap();
             assert!(files.is_empty(), "nonexistent cmd should yield no files");

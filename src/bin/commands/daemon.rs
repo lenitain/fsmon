@@ -81,9 +81,15 @@ pub async fn cmd_daemon(
         eprintln!("[DEBUG] --- cache configuration ---");
         eprintln!("[DEBUG]   dir_capacity:       {}", cache_cfg.dir_capacity);
         eprintln!("[DEBUG]   dir_ttl_secs:       {}", cache_cfg.dir_ttl_secs);
-        eprintln!("[DEBUG]   file_size_capacity: {}", cache_cfg.file_size_capacity);
+        eprintln!(
+            "[DEBUG]   file_size_capacity: {}",
+            cache_cfg.file_size_capacity
+        );
         eprintln!("[DEBUG]   proc_ttl_secs:      {}", cache_cfg.proc_ttl_secs);
-        eprintln!("[DEBUG]   stats_interval_secs: {}", cache_cfg.stats_interval_secs);
+        eprintln!(
+            "[DEBUG]   stats_interval_secs: {}",
+            cache_cfg.stats_interval_secs
+        );
         eprintln!("[DEBUG]   buffer_size:        {}", cache_cfg.buffer_size);
         match cache_cfg.channel_capacity {
             Some(cap) => eprintln!("[DEBUG]   channel_capacity:   {} (bounded)", cap),
@@ -94,8 +100,7 @@ pub async fn cmd_daemon(
     let paths_and_options = parse_path_entries(&store.flatten())?;
 
     // Merge disk_min_free: CLI > config > None
-    let disk_min_free = disk_min_free
-        .or_else(|| cfg.logging.disk_min_free.clone());
+    let disk_min_free = disk_min_free.or_else(|| cfg.logging.disk_min_free.clone());
 
     // Merge sync_interval: CLI > config > None (disabled)
     let sync_interval = sync_interval
@@ -115,7 +120,14 @@ pub async fn cmd_daemon(
     let subscribe_buf = cache_cfg.subscribe_buf;
     let log_dir = log_path;
     if debug {
-        eprintln!("[DEBUG]   local logging:      {}", if log_dir.is_some() { "enabled" } else { "disabled" });
+        eprintln!(
+            "[DEBUG]   local logging:      {}",
+            if log_dir.is_some() {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
     }
     let mut monitor = Monitor::new(
         paths_and_options,

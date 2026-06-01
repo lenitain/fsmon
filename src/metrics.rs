@@ -177,7 +177,6 @@ impl MetricsRegistry {
     pub fn set_disk_buffer_events(&self, n: i64) {
         self.disk_buffer_events.set(n);
     }
-
 }
 
 #[cfg(test)]
@@ -240,5 +239,4 @@ mod tests {
         g.set(42);
         assert_eq!(g.get(), 42);
     }
-
 }

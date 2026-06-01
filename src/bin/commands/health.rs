@@ -18,7 +18,8 @@ pub fn cmd_health() -> Result<()> {
     };
 
     let resp = socket::send_cmd(&socket_path, &cmd)?;
-    let output = toml::to_string(&resp).unwrap_or_else(|_| "Failed to serialize response".to_string());
+    let output =
+        toml::to_string(&resp).unwrap_or_else(|_| "Failed to serialize response".to_string());
     println!("{}", output);
     Ok(())
 }

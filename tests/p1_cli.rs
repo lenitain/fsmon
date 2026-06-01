@@ -25,11 +25,7 @@ static ENV_LOCK: Mutex<()> = Mutex::new(());
 fn unique_temp_home() -> std::path::PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "fsmon_cli_test_{}_{}",
-        std::process::id(),
-        n
-    ))
+    std::env::temp_dir().join(format!("fsmon_cli_test_{}_{}", std::process::id(), n))
 }
 
 /// Run a test with an isolated HOME directory.
@@ -57,9 +53,8 @@ fn with_isolated_home(f: impl FnOnce(&Path, &Path)) {
             ("SUDO_UID", None::<&str>),
         ],
         || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                f(&dir, &monitored_path)
-            }));
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&dir, &monitored_path)));
             let _ = fs::remove_dir_all(&dir);
             if let Err(e) = result {
                 std::panic::resume_unwind(e);
@@ -117,7 +112,9 @@ fn add_recursive_flag() {
 fn add_with_event_types() {
     with_isolated_home(|_home, mp| {
         let p = mp.to_string_lossy();
-        run_fsmon_success(&["add", "_global", "--path", &p, "-t", "MODIFY", "-t", "CREATE"]);
+        run_fsmon_success(&[
+            "add", "_global", "--path", &p, "-t", "MODIFY", "-t", "CREATE",
+        ]);
 
         let store = load_store();
         let entry = store.get(mp, None).unwrap();
@@ -167,7 +164,11 @@ fn add_duplicate_replaces() {
         let store = load_store();
         assert_eq!(store.entry_count(), 1, "should replace, not duplicate");
         let entry = store.get(mp, None).unwrap();
-        assert_eq!(entry.recursive, Some(false), "should be replaced with new flags");
+        assert_eq!(
+            entry.recursive,
+            Some(false),
+            "should be replaced with new flags"
+        );
     });
 }
 
@@ -325,8 +326,8 @@ fn clean_dry_run_preserves_data() {
         let log_dir = cfg.logging.path.unwrap();
         fs::create_dir_all(&log_dir).unwrap();
 
-        use std::io::Write;
         use chrono::Utc;
+        use std::io::Write;
         let log_path = log_dir.join("_global_log.jsonl");
         let mut f = fs::File::create(&log_path).unwrap();
         let ts = Utc::now();
@@ -342,7 +343,10 @@ fn clean_dry_run_preserves_data() {
         writeln!(f, "{}", recent).unwrap();
 
         let stdout = run_fsmon_success(&["clean", "_global", "--dry-run"]);
-        assert!(stdout.contains("Dry run") || stdout.contains("dry"), "should mention dry run");
+        assert!(
+            stdout.contains("Dry run") || stdout.contains("dry"),
+            "should mention dry run"
+        );
 
         // File still has 2 lines (dry run)
         let content = fs::read_to_string(&log_path).unwrap();
