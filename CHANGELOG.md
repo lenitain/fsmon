@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Independent integration test suite** (`tests/`) with shared `tests/common/` harness
+  - `p1_cli.rs` — 22 CLI end-to-end tests (add/monitored/remove/query/changes/clean)
+  - `p1_monitor.rs` — 8 event parsing, serialization, and EventType completeness tests
+  - `p1_crash_recovery.rs` — 12 crash recovery tests (DaemonLock, atomic writes, config resilience, log truncation)
+  - `p1_utils.rs` — 16 utility function tests (parse_size, parse_size_filter, parse_time_filter)
+  - `tests/README.md` — test index with run commands and layering guide
+- **GitHub Actions CI workflow** (`.github/workflows/ci.yml`)
+  - Build + unit tests + integration tests on every push/PR
+  - `cargo fmt --check` and `cargo clippy -- -D warnings`
+- **GitHub Actions Benchmark workflow** (`.github/workflows/bench.yml`)
+  - Release build + binary size measurement + smoke test
+
+### Changed
+
+- `cargo fmt` applied to all source files for consistent formatting
+
 ## [0.4.1] - 2026-05-30
 
 ### Added
