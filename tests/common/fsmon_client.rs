@@ -2,7 +2,9 @@
 //!
 //! Wraps `fsmon` binary invocations and returns parsed output.
 
-use std::path::{Path, PathBuf};
+#![allow(dead_code)]
+
+use std::path::PathBuf;
 use std::process::{Command, Output};
 use fsmon::FileEvent;
 

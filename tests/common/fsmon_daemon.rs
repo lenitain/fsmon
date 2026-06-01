@@ -3,6 +3,8 @@
 //! Spawns `fsmon daemon` as a subprocess, manages its lifecycle,
 //! and provides cleanup on drop.
 
+#![allow(dead_code)]
+
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::Duration;

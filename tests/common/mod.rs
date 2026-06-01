@@ -1,5 +1,7 @@
 //! Shared helpers for fsmon integration tests.
 
+#![allow(dead_code)]
+
 pub mod fsmon_client;
 pub mod fsmon_daemon;
 
