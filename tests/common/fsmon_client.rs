@@ -1,0 +1,71 @@
+//! CLI client helpers for fsmon integration tests.
+//!
+//! Wraps `fsmon` binary invocations and returns parsed output.
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use fsmon::FileEvent;
+
+/// Resolve the path to the `fsmon` binary in the Cargo target directory.
+/// Works for both `cargo test` (debug) and `cargo test --release`.
+pub fn fsmon_binary() -> PathBuf {
+    let current_exe = std::env::current_exe().expect("current_exe");
+    // current_exe is roughly target/{debug|release}/deps/test-binary-xxx
+    let target_dir = current_exe
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("target dir");
+    target_dir.join("fsmon")
+}
+
+/// Run `fsmon` with the given arguments and return the full Output.
+pub fn run_fsmon(args: &[&str]) -> Output {
+    Command::new(fsmon_binary())
+        .args(args)
+        .output()
+        .expect("failed to run fsmon binary")
+}
+
+/// Run `fsmon` and panic if it fails. Returns stdout as String.
+pub fn run_fsmon_success(args: &[&str]) -> String {
+    let out = run_fsmon(args);
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        panic!(
+            "fsmon {:?} failed (status {}):\n{}",
+            args,
+            out.status,
+            stderr
+        );
+    }
+    String::from_utf8(out.stdout).expect("valid utf8 stdout")
+}
+
+/// Run `fsmon` and return stdout + stderr combined on failure (useful for
+/// tests that expect non-zero exit).
+pub fn run_fsmon_raw(args: &[&str]) -> (bool, String, String) {
+    let out = run_fsmon(args);
+    (
+        out.status.success(),
+        String::from_utf8(out.stdout).unwrap_or_default(),
+        String::from_utf8(out.stderr).unwrap_or_default(),
+    )
+}
+
+/// Parse `fsmon monitored` output (one JSON object per line) into Vec<Value>.
+pub fn parse_monitored_output(stdout: &str) -> Vec<serde_json::Value> {
+    stdout
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).expect("valid JSON in monitored output"))
+        .collect()
+}
+
+/// Parse `fsmon query` / `fsmon changes` output (JSONL FileEvent lines).
+pub fn parse_query_output(stdout: &str) -> Vec<FileEvent> {
+    stdout
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).expect("valid JSONL in query output"))
+        .collect()
+}
