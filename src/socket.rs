@@ -134,7 +134,7 @@ pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResponse, S
             .try_clone()
             .map_err(|e| SocketError::Transient(e.to_string()))?;
         // Write JSON command followed by newline as delimiter
-        write!(writer, "{json}\n").map_err(|e| SocketError::Transient(e.to_string()))?;
+        writeln!(writer, "{json}").map_err(|e| SocketError::Transient(e.to_string()))?;
         writer
             .flush()
             .map_err(|e| SocketError::Transient(e.to_string()))?;

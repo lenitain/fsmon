@@ -86,7 +86,6 @@ impl Monitor {
         };
 
         let rx = tx.subscribe();
-        let track_cmd = track_cmd;
         let types: Option<Vec<EventType>> = types.as_ref().map(|v| {
             v.iter()
                 .filter_map(|t| t.parse::<EventType>().ok())
