@@ -130,7 +130,7 @@ impl Monitor {
                             .as_deref()
                             .unwrap_or(crate::monitored::CMD_GLOBAL)
                             .to_string();
-                        self.metrics.inc_event(&event_type.to_string(), &cmd_name);
+
                         pending.push(PendingEvent {
                             event,
                             cmd_name,

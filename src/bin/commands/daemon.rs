@@ -8,14 +8,29 @@ use std::path::Path;
 
 use super::parse_path_entries;
 
-pub async fn cmd_daemon(
-    debug: bool,
-    cli_cache: CliCacheOverride,
-    disk_min_free: Option<String>,
-    sync_interval: Option<u64>,
-    local_time: bool,
-    metrics_interval: Option<u64>,
-) -> Result<()> {
+/// Command-line options for `fsmon daemon`.
+pub struct DaemonOptions {
+    pub debug: bool,
+    pub cli_cache: CliCacheOverride,
+    pub disk_min_free: Option<String>,
+    pub sync_interval: Option<u64>,
+    pub local_time: bool,
+    pub metrics_interval: Option<u64>,
+    pub watchdog_interval: Option<u64>,
+    pub watchdog_multiplier: Option<u64>,
+}
+
+pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
+    let DaemonOptions {
+        debug,
+        cli_cache,
+        disk_min_free,
+        sync_interval,
+        local_time,
+        metrics_interval,
+        watchdog_interval,
+        watchdog_multiplier,
+    } = opts;
     // Acquire singleton lock first — only one daemon instance allowed
     let (uid, _gid) = fsmon::config::resolve_uid_gid();
     let _lock = DaemonLock::acquire(uid)?;
@@ -109,11 +124,43 @@ pub async fn cmd_daemon(
         .filter(|&n| n > 0)
         .map(std::time::Duration::from_secs);
 
+    // Merge watchdog_interval: CLI > config > None (disabled)
+    let watchdog_interval = watchdog_interval
+        .or(cfg.watchdog.as_ref().and_then(|w| w.interval_secs))
+        .filter(|&n| n > 0);
+
+    // Merge watchdog_multiplier: CLI > config > None (default: 2)
+    let watchdog_multiplier = watchdog_multiplier
+        .or(cfg.watchdog.as_ref().and_then(|w| w.multiplier))
+        .unwrap_or(2);
+
+    // Validate watchdog_multiplier
+    // Exit code 2 = configuration error (systemd will not restart)
+    if watchdog_multiplier <= 1 {
+        eprintln!(
+            "Error: watchdog multiplier must be > 1, got {}.",
+            watchdog_multiplier
+        );
+        std::process::exit(2);
+    }
+
+    // Compute WatchdogSec = interval × multiplier
+    let watchdog_sec = watchdog_interval.map(|i| i * watchdog_multiplier);
+
     if debug {
         if let Some(d) = sync_interval {
             eprintln!("[DEBUG]   sync_interval:      {}s", d.as_secs());
         } else {
             eprintln!("[DEBUG]   sync_interval:      disabled");
+        }
+        if let Some(i) = watchdog_interval {
+            eprintln!("[DEBUG]   watchdog_interval:  {}s", i);
+            eprintln!("[DEBUG]   watchdog_multiplier: {}x", watchdog_multiplier);
+            if let Some(s) = watchdog_sec {
+                eprintln!("[DEBUG]   watchdog_sec:       {}s", s);
+            }
+        } else {
+            eprintln!("[DEBUG]   watchdog:           disabled");
         }
     }
 
@@ -130,7 +177,7 @@ pub async fn cmd_daemon(
             }
         );
     }
-    let mut monitor = Monitor::new(
+    let mut monitor = match Monitor::new(
         paths_and_options,
         log_dir,
         Some(store_path),
@@ -143,7 +190,15 @@ pub async fn cmd_daemon(
         Some(subscribe_buf),
         local_time || cfg.logging.local_time.unwrap_or(false),
         metrics_interval,
-    )?;
+        watchdog_interval,
+    ) {
+        Ok(m) => m,
+        Err(e) => {
+            // Exit code 2 = configuration error (systemd will not restart)
+            eprintln!("Error: {}", e);
+            std::process::exit(2);
+        }
+    };
 
     if !store.is_empty() {
         for group in &store.groups {

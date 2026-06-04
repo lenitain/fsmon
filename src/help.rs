@@ -46,6 +46,8 @@ Usage:
   sudo fsmon daemon --channel-capacity 1024   Event channel cap (default: unbounded)
   sudo fsmon daemon --subscribe-buf 8192      Subscribe broadcast buffer
   sudo fsmon daemon --cache-dir-cap 200000    Override dir_cache capacity
+  sudo fsmon daemon --watchdog-interval 15    systemd watchdog heartbeat (secs)
+  sudo fsmon daemon --watchdog-multiplier 3   WatchdogSec = interval × multiplier
   fsmon add openclaw --path /home -r          Track openclaw on /home (recursive)
   fsmon monitored                             List monitored paths
   fsmon query _global -t '>1h'             Events from last hour
@@ -118,7 +120,7 @@ Examples:
   fsmon add _global --path /home -s '>=1MB'                    Minimum file size change"#
         }
         HelpTopic::Remove => {
-            r#"Remove one or more paths from the monitoring list.
+            r"Remove one or more paths from the monitoring list.
 
 Without --path, removes the entire cmd group.
 With --path, removes only the specified paths. Multiple paths are atomic:
@@ -137,16 +139,16 @@ Examples:
   fsmon remove _global               Remove entire global cmd group
   fsmon remove openclaw              Remove the entire openclaw cmd group
   fsmon remove openclaw --path /a    Remove /a from openclaw group
-  fsmon remove _global --path /a --path /b  Remove /a, /b from global group (atomic)"#
+  fsmon remove _global --path /a --path /b  Remove /a, /b from global group (atomic)"
         }
         HelpTopic::Monitored => {
-            r#"List all monitored paths with their configuration.
+            r"List all monitored paths with their configuration.
 
 Displays each path with its recursive flag, event type filters,
 size threshold, path/cmd exclusion patterns.
 
 Examples:
-  fsmon monitored"#
+  fsmon monitored"
         }
         HelpTopic::Query => {
             r#"Query historical file change events from log files.

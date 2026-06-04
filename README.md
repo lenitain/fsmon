@@ -151,7 +151,7 @@ journalctl -u fsmon -f          # Logs
 | Infrastructure config | `~/.config/fsmon/fsmon.toml` | TOML (created by `fsmon init`, all-commented — defaults apply) |
 | Monitored paths database | `~/.local/share/fsmon/monitored.jsonl` | JSONL (grouped by cmd, paths as map keys) |
 | Event logs | `~/.local/state/fsmon/*_log.jsonl` | JSONL (one event per line) |
-| Unix socket | `/tmp/fsmon-<UID>.sock` | TOML over stream |
+| Unix socket | `/tmp/fsmon-<UID>.sock` | JSON over stream |
 
 Both the store path and log directory are configurable in `~/.config/fsmon/fsmon.toml`
 (see `[monitored].path` and `[logging].path`).
@@ -206,6 +206,9 @@ sudo fsmon daemon --cache-dir-ttl 7200        # Dir handle cache TTL (default: 3
 sudo fsmon daemon --cache-file-size 20000     # File size cache capacity (default: 10000)
 sudo fsmon daemon --cache-proc-ttl 1200       # Process cache TTL (default: 600secs)
 sudo fsmon daemon --cache-stats-interval 0    # Disable periodic cache stats (default: 60secs)
+sudo fsmon daemon --metrics-interval 30       # Print status report to stderr every 30s
+sudo fsmon daemon --watchdog-interval 15      # systemd watchdog heartbeat interval (secs)
+sudo fsmon daemon --watchdog-multiplier 3     # WatchdogSec = interval × multiplier
 ```
 
 **Output modes:**
@@ -387,9 +390,12 @@ dir_ttl_secs = 3600
 file_size_capacity = 10000
 proc_ttl_secs = 600
 stats_interval_secs = 60
-buffer_size = 32768             # Fanotify read buffer (CLI only: --buffer-size)
 channel_capacity = 1024         # Event channel bound (omit = unbounded)
 subscribe_buf = 4096            # Broadcast buffer for subscribe consumers
+
+# [watchdog]
+# interval_secs = 15            # systemd watchdog heartbeat interval (secs)
+# multiplier = 2                # WatchdogSec = interval × multiplier (MUST be > 1)
 ```
 
 ### Override priority
@@ -430,7 +436,7 @@ Every event is a single JSON line. All fields are always present.
 }
 ```
 
-When `<CMD>` was specified on add and the event matches: `chain` is also included.
+The `chain` field is always present in the output. When `<CMD>` was specified on add and the event matches, it contains the process ancestry chain. When using `_global` or no process tracking, it's an empty string.
 
 ```json
 {
@@ -449,7 +455,7 @@ The `chain` format: `pid|cmd|user` per entry, `;`-separated from the event proce
 Linux Kernel (fanotify FID mode)
     → Raw  # FID events pushed to kernel queue
     → tokio reads events asynchronously
-    → fid_parser: resolves paths (two-pass +  # DashMap dir handle cache)
+    → fid_parser: resolves paths (two-pass + moka dir handle cache)
     → filters: event type, size, recursive/non-recursive scope
     → (if <CMD> was specified) process tree check:
       → not in tracked tree → drop immediately (zero /proc reads)
@@ -458,9 +464,9 @@ Linux Kernel (fanotify FID mode)
 
 Process tree (proc connector):
     Fork/Exec/Exit events from netlink connector socket
-    →  # DashMap: pid → {cmd, ppid, user, tgid, start_time}
+    → moka cache: pid → {cmd, ppid, user, tgid, start_time}
     On daemon start: /proc/*/stat snapshot seeds existing processes
-    is_descendant(pid, "openclaw") → O(depth)  # DashMap lookups
+    is_descendant(pid, "openclaw") → O(depth) moka cache lookups
 
 User pipe:
     tail -f *.jsonl | jq 'select(...)'
@@ -490,7 +496,7 @@ src/
 ├── lib.rs              # FileEvent, EventType, DaemonLock (flock singleton)
 ├── clean.rs            # Log cleanup engine: time/size trim, tail-offset
 ├── config.rs           # TOML config, SUDO_UID home resolution
-├── metrics.rs          # Prometheus metrics registry (AtomicU64 counters)
+├── metrics.rs          # Atomic counters/gauges for periodic metrics report
 ├── monitored.rs        # Monitored paths database (JSONL store)
 ├── monitor/            # Fanotify event loop (split into 9 submodules)
 │   ├── mod.rs          #   Monitor struct + main event loop
@@ -506,7 +512,7 @@ src/
 ├── dir_cache.rs        # Directory handle cache (moka + HandleKey)
 ├── proc_cache.rs       # Netlink proc connector: Fork/Exec/Exit, build_chain
 ├── query.rs            # Binary-search log query on sorted JSONL
-├── socket.rs           # Unix socket protocol (TOML req/resp)
+├── socket.rs           # Unix socket protocol (JSON req/resp)
 ├── utils.rs            # Size/time parsing, process info lookup, chown
 └── help.rs             # Help text constants
 ```

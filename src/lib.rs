@@ -11,6 +11,7 @@ pub mod proc_cache;
 pub mod query;
 pub mod socket;
 pub mod utils;
+pub mod watchdog;
 pub use utils::{
     SizeFilter, SizeOp, TimeFilter, TimeOp, format_datetime, parse_size, parse_size_filter,
     parse_time, parse_time_filter,
@@ -50,6 +51,10 @@ impl DaemonLock {
                     e
                 )
             })?;
+
+        // When running as root (daemon), chown lock file to original user
+        // so CLI commands (running as user) can read/manage it.
+        crate::config::chown_to_original_user(&path);
 
         match file.try_lock_exclusive() {
             Ok(()) => {}

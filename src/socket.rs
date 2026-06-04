@@ -1,5 +1,5 @@
 //! Unix socket protocol for daemon-CLI communication.
-//! Uses TOML over unix stream sockets, with each message separated by a blank line.
+//! Uses JSON over unix stream sockets, with each message as a single line.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;

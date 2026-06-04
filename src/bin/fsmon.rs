@@ -92,6 +92,17 @@ pub enum Commands {
         /// cache sizes, and reader task health.
         #[arg(long, value_name = "SECS")]
         metrics_interval: Option<u64>,
+
+        /// systemd watchdog heartbeat interval in seconds (default: disabled).
+        /// When set to N > 0, sends periodic WATCHDOG=1 notifications to systemd.
+        #[arg(long, value_name = "SECS")]
+        watchdog_interval: Option<u64>,
+
+        /// Watchdog timeout multiplier (default: 2).
+        /// WatchdogSec = watchdog_interval × multiplier.
+        /// Recommended: 2-4. Higher = more tolerant of transient stalls.
+        #[arg(long, value_name = "N")]
+        watchdog_multiplier: Option<u64>,
     },
 
     /// Add a path to the monitoring list

@@ -10,9 +10,13 @@ pub fn cmd_init(service: bool) -> Result<()> {
     Ok(())
 }
 
-fn service_template(binary: &str, home: &str) -> String {
+fn service_template(binary: &str, home: &str, watchdog_sec: Option<u64>) -> String {
+    let watchdog_line = match watchdog_sec {
+        Some(secs) => format!("WatchdogSec={}", secs),
+        None => String::new(),
+    };
     format!(
-        r#"[Unit]
+        r"[Unit]
 Description=fsmon - File System Change Monitor
 Documentation=man:fsmon(1)
 After=local-fs.target
@@ -22,13 +26,22 @@ Type=notify
 ExecStart={binary} daemon
 Restart=always
 RestartSec=5
+RestartPreventExitStatus=2
+StartLimitBurst=5
+StartLimitIntervalSec=300
 Environment=HOME={home}
+{watchdog_line}
 
 [Install]
 WantedBy=multi-user.target
-"#,
+",
         binary = binary,
         home = home,
+        watchdog_line = if watchdog_line.is_empty() {
+            ""
+        } else {
+            &watchdog_line
+        },
     )
 }
 
@@ -53,7 +66,17 @@ fn install_service() -> Result<()> {
         .to_string_lossy()
         .to_string();
 
-    let content = service_template(&binary, &home);
+    // Load config to check watchdog settings
+    let cfg = fsmon::config::Config::load()?;
+    let watchdog_cfg = cfg.watchdog.as_ref();
+    let watchdog_sec = watchdog_cfg.and_then(|w| {
+        w.interval_secs.map(|interval| {
+            let multiplier = w.multiplier.unwrap_or(2);
+            interval * multiplier
+        })
+    });
+
+    let content = service_template(&binary, &home, watchdog_sec);
 
     let service_path = Path::new("/etc/systemd/system/fsmon.service");
     if service_path.exists() {

@@ -32,6 +32,7 @@ use crate::proc_cache::{
 };
 use crate::socket::{SocketCmd, SocketError};
 use crate::utils::format_size;
+use crate::watchdog::Watchdog;
 use serde_json;
 
 // ---- Submodules ----
@@ -46,7 +47,7 @@ mod socket_handler;
 
 pub(crate) use channel::{EventReceiver, EventSender};
 pub(crate) use events::PendingEvent;
-pub(crate) use file_writer::{FileLogWriter, notify_sd_ready};
+pub(crate) use file_writer::FileLogWriter;
 pub(crate) use reader::ReaderState;
 #[cfg(test)]
 pub(crate) use socket_handler::chains_contain;
@@ -116,6 +117,8 @@ pub struct Monitor {
     /// paths, so that events during the recreate window aren't lost.
     /// Maps: target_pending_path → (parent_path, group_idx in fs_groups)
     pub(crate) temp_parent_marks: HashMap<PathBuf, (PathBuf, usize)>,
+    /// Watchdog manager for systemd integration.
+    pub(crate) watchdog: Option<Watchdog>,
 }
 
 impl Monitor {
@@ -133,6 +136,7 @@ impl Monitor {
         subscribe_buf: Option<usize>,
         local_time: bool,
         metrics_interval: Option<u64>,
+        watchdog_interval: Option<u64>,
     ) -> Result<Self> {
         let cache_config = cache_config.unwrap_or_default();
         let buffer_size = buffer_size.unwrap_or(cache_config.buffer_size);
@@ -229,8 +233,9 @@ impl Monitor {
                 Some(tx)
             },
             local_time,
-            metrics: MetricsRegistry::new(),
+            metrics: MetricsRegistry::new(metrics_interval.is_some()),
             temp_parent_marks: HashMap::new(),
+            watchdog: Some(Watchdog::new(watchdog_interval)),
         };
         if debug {
             eprintln!(
@@ -494,6 +499,14 @@ impl Monitor {
         }
 
         println!("Starting file trace monitor...");
+
+        // Initialize metrics counters
+        self.metrics
+            .set_monitored_paths(self.monitored_entries.len() as i64);
+        self.metrics
+            .set_pending_paths(self.pending_paths.len() as i64);
+        self.metrics.set_reader_groups(self.fs_groups.len() as i64);
+
         if !self.canonical_paths.is_empty() {
             println!("Active paths ({} fd(s)):", fan_group_count);
             for (path, opts) in &self.monitored_entries {
@@ -641,8 +654,21 @@ impl Monitor {
             tokio::sync::mpsc::unbounded_channel::<usize>().1,
         );
 
-        // Notify systemd
-        notify_sd_ready();
+        // Notify systemd: READY=1
+        if let Err(e) = crate::watchdog::sd_notify(libsystemd::daemon::NotifyState::Ready) {
+            eprintln!("[WARNING] systemd notify READY failed: {}", e);
+        }
+
+        // Start watchdog if enabled
+        let _watchdog_handle = self.watchdog.as_ref().map(|wd| {
+            if self.debug {
+                eprintln!(
+                    "[DEBUG] systemd watchdog enabled (interval: {}s)",
+                    wd.interval().as_secs()
+                );
+            }
+            wd.clone().start()
+        });
 
         let mut metrics_tick: Option<tokio::time::Interval> =
             self.metrics_interval.map(tokio::time::interval);
@@ -723,7 +749,7 @@ impl Monitor {
                 } => {
                     let report = self.collect_metrics(&dir_cache, &proc_cache, &pid_tree);
                     eprintln!(
-                        "[metrics] uptime={}s rss={:.1}MB caches(d/p/t/f)={}/{}/{}/{} readers={}/{}/{}",
+                        "[metrics] uptime={}s rss={:.1}MB caches(d/p/t/f)={}/{}/{}/{} readers={}/{}/{} subs={} paths={} pending={} disk_buf={}",
                         report.uptime_secs,
                         report.rss_mb,
                         report.dir_cache_entries,
@@ -733,6 +759,10 @@ impl Monitor {
                         report.reader_groups_total,
                         report.reader_groups_alive,
                         report.reader_groups_gave_up,
+                        report.subscribers,
+                        report.monitored_paths,
+                        report.pending_paths,
+                        report.disk_buffer_events,
                     );
                 }
 
@@ -864,6 +894,9 @@ impl Monitor {
             reader_groups_alive,
             reader_groups_gave_up,
             subscribers: self.metrics.subscribers() as u64,
+            monitored_paths: self.metrics.monitored_paths() as u64,
+            pending_paths: self.metrics.pending_paths() as u64,
+            disk_buffer_events: self.metrics.disk_buffer_events() as u64,
         }
     }
 
@@ -891,6 +924,9 @@ pub(crate) struct MetricsReport {
     pub reader_groups_alive: u64,
     pub reader_groups_gave_up: u64,
     pub subscribers: u64,
+    pub monitored_paths: u64,
+    pub pending_paths: u64,
+    pub disk_buffer_events: u64,
 }
 
 /// Read current RSS in MB from /proc/self/statm.
