@@ -94,13 +94,13 @@ fn daemon_accepts_multiplier_3() {
 #[test]
 fn daemon_rejects_negative_multiplier() {
     // Negative value should be rejected by clap (invalid number)
-    let (success, _, stderr) = run_daemon(&["--watchdog-multiplier", "-1"]);
+    let (success, _, _stderr) = run_daemon(&["--watchdog-multiplier", "-1"]);
     assert!(!success, "daemon should fail with negative multiplier");
 }
 
 #[test]
 fn daemon_rejects_non_numeric_multiplier() {
-    let (success, _, stderr) = run_daemon(&["--watchdog-multiplier", "abc"]);
+    let (success, _, _stderr) = run_daemon(&["--watchdog-multiplier", "abc"]);
     assert!(!success, "daemon should fail with non-numeric multiplier");
 }
 

@@ -2,7 +2,7 @@
 //!
 //! Tests for watchdog interval, multiplier validation, and CLI parsing.
 
-use fsmon::config::{Config, WatchdogConfig};
+use fsmon::config::Config;
 
 // ---- multiplier validation ----
 
