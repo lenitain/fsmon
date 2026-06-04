@@ -18,7 +18,7 @@ mod remove;
 pub use add::cmd_add;
 pub use changes::cmd_changes;
 pub use clean::cmd_clean;
-pub use daemon::cmd_daemon;
+pub use daemon::{cmd_daemon, DaemonOptions};
 pub use health::cmd_health;
 pub use init_cd::{cmd_cd, cmd_init};
 pub use monitored::{cmd_list_monitored_paths, cmd_monitored};
@@ -56,7 +56,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
                 channel_capacity,
                 subscribe_buf,
             };
-            cmd_daemon(
+            cmd_daemon(DaemonOptions {
                 debug,
                 cli_cache,
                 disk_min_free,
@@ -65,7 +65,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
                 metrics_interval,
                 watchdog_interval,
                 watchdog_multiplier,
-            )
+            })
             .await_()
         }
         Add(args) => cmd_add(args),

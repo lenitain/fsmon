@@ -8,16 +8,29 @@ use std::path::Path;
 
 use super::parse_path_entries;
 
-pub async fn cmd_daemon(
-    debug: bool,
-    cli_cache: CliCacheOverride,
-    disk_min_free: Option<String>,
-    sync_interval: Option<u64>,
-    local_time: bool,
-    metrics_interval: Option<u64>,
-    watchdog_interval: Option<u64>,
-    watchdog_multiplier: Option<u64>,
-) -> Result<()> {
+/// Command-line options for `fsmon daemon`.
+pub struct DaemonOptions {
+    pub debug: bool,
+    pub cli_cache: CliCacheOverride,
+    pub disk_min_free: Option<String>,
+    pub sync_interval: Option<u64>,
+    pub local_time: bool,
+    pub metrics_interval: Option<u64>,
+    pub watchdog_interval: Option<u64>,
+    pub watchdog_multiplier: Option<u64>,
+}
+
+pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
+    let DaemonOptions {
+        debug,
+        cli_cache,
+        disk_min_free,
+        sync_interval,
+        local_time,
+        metrics_interval,
+        watchdog_interval,
+        watchdog_multiplier,
+    } = opts;
     // Acquire singleton lock first — only one daemon instance allowed
     let (uid, _gid) = fsmon::config::resolve_uid_gid();
     let _lock = DaemonLock::acquire(uid)?;
