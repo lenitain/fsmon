@@ -206,7 +206,9 @@ sudo fsmon daemon --cache-dir-ttl 7200        # Dir handle cache TTL (default: 3
 sudo fsmon daemon --cache-file-size 20000     # File size cache capacity (default: 10000)
 sudo fsmon daemon --cache-proc-ttl 1200       # Process cache TTL (default: 600secs)
 sudo fsmon daemon --cache-stats-interval 0    # Disable periodic cache stats (default: 60secs)
-sudo fsmon daemon --metrics-interval 30        # Print status report to stderr every 30s
+sudo fsmon daemon --metrics-interval 30       # Print status report to stderr every 30s
+sudo fsmon daemon --watchdog-interval 15      # systemd watchdog heartbeat interval (secs)
+sudo fsmon daemon --watchdog-multiplier 3     # WatchdogSec = interval × multiplier
 ```
 
 **Output modes:**
@@ -390,6 +392,10 @@ proc_ttl_secs = 600
 stats_interval_secs = 60
 channel_capacity = 1024         # Event channel bound (omit = unbounded)
 subscribe_buf = 4096            # Broadcast buffer for subscribe consumers
+
+# [watchdog]
+# interval_secs = 15            # systemd watchdog heartbeat interval (secs)
+# multiplier = 2                # WatchdogSec = interval × multiplier (MUST be > 1)
 ```
 
 ### Override priority

@@ -201,7 +201,9 @@ sudo fsmon daemon --cache-dir-ttl 7200        # 目录句柄缓存 TTL（默认 
 sudo fsmon daemon --cache-file-size 20000     # 文件大小缓存容量（默认 10000）
 sudo fsmon daemon --cache-proc-ttl 1200       # 进程缓存 TTL（默认 600 秒）
 sudo fsmon daemon --cache-stats-interval 0    # 禁用缓存统计输出（默认 60 秒）
-sudo fsmon daemon --metrics-interval 30        # 每 30 秒向 stderr 打印状态报告
+sudo fsmon daemon --metrics-interval 30       # 每 30 秒向 stderr 打印状态报告
+sudo fsmon daemon --watchdog-interval 15      # systemd watchdog 心跳间隔（秒）
+sudo fsmon daemon --watchdog-multiplier 3     # watchdog 倍率（WatchdogSec = interval × multiplier）
 ```
 
 **输出模式：**
@@ -383,6 +385,10 @@ proc_ttl_secs = 600
 stats_interval_secs = 60
 channel_capacity = 1024         # 事件通道上限（不设置 = 无界）
 subscribe_buf = 4096            # Subscribe 消费者的广播缓冲
+
+# [watchdog]
+# interval_secs = 15            # systemd watchdog 心跳间隔（秒）
+# multiplier = 2                # 倍率，WatchdogSec = interval × multiplier
 ```
 
 ### 覆盖优先级
