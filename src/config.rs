@@ -437,74 +437,101 @@ impl Config {
 # fsmon configuration file
 # ================================================================
 #
-# This file uses defaults where commented. Uncomment keys to override.
-#
-# Changes take effect on the next daemon start (or SIGHUP reload).
+# All settings are optional. Commented values show defaults.
+# Uncomment to override. Changes take effect on next daemon start.
+# CLI flags override config file values.
 
 [monitored]
-#   Where the monitored paths database is stored.
-#   Config-only (no CLI flag).
+# Monitored paths database file path.
+# Config-only (no CLI flag).
 path = "~/.local/share/fsmon/monitored.jsonl"
 
 [logging]
-#   Log file output directory. Delete this section to disable file logging.
-#   Config-only (no CLI flag).
+# Log file output directory. Remove this section to disable file logging.
+# Config-only (no CLI flag).
 path = "~/.local/state/fsmon"
-#   Auto-clean: keep entries for at most N days.
-#   Config-only (clean command accepts -t/--time per invocation).
+#
+# Auto-clean: keep entries for at most N days.
+# Config-only (clean command accepts -t/--time per invocation).
 # keep_days = 30
-#   Auto-clean: keep log file under this size.
-#   Config-only (clean command accepts -s/--size per invocation).
+#
+# Auto-clean: truncate log file when it exceeds this size.
+# Config-only (clean command accepts -s/--size per invocation).
 # size = ">=1GB"
-#   Warn when free disk space drops below this threshold.
-#   Percentage ("10%") or absolute ("5GB"). Default: no check.
-#   CLI: --disk-min-free 10%
+#
+# Warn when free disk space drops below this threshold.
+# Format: percentage ("10%") or absolute ("5GB").
+# Default: no check. CLI: --disk-min-free 10%
 # disk_min_free = "10%"
-#   Log file sync interval in seconds (fdatasync). Default: disabled.
-#   Recommended: 5. Prevents event loss on crash (kill -9, power loss).
-#   CLI: --sync-interval 5
+#
+# Periodic fdatasync interval in seconds.
+# Prevents event loss on crash (kill -9, power loss).
+# Recommended: 5. Default: disabled. CLI: --sync-interval 5
 # sync_interval_secs = 5
-#   Use local time instead of UTC in event timestamps. Default: false.
-#   CLI: --local-time
+#
+# Use local time instead of UTC in event timestamps.
+# Default: false (UTC). CLI: --local-time
 # local_time = false
 
 [socket]
-#   Unix socket for CLI-to-daemon communication.
-#   Config-only (no CLI flag).
+# Unix socket for CLI-to-daemon communication.
+# <UID> is replaced with the actual user ID at runtime.
+# Config-only (no CLI flag).
 path = "/tmp/fsmon-<UID>.sock"
 
+# ----------------------------------------------------------------
+# Cache settings. Uncomment to override defaults.
+# ----------------------------------------------------------------
 # [cache]
-#   Directory handle cache capacity (default: 100000).
-#   CLI: --cache-dir-cap 200000
+#
+# Directory handle cache capacity.
+# Each entry is ~150-200 bytes. Lower on memory-constrained systems.
+# Default: 100000. CLI: --cache-dir-cap N
 # dir_capacity = 100000
-#   Directory handle cache TTL in seconds (default: 3600).
-#   CLI: --cache-dir-ttl 7200
+#
+# Directory handle cache TTL in seconds.
+# Shorter = faster memory reclaim for volatile directories.
+# Default: 3600. CLI: --cache-dir-ttl SECS
 # dir_ttl_secs = 3600
-#   File size cache capacity (default: 10000).
-#   CLI: --cache-file-size 20000
+#
+# File size cache capacity.
+# Raise for high-file-volume workloads.
+# Default: 10000. CLI: --cache-file-size N
 # file_size_capacity = 10000
-#   Process cache TTL in seconds (default: 600).
-#   CLI: --cache-proc-ttl 1200
+#
+# Process cache TTL in seconds.
+# Applies to proc_cache and pid_tree.
+# Default: 600. CLI: --cache-proc-ttl SECS
 # proc_ttl_secs = 600
-#   Cache stats output interval in debug mode (default: 60).
-#   CLI: --cache-stats-interval 30
+#
+# Cache stats output interval in debug mode (seconds).
+# Set to 0 to disable. Default: 60. CLI: --cache-stats-interval SECS
 # stats_interval_secs = 60
-#   Event channel capacity. Default: unbounded.
-#   CLI: --channel-capacity 1024
+#
+# Event channel capacity between reader tasks and main loop.
+# Default: unbounded. CLI: --channel-capacity N
 # channel_capacity = 1024
-#   Subscribe event stream buffer capacity. Default: 4096.
-#   CLI: --subscribe-buf 8192
+#
+# Subscribe event stream buffer capacity.
+# Events buffered for slow subscribers before dropping oldest.
+# Default: 4096. CLI: --subscribe-buf N
 # subscribe_buf = 4096
 
+# ----------------------------------------------------------------
+# systemd watchdog integration.
+# Sends periodic WATCHDOG=1 to prevent systemd from restarting.
+# ----------------------------------------------------------------
 # [watchdog]
-#   systemd watchdog integration. Sends periodic WATCHDOG=1 notifications.
-#   systemd will restart the service if no notification is received.
 #
-#   Heartbeat interval in seconds. None or 0 = disabled.
+# Heartbeat interval in seconds.
+# Must be > 0 to enable watchdog. Default: disabled.
+# CLI: --watchdog-interval SECS
 # interval_secs = 15
 #
-#   Timeout multiplier. WatchdogSec = interval_secs × multiplier.
-#   Default: 2. Recommended: 2-4.
+# Timeout multiplier. WatchdogSec = interval_secs × multiplier.
+# MUST be > 1 (daemon refuses to start otherwise).
+# Recommended: 2-4. Higher = more tolerant of transient stalls.
+# Default: 2. CLI: --watchdog-multiplier N
 # multiplier = 2
 "#
         .to_string()
