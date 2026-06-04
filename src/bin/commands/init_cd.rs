@@ -62,9 +62,12 @@ fn install_service() -> Result<()> {
     // Load config to check watchdog settings
     let cfg = fsmon::config::Config::load()?;
     let watchdog_cfg = cfg.watchdog.as_ref();
-    let watchdog_sec = watchdog_cfg
-        .and_then(|w| w.watchdog_sec)
-        .or_else(|| watchdog_cfg.and_then(|w| w.interval_secs).map(|i| i * 2));
+    let watchdog_sec = watchdog_cfg.and_then(|w| {
+        w.interval_secs.map(|interval| {
+            let multiplier = w.multiplier.unwrap_or(2);
+            interval * multiplier
+        })
+    });
 
     let content = service_template(&binary, &home, watchdog_sec);
 

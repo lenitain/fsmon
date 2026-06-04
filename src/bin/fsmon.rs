@@ -93,20 +93,16 @@ pub enum Commands {
         #[arg(long, value_name = "SECS")]
         metrics_interval: Option<u64>,
 
-        /// systemd watchdog interval in seconds (default: disabled).
+        /// systemd watchdog heartbeat interval in seconds (default: disabled).
         /// When set to N > 0, sends periodic WATCHDOG=1 notifications to systemd.
-        /// systemd will restart the service if no notification is received within
-        /// WatchdogSec (configured in the service unit).
-        /// Recommended: half of WatchdogSec in the service unit.
         #[arg(long, value_name = "SECS")]
         watchdog_interval: Option<u64>,
 
-        /// systemd WatchdogSec timeout in seconds (default: auto = watchdog_interval * 2).
-        /// This is the timeout in the systemd service unit. If no watchdog
-        /// notification is received within this time, systemd restarts the service.
-        /// Must be > watchdog_interval.
-        #[arg(long, value_name = "SECS")]
-        watchdog_sec: Option<u64>,
+        /// Watchdog timeout multiplier (default: 2).
+        /// WatchdogSec = watchdog_interval × multiplier.
+        /// Recommended: 2-4. Higher = more tolerant of transient stalls.
+        #[arg(long, value_name = "N")]
+        watchdog_multiplier: Option<u64>,
     },
 
     /// Add a path to the monitoring list
