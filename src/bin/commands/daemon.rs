@@ -137,7 +137,10 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
     // Validate watchdog_multiplier
     // Exit code 2 = configuration error (systemd will not restart)
     if watchdog_multiplier <= 1 {
-        eprintln!("Error: watchdog multiplier must be > 1, got {}.", watchdog_multiplier);
+        eprintln!(
+            "Error: watchdog multiplier must be > 1, got {}.",
+            watchdog_multiplier
+        );
         std::process::exit(2);
     }
 
