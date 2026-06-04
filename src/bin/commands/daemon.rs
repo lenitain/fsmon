@@ -122,11 +122,9 @@ pub async fn cmd_daemon(
         .unwrap_or(2);
 
     // Validate watchdog_multiplier
-    if watchdog_interval.is_some() && watchdog_multiplier <= 1 {
+    if watchdog_multiplier <= 1 {
         bail!(
-            "watchdog multiplier must be > 1, got {}. \
-             WatchdogSec = interval × multiplier, must be > interval \
-             to allow heartbeat tolerance.",
+            "watchdog multiplier must be > 1, got {}.",
             watchdog_multiplier
         );
     }
