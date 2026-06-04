@@ -26,7 +26,7 @@ fn clock_ticks_per_sec() -> i64 {
 use moka::sync::Cache;
 use proc_connector::{NetlinkMessageIter, ProcConnector, ProcEvent};
 
-use crate::utils::uid_to_username;
+use crate::utils::{uid_to_username, read_proc_status_fields};
 
 // ---- ProcCache (existing) ----
 
@@ -306,7 +306,7 @@ pub fn handle_proc_events(cache: &ProcCache, tree: &PidTree, data: &[u8], n: usi
                     .unwrap_or_else(|| "unknown".to_string());
 
                 let (user, ppid, tgid) =
-                    read_proc_info(pid).unwrap_or_else(|| ("unknown".to_string(), 0, 0));
+                    read_proc_status_fields(pid).unwrap_or_else(|| ("unknown".to_string(), 0, 0));
 
                 cache.insert(
                     pid,
@@ -367,24 +367,6 @@ pub fn handle_proc_events(cache: &ProcCache, tree: &PidTree, data: &[u8], n: usi
         }
     }
     processed
-}
-
-fn read_proc_info(pid: u32) -> Option<(String, u32, u32)> {
-    let status = std::fs::read_to_string(format!("/proc/{}/status", pid)).ok()?;
-    let mut user = String::new();
-    let mut ppid = 0u32;
-    let mut tgid = 0u32;
-    for line in status.lines() {
-        if let Some(val) = line.strip_prefix("Uid:") {
-            let uid: u32 = val.split_whitespace().next()?.parse().ok()?;
-            user = uid_to_username(uid).unwrap_or_else(|| "unknown".to_string());
-        } else if let Some(val) = line.strip_prefix("PPid:") {
-            ppid = val.trim().parse().ok()?;
-        } else if let Some(val) = line.strip_prefix("Tgid:") {
-            tgid = val.trim().parse().ok()?;
-        }
-    }
-    Some((user, ppid, tgid))
 }
 
 #[cfg(test)]

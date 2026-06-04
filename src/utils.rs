@@ -5,7 +5,40 @@ use std::sync::OnceLock;
 pub use sizefilter::{SizeFilter, SizeOp, format_size, parse_size, parse_size_filter};
 pub use timefilter::{TimeFilter, TimeOp, format_datetime, parse_time, parse_time_filter};
 
+use chrono::{DateTime, Utc};
 use crate::proc_cache::{ProcCache, ProcInfo, read_proc_start_time_ns};
+
+/// Extension trait for TimeFilter to provide matching and classification methods.
+pub trait TimeFilterExt {
+    /// Check if a timestamp matches this filter.
+    fn matches(&self, time: DateTime<Utc>) -> bool;
+    
+    /// Check if this filter is a lower bound (Gt or Ge).
+    fn is_lower_bound(&self) -> bool;
+    
+    /// Check if this filter is an upper bound (Lt or Le).
+    fn is_upper_bound(&self) -> bool;
+}
+
+impl TimeFilterExt for TimeFilter {
+    fn matches(&self, time: DateTime<Utc>) -> bool {
+        match self.op {
+            TimeOp::Gt => time > self.time,
+            TimeOp::Ge => time >= self.time,
+            TimeOp::Lt => time < self.time,
+            TimeOp::Le => time <= self.time,
+            TimeOp::Eq => time == self.time,
+        }
+    }
+    
+    fn is_lower_bound(&self) -> bool {
+        matches!(self.op, TimeOp::Gt | TimeOp::Ge)
+    }
+    
+    fn is_upper_bound(&self) -> bool {
+        matches!(self.op, TimeOp::Lt | TimeOp::Le)
+    }
+}
 
 /// Threshold for disk space pre-check.
 /// `Percent(pct)` — warn when free space drops below `pct`% of total.
@@ -104,7 +137,7 @@ fn read_proc_comm(pid: u32) -> Option<String> {
 }
 
 /// Read user, ppid, tgid from /proc/{pid}/status in one pass.
-fn read_proc_status_fields(pid: u32) -> Option<(String, u32, u32)> {
+pub fn read_proc_status_fields(pid: u32) -> Option<(String, u32, u32)> {
     let status = std::fs::read_to_string(format!("/proc/{}/status", pid)).ok()?;
     let mut user = String::new();
     let mut ppid = 0u32;
