@@ -169,9 +169,6 @@ impl MetricsRegistry {
         self.subscribers.enabled
     }
 
-    /// Increment the events_total counter.
-
-
     // ── Gauge accessors ──
 
     pub fn set_subscribers(&self, n: i64) {

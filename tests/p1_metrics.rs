@@ -30,7 +30,16 @@ fn metrics_format_is_parseable() {
 fn metrics_line_no_missing_sections() {
     // Verify the format is consistent: all expected keys present
     let line = "[metrics] uptime=0s rss=1.0MB caches(d/p/t/f)=0/0/0/0 readers=0/0/0 subs=0 paths=0 pending=0 disk_buf=0";
-    let keys = ["uptime=", "rss=", "caches(d/p/t/f)=", "readers=", "subs=", "paths=", "pending=", "disk_buf="];
+    let keys = [
+        "uptime=",
+        "rss=",
+        "caches(d/p/t/f)=",
+        "readers=",
+        "subs=",
+        "paths=",
+        "pending=",
+        "disk_buf=",
+    ];
     for key in &keys {
         assert!(line.contains(key), "metrics line should contain '{}'", key);
     }
