@@ -24,7 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Resolved clippy warnings**: Removed redundant `let track_cmd = track_cmd;` redefinition in `socket_handler.rs`
 - **Improved error handling**: Replaced `unwrap()` with proper error propagation in `AsyncPolyfill::await_()`
 - **Code style**: Merged nested or-patterns in `fid_parser.rs` for better readability
 

@@ -355,7 +355,9 @@ pub fn chown_to_user(path: &Path) -> std::io::Result<bool> {
         Some(nix::unistd::Gid::from_raw(gid)),
     ) {
         Ok(()) => Ok(true),
-        Err(nix::errno::Errno::EPERM | nix::errno::Errno::EOPNOTSUPP | nix::errno::Errno::ENOSYS) => {
+        Err(
+            nix::errno::Errno::EPERM | nix::errno::Errno::EOPNOTSUPP | nix::errno::Errno::ENOSYS,
+        ) => {
             // FS doesn't support ownership (vfat/exfat/NFS no_root_squash)
             Ok(false)
         }
