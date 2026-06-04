@@ -11,6 +11,7 @@ pub mod proc_cache;
 pub mod query;
 pub mod socket;
 pub mod utils;
+pub mod watchdog;
 pub use utils::{
     SizeFilter, SizeOp, TimeFilter, TimeOp, format_datetime, parse_size, parse_size_filter,
     parse_time, parse_time_filter,

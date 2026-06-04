@@ -44,6 +44,7 @@ inotify = "0.11"
 toml = "1.1"
 sizefilter = "0.1"
 timefilter = "0.1"
+libsystemd = "0.7"
 
 [profile.release]
 opt-level = 3

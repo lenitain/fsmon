@@ -15,6 +15,7 @@ pub async fn cmd_daemon(
     sync_interval: Option<u64>,
     local_time: bool,
     metrics_interval: Option<u64>,
+    watchdog_interval: Option<u64>,
 ) -> Result<()> {
     // Acquire singleton lock first — only one daemon instance allowed
     let (uid, _gid) = fsmon::config::resolve_uid_gid();
@@ -109,11 +110,21 @@ pub async fn cmd_daemon(
         .filter(|&n| n > 0)
         .map(std::time::Duration::from_secs);
 
+    // Merge watchdog_interval: CLI > config > None (disabled)
+    let watchdog_interval = watchdog_interval
+        .or(cfg.watchdog.as_ref().and_then(|w| w.interval_secs))
+        .filter(|&n| n > 0);
+
     if debug {
         if let Some(d) = sync_interval {
             eprintln!("[DEBUG]   sync_interval:      {}s", d.as_secs());
         } else {
             eprintln!("[DEBUG]   sync_interval:      disabled");
+        }
+        if let Some(i) = watchdog_interval {
+            eprintln!("[DEBUG]   watchdog_interval:  {}s", i);
+        } else {
+            eprintln!("[DEBUG]   watchdog_interval:  disabled");
         }
     }
 
@@ -143,6 +154,7 @@ pub async fn cmd_daemon(
         Some(subscribe_buf),
         local_time || cfg.logging.local_time.unwrap_or(false),
         metrics_interval,
+        watchdog_interval,
     )?;
 
     if !store.is_empty() {

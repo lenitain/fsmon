@@ -32,6 +32,7 @@ use crate::proc_cache::{
 };
 use crate::socket::{SocketCmd, SocketError};
 use crate::utils::format_size;
+use crate::watchdog::Watchdog;
 use serde_json;
 
 // ---- Submodules ----
@@ -116,6 +117,8 @@ pub struct Monitor {
     /// paths, so that events during the recreate window aren't lost.
     /// Maps: target_pending_path → (parent_path, group_idx in fs_groups)
     pub(crate) temp_parent_marks: HashMap<PathBuf, (PathBuf, usize)>,
+    /// Watchdog manager for systemd integration.
+    pub(crate) watchdog: Option<Watchdog>,
 }
 
 impl Monitor {
@@ -133,6 +136,7 @@ impl Monitor {
         subscribe_buf: Option<usize>,
         local_time: bool,
         metrics_interval: Option<u64>,
+        watchdog_interval: Option<u64>,
     ) -> Result<Self> {
         let cache_config = cache_config.unwrap_or_default();
         let buffer_size = buffer_size.unwrap_or(cache_config.buffer_size);
@@ -231,6 +235,7 @@ impl Monitor {
             local_time,
             metrics: MetricsRegistry::new(metrics_interval.is_some()),
             temp_parent_marks: HashMap::new(),
+            watchdog: Some(Watchdog::new(watchdog_interval)),
         };
         if debug {
             eprintln!(
@@ -651,6 +656,14 @@ impl Monitor {
 
         // Notify systemd
         notify_sd_ready();
+
+        // Start watchdog if enabled
+        let _watchdog_handle = self.watchdog.as_ref().map(|wd| {
+            if self.debug {
+                eprintln!("[DEBUG] systemd watchdog enabled (interval: {}s)", wd.interval().as_secs());
+            }
+            wd.clone().start()
+        });
 
         let mut metrics_tick: Option<tokio::time::Interval> =
             self.metrics_interval.map(tokio::time::interval);

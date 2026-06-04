@@ -19,6 +19,7 @@ pub struct Config {
     pub logging: LoggingConfig,
     pub socket: SocketConfig,
     pub cache: Option<CacheConfig>,
+    pub watchdog: Option<WatchdogConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +87,16 @@ pub struct CacheConfig {
     /// dropping oldest for slow subscribers. Default: 4096.
     /// Raise for high-throughput workloads with many subscribers.
     pub subscribe_buf: Option<usize>,
+}
+
+/// Watchdog configuration for systemd integration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatchdogConfig {
+    /// Watchdog interval in seconds. None or 0 = disabled.
+    /// When enabled, sends periodic WATCHDOG=1 notifications to systemd.
+    /// systemd will restart the service if no notification is received
+    /// within WatchdogSec (configured in the service unit).
+    pub interval_secs: Option<u64>,
 }
 
 /// Resolved cache configuration with all defaults filled in.
@@ -329,6 +340,7 @@ impl Default for Config {
                 path: PathBuf::from("/tmp/fsmon-<UID>.sock"),
             },
             cache: None,
+            watchdog: None,
         }
     }
 }
@@ -479,6 +491,13 @@ path = "/tmp/fsmon-<UID>.sock"
 #   Subscribe event stream buffer capacity. Default: 4096.
 #   CLI: --subscribe-buf 8192
 # subscribe_buf = 4096
+
+# [watchdog]
+#   systemd watchdog integration. Sends periodic WATCHDOG=1 notifications.
+#   systemd will restart the service if no notification is received.
+#   Interval in seconds. None or 0 = disabled.
+#   Recommended: half of WatchdogSec in the service unit (default: 15).
+# interval_secs = 15
 "#
         .to_string()
     }

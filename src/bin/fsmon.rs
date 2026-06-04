@@ -92,6 +92,14 @@ pub enum Commands {
         /// cache sizes, and reader task health.
         #[arg(long, value_name = "SECS")]
         metrics_interval: Option<u64>,
+
+        /// systemd watchdog interval in seconds (default: disabled).
+        /// When set to N > 0, sends periodic WATCHDOG=1 notifications to systemd.
+        /// systemd will restart the service if no notification is received within
+        /// WatchdogSec (configured in the service unit).
+        /// Recommended: half of WatchdogSec in the service unit.
+        #[arg(long, value_name = "SECS")]
+        watchdog_interval: Option<u64>,
     },
 
     /// Add a path to the monitoring list
