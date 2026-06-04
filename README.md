@@ -5,8 +5,8 @@
 <h3 align="center">Real-time Linux filesystem change monitoring with process attribution.</h3>
 
 🌍 **选择语言 | Language**
-- [English](./README.md)
 - [简体中文](./README.zh-CN.md)
+- [English](./README.md)
 
 [![Crates.io](https://img.shields.io/crates/v/fsmon)](https://crates.io/crates/fsmon)
 

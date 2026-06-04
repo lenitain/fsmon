@@ -90,7 +90,9 @@ where
 {
     type Output = Result<()>;
     fn await_(self) -> Self::Output {
-        tokio::runtime::Runtime::new().unwrap().block_on(self)
+        tokio::runtime::Runtime::new()
+            .map_err(|e| anyhow::anyhow!(e))?
+            .block_on(self)
     }
 }
 

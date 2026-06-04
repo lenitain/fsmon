@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Subscribe to fsmon daemon event stream.
 #
-# Protocol: send TOML → receive TOML OK → stream JSONL events.
+# Protocol: send JSON → receive JSON OK → stream JSONL events.
 # Pipe to jq for filtering.
 set -euo pipefail
 
@@ -10,7 +10,7 @@ SOCKET="/tmp/fsmon-$(id -u).sock"
 
 # Method 1: if socat is available (recommended)
 if command -v socat &>/dev/null; then
-    echo 'cmd = "subscribe"' | socat - "UNIX-CONNECT:$SOCKET" | {
+    echo '{"Subscribe":{}}' | socat - "UNIX-CONNECT:$SOCKET" | {
         read -r ok_line
         echo "[subscribed] $ok_line" >&2
         jq --unbuffered '.'
@@ -23,7 +23,7 @@ python3 -c '
 import os, socket, sys
 sock = socket.socket(socket.AF_UNIX)
 sock.connect(sys.argv[1])
-sock.sendall(b"cmd = \"subscribe\"\n\n")
+sock.sendall(b"{\"Subscribe\":{}}\n")
 resp = b""
 while True:
     c = sock.recv(1)

@@ -60,14 +60,9 @@ pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
     for p in &paths {
         if socket::send_cmd(
             &socket_path,
-            &SocketCmd {
-                cmd: "remove".to_string(),
-                path: Some(p.clone()),
-                recursive: None,
-                types: None,
-                size: None,
+            &SocketCmd::Remove {
+                path: p.clone(),
                 track_cmd: Some(cmd_str.to_string()),
-                local_time: None,
             },
         )
         .is_err()

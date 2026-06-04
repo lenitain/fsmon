@@ -30,8 +30,9 @@ use crate::monitored::PathEntry;
 use crate::proc_cache::{
     self, PID_TREE_CAP, PROC_CACHE_CAP, PidTree, ProcCache, snapshot_process_tree,
 };
-use crate::socket::{SocketCmd, SocketResp};
+use crate::socket::{SocketCmd, SocketError};
 use crate::utils::format_size;
+use serde_json;
 
 // ---- Submodules ----
 
@@ -797,25 +798,25 @@ impl Monitor {
                 } => {
                     match accept_result {
                         Ok((writer, cmd_str)) => {
-                            let cmd = match toml::from_str::<SocketCmd>(&cmd_str) {
+                            let cmd = match serde_json::from_str::<SocketCmd>(&cmd_str) {
                                 Ok(c) => c,
                                 Err(e) => {
-                                    let resp = SocketResp::err(format!("Invalid command: {e}"));
-                                    if let Ok(toml_str) = toml::to_string(&resp) {
+                                    let resp: Result<crate::socket::SocketResponse, SocketError> = Err(SocketError::Transient(format!("Invalid command: {e}")));
+                                    if let Ok(json_str) = serde_json::to_string(&resp) {
                                         let _ = tokio_io_oneshot(
                                             writer,
-                                            &format!("{toml_str}\n"),
+                                            &format!("{json_str}\n"),
                                         ).await;
                                     }
                                     continue;
                                 }
                             };
-                            if cmd.cmd == "subscribe" {
+                            if let SocketCmd::Subscribe { .. } = cmd {
                                 self.handle_subscribe(writer, &cmd);
                             } else {
-                                let resp = self.handle_socket_cmd(cmd);
-                                if let Ok(toml_str) = toml::to_string(&resp) {
-                                    let resp_bytes = format!("{toml_str}\n");
+                                let result = self.handle_socket_cmd(cmd);
+                                if let Ok(json_str) = serde_json::to_string(&result) {
+                                    let resp_bytes = format!("{json_str}\n");
                                     let _ = tokio_io_oneshot(writer, &resp_bytes).await;
                                 }
                             }

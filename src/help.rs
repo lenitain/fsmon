@@ -30,7 +30,7 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::Root => "",
         HelpTopic::Daemon => {
-            r#"Run the fsmon daemon as a foreground process (requires sudo for fanotify).
+            r"Run the fsmon daemon as a foreground process (requires sudo for fanotify).
 
 The daemon monitors all configured paths via fanotify and logs events.
 Use 'fsmon add'/'fsmon remove' to manage paths dynamically without
@@ -58,10 +58,10 @@ For systemd integration:
 Config:           ~/.config/fsmon/fsmon.toml
 Monitored:        ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
 Log dir:          ~/.local/state/fsmon/ (configurable via [logging].path)
-Socket:           /tmp/fsmon-<UID>.sock (configurable via [socket].path)"#
+Socket:           /tmp/fsmon-<UID>.sock (configurable via [socket].path)"
         }
         HelpTopic::Init => {
-            r#"Create the config file only (chezmoi-style).
+            r"Create the config file only (chezmoi-style).
 
 Creates:
   ~/.config/fsmon/fsmon.toml  Reference config (defaults apply without modification)
@@ -74,17 +74,17 @@ With --service, also installs a systemd service for automatic crash recovery:
   sudo fsmon init --service
 
 Examples:
-  fsmon init"#
+  fsmon init"
         }
         HelpTopic::Cd => {
-            r#"Open a subshell in the monitored path or log directory.
+            r"Open a subshell in the monitored path or log directory.
 
 Spawns a new shell (using $SHELL, fallback /bin/sh).
 Type 'exit' to return to the original directory.
 
 Examples:
   fsmon cd -l                     Enter log directory in subshell
-  fsmon cd -m                     Enter monitored store directory"#
+  fsmon cd -m                     Enter monitored store directory"
         }
         HelpTopic::Add => {
             r#"Add a path or process to the monitoring list.

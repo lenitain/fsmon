@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Subscribe to fsmon event stream via Unix socket.
 
-Protocol: send TOML command → receive TOML OK → stream JSONL events.
+Protocol: send JSON command → receive JSON OK → stream JSONL events.
 Pipe output to jq for filtering.
 """
 
@@ -15,10 +15,10 @@ if not os.path.exists(SOCKET):
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 sock.connect(SOCKET)
 
-# Send subscribe command (TOML, blank line terminated)
-sock.sendall(b'cmd = "subscribe"\n\n')
+# Send subscribe command (JSON)
+sock.sendall(b'{"Subscribe":{}}\n')
 
-# Use a single buffered reader for both TOML response and JSONL stream.
+# Use a single buffered reader for both JSON response and JSONL stream.
 # (Avoid mixing sock.recv() and sock.makefile() — recv consumes bytes
 #  that makefile can't see, causing event loss.)
 f = sock.makefile("rb")
@@ -27,7 +27,7 @@ resp = f.readline()
 resp_str = resp.decode().strip()
 print(f"[subscribed] {resp_str}", file=sys.stderr)
 
-if not resp_str.startswith("ok = true"):
+if resp_str != '"Ok"':
     sys.exit(f"subscribe failed: {resp_str}")
 
 # Stream JSONL events to stdout
