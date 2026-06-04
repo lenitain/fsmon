@@ -20,7 +20,10 @@ fn lock_acquire_and_reacquire() {
         match fs::remove_file(&lock_path) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                eprintln!("SKIP: {} is owned by root, run 'sudo rm {}' first", lock_path, lock_path);
+                eprintln!(
+                    "SKIP: {} is owned by root, run 'sudo rm {}' first",
+                    lock_path, lock_path
+                );
                 return;
             }
             Err(e) => panic!("failed to remove {}: {}", lock_path, e),
