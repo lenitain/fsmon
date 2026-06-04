@@ -9,7 +9,7 @@ Minimal examples for fsmon's two JSONL data exits.
 
 ## ② Unix socket — zero-disk real-time stream
 
-Subscribe protocol: send TOML command → receive TOML OK → stream JSONL.
+Subscribe protocol: send JSON command → receive JSON OK → stream JSONL.
 
 - `examples/subscribe.sh` — socat + jq (python fallback)
 - `examples/subscribe.py` — socket programming in 25 lines
