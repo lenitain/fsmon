@@ -219,9 +219,12 @@ impl MetricsRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
+
+    // ── CounterVec: enabled ──────────────────────────────────────────────
 
     #[test]
-    fn test_counter_vec_inc() {
+    fn counter_vec_inc_and_gather() {
         let cv = CounterVec::new(true);
         cv.inc(&["CREATE", "nginx"]);
         cv.inc(&["CREATE", "nginx"]);
@@ -229,6 +232,8 @@ mod tests {
         cv.inc(&["CREATE", "nginx"]);
 
         let entries = cv.gather();
+        assert_eq!(entries.len(), 2);
+
         let find = |et: &str, cmd: &str| -> Option<u64> {
             entries
                 .iter()
@@ -241,8 +246,32 @@ mod tests {
     }
 
     #[test]
-    fn test_counter_vec_concurrent() {
-        use std::thread;
+    fn counter_vec_gather_empty() {
+        let cv = CounterVec::new(true);
+        assert!(cv.gather().is_empty());
+    }
+
+    #[test]
+    fn counter_vec_single_label() {
+        let cv = CounterVec::new(true);
+        cv.inc(&["total"]);
+        cv.inc(&["total"]);
+        let entries = cv.gather();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].1, 2);
+    }
+
+    #[test]
+    fn counter_vec_many_labels() {
+        let cv = CounterVec::new(true);
+        cv.inc(&["a", "b", "c", "d"]);
+        let entries = cv.gather();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, vec!["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn counter_vec_concurrent_inc() {
         let cv = CounterVec::new(true);
         let cv2 = cv.clone();
         let h = thread::spawn(move || {
@@ -263,17 +292,341 @@ mod tests {
     }
 
     #[test]
-    fn test_int_gauge() {
+    fn counter_vec_concurrent_different_labels() {
+        let cv = CounterVec::new(true);
+        let mut handles = vec![];
+        for i in 0..10 {
+            let cv = cv.clone();
+            handles.push(thread::spawn(move || {
+                for _ in 0..100 {
+                    cv.inc(&[&format!("type{}", i), "cmd"]);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        let entries = cv.gather();
+        assert_eq!(entries.len(), 10);
+        let total: u64 = entries.iter().map(|(_, v)| v).sum();
+        assert_eq!(total, 1000);
+    }
+
+    // ── CounterVec: disabled ─────────────────────────────────────────────
+
+    #[test]
+    fn counter_vec_disabled_inc_noop() {
+        let cv = CounterVec::new(false);
+        cv.inc(&["CREATE", "nginx"]);
+        cv.inc(&["CREATE", "nginx"]);
+        assert!(cv.gather().is_empty());
+    }
+
+    #[test]
+    fn counter_vec_disabled_gather_empty() {
+        let cv = CounterVec::new(false);
+        assert!(cv.gather().is_empty());
+    }
+
+    // ── IntGauge: enabled ────────────────────────────────────────────────
+
+    #[test]
+    fn int_gauge_default_zero() {
         let g = IntGauge::new(true);
         assert_eq!(g.get(), 0);
+    }
+
+    #[test]
+    fn int_gauge_set() {
+        let g = IntGauge::new(true);
+        g.set(42);
+        assert_eq!(g.get(), 42);
+        g.set(0);
+        assert_eq!(g.get(), 0);
+        g.set(-10);
+        assert_eq!(g.get(), -10);
+    }
+
+    #[test]
+    fn int_gauge_inc() {
+        let g = IntGauge::new(true);
         g.inc();
         assert_eq!(g.get(), 1);
         g.inc();
         g.inc();
         assert_eq!(g.get(), 3);
+    }
+
+    #[test]
+    fn int_gauge_dec() {
+        let g = IntGauge::new(true);
+        g.dec();
+        assert_eq!(g.get(), -1);
+        g.dec();
+        assert_eq!(g.get(), -2);
+    }
+
+    #[test]
+    fn int_gauge_inc_dec_combined() {
+        let g = IntGauge::new(true);
+        g.inc();
+        g.inc();
+        g.inc();
         g.dec();
         assert_eq!(g.get(), 2);
+        g.set(10);
+        g.dec();
+        assert_eq!(g.get(), 9);
+    }
+
+    #[test]
+    fn int_gauge_concurrent_inc() {
+        let g = IntGauge::new(true);
+        let g2 = g.clone();
+        let h = thread::spawn(move || {
+            for _ in 0..1000 {
+                g2.inc();
+            }
+        });
+        for _ in 0..1000 {
+            g.inc();
+        }
+        h.join().unwrap();
+        assert_eq!(g.get(), 2000);
+    }
+
+    #[test]
+    fn int_gauge_concurrent_mixed() {
+        let g = IntGauge::new(true);
+        let g2 = g.clone();
+        let g3 = g.clone();
+        let h1 = thread::spawn(move || {
+            for _ in 0..1000 {
+                g2.inc();
+            }
+        });
+        let h2 = thread::spawn(move || {
+            for _ in 0..500 {
+                g3.dec();
+            }
+        });
+        for _ in 0..1000 {
+            g.inc();
+        }
+        h1.join().unwrap();
+        h2.join().unwrap();
+        assert_eq!(g.get(), 1500);
+    }
+
+    // ── IntGauge: disabled ───────────────────────────────────────────────
+
+    #[test]
+    fn int_gauge_disabled_set_noop() {
+        let g = IntGauge::new(false);
         g.set(42);
-        assert_eq!(g.get(), 42);
+        assert_eq!(g.get(), 0);
+    }
+
+    #[test]
+    fn int_gauge_disabled_inc_noop() {
+        let g = IntGauge::new(false);
+        g.inc();
+        g.inc();
+        assert_eq!(g.get(), 0);
+    }
+
+    #[test]
+    fn int_gauge_disabled_dec_noop() {
+        let g = IntGauge::new(false);
+        g.dec();
+        g.dec();
+        assert_eq!(g.get(), 0);
+    }
+
+    #[test]
+    fn int_gauge_disabled_get_always_zero() {
+        let g = IntGauge::new(false);
+        assert_eq!(g.get(), 0);
+    }
+
+    // ── MetricsRegistry: enabled ─────────────────────────────────────────
+
+    #[test]
+    fn registry_enabled_is_enabled() {
+        let r = MetricsRegistry::new(true);
+        assert!(r.is_enabled());
+    }
+
+    #[test]
+    fn registry_disabled_is_not_enabled() {
+        let r = MetricsRegistry::new(false);
+        assert!(!r.is_enabled());
+    }
+
+    #[test]
+    fn registry_default_not_enabled() {
+        let r = MetricsRegistry::default();
+        assert!(!r.is_enabled());
+    }
+
+    #[test]
+    fn registry_subscribers() {
+        let r = MetricsRegistry::new(true);
+        assert_eq!(r.subscribers(), 0);
+        r.inc_subscribers();
+        assert_eq!(r.subscribers(), 1);
+        r.inc_subscribers();
+        assert_eq!(r.subscribers(), 2);
+        r.dec_subscribers();
+        assert_eq!(r.subscribers(), 1);
+        r.set_subscribers(10);
+        assert_eq!(r.subscribers(), 10);
+    }
+
+    #[test]
+    fn registry_monitored_paths() {
+        let r = MetricsRegistry::new(true);
+        assert_eq!(r.monitored_paths(), 0);
+        r.set_monitored_paths(5);
+        assert_eq!(r.monitored_paths(), 5);
+    }
+
+    #[test]
+    fn registry_reader_groups() {
+        let r = MetricsRegistry::new(true);
+        assert_eq!(r.reader_groups(), 0);
+        r.set_reader_groups(3);
+        assert_eq!(r.reader_groups(), 3);
+    }
+
+    #[test]
+    fn registry_pending_paths() {
+        let r = MetricsRegistry::new(true);
+        assert_eq!(r.pending_paths(), 0);
+        r.set_pending_paths(2);
+        assert_eq!(r.pending_paths(), 2);
+    }
+
+    #[test]
+    fn registry_disk_buffer_events() {
+        let r = MetricsRegistry::new(true);
+        assert_eq!(r.disk_buffer_events(), 0);
+        r.set_disk_buffer_events(100);
+        assert_eq!(r.disk_buffer_events(), 100);
+    }
+
+    #[test]
+    fn registry_all_gauges_independent() {
+        let r = MetricsRegistry::new(true);
+        r.set_subscribers(1);
+        r.set_monitored_paths(2);
+        r.set_reader_groups(3);
+        r.set_pending_paths(4);
+        r.set_disk_buffer_events(5);
+        assert_eq!(r.subscribers(), 1);
+        assert_eq!(r.monitored_paths(), 2);
+        assert_eq!(r.reader_groups(), 3);
+        assert_eq!(r.pending_paths(), 4);
+        assert_eq!(r.disk_buffer_events(), 5);
+    }
+
+    // ── MetricsRegistry: disabled ────────────────────────────────────────
+
+    #[test]
+    fn registry_disabled_subscribers_always_zero() {
+        let r = MetricsRegistry::new(false);
+        r.inc_subscribers();
+        r.set_subscribers(10);
+        assert_eq!(r.subscribers(), 0);
+    }
+
+    #[test]
+    fn registry_disabled_monitored_paths_always_zero() {
+        let r = MetricsRegistry::new(false);
+        r.set_monitored_paths(10);
+        assert_eq!(r.monitored_paths(), 0);
+    }
+
+    #[test]
+    fn registry_disabled_reader_groups_always_zero() {
+        let r = MetricsRegistry::new(false);
+        r.set_reader_groups(10);
+        assert_eq!(r.reader_groups(), 0);
+    }
+
+    #[test]
+    fn registry_disabled_pending_paths_always_zero() {
+        let r = MetricsRegistry::new(false);
+        r.set_pending_paths(10);
+        assert_eq!(r.pending_paths(), 0);
+    }
+
+    #[test]
+    fn registry_disabled_disk_buffer_always_zero() {
+        let r = MetricsRegistry::new(false);
+        r.set_disk_buffer_events(100);
+        assert_eq!(r.disk_buffer_events(), 0);
+    }
+
+    // ── MetricsRegistry: clone shares state ──────────────────────────────
+
+    #[test]
+    fn registry_clone_shares_state() {
+        let r1 = MetricsRegistry::new(true);
+        let r2 = r1.clone();
+        r1.set_subscribers(5);
+        assert_eq!(r2.subscribers(), 5);
+        r2.inc_subscribers();
+        assert_eq!(r1.subscribers(), 6);
+    }
+
+    #[test]
+    fn registry_clone_disabled_stays_disabled() {
+        let r1 = MetricsRegistry::new(false);
+        let r2 = r1.clone();
+        r1.set_monitored_paths(10);
+        assert_eq!(r2.monitored_paths(), 0);
+    }
+
+    // ── MetricsRegistry: concurrent ──────────────────────────────────────
+
+    #[test]
+    fn registry_concurrent_subscribers() {
+        let r = MetricsRegistry::new(true);
+        let r2 = r.clone();
+        let h = thread::spawn(move || {
+            for _ in 0..1000 {
+                r2.inc_subscribers();
+            }
+        });
+        for _ in 0..1000 {
+            r.inc_subscribers();
+        }
+        h.join().unwrap();
+        assert_eq!(r.subscribers(), 2000);
+    }
+
+    #[test]
+    fn registry_concurrent_mixed_gauges() {
+        let r = MetricsRegistry::new(true);
+        let r2 = r.clone();
+        let r3 = r.clone();
+        let h1 = thread::spawn(move || {
+            for _ in 0..1000 {
+                r2.inc_subscribers();
+            }
+        });
+        let h2 = thread::spawn(move || {
+            for _ in 0..500 {
+                r3.set_monitored_paths(r3.monitored_paths() + 1);
+            }
+        });
+        for _ in 0..1000 {
+            r.inc_subscribers();
+        }
+        h1.join().unwrap();
+        h2.join().unwrap();
+        assert_eq!(r.subscribers(), 2000);
+        assert_eq!(r.monitored_paths(), 500);
     }
 }
