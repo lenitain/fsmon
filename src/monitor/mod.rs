@@ -47,7 +47,7 @@ mod socket_handler;
 
 pub(crate) use channel::{EventReceiver, EventSender};
 pub(crate) use events::PendingEvent;
-pub(crate) use file_writer::{FileLogWriter, notify_sd_ready};
+pub(crate) use file_writer::FileLogWriter;
 pub(crate) use reader::ReaderState;
 #[cfg(test)]
 pub(crate) use socket_handler::chains_contain;
@@ -654,8 +654,10 @@ impl Monitor {
             tokio::sync::mpsc::unbounded_channel::<usize>().1,
         );
 
-        // Notify systemd
-        notify_sd_ready();
+        // Notify systemd: READY=1
+        if let Err(e) = crate::watchdog::sd_notify(libsystemd::daemon::NotifyState::Ready) {
+            eprintln!("[WARNING] systemd notify READY failed: {}", e);
+        }
 
         // Start watchdog if enabled
         let _watchdog_handle = self.watchdog.as_ref().map(|wd| {

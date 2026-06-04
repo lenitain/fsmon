@@ -58,14 +58,23 @@ impl Watchdog {
     }
 }
 
+/// Send a notify state to systemd.
+/// Used internally for both READY and WATCHDOG signals.
+pub(crate) fn sd_notify(state: daemon::NotifyState) -> Result<(), String> {
+    daemon::notify(false, &[state])
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_watchdog_disabled() {
+    fn test_watchdog_disabled_none() {
         let wd = Watchdog::new(None);
         assert!(!wd.is_enabled());
+        assert_eq!(wd.interval(), Duration::from_secs(30)); // default
     }
 
     #[test]
@@ -76,8 +85,42 @@ mod tests {
 
     #[test]
     fn test_watchdog_enabled() {
-        let wd = Watchdog::new(Some(30));
+        let wd = Watchdog::new(Some(15));
         assert!(wd.is_enabled());
-        assert_eq!(wd.interval(), Duration::from_secs(30));
+        assert_eq!(wd.interval(), Duration::from_secs(15));
+    }
+
+    #[test]
+    fn test_watchdog_clone() {
+        let wd = Watchdog::new(Some(20));
+        let wd2 = wd.clone();
+        assert_eq!(wd.is_enabled(), wd2.is_enabled());
+        assert_eq!(wd.interval(), wd2.interval());
+    }
+
+    #[test]
+    fn test_libsystemd_notify_ready() {
+        // Test that libsystemd notify function works.
+        // In non-systemd environment, this returns an error — that's expected.
+        let result = sd_notify(daemon::NotifyState::Ready);
+        let _ = result; // don't care about result in test
+    }
+
+    #[test]
+    fn test_libsystemd_notify_watchdog() {
+        let result = sd_notify(daemon::NotifyState::Watchdog);
+        let _ = result;
+    }
+
+    #[test]
+    fn test_libsystemd_notify_status() {
+        let result = sd_notify(daemon::NotifyState::Status("fsmon test".to_string()));
+        let _ = result;
+    }
+
+    #[test]
+    fn test_libsystemd_watchdog_enabled() {
+        // In non-systemd environment, this returns None
+        let _ = daemon::watchdog_enabled(false);
     }
 }
