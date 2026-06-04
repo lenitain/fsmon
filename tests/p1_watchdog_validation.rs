@@ -33,7 +33,9 @@ fn run_daemon(args: &[&str]) -> (bool, String, String) {
 /// Check if error is about validation (not daemon lock or permissions).
 fn is_validation_error(stderr: &str) -> bool {
     // Exclude daemon lock and permission errors
-    !stderr.contains("Another fsmon daemon") && !stderr.contains("Operation not permitted")
+    !stderr.contains("Another fsmon daemon")
+        && !stderr.contains("Operation not permitted")
+        && !stderr.contains("Permission denied")
 }
 
 // ---- multiplier validation tests ----

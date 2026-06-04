@@ -1,10 +1,5 @@
 use anyhow::{Context, Result, bail};
-use fanotify_fid::consts::{
-    FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_NONBLOCK, FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
-};
-use fanotify_fid::prelude::*;
 use std::collections::HashMap;
-use std::fs;
 use std::num::NonZeroUsize;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
@@ -19,21 +14,25 @@ use moka::sync::Cache;
 
 use crate::FileEvent;
 use crate::config::ResolvedCacheConfig;
-use crate::dir_cache;
-use crate::fid_parser::{
-    DIR_CACHE_CAP, FanFd, FsGroup, chown_to_user, mark_directory, mark_recursive,
-    path_mask_from_options,
-};
+use crate::fid_parser::FsGroup;
 use crate::filters::{self, PathOptions};
 use crate::metrics::MetricsRegistry;
 use crate::monitored::PathEntry;
-use crate::proc_cache::{
-    self, PID_TREE_CAP, PROC_CACHE_CAP, PidTree, ProcCache, snapshot_process_tree,
-};
-use crate::socket::{SocketCmd, SocketError};
-use crate::utils::format_size;
+use crate::proc_cache::{self, PidTree, ProcCache};
 use crate::watchdog::Watchdog;
 use serde_json;
+use slotmap::SlotMap;
+
+/// Key type for FsGroup SlotMap lookups.
+pub(crate) type FsGroupKey = slotmap::DefaultKey;
+
+// ---- Debug logging macro ----
+// Avoids format!() allocation when debug is disabled.
+macro_rules! debug_log {
+    ($debug:expr, $($arg:tt)*) => {
+        if $debug { eprintln!("[DEBUG] {}", format!($($arg)*)); }
+    };
+}
 
 // ---- Submodules ----
 
@@ -41,6 +40,7 @@ mod channel;
 mod events;
 mod file_writer;
 mod filtering;
+mod init;
 mod live_path;
 mod reader;
 mod socket_handler;
@@ -52,6 +52,25 @@ pub(crate) use reader::ReaderState;
 #[cfg(test)]
 pub(crate) use socket_handler::chains_contain;
 pub(crate) use socket_handler::tokio_io_oneshot;
+
+// ---- MonitorConfig ----
+
+/// Configuration for creating a Monitor instance.
+pub struct MonitorConfig {
+    pub paths_and_options: Vec<(PathBuf, PathOptions)>,
+    pub log_dir: Option<PathBuf>,
+    pub monitored_path: Option<PathBuf>,
+    pub buffer_size: Option<usize>,
+    pub socket_listener: Option<tokio::net::UnixListener>,
+    pub debug: bool,
+    pub cache_config: Option<ResolvedCacheConfig>,
+    pub disk_min_free: Option<String>,
+    pub sync_interval: Option<std::time::Duration>,
+    pub subscribe_buf: Option<usize>,
+    pub local_time: bool,
+    pub metrics_interval: Option<u64>,
+    pub watchdog_interval: Option<u64>,
+}
 
 // ---- Monitor ----
 
@@ -68,10 +87,11 @@ pub struct Monitor {
     pub(crate) file_size_cache: LruCache<PathBuf, u64>,
     pub(crate) buffer_size: usize,
     pub(crate) socket_listener: Option<tokio::net::UnixListener>,
-    /// One `FsGroup` per unique filesystem (fan_fd + mount_fd dedup'd)
-    pub(crate) fs_groups: Vec<FsGroup>,
-    /// Maps monitored path → index in fs_groups for fast lookup in remove_path
-    pub(crate) path_to_group: HashMap<PathBuf, usize>,
+    /// One `FsGroup` per unique filesystem (fan_fd + mount_fd dedup'd).
+    /// Uses SlotMap for stable keys — removal doesn't invalidate other keys.
+    pub(crate) fs_groups: SlotMap<FsGroupKey, FsGroup>,
+    /// Maps monitored path → key in fs_groups for fast lookup in remove_path
+    pub(crate) path_to_group: HashMap<PathBuf, FsGroupKey>,
     pub(crate) dir_cache: Cache<fanotify_fid::types::HandleKey, PathBuf>,
     /// Shared state for spawning reader tasks during live-add (set in run())
     pub(crate) event_tx: Option<EventSender>,
@@ -90,12 +110,12 @@ pub struct Monitor {
     pub(crate) cache_config: ResolvedCacheConfig,
     /// Enable debug output
     pub(crate) debug: bool,
-    /// Death notifications from reader tasks: each sends its group_idx on exit.
-    pub(crate) reader_death_rx: tokio::sync::mpsc::UnboundedReceiver<usize>,
+    /// Death notifications from reader tasks: each sends its group key on exit.
+    pub(crate) reader_death_rx: tokio::sync::mpsc::UnboundedReceiver<FsGroupKey>,
     /// Cloneable sender for reader tasks to signal death.
-    pub(crate) reader_death_tx: tokio::sync::mpsc::UnboundedSender<usize>,
-    /// Per-group restart tracking (index-aligned with fs_groups).
-    pub(crate) reader_states: Vec<Option<ReaderState>>,
+    pub(crate) reader_death_tx: tokio::sync::mpsc::UnboundedSender<FsGroupKey>,
+    /// Per-group restart tracking (keyed by FsGroupKey).
+    pub(crate) reader_states: HashMap<FsGroupKey, ReaderState>,
     /// Daemon start time, set in run() for uptime calculation.
     pub(crate) started_at: std::time::Instant,
     /// Raw disk-min-free threshold string (e.g. "10%", "5GB"). None = no check.
@@ -115,15 +135,15 @@ pub struct Monitor {
     pub(crate) metrics: MetricsRegistry,
     /// Temporary fanotify marks on parent directories of deleted-and-pending
     /// paths, so that events during the recreate window aren't lost.
-    /// Maps: target_pending_path → (parent_path, group_idx in fs_groups)
-    pub(crate) temp_parent_marks: HashMap<PathBuf, (PathBuf, usize)>,
+    /// Maps: target_pending_path → (parent_path, key in fs_groups)
+    pub(crate) temp_parent_marks: HashMap<PathBuf, (PathBuf, FsGroupKey)>,
     /// Watchdog manager for systemd integration.
     pub(crate) watchdog: Option<Watchdog>,
 }
 
 impl Monitor {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    fn new(
         paths_and_options: Vec<(PathBuf, PathOptions)>,
         log_dir: Option<PathBuf>,
         monitored_path: Option<PathBuf>,
@@ -188,7 +208,8 @@ impl Monitor {
             monitored_entries.push((resolved.clone(), opts.clone()));
         }
 
-        let (reader_death_tx, reader_death_rx) = tokio::sync::mpsc::unbounded_channel::<usize>();
+        let (reader_death_tx, reader_death_rx) =
+            tokio::sync::mpsc::unbounded_channel::<FsGroupKey>();
 
         let monitor = Self {
             paths,
@@ -210,7 +231,7 @@ impl Monitor {
             cache_config,
             socket_listener,
             debug,
-            fs_groups: Vec::new(),
+            fs_groups: SlotMap::new(),
             path_to_group: HashMap::new(),
             event_tx: None,
             shared_dir_cache: None,
@@ -220,7 +241,7 @@ impl Monitor {
             daemon_pid: std::process::id(),
             reader_death_rx,
             reader_death_tx,
-            reader_states: Vec::new(),
+            reader_states: HashMap::new(),
             started_at: std::time::Instant::now(),
             disk_min_free,
             sync_interval,
@@ -258,370 +279,44 @@ impl Monitor {
         Ok(monitor)
     }
 
+    /// Construct a Monitor from a MonitorConfig struct.
+    pub fn from_config(cfg: MonitorConfig) -> Result<Self> {
+        Self::new(
+            cfg.paths_and_options,
+            cfg.log_dir,
+            cfg.monitored_path,
+            cfg.buffer_size,
+            cfg.socket_listener,
+            cfg.debug,
+            cfg.cache_config,
+            cfg.disk_min_free,
+            cfg.sync_interval,
+            cfg.subscribe_buf,
+            cfg.local_time,
+            cfg.metrics_interval,
+            cfg.watchdog_interval,
+        )
+    }
+
     pub async fn run(&mut self) -> Result<()> {
-        if nix::unistd::geteuid().as_raw() != 0 {
-            let hint = if let Ok(exe) = std::env::current_exe() {
-                if exe.to_string_lossy().contains(".cargo/bin") {
-                    "\n\nHint: It looks like fsmon was installed via cargo install (~/.cargo/bin).\n\
-                    sudo cannot find it because ~/.cargo/bin is not in sudo's secure_path.\n\
-                    Please either:\n\
-                      1. Copy to system path: sudo cp ~/.cargo/bin/fsmon /usr/local/bin/\n\
-                      2. Or use full path: sudo ~/.cargo/bin/fsmon monitor ..."
-                } else {
-                    ""
-                }
-            } else {
-                ""
-            };
+        self.check_root()?;
 
-            bail!(
-                "fanotify requires root privileges, please run with sudo{}",
-                hint
-            );
-        }
+        // Initialize process cache and pid tree
+        let proc_conn = self.init_process_cache();
 
-        // Create proc connector (event-driven, non-blocking).
-        let proc_conn = proc_cache::try_create_connector();
-        let proc_params = proc_cache::CacheParams {
-            capacity: proc_cache::PROC_CACHE_CAP,
-            ttl_secs: self.cache_config.proc_ttl_secs,
-        };
-        let proc_cache = proc_cache::new_cache_with(proc_params);
-        self.proc_cache = Some(proc_cache.clone());
-        let tree_params = proc_cache::CacheParams {
-            capacity: proc_cache::PID_TREE_CAP,
-            ttl_secs: self.cache_config.proc_ttl_secs,
-        };
-        let pid_tree = proc_cache::new_pid_tree_with(tree_params);
-        snapshot_process_tree(&pid_tree, &proc_cache);
-        self.pid_tree = Some(pid_tree.clone());
+        // Initialize fanotify: masks, fs_groups, pending paths, inotify
+        let fan_group_count = self.init_fanotify()?;
 
-        // Compute combined event mask from ALL cmd groups (OR over all entries)
-        let combined_mask = self
-            .monitored_entries
-            .iter()
-            .map(|(_, opts)| path_mask_from_options(opts))
-            .fold(0, |a, b| a | b);
-        if self.debug {
-            eprintln!("[DEBUG] combined fanotify mask: {:#x}", combined_mask);
-        }
+        // Initialize logging: log dir, chown, disk check
+        self.init_logging()?;
 
-        // Collect canonical paths — non-existent paths go to pending_paths
-        let mut keep_paths: Vec<PathBuf> = Vec::new();
-        for path in std::mem::take(&mut self.paths) {
-            if path.exists() {
-                let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
-                self.canonical_paths.push(canonical);
-                keep_paths.push(path);
-            } else {
-                eprintln!(
-                    "[INFO] Path '{}' does not exist yet — will start monitoring when created.",
-                    path.display()
-                );
-                let pending_opts: Vec<PathOptions> = self
-                    .monitored_entries
-                    .iter()
-                    .filter(|(p, _)| p == &path)
-                    .map(|(_, o)| o.clone())
-                    .collect();
-                self.monitored_entries.retain(|(p, _)| p != &path);
-                for opts in pending_opts {
-                    self.pending_paths.push((
-                        path.clone(),
-                        PathEntry {
-                            path: path.clone(),
-                            recursive: Some(opts.recursive),
-                            types: opts
-                                .event_types
-                                .as_ref()
-                                .map(|v| v.iter().map(|t| t.to_string()).collect()),
-                            size: opts
-                                .size_filter
-                                .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
-                            cmd: opts.cmd,
-                        },
-                    ));
-                }
-            }
-        }
-        self.paths = keep_paths;
-        // Initialize inotify for watching parent dirs of pending paths
-        self.inotify = Some(inotify::Inotify::init().context("inotify_init")?);
-        self.setup_inotify_watches();
+        // Print startup status and metrics
+        self.print_startup_status(fan_group_count);
 
-        // Initialize per-filesystem fanotify fds.
-        let mut fs_group_devs: Vec<u64> = Vec::new();
-        for (i, canonical) in self.canonical_paths.iter().enumerate() {
-            let path_mask = combined_mask;
+        // Spawn reader tasks and file writer
+        let (mut event_rx, dir_cache) = self.spawn_tasks();
 
-            // Determine filesystem via st_dev
-            let dev_id = std::fs::metadata(canonical)
-                .ok()
-                .map(|m| std::os::linux::fs::MetadataExt::st_dev(&m))
-                .unwrap_or(0);
-
-            // Try to reuse an existing FsGroup on the same filesystem
-            let mut reuse_idx = None;
-            for (gi, gdev) in fs_group_devs.iter().enumerate() {
-                if *gdev == dev_id {
-                    reuse_idx = Some(gi);
-                    break;
-                }
-            }
-
-            if let Some(gi) = reuse_idx {
-                // Same filesystem — just add inode mark
-                let group = &self.fs_groups[gi];
-                let fan_fd = &group.fan_fd;
-                if let Err(e) = mark_directory(fan_fd, path_mask, canonical) {
-                    eprintln!(
-                        "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
-                        canonical.display(),
-                        fan_fd.as_raw_fd(),
-                        e
-                    );
-                } else {
-                    eprintln!(
-                        "[INFO] Added {} (inode mark) on existing fd {}",
-                        canonical.display(),
-                        fan_fd.as_raw_fd()
-                    );
-                    let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
-                    if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
-                        mark_recursive(fan_fd, path_mask, canonical);
-                    }
-                }
-                self.fs_groups[gi].ref_count += 1;
-                self.path_to_group.insert(self.paths[i].clone(), gi);
-                continue;
-            }
-
-            // New filesystem — create fanotify fd + mount fd
-            let new_fd = fanotify_init(
-                FAN_CLOEXEC
-                    | FAN_NONBLOCK
-                    | FAN_CLASS_NOTIF
-                    | FAN_REPORT_FID
-                    | FAN_REPORT_DIR_FID
-                    | FAN_REPORT_NAME,
-                (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
-            )
-            .with_context(|| {
-                format!(
-                    "fanotify_init failed for {} (requires Linux 5.9+ kernel)",
-                    canonical.display()
-                )
-            })?;
-
-            let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
-            let recursive = opts.is_some_and(|o| o.recursive) && canonical.is_dir();
-            if self
-                .add_mark_upward(&new_fd, path_mask, canonical, recursive)
-                .is_none()
-            {
-                drop(new_fd);
-                continue;
-            }
-
-            // Open directory fd for open_by_handle_at
-            let mount_fd = match Self::open_dir(canonical) {
-                Ok(fd) => fd,
-                Err(e) => {
-                    eprintln!(
-                        "[WARNING] Could not open directory fd for {}: {}",
-                        canonical.display(),
-                        e
-                    );
-                    drop(new_fd);
-                    continue;
-                }
-            };
-
-            let gi = self.fs_groups.len();
-            self.fs_groups.push(FsGroup {
-                dev_id,
-                fan_fd: new_fd,
-                mount_fd,
-                ref_count: 1,
-            });
-            fs_group_devs.push(dev_id);
-            self.path_to_group.insert(self.paths[i].clone(), gi);
-        }
-
-        let fan_group_count = self.fs_groups.len();
-
-        if fan_group_count > 0 {
-            // Pre-cache directory handles (shared across fds)
-            for (i, canonical) in self.canonical_paths.iter().enumerate() {
-                if canonical.is_dir() {
-                    let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
-                    let recursive = opts.is_some_and(|o| o.recursive);
-                    if recursive {
-                        dir_cache::cache_recursive(&self.dir_cache, canonical);
-                    } else {
-                        dir_cache::cache_dir_handle(&self.dir_cache, canonical);
-                    }
-                }
-            }
-        } else if self.pending_paths.is_empty() {
-            eprintln!(
-                "No entries configured. Waiting for socket commands (use 'fsmon add <cmd> --path <path>')."
-            );
-        }
-
-        // Ensure log directory exists and is owned by the original user
-        if let Some(ref dir) = self.log_dir {
-            fs::create_dir_all(dir)
-                .with_context(|| format!("Failed to create log directory {}", dir.display()))?;
-            match chown_to_user(dir) {
-                Ok(true) => {}
-                Ok(false) => {
-                    eprintln!(
-                        "[WARNING] Log directory '{}' is on a filesystem that does not support\n         ownership changes (e.g. vfat/exfat/NFS). Log files will remain owned by root.\n         Run 'sudo fsmon clean' if you cannot clean logs as a normal user.",
-                        dir.display()
-                    );
-                }
-                Err(e) => {
-                    eprintln!(
-                        "[WARNING] Could not chown log directory '{}': {}.\n         Log files may remain owned by root.",
-                        dir.display(),
-                        e
-                    );
-                }
-            }
-        }
-
-        // Startup disk space check
-        if let Some(ref threshold_str) = self.disk_min_free
-            && let Some(ref dir) = self.log_dir
-        {
-            Self::check_disk_space(dir, threshold_str);
-        }
-
-        println!("Starting file trace monitor...");
-
-        // Initialize metrics counters
-        self.metrics
-            .set_monitored_paths(self.monitored_entries.len() as i64);
-        self.metrics
-            .set_pending_paths(self.pending_paths.len() as i64);
-        self.metrics.set_reader_groups(self.fs_groups.len() as i64);
-
-        if !self.canonical_paths.is_empty() {
-            println!("Active paths ({} fd(s)):", fan_group_count);
-            for (path, opts) in &self.monitored_entries {
-                let label = match opts.cmd {
-                    Some(ref name) => format!("[{}]", name),
-                    None => "[global]".to_string(),
-                };
-                println!("  {} {}", label, path.display());
-            }
-        }
-        if self.debug {
-            eprintln!(
-                "[DEBUG] monitored_entries ({} entries, full list):",
-                self.monitored_entries.len()
-            );
-            for (i, (p, o)) in self.monitored_entries.iter().enumerate() {
-                let label = o.cmd.as_deref().unwrap_or("global");
-                eprintln!(
-                    "[DEBUG]   [{}] {} cmd={} recursive={}",
-                    i,
-                    p.display(),
-                    label,
-                    o.recursive
-                );
-            }
-        }
-        if self.debug {
-            eprintln!("[DEBUG] --- cache stats ---");
-            eprintln!(
-                "[DEBUG]   dir_cache:        {}/{} entries",
-                self.dir_cache.entry_count(),
-                DIR_CACHE_CAP
-            );
-            if let Some(ref c) = self.proc_cache {
-                eprintln!(
-                    "[DEBUG]   proc_cache:       {}/{} entries",
-                    c.entry_count(),
-                    PROC_CACHE_CAP
-                );
-            }
-            if let Some(ref t) = self.pid_tree {
-                eprintln!(
-                    "[DEBUG]   pid_tree:         {}/{} entries",
-                    t.entry_count(),
-                    PID_TREE_CAP
-                );
-            }
-            eprintln!(
-                "[DEBUG]   file_size_cache:  {}/{} entries",
-                self.file_size_cache.len(),
-                self.file_size_cache.cap()
-            );
-        }
-        if !self.pending_paths.is_empty() {
-            println!("Pending paths (waiting for directory creation):");
-            let mut by_cmd: std::collections::BTreeMap<Option<String>, Vec<&PathBuf>> =
-                std::collections::BTreeMap::new();
-            for (path, entry) in &self.pending_paths {
-                let cmd = entry.cmd.as_deref().and_then(|c| {
-                    if c == crate::monitored::CMD_GLOBAL {
-                        None
-                    } else {
-                        Some(c.to_string())
-                    }
-                });
-                by_cmd.entry(cmd).or_default().push(path);
-            }
-            for (cmd, paths) in &by_cmd {
-                let label = match cmd {
-                    Some(name) => format!("[{}]", name),
-                    None => "[global]".to_string(),
-                };
-                for path in paths {
-                    println!("  {} {}", label, path.display());
-                }
-            }
-        }
-
-        // Spawn one reader task per FsGroup
-        let (event_tx, mut event_rx) = match self.cache_config.channel_capacity {
-            Some(cap) if cap > 0 => {
-                let (tx, rx) = tokio::sync::mpsc::channel(cap);
-                (EventSender::Bounded(tx), EventReceiver::Bounded(rx))
-            }
-            _ => {
-                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-                (EventSender::Unbounded(tx), EventReceiver::Unbounded(rx))
-            }
-        };
-        let dir_cache = self.dir_cache.clone();
-
-        // Shared state for live-add
-        self.event_tx = Some(event_tx);
-        self.shared_dir_cache = Some(dir_cache.clone());
-
-        for gi in 0..self.fs_groups.len() {
-            self.spawn_fd_reader(gi);
-        }
-
-        // Spawn file writer task
-        let fw_log_dir = self.log_dir.clone();
-        let fw_sync = self.sync_interval;
-        let fw_debug = self.debug;
-        let fw_local = self.local_time;
-        let fw_metrics = self.metrics.clone();
-        if let Some(fw_log_dir) = fw_log_dir
-            && let Some(ref tx) = self.event_stream_tx
-        {
-            let fw_rx = tx.subscribe();
-            let fw = FileLogWriter::new(fw_log_dir, fw_sync, fw_debug, fw_local, fw_metrics);
-            tokio::spawn(async move {
-                fw.run(fw_rx).await;
-            });
-        }
-
+        // --- Signal handlers ---
         let mut sigterm =
             signal(SignalKind::terminate()).context("failed to create SIGTERM signal handler")?;
         let mut sighup =
@@ -632,7 +327,7 @@ impl Monitor {
         // Build inotify AsyncFd for tokio event loop
         let inotify_async = self.inotify.as_ref().map(|ino| {
             let fd = ino.as_raw_fd();
-            AsyncFd::new(FanFd(fd)).expect("inotify AsyncFd")
+            AsyncFd::new(crate::fid_parser::FanFd(fd)).expect("inotify AsyncFd")
         });
 
         // Build proc connector AsyncFd for tokio event loop
@@ -648,10 +343,14 @@ impl Monitor {
         });
         let mut proc_buf = vec![0u8; 65536];
 
+        // Clone caches for event loop use
+        let proc_cache = self.proc_cache.clone().unwrap();
+        let pid_tree = self.pid_tree.clone().unwrap();
+
         // Move the reader death receiver out of self so tokio::select! can use it.
         let mut reader_death_rx = std::mem::replace(
             &mut self.reader_death_rx,
-            tokio::sync::mpsc::unbounded_channel::<usize>().1,
+            tokio::sync::mpsc::unbounded_channel::<FsGroupKey>().1,
         );
 
         // Notify systemd: READY=1
@@ -659,80 +358,45 @@ impl Monitor {
             eprintln!("[WARNING] systemd notify READY failed: {}", e);
         }
 
-        // Start watchdog if enabled
-        let _watchdog_handle = self.watchdog.as_ref().map(|wd| {
-            if self.debug {
-                eprintln!(
-                    "[DEBUG] systemd watchdog enabled (interval: {}s)",
-                    wd.interval().as_secs()
-                );
-            }
-            wd.clone().start()
-        });
+        // Heartbeat tick: integrated into the main event loop (not a separate task).
+        // If the main loop blocks, this tick won't fire → systemd times out → restart.
+        let mut heartbeat_tick: Option<tokio::time::Interval> =
+            self.watchdog.as_ref().and_then(|wd| {
+                if !wd.is_enabled() {
+                    return None;
+                }
+                if self.debug {
+                    debug_log!(
+                        self.debug,
+                        "systemd watchdog enabled (interval: {}s, heartbeat in main loop)",
+                        wd.interval().as_secs()
+                    );
+                }
+                // First tick fires after one interval (not immediately).
+                let start = tokio::time::Instant::now() + wd.interval();
+                Some(tokio::time::interval_at(start, wd.interval()))
+            });
 
         let mut metrics_tick: Option<tokio::time::Interval> =
             self.metrics_interval.map(tokio::time::interval);
 
+        // --- Main event loop ---
         loop {
             tokio::select! {
                 Some(events) = event_rx.recv() => {
-                    // 1. Drain proc events before processing (existing behavior)
-                    if let Some(afd) = proc_afd.as_ref() {
-                        let conn = afd.get_ref();
-                        loop {
-                            match conn.recv_raw(&mut proc_buf) {
-                                Ok(n) => {
-                                    proc_cache::handle_proc_events(&proc_cache, &pid_tree, &proc_buf, n);
-                                }
-                                Err(proc_connector::Error::WouldBlock) => break,
-                                Err(proc_connector::Error::Interrupted) => continue,
-                                Err(e) => {
-                                    eprintln!("proc connector error: {e}");
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    // 2. Build events (deferred send)
+                    self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_cache, &pid_tree);
                     let mut pending = self.process_event_batch(&events);
-                    // 3. Second drain: catch Exec events that arrived between step 1 and step 2.
-                    //    This closes the race window for short-lived processes (rm, touch, etc.)
-                    //    whose Exec event may arrive after the fanotify event.
-                    if let Some(afd) = proc_afd.as_ref() {
-                        let conn = afd.get_ref();
-                        loop {
-                            match conn.recv_raw(&mut proc_buf) {
-                                Ok(n) => {
-                                    proc_cache::handle_proc_events(&proc_cache, &pid_tree, &proc_buf, n);
-                                }
-                                Err(proc_connector::Error::WouldBlock) => break,
-                                Err(proc_connector::Error::Interrupted) => continue,
-                                _ => break,
-                            }
-                        }
-                    }
-                    // 4. Patch any "unknown" fields using now-populated caches
+                    self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_cache, &pid_tree);
                     self.patch_pending_events(&mut pending);
-                    // 5. Send to broadcast
                     self.send_pending_events(&pending);
-                    // 6. Retry pending paths (inotify handles the primary
-                    //    delete→pending transition via DELETE_SELF).
                     self.check_pending();
                 }
                 _ = tokio::signal::ctrl_c() => {
-                    while let Ok(events) = event_rx.try_recv() {
-                        let mut pending = self.process_event_batch(&events);
-                        self.patch_pending_events(&mut pending);
-                        self.send_pending_events(&pending);
-                    }
+                    self.drain_remaining_events(&mut event_rx, &proc_afd, &mut proc_buf, &proc_cache, &pid_tree);
                     break;
                 }
                 _ = sigterm.recv() => {
-                    while let Ok(events) = event_rx.try_recv() {
-                        let mut pending = self.process_event_batch(&events);
-                        self.patch_pending_events(&mut pending);
-                        self.send_pending_events(&pending);
-                    }
+                    self.drain_remaining_events(&mut event_rx, &proc_afd, &mut proc_buf, &proc_cache, &pid_tree);
                     break;
                 }
                 _ = sighup.recv() => {
@@ -766,6 +430,22 @@ impl Monitor {
                     );
                 }
 
+                // Watchdog heartbeat: fires only when the main event loop is responsive.
+                // If any synchronous operation blocks the loop, this tick won't fire
+                // and systemd will restart the service after WatchdogSec timeout.
+                _ = async {
+                    match heartbeat_tick.as_mut() {
+                        Some(t) => t.tick().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    if let Some(ref wd) = self.watchdog
+                        && let Err(e) = wd.send_heartbeat()
+                    {
+                        eprintln!("[ERROR] systemd watchdog notify failed: {}", e);
+                    }
+                }
+
                 proc_readable = async {
                     match proc_afd.as_ref() {
                         Some(afd) => afd.readable().await,
@@ -795,9 +475,7 @@ impl Monitor {
                         None => std::future::pending().await,
                     }
                 } => {
-                    if self.debug {
-                        eprintln!("[DEBUG] inotify fd became readable");
-                    }
+                    debug_log!(self.debug, "inotify fd became readable");
                     if let Ok(mut guard) = inotify_ready {
                         self.handle_inotify_events();
                         guard.clear_ready();
@@ -805,54 +483,11 @@ impl Monitor {
                 }
                 accept_result = async {
                     match socket_listener.as_ref() {
-                        Some(listener) => {
-                            let (stream, _) = listener.accept().await?;
-                            let (reader, writer) = stream.into_split();
-                            let mut buf_reader = tokio::io::BufReader::new(reader);
-                            let mut message = String::new();
-                            loop {
-                                let mut line = String::new();
-                                let bytes = buf_reader.read_line(&mut line).await?;
-                                if bytes == 0 {
-                                    break;
-                                }
-                                if line.trim().is_empty() && !message.is_empty() {
-                                    break;
-                                }
-                                message.push_str(&line);
-                            }
-                            Ok::<(tokio::net::unix::OwnedWriteHalf, String), std::io::Error>((writer, message.trim().to_string()))
-                        }
+                        Some(listener) => Self::accept_socket_connection(listener).await,
                         None => std::future::pending().await,
                     }
                 } => {
-                    match accept_result {
-                        Ok((writer, cmd_str)) => {
-                            let cmd = match serde_json::from_str::<SocketCmd>(&cmd_str) {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    let resp: Result<crate::socket::SocketResponse, SocketError> = Err(SocketError::Transient(format!("Invalid command: {e}")));
-                                    if let Ok(json_str) = serde_json::to_string(&resp) {
-                                        let _ = tokio_io_oneshot(
-                                            writer,
-                                            &format!("{json_str}\n"),
-                                        ).await;
-                                    }
-                                    continue;
-                                }
-                            };
-                            if let SocketCmd::Subscribe { .. } = cmd {
-                                self.handle_subscribe(writer, &cmd);
-                            } else {
-                                let result = self.handle_socket_cmd(cmd);
-                                if let Ok(json_str) = serde_json::to_string(&result) {
-                                    let resp_bytes = format!("{json_str}\n");
-                                    let _ = tokio_io_oneshot(writer, &resp_bytes).await;
-                                }
-                            }
-                        }
-                        Err(e) => eprintln!("Socket accept error: {e}"),
-                    }
+                    self.handle_socket_accept(accept_result).await;
                 }
                 Some(dead_idx) = reader_death_rx.recv() => {
                     self.restart_reader(dead_idx);
@@ -872,16 +507,9 @@ impl Monitor {
         proc_cache: &crate::proc_cache::ProcCache,
         pid_tree: &crate::proc_cache::PidTree,
     ) -> MetricsReport {
-        let reader_groups_alive = self
-            .reader_states
-            .iter()
-            .filter(|s| s.as_ref().is_some_and(|s| !s.gave_up))
-            .count() as u64;
-        let reader_groups_gave_up = self
-            .reader_states
-            .iter()
-            .filter(|s| s.as_ref().is_some_and(|s| s.gave_up))
-            .count() as u64;
+        let reader_groups_alive = self.reader_states.values().filter(|s| !s.gave_up).count() as u64;
+        let reader_groups_gave_up =
+            self.reader_states.values().filter(|s| s.gave_up).count() as u64;
 
         MetricsReport {
             uptime_secs: self.started_at.elapsed().as_secs(),
@@ -906,6 +534,107 @@ impl Monitor {
             for pe in pending {
                 let _ = tx.send((pe.event.clone(), pe.cmd_name.clone()));
             }
+        }
+    }
+
+    /// Drain all pending proc connector events into the caches.
+    fn drain_proc_events(
+        &self,
+        proc_afd: &Option<AsyncFd<proc_connector::ProcConnector>>,
+        proc_buf: &mut [u8],
+        proc_cache: &ProcCache,
+        pid_tree: &PidTree,
+    ) {
+        if let Some(afd) = proc_afd.as_ref() {
+            let conn = afd.get_ref();
+            loop {
+                match conn.recv_raw(proc_buf) {
+                    Ok(n) => {
+                        proc_cache::handle_proc_events(proc_cache, pid_tree, proc_buf, n);
+                    }
+                    Err(proc_connector::Error::WouldBlock) => break,
+                    Err(proc_connector::Error::Interrupted) => continue,
+                    Err(e) => {
+                        eprintln!("proc connector error: {e}");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Drain remaining events from the channel and process them before shutdown.
+    fn drain_remaining_events(
+        &mut self,
+        event_rx: &mut EventReceiver,
+        proc_afd: &Option<AsyncFd<proc_connector::ProcConnector>>,
+        proc_buf: &mut [u8],
+        proc_cache: &ProcCache,
+        pid_tree: &PidTree,
+    ) {
+        while let Ok(events) = event_rx.try_recv() {
+            self.drain_proc_events(proc_afd, proc_buf, proc_cache, pid_tree);
+            let mut pending = self.process_event_batch(&events);
+            self.patch_pending_events(&mut pending);
+            self.send_pending_events(&pending);
+        }
+    }
+
+    /// Accept a socket connection and read the command message.
+    async fn accept_socket_connection(
+        listener: &tokio::net::UnixListener,
+    ) -> Result<(tokio::net::unix::OwnedWriteHalf, String), std::io::Error> {
+        let (stream, _) = listener.accept().await?;
+        let (reader, writer) = stream.into_split();
+        let mut buf_reader = tokio::io::BufReader::new(reader);
+        let mut message = String::new();
+        loop {
+            let mut line = String::new();
+            let bytes = buf_reader.read_line(&mut line).await?;
+            if bytes == 0 {
+                break;
+            }
+            if line.trim().is_empty() && !message.is_empty() {
+                break;
+            }
+            message.push_str(&line);
+        }
+        Ok((writer, message.trim().to_string()))
+    }
+
+    /// Handle an accepted socket connection: parse command and dispatch.
+    async fn handle_socket_accept(
+        &mut self,
+        result: Result<(tokio::net::unix::OwnedWriteHalf, String), std::io::Error>,
+    ) {
+        match result {
+            Ok((writer, cmd_str)) => {
+                let cmd = match serde_json::from_str::<crate::socket::SocketCmd>(&cmd_str) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let resp: Result<
+                            crate::socket::SocketResponse,
+                            crate::socket::SocketError,
+                        > = Err(crate::socket::SocketError::Transient(format!(
+                            "Invalid command: {e}"
+                        )));
+                        if let Ok(json_str) = serde_json::to_string(&resp) {
+                            let _ = tokio_io_oneshot(writer, &format!("{json_str}\n")).await;
+                        }
+                        return;
+                    }
+                };
+                if let crate::socket::SocketCmd::Subscribe { .. } = cmd {
+                    self.handle_subscribe(writer, &cmd);
+                } else {
+                    let result = self.handle_socket_cmd(cmd);
+                    if let Ok(json_str) = serde_json::to_string(&result) {
+                        let resp_bytes = format!("{json_str}\n");
+                        let _ = tokio_io_oneshot(writer, &resp_bytes).await;
+                    }
+                }
+            }
+            Err(e) => eprintln!("Socket accept error: {e}"),
         }
     }
 }
@@ -942,4 +671,5 @@ fn get_rss_mb() -> f64 {
 }
 
 #[cfg(test)]
+#[path = "tests.rs"]
 mod tests;

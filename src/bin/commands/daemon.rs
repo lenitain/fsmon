@@ -177,21 +177,21 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
             }
         );
     }
-    let mut monitor = match Monitor::new(
+    let mut monitor = match Monitor::from_config(fsmon::monitor::MonitorConfig {
         paths_and_options,
         log_dir,
-        Some(store_path),
-        Some(cache_cfg.buffer_size),
-        Some(socket_listener),
+        monitored_path: Some(store_path),
+        buffer_size: Some(cache_cfg.buffer_size),
+        socket_listener: Some(socket_listener),
         debug,
-        Some(cache_cfg),
+        cache_config: Some(cache_cfg),
         disk_min_free,
         sync_interval,
-        Some(subscribe_buf),
-        local_time || cfg.logging.local_time.unwrap_or(false),
+        subscribe_buf: Some(subscribe_buf),
+        local_time: local_time || cfg.logging.local_time.unwrap_or(false),
         metrics_interval,
         watchdog_interval,
-    ) {
+    }) {
         Ok(m) => m,
         Err(e) => {
             // Exit code 2 = configuration error (systemd will not restart)

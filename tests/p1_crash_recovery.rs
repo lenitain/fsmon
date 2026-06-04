@@ -12,25 +12,8 @@ use fsmon::parse_log_line_jsonl;
 #[test]
 fn lock_acquire_and_reacquire() {
     let uid = nix::unistd::geteuid().as_raw();
-    let lock_path = format!("/tmp/fsmon-{}.lock", uid);
 
-    // Clean up stale lock file from previous daemon runs (root-owned).
-    // If we can't remove it (Permission denied), skip this test.
-    if std::path::Path::new(&lock_path).exists() {
-        match fs::remove_file(&lock_path) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                eprintln!(
-                    "SKIP: {} is owned by root, run 'sudo rm {}' first",
-                    lock_path, lock_path
-                );
-                return;
-            }
-            Err(e) => panic!("failed to remove {}: {}", lock_path, e),
-        }
-    }
-
-    // Acquire lock
+    // Acquire lock (Unix socket binding)
     let lock = DaemonLock::acquire(uid).unwrap();
 
     // Double acquire must fail
@@ -46,8 +29,7 @@ fn lock_acquire_and_reacquire() {
 
     // Drop and re-acquire succeeds
     drop(lock);
-    let lock2 = DaemonLock::acquire(uid).unwrap();
-    drop(lock2);
+    let _lock2 = DaemonLock::acquire(uid).unwrap();
 }
 
 // ---- 原子写入 ----

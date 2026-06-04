@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.7] - 2026-06-05
+
+### Fixed
+
+- **Watchdog liveness detection**: Moved heartbeat from separate tokio task into the main event loop (`tokio::select!`). Previously the watchdog was a standalone task that kept sending `WATCHDOG=1` regardless of whether the main loop was responsive. If a synchronous operation blocked the main loop (e.g., `fs::metadata` on NFS), systemd couldn't detect the hang because heartbeats continued. Now the heartbeat is a tick branch in `select!` — if the main loop blocks, the tick can't be polled, heartbeats stop, and systemd restarts the service.
+  - `watchdog.rs`: Removed `start()` task spawn, added `send_heartbeat()` method
+  - `monitor/mod.rs`: Added `heartbeat_tick` branch to main `select!` loop
+
+### Changed
+
+- **Docs**: Updated README file trees to reflect current source structure (added `watchdog.rs`, `cli.rs`, `config/` directory, `monitor/init.rs`, `monitor/tests.rs`, `bin/tests/`)
+
+## [0.4.6] - 2026-06-05
+
+### Changed
+
+- **Code quality refactoring**: Comprehensive cleanup based on thermal-nuclear code review
+  - **TimeFilter methods**: Extracted `matches()`, `is_lower_bound()`, `is_upper_bound()` methods, eliminating 30+ lines of duplicated match blocks across `query.rs` and `clean.rs`
+  - **PID status reading dedup**: Removed duplicate `read_proc_info` in `proc_cache.rs`, now reuses `utils::read_proc_status_fields`
+  - **`query.rs` split**: 1078 lines → `query/core.rs` (300 lines) + `query/tests.rs` (750 lines)
+  - **`clean.rs` split**: 1014 lines → `clean/core.rs` (230 lines) + `clean/tests.rs` (780 lines)
+  - **PathEntry → PathOptions conversion unified**: Added `TryFrom<&PathEntry> for PathOptions` impl, eliminating 4 duplicated conversion blocks
+  - **chown logic unified**: `chown_to_original_user` now delegates to `chown_to_user` for single source of truth
+  - **Unused code cleanup**: Removed dead imports and unused skeleton modules
+- **Structural refactoring**: Major code quality improvements for maintainability and readability
+  - **Config module**: Moved from flat `config.rs` to `config/` directory structure for consistency
+  - **Monitor event loop**: Extracted `run()` into focused helper methods (`matches_process_tree()`, `handle_canonical_root_deleted()`, etc.)
+  - **FsGroup storage**: Replaced `Vec<FsGroup>` with `SlotMap` to eliminate index fixup logic and improve safety
+  - **Helper extraction**: Added `path_matches()` and `collect_matching_entries()` helpers to reduce code duplication
+  - **Debug logging**: Extracted `debug_log!` macro, replacing 31 debug sites with consistent macro calls
+  - **MonitorConfig**: Inlined `MonitorConfig` struct, made `new()` private for better encapsulation
+  - **Test organization**: Unified test structure by inlining all unit tests and moving CLI tests to `tests/cli_tests.rs`
+
+### Fixed
+
+- **Singleton lock**: Replaced `flock` with Unix socket for daemon singleton lock to improve reliability
+- **Lock file permissions**: Explicitly set `chmod 666` after creating lock file to prevent permission issues
+- **Watchdog tests**: Handled `Permission denied` in watchdog validation tests for proper CI execution
+- **Daemon restart**: Removed `chown` on daemon lock file to prevent permission denied errors on restart
+- **Clippy warnings**: Resolved `module_inception` warning to pass CI checks
+- **CLI socket communication (two bugs)**:
+  1. **Half-close**: `send_cmd()` did not shut down the write end after sending the command. The server's `read_line` loop blocked waiting for more data, never got EOF, and never sent a response. Added `writer.shutdown(Shutdown::Write)` after flush.
+  2. **Response parsing**: Client parsed response as `SocketResponse` but server sends `Result<SocketResponse, SocketError>` (with `Ok`/`Err` wrapper). Client now parses the `Result` type directly.
+  - Affected commands: `fsmon health`, `fsmon add` (daemon notification), `fsmon remove` (daemon notification), and all CLI→daemon socket commands.
+
+### Chore
+
+- **Cleanup**: Removed temporary plan/todo files and unused skeleton modules
+- **Formatting**: Applied `cargo fmt` across codebase for consistent style
+- **Dead code**: Removed unused `debug_log` method and macro
+
+### Test
+
+- All 387 existing tests pass with zero warnings
+- No behavioral changes — pure refactoring
+
 ## [0.4.5] - 2026-06-04
 
 ### Added

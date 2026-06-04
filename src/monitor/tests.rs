@@ -4,7 +4,12 @@ use crate::filters::PathOptions;
 use crate::monitored::PathEntry;
 use crate::utils::{SizeFilter, SizeOp};
 use crate::{EventType, FileEvent};
-use fanotify_fid::consts::{FAN_CREATE, FAN_DELETE, FAN_EVENT_ON_CHILD, FAN_MODIFY, FAN_ONDIR};
+use fanotify_fid::consts::{
+    FAN_CREATE, FAN_DELETE, FAN_EVENT_ON_CHILD, FAN_MARK_ADD, FAN_MARK_FILESYSTEM, FAN_MODIFY,
+    FAN_ONDIR,
+};
+use fanotify_fid::prelude::*;
+use fanotify_fid::{fanotify_init, fanotify_mark};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -448,7 +453,6 @@ fn test_fanotify_init() {
         (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
     );
     assert!(fd.is_ok(), "fanotify_init should succeed with root");
-    // OwnedFd is closed on drop — no explicit close needed
 }
 
 #[test]
@@ -517,19 +521,10 @@ fn test_fanotify_mark_nonexistent_path() {
 
 #[test]
 fn test_fanotify_mark_null_byte_path_no_root() {
-    // Verifies CString::new rejects interior null bytes BEFORE any
-    // syscall. This test does NOT require root — the error is raised
-    // in userspace during path-to-C-string conversion.
     let mask = FAN_CREATE | FAN_DELETE;
-
-    // Create a path with an interior null byte
     let bad_path = Path::new("/tmp/ok\0evil");
-
-    // fanotify_mark needs an fd, but the null byte rejection happens
-    // before any syscall. We just need a valid OwnedFd for the param.
     let dev_null = std::fs::File::open("/dev/null").expect("/dev/null must exist on Linux");
     let dummy_fd: std::os::fd::OwnedFd = dev_null.into();
-
     let result = fanotify_mark(&dummy_fd, FAN_MARK_ADD, mask, AT_FDCWD, bad_path);
 
     match result {
@@ -635,16 +630,12 @@ fn test_chains_contain_empty_chain() {
 
 #[test]
 fn test_chains_contain_partial_name_not_match() {
-    // "myapp-backup" should not match filter "myapp"
     assert!(!chains_contain("bash → myapp-backup → fsmon", "myapp"));
 }
 
 #[tokio::test]
 async fn test_subscriber_task_receives_events() {
     let (tx, mut rx) = tokio::sync::broadcast::channel(64);
-
-    // Verify broadcast channel works as the unified event stream:
-    // Multiple receivers get the same events.
     let mut rx2 = tx.subscribe();
     let event = FileEvent {
         time: chrono::Utc::now(),
@@ -668,17 +659,12 @@ async fn test_subscriber_task_receives_events() {
 
 #[tokio::test]
 async fn test_subscriber_task_filters_by_cmd() {
-    // Test the filter logic directly: chains_contain is already tested
-    // above. The subscriber_task's filter is just chains_contain check.
     assert!(chains_contain("bash → myapp", "myapp"));
     assert!(!chains_contain("bash → myapp", "other-app"));
 }
 
 #[tokio::test]
 async fn test_subscriber_task_filters_by_type() {
-    // Test the type filter logic: subscriber_task checks if event.event_type
-    // is in the allowed types list. We verify by checking a broadcast receiver
-    // with the same filter pattern.
     let allowed = [EventType::Delete, EventType::CloseWrite];
 
     let create_event = FileEvent {
@@ -712,10 +698,8 @@ async fn test_subscriber_task_filters_by_type() {
 
 #[tokio::test]
 async fn test_subscriber_task_handles_lagged() {
-    // Test the broadcast Lagged behavior directly
-    let (tx, mut rx) = tokio::sync::broadcast::channel(4); // small buffer
+    let (tx, mut rx) = tokio::sync::broadcast::channel(4);
 
-    // Fill the buffer and overflow to trigger Lagged
     for i in 0..10 {
         let _ = tx.send(FileEvent {
             time: chrono::Utc::now(),
@@ -731,14 +715,12 @@ async fn test_subscriber_task_handles_lagged() {
         });
     }
 
-    // The next recv should get Lagged
     let result = rx.recv().await;
     match result {
         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
             assert!(n > 0, "should lag with >0 dropped events, got {}", n);
         }
         Ok(event) => {
-            // Might get a recent event if buffer still has capacity
             assert!(
                 event.file_size >= 6,
                 "should be a recent event, got file_size={}",

@@ -51,9 +51,7 @@ impl Monitor {
 
             // Exclude fsmon daemon's own events to prevent self-triggering.
             if event_pid == self.daemon_pid {
-                if self.debug {
-                    eprintln!("[DEBUG] skip daemon self-event (pid={})", event_pid);
-                }
+                debug_log!(self.debug, "skip daemon self-event (pid={})", event_pid);
                 continue;
             }
 
@@ -76,37 +74,17 @@ impl Monitor {
                     }
                 }
             }
-            if self.debug && matching_entries.is_empty() {
-                eprintln!(
-                    "[DEBUG] event on {} (pid={}): no matching entries",
+            if matching_entries.is_empty() {
+                debug_log!(
+                    self.debug,
+                    "event on {} (pid={}): no matching entries",
                     raw.path.display(),
                     event_pid
                 );
             }
             for (_monitored_path, opts) in &matching_entries {
                 // Check process tree filter
-                let cmd_match = if let Some(ref cmd_name) = opts.cmd {
-                    let matched = self
-                        .pid_tree
-                        .as_ref()
-                        .map(|tree| crate::proc_cache::is_descendant(tree, event_pid, cmd_name))
-                        .unwrap_or(false);
-                    if self.debug {
-                        eprintln!(
-                            "[DEBUG]   check cmd=\"{}\" pid={}: {}",
-                            cmd_name,
-                            event_pid,
-                            if matched { "MATCH" } else { "SKIP" }
-                        );
-                    }
-                    matched
-                } else {
-                    if self.debug {
-                        eprintln!("[DEBUG]   check cmd=global pid={}: MATCH", event_pid);
-                    }
-                    true
-                };
-                if !cmd_match {
+                if !self.matches_process_tree(opts.cmd.as_deref(), event_pid) {
                     continue;
                 }
 
@@ -114,17 +92,16 @@ impl Monitor {
                     let event = self.build_file_event_for_opts(raw, *event_type, opts);
 
                     if !self.is_path_in_scope_for_opts(&event.path, opts) {
-                        if self.debug {
-                            eprintln!("[DEBUG]   -> out of scope for this opts");
-                        }
+                        debug_log!(self.debug, "  -> out of scope for this opts");
                         continue;
                     }
 
                     if self.should_output_for_opts(&event, opts) {
-                        if self.debug {
-                            let cmd = opts.cmd.as_deref().unwrap_or("global");
-                            eprintln!("[DEBUG]   -> {}_log.jsonl", cmd);
-                        }
+                        debug_log!(
+                            self.debug,
+                            "  -> {}_log.jsonl",
+                            opts.cmd.as_deref().unwrap_or("global")
+                        );
                         let cmd_name = opts
                             .cmd
                             .as_deref()
@@ -143,55 +120,80 @@ impl Monitor {
             // After recording DELETE_SELF events: remove the deleted
             // monitored directory from active monitoring and move to
             // pending_paths so it can be re-monitored if recreated.
-            if is_canonical_root {
-                if self.debug {
-                    eprintln!(
-                        "[DEBUG] monitored directory deleted: {}",
-                        raw.path.display()
-                    );
-                }
-                if let Some(ref path) = matched_path {
-                    // Preserve ALL cmd groups before removing
-                    let all_opts: Vec<PathOptions> =
-                        self.opts_for_path(path).into_iter().cloned().collect();
-                    if let Err(e) = self.remove_path(path, None) {
-                        eprintln!(
-                            "[WARNING] Failed to remove deleted path '{}': {e}",
-                            path.display()
-                        );
-                    }
-                    for opts in all_opts {
-                        self.pending_paths.push((
-                            path.clone(),
-                            PathEntry {
-                                path: path.clone(),
-                                recursive: Some(opts.recursive),
-                                types: opts
-                                    .event_types
-                                    .as_ref()
-                                    .map(|v| v.iter().map(|t| t.to_string()).collect()),
-                                size: opts
-                                    .size_filter
-                                    .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
-                                cmd: opts.cmd,
-                            },
-                        ));
-                    }
-                    self.setup_inotify_watches();
-                    // Add a temporary fanotify mark on the nearest existing
-                    // ancestor directory so that events during the recreate
-                    // window (mkdir, touch, etc.) are not lost.
-                    if self.add_temp_parent_mark(path) && self.debug {
-                        eprintln!("[DEBUG] temp parent mark active for {}", path.display());
-                    }
-                    // Path may have been recreated before the inotify watch was
-                    // established. Check immediately to avoid missing the window.
-                    self.check_pending();
-                }
+            if is_canonical_root && let Some(ref path) = matched_path {
+                self.handle_canonical_root_deleted(path);
             }
         }
 
         pending
+    }
+
+    /// Check if an event's PID matches the process tree filter for a cmd group.
+    /// Returns true if no filter is set or if the PID is a descendant of the target cmd.
+    fn matches_process_tree(&self, cmd: Option<&str>, event_pid: u32) -> bool {
+        match cmd {
+            Some(cmd_name) => {
+                let matched = self
+                    .pid_tree
+                    .as_ref()
+                    .map(|tree| crate::proc_cache::is_descendant(tree, event_pid, cmd_name))
+                    .unwrap_or(false);
+                debug_log!(
+                    self.debug,
+                    "  check cmd=\"{}\" pid={}: {}",
+                    cmd_name,
+                    event_pid,
+                    if matched { "MATCH" } else { "SKIP" }
+                );
+                matched
+            }
+            None => {
+                debug_log!(self.debug, "  check cmd=global pid={}: MATCH", event_pid);
+                true
+            }
+        }
+    }
+
+    /// Handle deletion of a monitored canonical root directory.
+    /// Moves the path to pending_paths for re-monitoring on recreation,
+    /// sets up inotify watches and temporary parent marks.
+    fn handle_canonical_root_deleted(&mut self, path: &Path) {
+        debug_log!(
+            self.debug,
+            "monitored directory deleted: {}",
+            path.display()
+        );
+        // Preserve ALL cmd groups before removing
+        let all_opts: Vec<PathOptions> = self.opts_for_path(path).into_iter().cloned().collect();
+        if let Err(e) = self.remove_path(path, None) {
+            eprintln!(
+                "[WARNING] Failed to remove deleted path '{}': {e}",
+                path.display()
+            );
+        }
+        for opts in all_opts {
+            self.pending_paths.push((
+                path.to_path_buf(),
+                PathEntry {
+                    path: path.to_path_buf(),
+                    recursive: Some(opts.recursive),
+                    types: opts
+                        .event_types
+                        .as_ref()
+                        .map(|v| v.iter().map(|t| t.to_string()).collect()),
+                    size: opts
+                        .size_filter
+                        .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
+                    cmd: opts.cmd,
+                },
+            ));
+        }
+        self.setup_inotify_watches();
+        if self.add_temp_parent_mark(path) {
+            debug_log!(self.debug, "temp parent mark active for {}", path.display());
+        }
+        // Path may have been recreated before the inotify watch was established.
+        self.check_pending();
     }
 
     /// Resolve "unknown" fields in pending events after proc events have been drained.
@@ -300,81 +302,69 @@ impl Monitor {
     /// marks during the delete-recreate window are matched.
     pub(crate) fn matching_opts_for_event(&self, event_path: &Path) -> Vec<(PathBuf, PathOptions)> {
         let mut result = Vec::new();
-        if self.debug {
-            eprintln!("[DEBUG] matching path={}", event_path.display());
-        }
-        for (monitored_path, opts) in &self.monitored_entries {
-            let matches = if opts.recursive {
-                event_path.starts_with(monitored_path)
-            } else {
-                event_path == monitored_path.as_path()
-                    || event_path.parent() == Some(monitored_path.as_path())
-            };
-            if self.debug {
-                let label = opts.cmd.as_deref().unwrap_or("global");
-                eprintln!(
-                    "[DEBUG]   check {} (cmd={}, recursive={}): {}",
-                    monitored_path.display(),
-                    label,
-                    opts.recursive,
-                    if matches { "MATCH" } else { "no" }
-                );
+        debug_log!(self.debug, "matching path={}", event_path.display());
+
+        // Match monitored_entries
+        Self::collect_matching_entries(
+            event_path,
+            &self.monitored_entries,
+            &mut result,
+            self.debug,
+        );
+
+        // Match pending_paths (convert PathEntry → PathOptions)
+        for (pending_path, entry) in &self.pending_paths {
+            if !Self::path_matches(event_path, pending_path, entry.recursive.unwrap_or(false)) {
+                continue;
             }
+            let opts = match PathOptions::try_from(entry) {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            debug_log!(
+                self.debug,
+                "  check {}/pending (cmd={}, recursive={}): MATCH",
+                pending_path.display(),
+                opts.cmd.as_deref().unwrap_or("global"),
+                opts.recursive
+            );
+            result.push((pending_path.clone(), opts));
+        }
+        if result.is_empty() {
+            debug_log!(self.debug, "  -> no matching entries");
+        }
+        result
+    }
+
+    /// Check if an event path matches a monitored path (recursive or direct).
+    fn path_matches(event_path: &Path, entry_path: &Path, recursive: bool) -> bool {
+        if recursive {
+            event_path.starts_with(entry_path)
+        } else {
+            event_path == entry_path || event_path.parent() == Some(entry_path)
+        }
+    }
+
+    /// Collect matching (path, opts) from a slice into result, with debug logging.
+    fn collect_matching_entries(
+        event_path: &Path,
+        entries: &[(PathBuf, PathOptions)],
+        result: &mut Vec<(PathBuf, PathOptions)>,
+        debug: bool,
+    ) {
+        for (monitored_path, opts) in entries {
+            let matches = Self::path_matches(event_path, monitored_path, opts.recursive);
+            debug_log!(
+                debug,
+                "  check {} (cmd={}, recursive={}): {}",
+                monitored_path.display(),
+                opts.cmd.as_deref().unwrap_or("global"),
+                opts.recursive,
+                if matches { "MATCH" } else { "no" }
+            );
             if matches {
                 result.push((monitored_path.clone(), opts.clone()));
             }
         }
-
-        // Also match against pending paths — these are monitored via temporary
-        // parent marks and need to generate events during the recreate window.
-        for (pending_path, entry) in &self.pending_paths {
-            let recursive = entry.recursive.unwrap_or(false);
-            let pending_matches = if recursive {
-                event_path.starts_with(pending_path)
-            } else {
-                event_path == pending_path.as_path()
-                    || event_path.parent() == Some(pending_path.as_path())
-            };
-            if !pending_matches {
-                continue;
-            }
-            // Convert PathEntry → PathOptions for matching/filtering
-            let types = entry.types.as_ref().map(|t| {
-                t.iter()
-                    .filter_map(|s| s.parse::<crate::EventType>().ok())
-                    .collect()
-            });
-            let size_filter = entry
-                .size
-                .as_ref()
-                .and_then(|s| crate::utils::parse_size_filter(s).ok());
-            let cmd = entry.cmd.as_deref().and_then(|c| {
-                if c == crate::monitored::CMD_GLOBAL {
-                    None
-                } else {
-                    Some(c.to_string())
-                }
-            });
-            let opts = PathOptions {
-                size_filter,
-                event_types: types,
-                recursive,
-                cmd,
-            };
-            if self.debug {
-                let label = opts.cmd.as_deref().unwrap_or("global");
-                eprintln!(
-                    "[DEBUG]   check {}/pending (cmd={}, recursive={}): MATCH",
-                    pending_path.display(),
-                    label,
-                    recursive
-                );
-            }
-            result.push((pending_path.clone(), opts));
-        }
-        if self.debug && result.is_empty() {
-            eprintln!("[DEBUG]   -> no matching entries");
-        }
-        result
     }
 }

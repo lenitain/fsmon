@@ -69,6 +69,41 @@ pub struct PathEntry {
 
 impl PathParams {}
 
+impl TryFrom<&PathEntry> for crate::filters::PathOptions {
+    type Error = anyhow::Error;
+
+    fn try_from(entry: &PathEntry) -> Result<Self> {
+        let size_filter = entry
+            .size
+            .as_ref()
+            .map(|s| crate::utils::parse_size_filter(s))
+            .transpose()?;
+        let event_types = entry
+            .types
+            .as_ref()
+            .map(|v| {
+                v.iter()
+                    .map(|s| s.parse::<crate::EventType>())
+                    .collect::<std::result::Result<Vec<_>, _>>()
+            })
+            .transpose()
+            .map_err(|e: String| anyhow::anyhow!(e))?;
+        let cmd = entry.cmd.as_deref().and_then(|c| {
+            if c == CMD_GLOBAL {
+                None
+            } else {
+                Some(c.to_string())
+            }
+        });
+        Ok(crate::filters::PathOptions {
+            size_filter,
+            event_types,
+            recursive: entry.recursive.unwrap_or(false),
+            cmd,
+        })
+    }
+}
+
 impl From<&PathEntry> for PathParams {
     fn from(e: &PathEntry) -> Self {
         PathParams {

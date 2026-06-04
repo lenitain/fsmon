@@ -19,9 +19,8 @@ impl Monitor {
         let readers: Vec<ReaderHealth> = self
             .fs_groups
             .iter()
-            .enumerate()
-            .map(|(i, g)| {
-                let state = self.reader_states.get(i).and_then(|s| s.as_ref());
+            .map(|(key, g)| {
+                let state = self.reader_states.get(&key);
                 let alive = state.is_some_and(|s| {
                     // Only dead when restart_reader explicitly gave up.
                     // gave_up is reset when spawn_fd_reader attempts recovery.
@@ -111,9 +110,7 @@ impl Monitor {
         &mut self,
         cmd: SocketCmd,
     ) -> Result<SocketResponse, SocketError> {
-        if self.debug {
-            eprintln!("[DEBUG] socket command: {:?}", cmd);
-        }
+        debug_log!(self.debug, "socket command: {:?}", cmd);
         match cmd {
             SocketCmd::Add {
                 path,
@@ -206,9 +203,7 @@ impl Monitor {
     }
 
     pub(crate) fn reload_config(&mut self) -> anyhow::Result<()> {
-        if self.debug {
-            eprintln!("[DEBUG] reload_config");
-        }
+        debug_log!(self.debug, "reload_config");
         let monitored_path = self
             .monitored_path
             .as_ref()
