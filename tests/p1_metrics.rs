@@ -14,19 +14,24 @@ fn rss_reading_is_reasonable() {
 #[test]
 fn metrics_format_is_parseable() {
     // Simulate a real metrics output line and verify it can be parsed
-    let line = "[metrics] uptime=3600s rss=4.2MB caches(d/p/t/f)=823/156/12/45 readers=3/2/1";
+    let line = "[metrics] uptime=3600s rss=4.2MB caches(d/p/t/f)=823/156/12/45 readers=3/2/1 subs=2 paths=5 pending=0 disk_buf=0 events=CREATE,nginx:100 MODIFY,global:50";
     assert!(line.starts_with("[metrics]"));
     assert!(line.contains("uptime="));
     assert!(line.contains("rss="));
     assert!(line.contains("caches(d/p/t/f)="));
     assert!(line.contains("readers="));
+    assert!(line.contains("subs="));
+    assert!(line.contains("paths="));
+    assert!(line.contains("pending="));
+    assert!(line.contains("disk_buf="));
+    assert!(line.contains("events="));
 }
 
 #[test]
 fn metrics_line_no_missing_sections() {
     // Verify the format is consistent: all expected keys present
-    let line = "[metrics] uptime=0s rss=1.0MB caches(d/p/t/f)=0/0/0/0 readers=0/0/0";
-    let keys = ["uptime=", "rss=", "caches(d/p/t/f)=", "readers="];
+    let line = "[metrics] uptime=0s rss=1.0MB caches(d/p/t/f)=0/0/0/0 readers=0/0/0 subs=0 paths=0 pending=0 disk_buf=0 events=";
+    let keys = ["uptime=", "rss=", "caches(d/p/t/f)=", "readers=", "subs=", "paths=", "pending=", "disk_buf=", "events="];
     for key in &keys {
         assert!(line.contains(key), "metrics line should contain '{}'", key);
     }
