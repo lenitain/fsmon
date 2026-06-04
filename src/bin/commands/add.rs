@@ -1,7 +1,7 @@
 use anyhow::{Result, bail};
 use fsmon::config::Config;
 use fsmon::monitored::{CMD_GLOBAL, Monitored, PathEntry};
-use fsmon::socket::{self, SocketCmd, SocketResponse, SocketError};
+use fsmon::socket::{self, SocketCmd, SocketError, SocketResponse};
 use std::path::PathBuf;
 
 use crate::AddArgs;

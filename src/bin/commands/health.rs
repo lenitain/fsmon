@@ -12,8 +12,8 @@ pub fn cmd_health() -> Result<()> {
 
     match socket::send_cmd(&socket_path, &cmd) {
         Ok(resp) => {
-            let output =
-                serde_json::to_string_pretty(&resp).unwrap_or_else(|_| "Failed to serialize response".to_string());
+            let output = serde_json::to_string_pretty(&resp)
+                .unwrap_or_else(|_| "Failed to serialize response".to_string());
             println!("{}", output);
         }
         Err(e) => {

@@ -79,8 +79,6 @@ impl std::fmt::Display for SocketError {
 
 impl std::error::Error for SocketError {}
 
-
-
 /// Health info for a single reader task (index-aligned with FsGroup).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReaderHealth {
@@ -111,8 +109,6 @@ pub enum ErrorKind {
     Transient,
 }
 
-
-
 /// Send a command to the running daemon and get the response.
 ///
 /// # Protocol semantics
@@ -134,10 +130,14 @@ pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResponse, S
     let json = serde_json::to_string(cmd).map_err(|e| SocketError::Transient(e.to_string()))?;
 
     {
-        let mut writer = stream.try_clone().map_err(|e| SocketError::Transient(e.to_string()))?;
+        let mut writer = stream
+            .try_clone()
+            .map_err(|e| SocketError::Transient(e.to_string()))?;
         // Write JSON command followed by newline as delimiter
         write!(writer, "{json}\n").map_err(|e| SocketError::Transient(e.to_string()))?;
-        writer.flush().map_err(|e| SocketError::Transient(e.to_string()))?;
+        writer
+            .flush()
+            .map_err(|e| SocketError::Transient(e.to_string()))?;
     }
 
     let mut reader = BufReader::new(stream);
@@ -145,7 +145,9 @@ pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResponse, S
     // Read until EOF — the server closes the connection after sending the response.
     loop {
         let mut line = String::new();
-        let bytes = reader.read_line(&mut line).map_err(|e| SocketError::Transient(e.to_string()))?;
+        let bytes = reader
+            .read_line(&mut line)
+            .map_err(|e| SocketError::Transient(e.to_string()))?;
         if bytes == 0 {
             break; // EOF
         }
@@ -153,11 +155,13 @@ pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResponse, S
     }
 
     if response.trim().is_empty() {
-        return Err(SocketError::Transient("Empty response from daemon".to_string()));
+        return Err(SocketError::Transient(
+            "Empty response from daemon".to_string(),
+        ));
     }
 
-    let resp: SocketResponse =
-        serde_json::from_str(response.trim()).map_err(|e| SocketError::Transient(format!("Failed to parse daemon response: {}", e)))?;
+    let resp: SocketResponse = serde_json::from_str(response.trim())
+        .map_err(|e| SocketError::Transient(format!("Failed to parse daemon response: {}", e)))?;
     Ok(resp)
 }
 
@@ -180,7 +184,11 @@ mod tests {
         let json_str = serde_json::to_string(&cmd).unwrap();
         let parsed: SocketCmd = serde_json::from_str(&json_str).unwrap();
         match parsed {
-            SocketCmd::Subscribe { types, track_cmd, local_time } => {
+            SocketCmd::Subscribe {
+                types,
+                track_cmd,
+                local_time,
+            } => {
                 assert!(types.is_none());
                 assert!(track_cmd.is_none());
                 assert!(local_time.is_none());
@@ -199,7 +207,11 @@ mod tests {
         let json_str = serde_json::to_string(&cmd).unwrap();
         let parsed: SocketCmd = serde_json::from_str(&json_str).unwrap();
         match parsed {
-            SocketCmd::Subscribe { types, track_cmd, local_time } => {
+            SocketCmd::Subscribe {
+                types,
+                track_cmd,
+                local_time,
+            } => {
                 assert_eq!(track_cmd, Some("nginx".into()));
                 assert_eq!(types, Some(vec!["CREATE".into(), "DELETE".into()]));
                 assert_eq!(local_time, Some(true));
@@ -220,7 +232,13 @@ mod tests {
         let json_str = serde_json::to_string(&cmd).unwrap();
         let parsed: SocketCmd = serde_json::from_str(&json_str).unwrap();
         match parsed {
-            SocketCmd::Add { path, recursive, types, size, track_cmd } => {
+            SocketCmd::Add {
+                path,
+                recursive,
+                types,
+                size,
+                track_cmd,
+            } => {
                 assert_eq!(path, PathBuf::from("/tmp/test"));
                 assert_eq!(recursive, Some(true));
                 assert_eq!(types, Some(vec!["MODIFY".into()]));
@@ -238,7 +256,7 @@ mod tests {
         assert!(json_str.contains("List"));
         let parsed: SocketCmd = serde_json::from_str(&json_str).unwrap();
         match parsed {
-            SocketCmd::List => {},
+            SocketCmd::List => {}
             _ => panic!("Expected List variant"),
         }
     }
@@ -249,7 +267,7 @@ mod tests {
         let json_str = serde_json::to_string(&cmd).unwrap();
         let parsed: SocketCmd = serde_json::from_str(&json_str).unwrap();
         match parsed {
-            SocketCmd::Health => {},
+            SocketCmd::Health => {}
             _ => panic!("Expected Health variant"),
         }
     }
@@ -296,7 +314,10 @@ mod tests {
         assert!(json_str.contains("Permanent"));
         assert!(json_str.contains("log directory conflict"));
         let parsed: SocketError = serde_json::from_str(&json_str).unwrap();
-        assert_eq!(parsed.to_string(), "Permanent error: log directory conflict");
+        assert_eq!(
+            parsed.to_string(),
+            "Permanent error: log directory conflict"
+        );
     }
 
     #[test]
@@ -383,7 +404,10 @@ mod tests {
         let non_empty: Vec<&str> = response.lines().filter(|l| !l.trim().is_empty()).collect();
         let resp_line = non_empty.first().expect("no JSON response");
         let resp: SocketResponse = serde_json::from_str(resp_line).unwrap();
-        assert!(matches!(resp, SocketResponse::Ok), "subscribe should return Ok");
+        assert!(
+            matches!(resp, SocketResponse::Ok),
+            "subscribe should return Ok"
+        );
 
         let event_line = non_empty.get(1).expect("no event line");
         assert!(
@@ -415,7 +439,9 @@ mod tests {
             let cmd_str = String::from_utf8_lossy(&buf[..n]);
             let cmd: SocketCmd = serde_json::from_str(cmd_str.trim()).unwrap();
             match cmd {
-                SocketCmd::Subscribe { types, track_cmd, .. } => {
+                SocketCmd::Subscribe {
+                    types, track_cmd, ..
+                } => {
                     assert_eq!(track_cmd, Some("nginx".into()));
                     assert_eq!(types, Some(vec!["CREATE".into(), "DELETE".into()]));
                 }

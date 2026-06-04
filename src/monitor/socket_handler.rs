@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::metrics::MetricsRegistry;
 use crate::monitored::{Monitored, PathEntry};
-use crate::socket::{SocketCmd, SocketResponse, SocketError};
+use crate::socket::{SocketCmd, SocketError, SocketResponse};
 use crate::utils::format_size;
 use crate::{EventType, FileEvent};
 use serde_json;
@@ -57,14 +57,18 @@ impl Monitor {
         cmd: &SocketCmd,
     ) {
         let (track_cmd, types, local_time) = match cmd {
-            SocketCmd::Subscribe { types, track_cmd, local_time } => {
-                (track_cmd.clone(), types.clone(), *local_time)
-            }
+            SocketCmd::Subscribe {
+                types,
+                track_cmd,
+                local_time,
+            } => (track_cmd.clone(), types.clone(), *local_time),
             _ => {
                 // This should never happen, but handle gracefully
                 tokio::spawn(write_resp_and_close(
                     writer,
-                    Err(SocketError::Permanent("Expected Subscribe command".to_string())),
+                    Err(SocketError::Permanent(
+                        "Expected Subscribe command".to_string(),
+                    )),
                 ));
                 return;
             }
@@ -104,15 +108,21 @@ impl Monitor {
         ));
     }
 
-    pub(crate) fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> Result<SocketResponse, SocketError> {
+    pub(crate) fn handle_socket_cmd(
+        &mut self,
+        cmd: SocketCmd,
+    ) -> Result<SocketResponse, SocketError> {
         if self.debug {
-            eprintln!(
-                "[DEBUG] socket command: {:?}",
-                cmd
-            );
+            eprintln!("[DEBUG] socket command: {:?}", cmd);
         }
         match cmd {
-            SocketCmd::Add { path, recursive, types, size, track_cmd } => {
+            SocketCmd::Add {
+                path,
+                recursive,
+                types,
+                size,
+                track_cmd,
+            } => {
                 let track_cmd = track_cmd.as_deref().and_then(|c| {
                     if c == crate::monitored::CMD_GLOBAL {
                         None
@@ -189,7 +199,10 @@ impl Monitor {
                 Ok(SocketResponse::Paths(paths))
             }
             SocketCmd::Health => Ok(self.health()),
-            _ => Err(SocketError::Transient(format!("Unknown command: {:?}", cmd))),
+            _ => Err(SocketError::Transient(format!(
+                "Unknown command: {:?}",
+                cmd
+            ))),
         }
     }
 
