@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use fsmon::DaemonLock;
 use fsmon::config::{CacheConfig, CliCacheOverride, Config};
 use fsmon::monitor::Monitor;
@@ -135,11 +135,10 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
         .unwrap_or(2);
 
     // Validate watchdog_multiplier
+    // Exit code 2 = configuration error (systemd will not restart)
     if watchdog_multiplier <= 1 {
-        bail!(
-            "watchdog multiplier must be > 1, got {}.",
-            watchdog_multiplier
-        );
+        eprintln!("Error: watchdog multiplier must be > 1, got {}.", watchdog_multiplier);
+        std::process::exit(2);
     }
 
     // Compute WatchdogSec = interval × multiplier
@@ -175,7 +174,7 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
             }
         );
     }
-    let mut monitor = Monitor::new(
+    let mut monitor = match Monitor::new(
         paths_and_options,
         log_dir,
         Some(store_path),
@@ -189,7 +188,14 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
         local_time || cfg.logging.local_time.unwrap_or(false),
         metrics_interval,
         watchdog_interval,
-    )?;
+    ) {
+        Ok(m) => m,
+        Err(e) => {
+            // Exit code 2 = configuration error (systemd will not restart)
+            eprintln!("Error: {}", e);
+            std::process::exit(2);
+        }
+    };
 
     if !store.is_empty() {
         for group in &store.groups {
