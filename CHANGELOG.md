@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 2026-06-04
+
+### Changed
+
+- **Socket protocol upgraded from TOML to JSON**: Type-safe Socket protocol refactoring for improved maintainability and type safety
+  - `SocketCmd` changed from string command to enum type, supporting `Add`, `Remove`, `Health`, `Subscribe`, `Metrics` commands
+  - `SocketResp` struct changed to `SocketResponse` enum, supporting `Ok`, `Health`, `Error`, `Events` response types
+  - `ErrorKind` changed to `SocketError` enum (Permanent/Transient)
+  - Protocol format upgraded from TOML to JSON, using `serde_json` instead of `toml`
+  - Updated daemon-side `socket_handler.rs` code to support new enum types
+  - Updated CLI-side `add.rs`, `remove.rs`, `health.rs` code to use new type-safe API
+  - Updated all test cases
+- **Extensions examples updated**: Adapted to new JSON protocol format
+  - `subscribe.sh`: Send JSON commands
+  - `subscribe.py`: Send JSON commands, updated response checks
+  - `README.md`: Updated protocol description
+
+### Fixed
+
+- **Resolved clippy warnings**: Removed redundant `let track_cmd = track_cmd;` redefinition in `socket_handler.rs`
+- **Improved error handling**: Replaced `unwrap()` with proper error propagation in `AsyncPolyfill::await_()`
+- **Code style**: Merged nested or-patterns in `fid_parser.rs` for better readability
+
+### Documentation
+
+- **Added protocol semantic documentation comments**: Improved Socket protocol documentation
+
 ## [0.4.3] - 2026-06-04
 
 ### Changed
