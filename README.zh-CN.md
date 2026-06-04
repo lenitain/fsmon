@@ -150,7 +150,7 @@ journalctl -u fsmon -f          # 日志
 | 基础设施配置 | `~/.config/fsmon/fsmon.toml` | TOML（由 `fsmon init` 创建，全部注释 — 不修改则使用默认值） |
 | 监控路径数据库 | `~/.local/share/fsmon/monitored.jsonl` | JSONL（按 cmd 分组，路径为 map 键） |
 | 事件日志 | `~/.local/state/fsmon/*_log.jsonl` | JSONL（每行一个事件） |
-| Unix 套接字 | `/tmp/fsmon-<UID>.sock` | TOML 协议 |
+| Unix 套接字 | `/tmp/fsmon-<UID>.sock` | JSON over stream |
 
 存储路径和日志目录均可通过 `~/.config/fsmon/fsmon.toml` 配置（参见 `[monitored].path` 和 `[logging].path`）。
 
@@ -201,6 +201,7 @@ sudo fsmon daemon --cache-dir-ttl 7200        # 目录句柄缓存 TTL（默认 
 sudo fsmon daemon --cache-file-size 20000     # 文件大小缓存容量（默认 10000）
 sudo fsmon daemon --cache-proc-ttl 1200       # 进程缓存 TTL（默认 600 秒）
 sudo fsmon daemon --cache-stats-interval 0    # 禁用缓存统计输出（默认 60 秒）
+sudo fsmon daemon --metrics-interval 30        # 每 30 秒向 stderr 打印状态报告
 ```
 
 **输出模式：**
@@ -380,7 +381,6 @@ dir_ttl_secs = 3600
 file_size_capacity = 10000
 proc_ttl_secs = 600
 stats_interval_secs = 60
-buffer_size = 32768             # Fanotify 读取缓冲区（仅 CLI：--buffer-size）
 channel_capacity = 1024         # 事件通道上限（不设置 = 无界）
 subscribe_buf = 4096            # Subscribe 消费者的广播缓冲
 ```
@@ -423,7 +423,7 @@ sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536
 }
 ```
 
-指定 `<CMD>` 且事件匹配时，额外包含 `chain`：
+`chain` 字段始终存在于输出中。当指定 `<CMD>` 且事件匹配时，包含进程祖先链。当使用 `_global` 或不进行进程追踪时，为空字符串。
 
 ```json
 {
@@ -442,7 +442,7 @@ sudo fsmon daemon --cache-dir-cap 200000 --buffer-size 65536
 Linux 内核 (fanotify FID 模式)
     → 原始  # FID 事件推入内核队列
     → tokio 异步读取事件
-    → fid_parser: 解析路径（两遍 +  # DashMap 目录句柄缓存）
+    → fid_parser: 解析路径（两遍 + moka 目录句柄缓存）
     → 过滤器: 事件类型、大小、递归/非递归范围
     → （如果指定了 <CMD>）进程树检查：
       → 不在追踪树中 → 立即丢弃（零 /proc 读取）
@@ -451,9 +451,9 @@ Linux 内核 (fanotify FID 模式)
 
 进程树（proc connector）:
     Fork/Exec/Exit 事件来自 netlink connector 套接字
-    →  # DashMap: pid → {cmd, ppid, user, tgid, start_time}
+    → moka 缓存: pid → {cmd, ppid, user, tgid, start_time}
     守护进程启动时：/proc/*/stat 快照种子填充已有进程
-    is_descendant(pid, "openclaw") → O(depth) DashMap 查找
+    is_descendant(pid, "openclaw") → O(depth) moka 缓存查找
 
 用户管道:
     tail -f *.jsonl | jq 'select(...)'
@@ -499,7 +499,7 @@ src/
 ├── dir_cache.rs        # 目录句柄缓存（moka + HandleKey）
 ├── proc_cache.rs       # Netlink proc connector：Fork/Exec/Exit、build_chain
 ├── query.rs            # 对已排序 JSONL 进行二分查找日志查询
-├── socket.rs           # Unix 套接字协议（TOML 请求/响应）
+├── socket.rs           # Unix 套接字协议（JSON 请求/响应）
 ├── utils.rs            # 大小/时间解析、进程信息查找、chown
 └── help.rs             # 帮助文本常量
 ```
