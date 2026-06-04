@@ -24,8 +24,10 @@ After=local-fs.target
 [Service]
 Type=notify
 ExecStart={binary} daemon
-Restart=always
+Restart=on-failure
 RestartSec=5
+StartLimitBurst=3
+StartLimitIntervalSec=60
 Environment=HOME={home}
 {watchdog_line}
 
