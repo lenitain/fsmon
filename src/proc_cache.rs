@@ -11,6 +11,18 @@
 
 use std::time::Duration;
 
+/// Clock ticks per second (POSIX `sysconf(_SC_CLK_TCK)`).
+///
+/// Returns 100 as fallback — the overwhelmingly common value on Linux.
+/// This is a system-wide constant that never changes at runtime.
+fn clock_ticks_per_sec() -> i64 {
+    // SAFETY: sysconf(_SC_CLK_TCK) is a pure read-only query with no
+    // side effects, cannot fail or cause UB. It returns a system-wide
+    // constant that is set at boot and never changes.
+    let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    if ticks <= 0 { 100 } else { ticks }
+}
+
 use moka::sync::Cache;
 use proc_connector::{NetlinkMessageIter, ProcConnector, ProcEvent};
 
@@ -177,11 +189,7 @@ pub fn read_proc_start_time_ns(pid: u32) -> u64 {
     if starttime_jiffies == 0 {
         return 0;
     }
-    let clk_tck = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
-    if clk_tck <= 0 {
-        return 0;
-    }
-    (starttime_jiffies as u128 * 1_000_000_000 / clk_tck as u128) as u64
+    (starttime_jiffies as u128 * 1_000_000_000 / clock_ticks_per_sec() as u128) as u64
 }
 
 /// Check if `pid` is a descendant of any process whose cmd == `target_cmd`.
