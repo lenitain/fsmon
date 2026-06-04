@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-06-04
+
+### Changed
+
+- **Upgraded `nix` from 0.29 to 0.31**: leverages new `OwnedFd`-returning API for
+  `dup()` and `open()`, eliminating 2 `unsafe` blocks in `reader.rs`.
+- **Wrapped `libc::sysconf` unsafe call** in `clock_ticks_per_sec()` helper
+  function (`proc_cache.rs`). Contains the only remaining `unsafe` in a single
+  well-documented function with a fallback default of 100 (common Linux value).
+
 ## [0.4.2] - 2026-06-01
 
 ### Added
