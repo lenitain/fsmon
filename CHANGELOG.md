@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **systemd watchdog integration**: Periodic `WATCHDOG=1` notifications to prevent systemd from restarting the service
+  - `--watchdog-interval SECS`: Heartbeat interval in seconds (default: disabled)
+  - `--watchdog-multiplier N`: Timeout multiplier (default: 2), `WatchdogSec = interval × multiplier`
+  - Config file: `[watchdog]` section with `interval_secs` and `multiplier`
+  - Daemon refuses to start if multiplier ≤ 1
+  - Tests: 16 unit tests, 10 integration tests
+- **Metrics improvements**: All counters now available in `--metrics-interval` output
+  - New counters: subscribers, monitored_paths, pending_paths, disk_buffer_events, events by type/cmd
+  - Zero overhead when `--metrics-interval` is disabled
+  - 37 metrics unit tests added
+
+### Changed
+
+- **Unified systemd integration**: All sd_notify calls now use libsystemd
+  - Removed hand-written socket code from `file_writer.rs`
+  - Use `libsystemd::daemon::notify` for READY=1 and WATCHDOG=1 signals
+  - Added `sd_notify` helper function for consistent usage
+- **Default config file**: All parameters documented with strict annotations
+  - Watchdog multiplier MUST be > 1 warning
+  - Clear section separators and CLI flag references for every option
+- **`DaemonOptions` struct**: Grouped daemon command parameters to satisfy clippy
+
+### Fixed
+
+- **Lock file ownership**: Lock file chowned to original user when daemon runs as root
+- **Doc-code mismatches**: Corrected README, README.zh-CN, and socket.rs documentation
+- **Clippy warnings**: Removed needless raw string hashes, fixed stale doc comments
+- **Multiplier validation**: Daemon rejects multiplier ≤ 1 regardless of watchdog enabled state
+
+### Test
+
+- Watchdog configuration tests (`p1_watchdog.rs`): 16 tests for config parsing, CLI args, merge priority
+- Watchdog validation tests (`p1_watchdog_validation.rs`): 10 tests for daemon startup rejection
+- Metrics unit tests: 37 tests covering all counter operations
+
 ## [0.4.4] - 2026-06-04
 
 ### Changed
