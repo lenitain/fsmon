@@ -1,4 +1,4 @@
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -29,27 +29,20 @@ impl Monitor {
     /// Duplicate a file descriptor, returning an owned fd.
     /// The returned `OwnedFd` has independent lifetime from the source
     /// and will be closed on drop.
-    pub(crate) fn dup_fd(fd: &impl AsRawFd) -> std::io::Result<OwnedFd> {
-        let new_raw = nix::unistd::dup(fd.as_raw_fd()).map_err(std::io::Error::other)?;
-        // SAFETY: nix::unistd::dup returned a new valid fd that we
-        // exclusively own. The kernel guarantees dup returns the
-        // lowest-numbered unused fd, not owned by any other OwnedFd.
-        Ok(unsafe { OwnedFd::from_raw_fd(new_raw) })
+    pub(crate) fn dup_fd(fd: &impl AsFd) -> std::io::Result<OwnedFd> {
+        nix::unistd::dup(fd).map_err(std::io::Error::other)
     }
 
     /// Open a directory and return an owned fd.
     /// The returned `OwnedFd` has the directory open and will be
     /// closed on drop.
     pub(crate) fn open_dir(path: &Path) -> std::io::Result<OwnedFd> {
-        let raw = nix::fcntl::open(
+        nix::fcntl::open(
             path,
             nix::fcntl::OFlag::O_DIRECTORY,
             nix::sys::stat::Mode::empty(),
         )
-        .map_err(std::io::Error::other)?;
-        // SAFETY: nix::fcntl::open succeeded, returning a new valid fd
-        // that we exclusively own. It will be closed when OwnedFd drops.
-        Ok(unsafe { OwnedFd::from_raw_fd(raw) })
+        .map_err(std::io::Error::other)
     }
 
     /// Spawn a tokio reader task for `group_idx` in `fs_groups`.
