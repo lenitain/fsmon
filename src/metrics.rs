@@ -1,9 +1,8 @@
 //! Lightweight metrics registry for fsmon daemon.
 //!
-//! Three-layer design:
-//!   Counter layer — generic atomic counters (zero deps)
-//!   Format layer  — format to Prometheus text (extensible)
-//!   Transport     — socket command + optional TCP HTTP
+//! Provides generic atomic counters (CounterVec) and gauges (IntGauge)
+//! for tracking runtime stats. Used by the periodic metrics report
+//! printed to stderr via --metrics-interval.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};

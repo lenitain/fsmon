@@ -483,7 +483,7 @@ src/
 ├── lib.rs              # FileEvent、EventType、DaemonLock（flock 单例）
 ├── clean.rs            # 日志清理引擎：时间/大小修剪、尾偏移
 ├── config.rs           # TOML 配置、SUDO_UID home 解析
-├── metrics.rs          # Prometheus 指标注册表（AtomicU64 计数器）
+├── metrics.rs          # 原子计数器/仪表，用于定期指标报告
 ├── monitored.rs        # 监控路径数据库（JSONL 存储）
 ├── monitor/            # Fanotify 事件循环（拆分为 9 个子模块）
 │   ├── mod.rs          #   Monitor 结构体 + 主事件循环

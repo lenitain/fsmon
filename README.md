@@ -490,7 +490,7 @@ src/
 ├── lib.rs              # FileEvent, EventType, DaemonLock (flock singleton)
 ├── clean.rs            # Log cleanup engine: time/size trim, tail-offset
 ├── config.rs           # TOML config, SUDO_UID home resolution
-├── metrics.rs          # Prometheus metrics registry (AtomicU64 counters)
+├── metrics.rs          # Atomic counters/gauges for periodic metrics report
 ├── monitored.rs        # Monitored paths database (JSONL store)
 ├── monitor/            # Fanotify event loop (split into 9 submodules)
 │   ├── mod.rs          #   Monitor struct + main event loop
