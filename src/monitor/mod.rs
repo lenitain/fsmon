@@ -494,6 +494,12 @@ impl Monitor {
         }
 
         println!("Starting file trace monitor...");
+
+        // Initialize metrics counters
+        self.metrics.set_monitored_paths(self.monitored_entries.len() as i64);
+        self.metrics.set_pending_paths(self.pending_paths.len() as i64);
+        self.metrics.set_reader_groups(self.fs_groups.len() as i64);
+
         if !self.canonical_paths.is_empty() {
             println!("Active paths ({} fd(s)):", fan_group_count);
             for (path, opts) in &self.monitored_entries {
