@@ -51,6 +51,10 @@ impl DaemonLock {
                 )
             })?;
 
+        // When running as root (daemon), chown lock file to original user
+        // so CLI commands (running as user) can read/manage it.
+        crate::config::chown_to_original_user(&path);
+
         match file.try_lock_exclusive() {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
