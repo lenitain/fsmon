@@ -4,15 +4,16 @@ use std::path::PathBuf;
 
 use crate::metrics::MetricsRegistry;
 use crate::monitored::{Monitored, PathEntry};
-use crate::socket::{SocketCmd, SocketResp};
+use crate::socket::{SocketCmd, SocketResponse, SocketError};
 use crate::utils::format_size;
 use crate::{EventType, FileEvent};
+use serde_json;
 
 use super::Monitor;
 
 impl Monitor {
     /// Build a health snapshot for the `health` socket command.
-    pub(crate) fn health(&self) -> SocketResp {
+    pub(crate) fn health(&self) -> SocketResponse {
         use crate::socket::{HealthInfo, ReaderHealth};
 
         let readers: Vec<ReaderHealth> = self
@@ -40,7 +41,7 @@ impl Monitor {
             None => "unbounded".to_string(),
         };
 
-        SocketResp::health(HealthInfo {
+        SocketResponse::Health(HealthInfo {
             uptime_secs: self.started_at.elapsed().as_secs(),
             channel_type,
             monitored_paths: self.monitored_entries.len(),
@@ -55,20 +56,34 @@ impl Monitor {
         writer: tokio::net::unix::OwnedWriteHalf,
         cmd: &SocketCmd,
     ) {
+        let (track_cmd, types, local_time) = match cmd {
+            SocketCmd::Subscribe { types, track_cmd, local_time } => {
+                (track_cmd.clone(), types.clone(), *local_time)
+            }
+            _ => {
+                // This should never happen, but handle gracefully
+                tokio::spawn(write_resp_and_close(
+                    writer,
+                    Err(SocketError::Permanent("Expected Subscribe command".to_string())),
+                ));
+                return;
+            }
+        };
+
         let tx = match self.event_stream_tx.as_ref() {
             Some(tx) => tx,
             None => {
                 tokio::spawn(write_resp_and_close(
                     writer,
-                    SocketResp::permanent_err("subscriptions disabled"),
+                    Err(SocketError::Permanent("subscriptions disabled".to_string())),
                 ));
                 return;
             }
         };
 
         let rx = tx.subscribe();
-        let track_cmd = cmd.track_cmd.clone();
-        let types: Option<Vec<EventType>> = cmd.types.as_ref().map(|v| {
+        let track_cmd = track_cmd;
+        let types: Option<Vec<EventType>> = types.as_ref().map(|v| {
             v.iter()
                 .filter_map(|t| t.parse::<EventType>().ok())
                 .collect()
@@ -76,7 +91,7 @@ impl Monitor {
 
         // Subscriber can override local_time per-connection.
         // If not specified, use daemon default.
-        let sub_local = cmd.local_time.unwrap_or(self.local_time);
+        let sub_local = local_time.unwrap_or(self.local_time);
         let sub_metrics = self.metrics.clone();
         self.metrics.inc_subscribers();
         tokio::spawn(subscriber_task(
@@ -89,23 +104,16 @@ impl Monitor {
         ));
     }
 
-    pub(crate) fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> SocketResp {
+    pub(crate) fn handle_socket_cmd(&mut self, cmd: SocketCmd) -> Result<SocketResponse, SocketError> {
         if self.debug {
             eprintln!(
-                "[DEBUG] socket command: {} path={:?} track_cmd={:?}",
-                cmd.cmd, cmd.path, cmd.track_cmd
+                "[DEBUG] socket command: {:?}",
+                cmd
             );
         }
-        match cmd.cmd.as_str() {
-            "add" => {
-                let raw = match &cmd.path {
-                    Some(p) => p.clone(),
-                    None => {
-                        return SocketResp::err("Missing 'path' field");
-                    }
-                };
-                let path = raw;
-                let track_cmd = cmd.track_cmd.as_deref().and_then(|c| {
+        match cmd {
+            SocketCmd::Add { path, recursive, types, size, track_cmd } => {
+                let track_cmd = track_cmd.as_deref().and_then(|c| {
                     if c == crate::monitored::CMD_GLOBAL {
                         None
                     } else {
@@ -123,45 +131,39 @@ impl Monitor {
                 // Rebuild fanotify mask: last seen mask stays via path_options
                 let entry = PathEntry {
                     path,
-                    recursive: cmd.recursive,
-                    types: cmd.types.clone(),
-                    size: cmd.size.clone(),
-                    cmd: cmd.track_cmd.clone(),
+                    recursive,
+                    types: types.clone(),
+                    size: size.clone(),
+                    cmd: track_cmd.clone(),
                 };
                 match self.add_path(&entry) {
-                    Ok(()) => SocketResp::ok(),
+                    Ok(()) => Ok(SocketResponse::Ok),
                     Err(e) => {
                         // Classify: recursion/conflict errors are permanent (will fail after restart)
                         let msg = e.to_string();
                         if msg.contains("infinite recursion") || msg.contains("log directory") {
-                            SocketResp::permanent_err(msg)
+                            Err(SocketError::Permanent(msg))
                         } else {
-                            SocketResp::err(msg)
+                            Err(SocketError::Transient(msg))
                         }
                     }
                 }
             }
-            "remove" => {
-                let path = match &cmd.path {
-                    Some(p) => p.clone(),
-                    None => {
-                        return SocketResp::err("Missing 'path' field");
-                    }
-                };
-                match self.remove_path(&path, cmd.track_cmd.as_deref()) {
-                    Ok(()) => SocketResp::ok(),
+            SocketCmd::Remove { path, track_cmd } => {
+                match self.remove_path(&path, track_cmd.as_deref()) {
+                    Ok(()) => Ok(SocketResponse::Ok),
                     Err(e) => {
                         // Classify: recursion/conflict errors are permanent (will fail after restart)
                         let msg = e.to_string();
                         if msg.contains("infinite recursion") || msg.contains("log directory") {
-                            SocketResp::permanent_err(msg)
+                            Err(SocketError::Permanent(msg))
                         } else {
-                            SocketResp::err(msg)
+                            Err(SocketError::Transient(msg))
                         }
                     }
                 }
             }
-            "list" => {
+            SocketCmd::List => {
                 let paths: Vec<PathEntry> = self
                     .monitored_entries
                     .iter()
@@ -184,16 +186,10 @@ impl Monitor {
                         }
                     })
                     .collect();
-                SocketResp {
-                    ok: true,
-                    error: None,
-                    error_kind: None,
-                    paths: Some(paths),
-                    health: None,
-                }
+                Ok(SocketResponse::Paths(paths))
             }
-            "health" => self.health(),
-            _ => SocketResp::err(format!("Unknown command: {}", cmd.cmd)),
+            SocketCmd::Health => Ok(self.health()),
+            _ => Err(SocketError::Transient(format!("Unknown command: {:?}", cmd))),
         }
     }
 
@@ -229,15 +225,17 @@ impl Monitor {
     }
 }
 
-/// Write a TOML response and close the socket (one-shot command helper).
+/// Write a JSON response and close the socket (one-shot command helper).
 pub(crate) async fn write_resp_and_close(
     mut writer: tokio::net::unix::OwnedWriteHalf,
-    resp: SocketResp,
+    result: Result<SocketResponse, SocketError>,
 ) {
     use tokio::io::AsyncWriteExt;
-    if let Ok(toml_str) = toml::to_string(&resp) {
-        let _ = writer.write_all(format!("{toml_str}\n").as_bytes()).await;
-    }
+    let json_str = match result {
+        Ok(resp) => serde_json::to_string(&resp).unwrap_or_default(),
+        Err(e) => serde_json::to_string(&e).unwrap_or_default(),
+    };
+    let _ = writer.write_all(format!("{json_str}\n").as_bytes()).await;
 }
 
 /// Write bytes and close (for non-subscribe socket commands).
@@ -262,9 +260,9 @@ pub(crate) async fn subscriber_task(
 ) {
     use tokio::io::AsyncWriteExt;
 
-    // 1. Send initial ok response (TOML)
-    let resp = SocketResp::ok();
-    let resp_str = toml::to_string(&resp).unwrap_or_default();
+    // 1. Send initial ok response (JSON)
+    let resp = SocketResponse::Ok;
+    let resp_str = serde_json::to_string(&resp).unwrap_or_default();
     if writer
         .write_all(format!("{resp_str}\n").as_bytes())
         .await

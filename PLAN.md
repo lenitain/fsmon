@@ -183,7 +183,7 @@ pub enum TransientError {
 }
 ```
 
-## 6. 版本兼容性策略
+## 6. 版本兼容性策略(这个暂时不考虑)
 
 ### niri 的做法
 ```rust

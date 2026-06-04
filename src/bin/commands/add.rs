@@ -1,7 +1,7 @@
 use anyhow::{Result, bail};
 use fsmon::config::Config;
 use fsmon::monitored::{CMD_GLOBAL, Monitored, PathEntry};
-use fsmon::socket::{self, SocketCmd};
+use fsmon::socket::{self, SocketCmd, SocketResponse, SocketError};
 use std::path::PathBuf;
 
 use crate::AddArgs;
@@ -139,35 +139,33 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     let socket_path = cfg.socket.path.clone();
     let result = socket::send_cmd(
         &socket_path,
-        &SocketCmd {
-            cmd: "add".to_string(),
-            path,
+        &SocketCmd::Add {
+            path: path.clone().unwrap_or_default(),
             recursive,
             types,
             size: size_val,
             track_cmd: process_name,
-            local_time: None,
         },
     );
 
     match result {
-        Ok(resp) if resp.ok => {
+        Ok(SocketResponse::Ok) => {
             println!("Entry added: {}", entry.path.display());
         }
         Ok(resp) => {
-            if resp.error_kind == Some(fsmon::socket::ErrorKind::Permanent) {
-                let mut store = Monitored::load(&cfg.monitored.path)?;
-                store.remove_entry(&entry.path, entry.cmd.as_deref());
-                store.save(&cfg.monitored.path)?;
-                eprintln!("Error: {}", resp.error.unwrap_or_default());
-            } else {
-                println!("Entry added: {}", entry.path.display());
-                eprintln!("Daemon error: {}", resp.error.unwrap_or_default());
-            }
-        }
-        Err(_) => {
+            // Unexpected response type
             println!("Entry added: {}", entry.path.display());
-            eprintln!("Daemon is not running — will be monitored after daemon restart.");
+            eprintln!("Unexpected response from daemon: {:?}", resp);
+        }
+        Err(SocketError::Permanent(msg)) => {
+            let mut store = Monitored::load(&cfg.monitored.path)?;
+            store.remove_entry(&entry.path, entry.cmd.as_deref());
+            store.save(&cfg.monitored.path)?;
+            eprintln!("Error: {}", msg);
+        }
+        Err(SocketError::Transient(msg)) => {
+            println!("Entry added: {}", entry.path.display());
+            eprintln!("Daemon error: {}", msg);
         }
     }
     Ok(())

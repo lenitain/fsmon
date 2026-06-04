@@ -5,28 +5,81 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use serde_json;
 
 use crate::monitored::PathEntry;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SocketCmd {
-    pub cmd: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<PathBuf>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub recursive: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub types: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub size: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub track_cmd: Option<String>,
-    /// Use local time instead of UTC in event timestamps.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub local_time: Option<bool>,
+/// Type-safe socket commands.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SocketCmd {
+    /// Add a path to monitoring.
+    Add {
+        path: PathBuf,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        recursive: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        types: Option<Vec<String>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        size: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        track_cmd: Option<String>,
+    },
+    /// Remove a path from monitoring.
+    Remove {
+        path: PathBuf,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        track_cmd: Option<String>,
+    },
+    /// List all monitored paths.
+    List,
+    /// Get daemon health information.
+    Health,
+    /// Subscribe to file system events.
+    Subscribe {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        types: Option<Vec<String>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        track_cmd: Option<String>,
+        /// Use local time instead of UTC in event timestamps.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        local_time: Option<bool>,
+    },
 }
+
+/// Type-safe socket responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SocketResponse {
+    /// Command succeeded.
+    Ok,
+    /// List of monitored paths.
+    Paths(Vec<PathEntry>),
+    /// Health information.
+    Health(HealthInfo),
+}
+
+/// Type-safe socket errors.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SocketError {
+    /// Permanent error (will persist after daemon restart).
+    Permanent(String),
+    /// Transient error (runtime issue, will work after restart).
+    Transient(String),
+}
+
+impl std::fmt::Display for SocketError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SocketError::Permanent(msg) => write!(f, "Permanent error: {}", msg),
+            SocketError::Transient(msg) => write!(f, "Transient error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for SocketError {}
+
+
 
 /// Health info for a single reader task (index-aligned with FsGroup).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,88 +111,34 @@ pub enum ErrorKind {
     Transient,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SocketResp {
-    pub ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error_kind: Option<ErrorKind>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub paths: Option<Vec<PathEntry>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub health: Option<HealthInfo>,
-}
 
-impl SocketResp {
-    pub fn ok() -> Self {
-        SocketResp {
-            ok: true,
-            error: None,
-            error_kind: None,
-            paths: None,
-            health: None,
-        }
-    }
-
-    pub fn err(msg: impl Into<String>) -> Self {
-        SocketResp {
-            ok: false,
-            error: Some(msg.into()),
-            error_kind: None,
-            paths: None,
-            health: None,
-        }
-    }
-
-    pub fn permanent_err(msg: impl Into<String>) -> Self {
-        SocketResp {
-            ok: false,
-            error: Some(msg.into()),
-            error_kind: Some(ErrorKind::Permanent),
-            paths: None,
-            health: None,
-        }
-    }
-
-    pub fn health(info: HealthInfo) -> Self {
-        SocketResp {
-            ok: true,
-            error: None,
-            error_kind: None,
-            paths: None,
-            health: Some(info),
-        }
-    }
-}
 
 /// Send a command to the running daemon and get the response.
-pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResp> {
-    let stream = UnixStream::connect(socket_path).with_context(|| {
-        format!(
+pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResponse, SocketError> {
+    let stream = UnixStream::connect(socket_path).map_err(|e| {
+        SocketError::Transient(format!(
             "Failed to connect to fsmon daemon at {}. Is the daemon running? \
-             Start it with: sudo fsmon daemon",
-            socket_path.display()
-        )
+             Start it with: sudo fsmon daemon: {}",
+            socket_path.display(),
+            e
+        ))
     })?;
 
-    let toml = toml::to_string(cmd)?;
+    let json = serde_json::to_string(cmd).map_err(|e| SocketError::Transient(e.to_string()))?;
 
     {
-        let mut writer = stream.try_clone()?;
-        // Write TOML document followed by blank line as delimiter
-        write!(writer, "{toml}\n\n")?;
-        writer.flush()?;
+        let mut writer = stream.try_clone().map_err(|e| SocketError::Transient(e.to_string()))?;
+        // Write JSON command followed by newline as delimiter
+        write!(writer, "{json}\n").map_err(|e| SocketError::Transient(e.to_string()))?;
+        writer.flush().map_err(|e| SocketError::Transient(e.to_string()))?;
     }
 
     let mut reader = BufReader::new(stream);
     let mut response = String::new();
     // Read until EOF — the server closes the connection after sending the response.
-    // Don't break on blank lines because TOML serialization of Vec fields contains
-    // embedded blank lines between array-of-tables entries (e.g., [[paths]]).
     loop {
         let mut line = String::new();
-        let bytes = reader.read_line(&mut line)?;
+        let bytes = reader.read_line(&mut line).map_err(|e| SocketError::Transient(e.to_string()))?;
         if bytes == 0 {
             break; // EOF
         }
@@ -147,11 +146,11 @@ pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResp> {
     }
 
     if response.trim().is_empty() {
-        bail!("Empty response from daemon");
+        return Err(SocketError::Transient("Empty response from daemon".to_string()));
     }
 
-    let resp: SocketResp =
-        toml::from_str(response.trim()).with_context(|| "Failed to parse daemon response")?;
+    let resp: SocketResponse =
+        serde_json::from_str(response.trim()).map_err(|e| SocketError::Transient(format!("Failed to parse daemon response: {}", e)))?;
     Ok(resp)
 }
 
@@ -162,103 +161,139 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
     use tokio::net::{UnixListener as TokioUnixListener, UnixStream as TokioUnixStream};
 
-    // ── SocketCmd TOML serialization round-trip ──
+    // ── SocketCmd JSON serialization round-trip ──
 
     #[test]
     fn test_socket_cmd_subscribe_roundtrip() {
-        let cmd = SocketCmd {
-            cmd: "subscribe".into(),
-            path: None,
-            recursive: None,
+        let cmd = SocketCmd::Subscribe {
             types: None,
-            size: None,
             track_cmd: None,
             local_time: None,
         };
-        let toml_str = toml::to_string(&cmd).unwrap();
-        let parsed: SocketCmd = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.cmd, "subscribe");
-        assert!(parsed.path.is_none());
+        let json_str = serde_json::to_string(&cmd).unwrap();
+        let parsed: SocketCmd = serde_json::from_str(&json_str).unwrap();
+        match parsed {
+            SocketCmd::Subscribe { types, track_cmd, local_time } => {
+                assert!(types.is_none());
+                assert!(track_cmd.is_none());
+                assert!(local_time.is_none());
+            }
+            _ => panic!("Expected Subscribe variant"),
+        }
     }
 
     #[test]
     fn test_socket_cmd_subscribe_with_filters_roundtrip() {
-        let cmd = SocketCmd {
-            cmd: "subscribe".into(),
-            path: None,
-            recursive: None,
+        let cmd = SocketCmd::Subscribe {
             types: Some(vec!["CREATE".into(), "DELETE".into()]),
-            size: None,
             track_cmd: Some("nginx".into()),
             local_time: Some(true),
         };
-        let toml_str = toml::to_string(&cmd).unwrap();
-        let parsed: SocketCmd = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.cmd, "subscribe");
-        assert_eq!(parsed.track_cmd, Some("nginx".into()));
-        assert_eq!(parsed.types, Some(vec!["CREATE".into(), "DELETE".into()]));
-        assert_eq!(parsed.local_time, Some(true));
+        let json_str = serde_json::to_string(&cmd).unwrap();
+        let parsed: SocketCmd = serde_json::from_str(&json_str).unwrap();
+        match parsed {
+            SocketCmd::Subscribe { types, track_cmd, local_time } => {
+                assert_eq!(track_cmd, Some("nginx".into()));
+                assert_eq!(types, Some(vec!["CREATE".into(), "DELETE".into()]));
+                assert_eq!(local_time, Some(true));
+            }
+            _ => panic!("Expected Subscribe variant"),
+        }
     }
 
     #[test]
     fn test_socket_cmd_add_roundtrip() {
-        let cmd = SocketCmd {
-            cmd: "add".into(),
-            path: Some(PathBuf::from("/tmp/test")),
+        let cmd = SocketCmd::Add {
+            path: PathBuf::from("/tmp/test"),
             recursive: Some(true),
             types: Some(vec!["MODIFY".into()]),
             size: Some(">=1MB".into()),
             track_cmd: Some("openclaw".into()),
-            local_time: None,
         };
-        let toml_str = toml::to_string(&cmd).unwrap();
-        let parsed: SocketCmd = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.cmd, "add");
-        assert_eq!(parsed.path, Some(PathBuf::from("/tmp/test")));
-        assert_eq!(parsed.track_cmd, Some("openclaw".into()));
+        let json_str = serde_json::to_string(&cmd).unwrap();
+        let parsed: SocketCmd = serde_json::from_str(&json_str).unwrap();
+        match parsed {
+            SocketCmd::Add { path, recursive, types, size, track_cmd } => {
+                assert_eq!(path, PathBuf::from("/tmp/test"));
+                assert_eq!(recursive, Some(true));
+                assert_eq!(types, Some(vec!["MODIFY".into()]));
+                assert_eq!(size, Some(">=1MB".into()));
+                assert_eq!(track_cmd, Some("openclaw".into()));
+            }
+            _ => panic!("Expected Add variant"),
+        }
     }
 
     #[test]
-    fn test_socket_cmd_metrics_roundtrip() {
-        let cmd = SocketCmd {
-            cmd: "metrics".into(),
-            path: None,
-            recursive: None,
-            types: None,
-            size: None,
-            track_cmd: None,
-            local_time: None,
+    fn test_socket_cmd_list_roundtrip() {
+        let cmd = SocketCmd::List;
+        let json_str = serde_json::to_string(&cmd).unwrap();
+        assert!(json_str.contains("List"));
+        let parsed: SocketCmd = serde_json::from_str(&json_str).unwrap();
+        match parsed {
+            SocketCmd::List => {},
+            _ => panic!("Expected List variant"),
+        }
+    }
+
+    #[test]
+    fn test_socket_cmd_health_roundtrip() {
+        let cmd = SocketCmd::Health;
+        let json_str = serde_json::to_string(&cmd).unwrap();
+        let parsed: SocketCmd = serde_json::from_str(&json_str).unwrap();
+        match parsed {
+            SocketCmd::Health => {},
+            _ => panic!("Expected Health variant"),
+        }
+    }
+
+    #[test]
+    fn test_socket_cmd_remove_roundtrip() {
+        let cmd = SocketCmd::Remove {
+            path: PathBuf::from("/tmp/test"),
+            track_cmd: Some("nginx".into()),
         };
-        let toml_str = toml::to_string(&cmd).unwrap();
-        assert!(toml_str.contains("cmd = \"metrics\""));
-        let parsed: SocketCmd = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.cmd, "metrics");
+        let json_str = serde_json::to_string(&cmd).unwrap();
+        let parsed: SocketCmd = serde_json::from_str(&json_str).unwrap();
+        match parsed {
+            SocketCmd::Remove { path, track_cmd } => {
+                assert_eq!(path, PathBuf::from("/tmp/test"));
+                assert_eq!(track_cmd, Some("nginx".into()));
+            }
+            _ => panic!("Expected Remove variant"),
+        }
     }
 
-    // ── SocketResp format ──
+    // ── SocketResponse / SocketError JSON format ──
 
     #[test]
-    fn test_socket_resp_ok_subscribe_format() {
-        let resp = SocketResp::ok();
-        let toml_str = toml::to_string(&resp).unwrap();
-        assert!(toml_str.contains("ok = true"));
-        assert!(!toml_str.contains("error"));
-    }
-
-    #[test]
-    fn test_socket_resp_error_format() {
-        let resp = SocketResp::err("daemon not running");
-        let toml_str = toml::to_string(&resp).unwrap();
-        assert!(toml_str.contains("ok = false"));
-        assert!(toml_str.contains("daemon not running"));
-        // Permanent error has error_kind
-        let resp = SocketResp::permanent_err("log directory conflict");
-        let toml_str = toml::to_string(&resp).unwrap();
-        assert!(toml_str.contains("error_kind = \"Permanent\""));
+    fn test_socket_response_ok_format() {
+        let resp = SocketResponse::Ok;
+        let json_str = serde_json::to_string(&resp).unwrap();
+        assert_eq!(json_str, "\"Ok\"");
+        let parsed: SocketResponse = serde_json::from_str(&json_str).unwrap();
+        assert!(matches!(parsed, SocketResponse::Ok));
     }
 
     #[test]
-    fn test_socket_resp_health_format() {
+    fn test_socket_error_format() {
+        let err = SocketError::Transient("daemon not running".to_string());
+        let json_str = serde_json::to_string(&err).unwrap();
+        assert!(json_str.contains("Transient"));
+        assert!(json_str.contains("daemon not running"));
+        let parsed: SocketError = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed.to_string(), "Transient error: daemon not running");
+
+        let err = SocketError::Permanent("log directory conflict".to_string());
+        let json_str = serde_json::to_string(&err).unwrap();
+        assert!(json_str.contains("Permanent"));
+        assert!(json_str.contains("log directory conflict"));
+        let parsed: SocketError = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed.to_string(), "Permanent error: log directory conflict");
+    }
+
+    #[test]
+    fn test_socket_response_health_format() {
         let health = HealthInfo {
             uptime_secs: 3600,
             channel_type: "bounded(1024)".into(),
@@ -277,13 +312,17 @@ mod tests {
                 },
             ],
         };
-        let resp = SocketResp::health(health);
-        let toml_str = toml::to_string(&resp).unwrap();
-        assert!(toml_str.contains("ok = true"));
-        assert!(toml_str.contains("uptime_secs = 3600"));
-        assert!(toml_str.contains("monitored_paths = 5"));
-        assert!(toml_str.contains("reader_groups = 2"));
-        assert!(toml_str.contains("fd = 4"));
+        let resp = SocketResponse::Health(health);
+        let json_str = serde_json::to_string(&resp).unwrap();
+        assert!(json_str.contains("Health"));
+        assert!(json_str.contains("uptime_secs"));
+        assert!(json_str.contains("3600"));
+        assert!(json_str.contains("monitored_paths"));
+        assert!(json_str.contains("5"));
+        assert!(json_str.contains("reader_groups"));
+        assert!(json_str.contains("2"));
+        assert!(json_str.contains("fd"));
+        assert!(json_str.contains("4"));
     }
 
     // ── Subscribe protocol end-to-end via Unix socket ──
@@ -307,11 +346,11 @@ mod tests {
                 String::from_utf8_lossy(&buf[..n])
             );
 
-            // Send TOML ok response then JSONL event
-            let resp = SocketResp::ok();
-            let resp_toml = toml::to_string(&resp).unwrap().trim().to_string();
+            // Send JSON ok response then JSONL event
+            let resp = SocketResponse::Ok;
+            let resp_json = serde_json::to_string(&resp).unwrap();
             let event_json = r#"{"time":"2026-05-28T10:00:00Z","event_type":"CREATE","path":"/tmp/test.txt","pid":1234,"cmd":"touch","user":"root","file_size":0,"ppid":1,"tgid":1234,"chain":""}"#;
-            let payload = format!("{}\n{}\n", resp_toml, event_json);
+            let payload = format!("{}\n{}\n", resp_json, event_json);
             eprintln!("[server] sending {} bytes: {:?}", payload.len(), payload);
             stream.write_all(payload.as_bytes()).await.unwrap();
             eprintln!("[server] sent, shutting down");
@@ -319,7 +358,7 @@ mod tests {
 
         let mut stream = TokioUnixStream::connect(&socket_path).await.unwrap();
 
-        stream.write_all(b"cmd = \"subscribe\"\n\n").await.unwrap();
+        stream.write_all(b"{\"Subscribe\":{}}\n").await.unwrap();
 
         // Read ALL data with timeout
         let mut all_data = vec![0u8; 4096];
@@ -333,11 +372,11 @@ mod tests {
         let response = String::from_utf8_lossy(&all_data[..n]).to_string();
         eprintln!("[client] received {} bytes: {:?}", n, response);
 
-        // Parse response: skip empty lines, first non-empty = TOML, second = JSONL
+        // Parse response: lines, first = JSON ok, second = JSONL event
         let non_empty: Vec<&str> = response.lines().filter(|l| !l.trim().is_empty()).collect();
-        let resp_line = non_empty.first().expect("no TOML response");
-        let resp: SocketResp = toml::from_str(resp_line).unwrap();
-        assert!(resp.ok, "subscribe should return ok = true");
+        let resp_line = non_empty.first().expect("no JSON response");
+        let resp: SocketResponse = serde_json::from_str(resp_line).unwrap();
+        assert!(matches!(resp, SocketResponse::Ok), "subscribe should return Ok");
 
         let event_line = non_empty.get(1).expect("no event line");
         assert!(
@@ -367,41 +406,41 @@ mod tests {
 
             // Parse and verify the command
             let cmd_str = String::from_utf8_lossy(&buf[..n]);
-            let cmd: SocketCmd = toml::from_str(cmd_str.trim()).unwrap();
-            assert_eq!(cmd.cmd, "subscribe");
-            assert_eq!(cmd.track_cmd, Some("nginx".into()));
-            assert_eq!(cmd.types, Some(vec!["CREATE".into(), "DELETE".into()]));
+            let cmd: SocketCmd = serde_json::from_str(cmd_str.trim()).unwrap();
+            match cmd {
+                SocketCmd::Subscribe { types, track_cmd, .. } => {
+                    assert_eq!(track_cmd, Some("nginx".into()));
+                    assert_eq!(types, Some(vec!["CREATE".into(), "DELETE".into()]));
+                }
+                _ => panic!("Expected Subscribe variant"),
+            }
 
-            let resp = SocketResp::ok();
-            let resp_toml = toml::to_string(&resp).unwrap();
+            let resp = SocketResponse::Ok;
+            let resp_json = serde_json::to_string(&resp).unwrap();
             stream
-                .write_all(format!("{}\n", resp_toml).as_bytes())
+                .write_all(format!("{}\n", resp_json).as_bytes())
                 .await
                 .unwrap();
         });
 
         let mut stream = TokioUnixStream::connect(&socket_path).await.unwrap();
-        let subscribe_cmd = SocketCmd {
-            cmd: "subscribe".into(),
-            path: None,
-            recursive: None,
+        let subscribe_cmd = SocketCmd::Subscribe {
             types: Some(vec!["CREATE".into(), "DELETE".into()]),
-            size: None,
             track_cmd: Some("nginx".into()),
             local_time: Some(false),
         };
-        let toml_payload = toml::to_string(&subscribe_cmd).unwrap();
+        let json_payload = serde_json::to_string(&subscribe_cmd).unwrap();
         stream
-            .write_all(format!("{}\n\n", toml_payload).as_bytes())
+            .write_all(format!("{}\n", json_payload).as_bytes())
             .await
             .unwrap();
 
         let mut reader = tokio::io::BufReader::new(&mut stream);
         let mut resp_line = String::new();
         reader.read_line(&mut resp_line).await.unwrap();
-        let resp: SocketResp = toml::from_str(resp_line.trim()).unwrap();
+        let resp: SocketResponse = serde_json::from_str(resp_line.trim()).unwrap();
         assert!(
-            resp.ok,
+            matches!(resp, SocketResponse::Ok),
             "subscribe with filters should succeed, got: {}",
             resp_line
         );
