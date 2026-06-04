@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use fsmon::DaemonLock;
 use fsmon::config::{CacheConfig, CliCacheOverride, Config};
 use fsmon::monitor::Monitor;
@@ -120,6 +120,16 @@ pub async fn cmd_daemon(
     let watchdog_multiplier = watchdog_multiplier
         .or(cfg.watchdog.as_ref().and_then(|w| w.multiplier))
         .unwrap_or(2);
+
+    // Validate watchdog_multiplier
+    if watchdog_interval.is_some() && watchdog_multiplier <= 1 {
+        bail!(
+            "watchdog multiplier must be > 1, got {}. \
+             WatchdogSec = interval × multiplier, must be > interval \
+             to allow heartbeat tolerance.",
+            watchdog_multiplier
+        );
+    }
 
     // Compute WatchdogSec = interval × multiplier
     let watchdog_sec = watchdog_interval.map(|i| i * watchdog_multiplier);
