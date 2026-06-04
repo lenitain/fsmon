@@ -118,7 +118,7 @@ Examples:
   fsmon add _global --path /home -s '>=1MB'                    Minimum file size change"#
         }
         HelpTopic::Remove => {
-            r#"Remove one or more paths from the monitoring list.
+            r"Remove one or more paths from the monitoring list.
 
 Without --path, removes the entire cmd group.
 With --path, removes only the specified paths. Multiple paths are atomic:
@@ -137,16 +137,16 @@ Examples:
   fsmon remove _global               Remove entire global cmd group
   fsmon remove openclaw              Remove the entire openclaw cmd group
   fsmon remove openclaw --path /a    Remove /a from openclaw group
-  fsmon remove _global --path /a --path /b  Remove /a, /b from global group (atomic)"#
+  fsmon remove _global --path /a --path /b  Remove /a, /b from global group (atomic)"
         }
         HelpTopic::Monitored => {
-            r#"List all monitored paths with their configuration.
+            r"List all monitored paths with their configuration.
 
 Displays each path with its recursive flag, event type filters,
 size threshold, path/cmd exclusion patterns.
 
 Examples:
-  fsmon monitored"#
+  fsmon monitored"
         }
         HelpTopic::Query => {
             r#"Query historical file change events from log files.

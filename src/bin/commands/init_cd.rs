@@ -12,7 +12,7 @@ pub fn cmd_init(service: bool) -> Result<()> {
 
 fn service_template(binary: &str, home: &str) -> String {
     format!(
-        r#"[Unit]
+        r"[Unit]
 Description=fsmon - File System Change Monitor
 Documentation=man:fsmon(1)
 After=local-fs.target
@@ -26,7 +26,7 @@ Environment=HOME={home}
 
 [Install]
 WantedBy=multi-user.target
-"#,
+",
         binary = binary,
         home = home,
     )
