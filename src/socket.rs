@@ -114,6 +114,13 @@ pub enum ErrorKind {
 
 
 /// Send a command to the running daemon and get the response.
+///
+/// # Protocol semantics
+///
+/// - Each command is processed independently (no atomicity between commands).
+/// - Non-subscribe commands: send JSON → receive JSON response → connection closes.
+/// - Subscribe command: send JSON → receive JSON OK → stream JSONL events → connection stays open.
+/// - Each connection handles exactly one command.
 pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResponse, SocketError> {
     let stream = UnixStream::connect(socket_path).map_err(|e| {
         SocketError::Transient(format!(

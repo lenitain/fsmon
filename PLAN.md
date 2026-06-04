@@ -63,19 +63,20 @@ pub enum SocketError {
 }
 ```
 
-## 2. 清晰的协议语义
+## 2. 清晰的协议语义 ✅ 已完成
 
-### niri 的做法
-- 每个请求**恰好**得到一个响应
-- 事件流通过专门的 `EventStream` 请求启动
-- 明确说明并发限制（"Requests are *always* processed separately"）
+### 当前实现（已满足）
+- 每个请求**恰好**得到一个响应（普通命令）
+- 事件流通过 `Subscribe` 命令启动（先 OK 后流式）
+- 每个连接处理一个命令（隐式并发限制）
+- 已添加文档注释说明协议语义
 
-### 改进建议
 ```rust
-// 明确协议语义
-/// 发送命令并等待响应
-/// 注意：每个命令是独立处理的，不要依赖命令间的原子性
-pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketReply> {
+/// # Protocol semantics
+/// - Each command is processed independently
+/// - Non-subscribe: send JSON → receive JSON → connection closes
+/// - Subscribe: send JSON → receive OK → stream JSONL events
+pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResponse, SocketError> {
     // ...
 }
 ```
