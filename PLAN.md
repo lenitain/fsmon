@@ -220,25 +220,29 @@ schemars = { version = "0.8", optional = true }
 
 ## 实施计划
 
-### Phase 1: 定义 fsmon-ipc crate
-- [ ] 创建 `fsmon-ipc` crate
-- [ ] 定义 `SocketCmd`、`SocketResponse`、`SocketError` 枚举
-- [ ] 定义 `FsmonEvent` 事件枚举
-- [ ] 添加 `json-schema` feature
+### Phase 1: 类型安全的 Socket 协议 ✅ 已完成
+- [x] 定义 `SocketCmd` 枚举（替代字符串命令）
+- [x] 定义 `SocketResponse` 枚举
+- [x] 定义 `SocketError` 枚举（Permanent/Transient）
+- [x] 协议格式从 TOML 升级为 JSON
+- [x] 更新 daemon 端（socket_handler.rs, mod.rs）
+- [x] 更新 CLI 端（add.rs, remove.rs, health.rs）
+- [x] 更新 extensions 示例（subscribe.sh, subscribe.py）
+- [x] 更新所有测试用例
 
-### Phase 2: 实现客户端库
+### Phase 2: 定义 FsmonEvent 事件枚举
+- [ ] 定义 `FsmonEvent` 枚举
+- [ ] 更新事件广播使用 `FsmonEvent`
+- [ ] 保持向后兼容（可选）
+
+### Phase 3: 实现客户端库
 - [ ] 实现 `FsmonClient` 结构
 - [ ] 实现 `EventStream` 迭代器
 - [ ] 添加文档和示例
 
-### Phase 3: 迁移 daemon
-- [ ] 更新 daemon 使用新的 `SocketCmd` 枚举
-- [ ] 更新事件广播使用 `FsmonEvent`
-- [ ] 保持向后兼容（可选）
-
-### Phase 4: 更新 CLI
-- [ ] 更新 CLI 命令使用新的 IPC 类型
-- [ ] 添加 `--json` 输出支持
+### Phase 4: JSON Schema 支持
+- [ ] 添加 `json-schema` feature
+- [ ] 使用 schemars 派生 JsonSchema
 
 ## 参考资源
 
