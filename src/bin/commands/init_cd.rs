@@ -34,7 +34,11 @@ WantedBy=multi-user.target
 ",
         binary = binary,
         home = home,
-        watchdog_line = if watchdog_line.is_empty() { "" } else { &watchdog_line },
+        watchdog_line = if watchdog_line.is_empty() {
+            ""
+        } else {
+            &watchdog_line
+        },
     )
 }
 

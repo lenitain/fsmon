@@ -110,7 +110,8 @@ fn daemon_rejects_non_numeric_multiplier() {
 fn daemon_rejects_zero_interval() {
     // interval=0 with multiplier > 1 should fail because watchdog is disabled
     // but the validation only checks multiplier, not interval
-    let (success, _, stderr) = run_daemon(&["--watchdog-interval", "0", "--watchdog-multiplier", "2"]);
+    let (success, _, stderr) =
+        run_daemon(&["--watchdog-interval", "0", "--watchdog-multiplier", "2"]);
     // This should fail for root privilege, not watchdog validation
     if !success {
         assert!(
@@ -122,7 +123,8 @@ fn daemon_rejects_zero_interval() {
 
 #[test]
 fn daemon_accepts_valid_watchdog_args() {
-    let (success, _, stderr) = run_daemon(&["--watchdog-interval", "15", "--watchdog-multiplier", "2"]);
+    let (success, _, stderr) =
+        run_daemon(&["--watchdog-interval", "15", "--watchdog-multiplier", "2"]);
     // This should fail for root privilege, not watchdog validation
     if !success {
         assert!(
@@ -150,7 +152,8 @@ fn daemon_rejects_multiplier_only() {
 #[test]
 fn daemon_rejects_multiplier_with_interval() {
     // multiplier=1 with interval should fail validation
-    let (success, _, stderr) = run_daemon(&["--watchdog-interval", "10", "--watchdog-multiplier", "1"]);
+    let (success, _, stderr) =
+        run_daemon(&["--watchdog-interval", "10", "--watchdog-multiplier", "1"]);
     assert!(!success, "daemon should fail with multiplier=1");
     if is_validation_error(&stderr) {
         assert!(

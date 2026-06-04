@@ -1,5 +1,5 @@
-use std::time::Duration;
 use libsystemd::daemon;
+use std::time::Duration;
 use tokio::time::interval;
 
 /// Watchdog manager for systemd integration.

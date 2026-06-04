@@ -662,7 +662,10 @@ impl Monitor {
         // Start watchdog if enabled
         let _watchdog_handle = self.watchdog.as_ref().map(|wd| {
             if self.debug {
-                eprintln!("[DEBUG] systemd watchdog enabled (interval: {}s)", wd.interval().as_secs());
+                eprintln!(
+                    "[DEBUG] systemd watchdog enabled (interval: {}s)",
+                    wd.interval().as_secs()
+                );
             }
             wd.clone().start()
         });

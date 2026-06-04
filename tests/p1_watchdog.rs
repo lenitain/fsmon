@@ -25,7 +25,10 @@ fn multiplier_valid_values() {
 /// Simulate daemon validation logic.
 fn validate_multiplier(multiplier: u64) -> Result<(), String> {
     if multiplier <= 1 {
-        return Err(format!("watchdog multiplier must be > 1, got {}.", multiplier));
+        return Err(format!(
+            "watchdog multiplier must be > 1, got {}.",
+            multiplier
+        ));
     }
     Ok(())
 }
@@ -124,8 +127,14 @@ fn cli_watchdog_args() {
     }
 
     // Both args present
-    let cli = Cli::try_parse_from(["test", "--watchdog-interval", "15", "--watchdog-multiplier", "3"])
-        .unwrap();
+    let cli = Cli::try_parse_from([
+        "test",
+        "--watchdog-interval",
+        "15",
+        "--watchdog-multiplier",
+        "3",
+    ])
+    .unwrap();
     assert_eq!(cli.watchdog_interval, Some(15));
     assert_eq!(cli.watchdog_multiplier, Some(3));
 
@@ -210,7 +219,11 @@ WantedBy=multi-user.target
 ",
         binary = binary,
         home = home,
-        watchdog_line = if watchdog_line.is_empty() { "" } else { &watchdog_line },
+        watchdog_line = if watchdog_line.is_empty() {
+            ""
+        } else {
+            &watchdog_line
+        },
     )
 }
 
