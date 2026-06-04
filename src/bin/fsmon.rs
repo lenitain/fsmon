@@ -100,6 +100,13 @@ pub enum Commands {
         /// Recommended: half of WatchdogSec in the service unit.
         #[arg(long, value_name = "SECS")]
         watchdog_interval: Option<u64>,
+
+        /// systemd WatchdogSec timeout in seconds (default: auto = watchdog_interval * 2).
+        /// This is the timeout in the systemd service unit. If no watchdog
+        /// notification is received within this time, systemd restarts the service.
+        /// Must be > watchdog_interval.
+        #[arg(long, value_name = "SECS")]
+        watchdog_sec: Option<u64>,
     },
 
     /// Add a path to the monitoring list

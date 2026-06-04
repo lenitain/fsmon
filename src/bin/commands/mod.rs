@@ -44,6 +44,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
             local_time,
             metrics_interval,
             watchdog_interval,
+            watchdog_sec,
         } => {
             let cli_cache = fsmon::config::CliCacheOverride {
                 dir_capacity: cache_dir_cap,
@@ -63,6 +64,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
                 local_time,
                 metrics_interval,
                 watchdog_interval,
+                watchdog_sec,
             )
             .await_()
         }

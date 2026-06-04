@@ -10,8 +10,8 @@ pub fn cmd_init(service: bool) -> Result<()> {
     Ok(())
 }
 
-fn service_template(binary: &str, home: &str, watchdog_secs: Option<u64>) -> String {
-    let watchdog_line = match watchdog_secs {
+fn service_template(binary: &str, home: &str, watchdog_sec: Option<u64>) -> String {
+    let watchdog_line = match watchdog_sec {
         Some(secs) => format!("WatchdogSec={}", secs),
         None => String::new(),
     };
@@ -61,11 +61,12 @@ fn install_service() -> Result<()> {
 
     // Load config to check watchdog settings
     let cfg = fsmon::config::Config::load()?;
-    let watchdog_secs = cfg.watchdog.as_ref().and_then(|w| w.interval_secs);
-    // Double the interval for WatchdogSec (watchdog sends at half the interval)
-    let watchdog_secs = watchdog_secs.map(|s| s * 2);
+    let watchdog_cfg = cfg.watchdog.as_ref();
+    let watchdog_sec = watchdog_cfg
+        .and_then(|w| w.watchdog_sec)
+        .or_else(|| watchdog_cfg.and_then(|w| w.interval_secs).map(|i| i * 2));
 
-    let content = service_template(&binary, &home, watchdog_secs);
+    let content = service_template(&binary, &home, watchdog_sec);
 
     let service_path = Path::new("/etc/systemd/system/fsmon.service");
     if service_path.exists() {

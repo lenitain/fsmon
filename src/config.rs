@@ -97,6 +97,10 @@ pub struct WatchdogConfig {
     /// systemd will restart the service if no notification is received
     /// within WatchdogSec (configured in the service unit).
     pub interval_secs: Option<u64>,
+    /// systemd WatchdogSec in seconds. None = auto (interval_secs * 2).
+    /// This is the timeout in the systemd service unit. If no watchdog
+    /// notification is received within this time, systemd restarts the service.
+    pub watchdog_sec: Option<u64>,
 }
 
 /// Resolved cache configuration with all defaults filled in.
@@ -495,9 +499,15 @@ path = "/tmp/fsmon-<UID>.sock"
 # [watchdog]
 #   systemd watchdog integration. Sends periodic WATCHDOG=1 notifications.
 #   systemd will restart the service if no notification is received.
-#   Interval in seconds. None or 0 = disabled.
-#   Recommended: half of WatchdogSec in the service unit (default: 15).
+#
+#   Heartbeat interval in seconds. None or 0 = disabled.
+#   Recommended: WatchdogSec / 2 (default: 15).
 # interval_secs = 15
+#
+#   systemd WatchdogSec timeout in seconds.
+#   None = auto (interval_secs * 2). Must be > interval_secs.
+#   If no WATCHDOG=1 received within this time, systemd restarts the service.
+# watchdog_sec = 30
 "#
         .to_string()
     }
