@@ -723,7 +723,7 @@ impl Monitor {
                 } => {
                     let report = self.collect_metrics(&dir_cache, &proc_cache, &pid_tree);
                     eprintln!(
-                        "[metrics] uptime={}s rss={:.1}MB caches(d/p/t/f)={}/{}/{}/{} readers={}/{}/{} subs={} paths={} pending={} disk_buf={} events={}",
+                        "[metrics] uptime={}s rss={:.1}MB caches(d/p/t/f)={}/{}/{}/{} readers={}/{}/{} subs={} paths={} pending={} disk_buf={}",
                         report.uptime_secs,
                         report.rss_mb,
                         report.dir_cache_entries,
@@ -737,7 +737,6 @@ impl Monitor {
                         report.monitored_paths,
                         report.pending_paths,
                         report.disk_buffer_events,
-                        report.events_total.iter().map(|(k, v)| format!("{}:{}", k, v)).collect::<Vec<_>>().join(" "),
                     );
                 }
 
@@ -858,14 +857,6 @@ impl Monitor {
             .filter(|s| s.as_ref().is_some_and(|s| s.gave_up))
             .count() as u64;
 
-        let events_total = self.metrics.events_total().gather()
-            .into_iter()
-            .map(|(labels, val)| {
-                let key = labels.join(",");
-                (key, val)
-            })
-            .collect();
-
         MetricsReport {
             uptime_secs: self.started_at.elapsed().as_secs(),
             rss_mb: get_rss_mb(),
@@ -880,7 +871,6 @@ impl Monitor {
             monitored_paths: self.metrics.monitored_paths() as u64,
             pending_paths: self.metrics.pending_paths() as u64,
             disk_buffer_events: self.metrics.disk_buffer_events() as u64,
-            events_total,
         }
     }
 
@@ -911,7 +901,6 @@ pub(crate) struct MetricsReport {
     pub monitored_paths: u64,
     pub pending_paths: u64,
     pub disk_buffer_events: u64,
-    pub events_total: Vec<(String, u64)>,
 }
 
 /// Read current RSS in MB from /proc/self/statm.

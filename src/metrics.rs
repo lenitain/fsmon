@@ -140,7 +140,6 @@ impl IntGauge {
 /// Cheap to clone (Arc-backed) — pass a clone to background tasks.
 #[derive(Clone)]
 pub struct MetricsRegistry {
-    events_total: CounterVec,
     subscribers: IntGauge,
     monitored_paths: IntGauge,
     reader_groups: IntGauge,
@@ -157,7 +156,6 @@ impl Default for MetricsRegistry {
 impl MetricsRegistry {
     pub fn new(enabled: bool) -> Self {
         Self {
-            events_total: CounterVec::new(enabled),
             subscribers: IntGauge::new(enabled),
             monitored_paths: IntGauge::new(enabled),
             reader_groups: IntGauge::new(enabled),
@@ -168,17 +166,11 @@ impl MetricsRegistry {
 
     /// Returns true if metrics collection is enabled.
     pub fn is_enabled(&self) -> bool {
-        self.events_total.enabled
+        self.subscribers.enabled
     }
 
     /// Increment the events_total counter.
-    pub fn inc_event(&self, event_type: &str, cmd: &str) {
-        self.events_total.inc(&[event_type, cmd]);
-    }
 
-    pub fn events_total(&self) -> &CounterVec {
-        &self.events_total
-    }
 
     // ── Gauge accessors ──
 
