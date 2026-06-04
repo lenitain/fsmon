@@ -27,6 +27,8 @@ ExecStart={binary} daemon
 Restart=always
 RestartSec=5
 RestartPreventExitStatus=2
+StartLimitBurst=5
+StartLimitIntervalSec=300
 Environment=HOME={home}
 {watchdog_line}
 
