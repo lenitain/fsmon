@@ -19,11 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **moka retained for dir_cache**: `moka` still used for directory cache (separate concern from process cache)
   - Net result: -543 lines removed, +100 lines added. All 242 tests pass.
 
-### Chore
-
-- **Formatting**: Applied `cargo fmt` across codebase
-- **CI**: Added CI test workflow
-
 ## [0.4.7] - 2026-06-05
 
 ### Fixed
