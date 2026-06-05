@@ -112,34 +112,7 @@ pub fn parse_path_entries(entries: &[PathEntry]) -> Result<Vec<(PathBuf, PathOpt
 
 /// Convert a single `PathEntry` to `PathOptions`.
 pub fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
-    let size_filter = entry
-        .size
-        .as_ref()
-        .map(|s| parse_size_filter(s))
-        .transpose()?;
-    let event_types = entry
-        .types
-        .as_ref()
-        .map(|v| {
-            v.iter()
-                .map(|s| s.parse::<EventType>())
-                .collect::<std::result::Result<Vec<_>, _>>()
-        })
-        .transpose()
-        .map_err(|e: String| anyhow::anyhow!(e))?;
-    let cmd = entry.cmd.as_deref().and_then(|c| {
-        if c == fsmon::monitored::CMD_GLOBAL {
-            None
-        } else {
-            Some(c.to_string())
-        }
-    });
-    Ok(PathOptions {
-        size_filter,
-        event_types,
-        recursive: entry.recursive.unwrap_or(false),
-        cmd,
-    })
+    PathOptions::try_from(entry)
 }
 
 /// Resolve a user-provided path to absolute.

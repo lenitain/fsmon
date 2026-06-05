@@ -328,8 +328,7 @@ impl Monitor {
         // Also match against pending paths — these are monitored via temporary
         // parent marks and need to generate events during the recreate window.
         for (pending_path, entry) in &self.pending_paths {
-            let recursive = entry.recursive.unwrap_or(false);
-            let pending_matches = if recursive {
+            let pending_matches = if entry.recursive.unwrap_or(false) {
                 event_path.starts_with(pending_path)
             } else {
                 event_path == pending_path.as_path()
@@ -339,27 +338,9 @@ impl Monitor {
                 continue;
             }
             // Convert PathEntry → PathOptions for matching/filtering
-            let types = entry.types.as_ref().map(|t| {
-                t.iter()
-                    .filter_map(|s| s.parse::<crate::EventType>().ok())
-                    .collect()
-            });
-            let size_filter = entry
-                .size
-                .as_ref()
-                .and_then(|s| crate::utils::parse_size_filter(s).ok());
-            let cmd = entry.cmd.as_deref().and_then(|c| {
-                if c == crate::monitored::CMD_GLOBAL {
-                    None
-                } else {
-                    Some(c.to_string())
-                }
-            });
-            let opts = PathOptions {
-                size_filter,
-                event_types: types,
-                recursive,
-                cmd,
+            let opts = match PathOptions::try_from(entry) {
+                Ok(o) => o,
+                Err(_) => continue,
             };
             if self.debug {
                 let label = opts.cmd.as_deref().unwrap_or("global");
@@ -367,7 +348,7 @@ impl Monitor {
                     "[DEBUG]   check {}/pending (cmd={}, recursive={}): MATCH",
                     pending_path.display(),
                     label,
-                    recursive
+                    opts.recursive
                 );
             }
             result.push((pending_path.clone(), opts));

@@ -240,16 +240,7 @@ pub fn resolve_uid_gid() -> (u32, u32) {
 /// Chown a path to the original user (daemon runs as root, files should go to the user).
 /// Silently no-ops if already running as the target user (no sudo).
 pub fn chown_to_original_user(path: &Path) {
-    let (uid, gid) = resolve_uid_gid();
-    if nix::unistd::geteuid().as_raw() == 0
-        && let Ok(cpath) = std::ffi::CString::new(path.to_string_lossy().as_ref())
-    {
-        let _ = nix::unistd::chown(
-            cpath.as_c_str(),
-            Some(nix::unistd::Uid::from_raw(uid)),
-            Some(nix::unistd::Gid::from_raw(gid)),
-        );
-    }
+    let _ = crate::fid_parser::chown_to_user(path);
 }
 
 /// Resolve the original user's UID:

@@ -36,31 +36,7 @@ impl Monitor {
                     "[DEBUG]   path already monitored — adding cmd and updating fanotify mask"
                 );
             }
-            let cmd = entry.cmd.as_deref().and_then(|c| {
-                if c == crate::monitored::CMD_GLOBAL {
-                    None
-                } else {
-                    Some(c.to_string())
-                }
-            });
-            let event_types = entry.types.as_ref().map(|types| {
-                types
-                    .iter()
-                    .filter_map(|s| s.parse::<EventType>().ok())
-                    .collect()
-            });
-            let size_filter = entry
-                .size
-                .as_ref()
-                .map(|s| parse_size_filter(s))
-                .transpose()?;
-            let recursive = entry.recursive.unwrap_or(false);
-            let opts = PathOptions {
-                size_filter,
-                event_types,
-                recursive,
-                cmd,
-            };
+            let opts = PathOptions::try_from(entry)?;
             self.monitored_entries.push((path.clone(), opts.clone()));
 
             // Update fanotify mask: OR all entries for this path
@@ -88,7 +64,7 @@ impl Monitor {
                 "Monitoring entry: [{}] {} (recursive={})",
                 cmd_label,
                 path.display(),
-                recursive
+                opts.recursive
             );
             self.metrics
                 .set_monitored_paths(self.monitored_entries.len() as i64);
@@ -137,41 +113,15 @@ impl Monitor {
 
         let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
 
-        let event_types = entry.types.as_ref().map(|types| {
-            types
-                .iter()
-                .filter_map(|s| s.parse::<EventType>().ok())
-                .collect()
-        });
-        let size_filter = entry
-            .size
-            .as_ref()
-            .map(|s| parse_size_filter(s))
-            .transpose()?;
-        let recursive = entry.recursive.unwrap_or(false);
-        // `_global` in PathEntry means no process tracking → convert to None
-        let cmd = entry.cmd.as_deref().and_then(|c| {
-            if c == crate::monitored::CMD_GLOBAL {
-                None
-            } else {
-                Some(c.to_string())
-            }
-        });
+        let opts = PathOptions::try_from(entry)?;
         // Reject cmd=fsmon: daemon's own events are excluded by PID filter.
         // This mirrors the validation in Monitor::new() for runtime socket adds.
-        if cmd.as_deref() == Some("fsmon") {
+        if opts.cmd.as_deref() == Some("fsmon") {
             bail!(
                 "Cannot monitor 'fsmon' process: fsmon daemon's own events \
                  are excluded from monitoring."
             );
         }
-
-        let opts = PathOptions {
-            size_filter,
-            event_types,
-            recursive,
-            cmd,
-        };
 
         let path_mask = path_mask_from_options(&opts);
 
@@ -180,7 +130,7 @@ impl Monitor {
             "Monitoring entry: [{}] {} (recursive={})",
             cmd_label,
             path.display(),
-            recursive,
+            opts.recursive,
         );
 
         // Determine filesystem device ID for dedup lookup
@@ -203,7 +153,7 @@ impl Monitor {
                     e
                 );
             } else {
-                if recursive && canonical.is_dir() {
+                if opts.recursive && canonical.is_dir() {
                     mark_recursive(fan_fd, path_mask, &canonical);
                 }
             }
@@ -233,7 +183,7 @@ impl Monitor {
             })?;
 
             if self
-                .add_mark_upward(&new_fd, path_mask, &canonical, recursive)
+                .add_mark_upward(&new_fd, path_mask, &canonical, opts.recursive)
                 .is_none()
             {
                 bail!("Failed to mark {}: inode mark failed", canonical.display());
@@ -265,7 +215,7 @@ impl Monitor {
         if canonical.is_dir()
             && let Some(ref cache) = self.shared_dir_cache
         {
-            if recursive {
+            if opts.recursive {
                 dir_cache::cache_recursive(cache, &canonical);
             } else {
                 dir_cache::cache_dir_handle(cache, &canonical);
@@ -853,25 +803,7 @@ impl Monitor {
             .pending_paths
             .iter()
             .filter(|(p, _)| p == target_path)
-            .map(|(_, entry)| {
-                let types = entry.types.as_ref().map(|t| {
-                    t.iter()
-                        .filter_map(|s| s.parse::<crate::EventType>().ok())
-                        .collect()
-                });
-                PathOptions {
-                    size_filter: None,
-                    event_types: types,
-                    recursive: entry.recursive.unwrap_or(false),
-                    cmd: entry.cmd.clone().and_then(|c| {
-                        if c == crate::monitored::CMD_GLOBAL {
-                            None
-                        } else {
-                            Some(c)
-                        }
-                    }),
-                }
-            })
+            .filter_map(|(_, entry)| PathOptions::try_from(entry).ok())
             .collect();
 
         if saved_entries.is_empty() && pending_opts.is_empty() {
