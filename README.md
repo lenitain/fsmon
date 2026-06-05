@@ -511,9 +511,14 @@ src/
 ├── filters.rs          # PathOptions, event/size filters, path matching
 ├── dir_cache.rs        # Directory handle cache (moka + HandleKey)
 ├── proc_cache.rs       # Netlink proc connector: Fork/Exec/Exit, build_chain
-├── query.rs            # Binary-search log query on sorted JSONL
+├── query/              # Binary-search log query on sorted JSONL
+│   ├── core.rs         #   Query struct, binary search, filtering
+│   └── tests.rs        #   Query unit tests
+├── clean/              # Log file cleanup by time and size
+│   ├── core.rs         #   Clean logic, truncation, size trimming
+│   └── tests.rs        #   Clean unit tests
 ├── socket.rs           # Unix socket protocol (JSON req/resp)
-├── utils.rs            # Size/time parsing, process info lookup, chown
+├── utils.rs            # Size/time parsing, process info lookup, TimeFilter methods
 └── help.rs             # Help text constants
 ```
 

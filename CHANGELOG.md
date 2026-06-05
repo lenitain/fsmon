@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.6] - 2026-06-05
+
+### Changed
+
+- **Code quality refactoring**: Comprehensive cleanup based on thermal-nuclear code review
+  - **TimeFilter methods**: Extracted `matches()`, `is_lower_bound()`, `is_upper_bound()` methods, eliminating 30+ lines of duplicated match blocks across `query.rs` and `clean.rs`
+  - **PID status reading dedup**: Removed duplicate `read_proc_info` in `proc_cache.rs`, now reuses `utils::read_proc_status_fields`
+  - **`query.rs` split**: 1078 lines → `query/core.rs` (300 lines) + `query/tests.rs` (750 lines)
+  - **`clean.rs` split**: 1014 lines → `clean/core.rs` (230 lines) + `clean/tests.rs` (780 lines)
+  - **PathEntry → PathOptions conversion unified**: Added `TryFrom<&PathEntry> for PathOptions` impl, eliminating 4 duplicated conversion blocks
+  - **chown logic unified**: `chown_to_original_user` now delegates to `chown_to_user` for single source of truth
+  - **Unused code cleanup**: Removed dead imports and unused skeleton modules
+
+### Test
+
+- All 387 existing tests pass with zero warnings
+- No behavioral changes — pure refactoring
+
 ## [0.4.5] - 2026-06-04
 
 ### Added
