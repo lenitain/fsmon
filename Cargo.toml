@@ -46,7 +46,7 @@ sizefilter = "0.1"
 timefilter = "0.1"
 libsystemd = "0.7"
 slotmap = "1.1.1"
-proc-tree = { path = "/home/pilot/.projects/proc-tree" }
+proc-tree = "0.1"
 
 [profile.release]
 opt-level = 3
