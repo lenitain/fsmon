@@ -1,68 +1,31 @@
 //! Proc Connector Process Cache + Process Tree
 //!
 //! Delegates to `proc-tree` crate for core process tree logic.
-//! Provides moka-based storage adapters and proc-connector integration.
+//! Uses `DefaultTree`/`DefaultCache` (HashMap + Mutex + TTL) as storage.
 
-use std::time::Duration;
-
-use moka::sync::Cache;
 use proc_connector::{NetlinkMessageIter, ProcConnector, ProcEvent as PcEvent};
 
 // Re-export proc-tree public types
-pub use proc_tree::{PidNode, ProcEvent, ProcInfo, ProcessLink, read_proc_start_time_ns};
+pub use proc_tree::{
+    DefaultCache, DefaultTree, PidNode, ProcEvent, ProcInfo, ProcessLink,
+    read_proc_start_time_ns,
+};
 
-// ---- Moka-backed trait adapters ----
+// ---- Type aliases ----
 
-/// Adapter: moka `Cache<u32, PidNode>` → `TreeStore`.
-struct TreeRef<'a>(&'a Cache<u32, PidNode>);
+/// Shared process tree: PID → parent PID + cmd.
+pub type PidTree = DefaultTree;
 
-impl proc_tree::TreeStore for TreeRef<'_> {
-    fn get_node(&self, pid: u32) -> Option<PidNode> {
-        self.0.get(&pid)
-    }
-    fn insert_node(&self, pid: u32, node: PidNode) {
-        self.0.insert(pid, node);
-    }
-    fn all_pids(&self) -> Vec<u32> {
-        self.0.iter().map(|(k, _)| *k).collect()
-    }
-}
-
-/// Adapter: moka `Cache<u32, ProcInfo>` → `CacheStore`.
-struct CacheRef<'a>(&'a Cache<u32, ProcInfo>);
-
-impl proc_tree::CacheStore for CacheRef<'_> {
-    fn get_info(&self, pid: u32) -> Option<ProcInfo> {
-        self.0.get(&pid)
-    }
-    fn insert_info(&self, pid: u32, info: ProcInfo) {
-        self.0.insert(pid, info);
-    }
-}
-
-// ---- Type aliases (backward compat) ----
-
-/// Shared PID → ProcInfo cache (thread-safe, bounded, TTL-based eviction).
-pub type ProcCache = Cache<u32, ProcInfo>;
-
-/// Shared process tree: PID → parent PID + cmd (bounded, TTL-based eviction).
-pub type PidTree = Cache<u32, PidNode>;
+/// Shared PID → ProcInfo cache.
+pub type ProcCache = DefaultCache;
 
 // ---- Constants ----
 
-/// Capacity for process info cache.
 pub const PROC_CACHE_CAP: u64 = 65536;
-
-/// TTL for process info entries. Exited processes are evicted after this time.
 pub const PROC_CACHE_TTL_SECS: u64 = 600;
-
-/// Capacity for process tree cache.
 pub const PID_TREE_CAP: u64 = 65536;
-
-/// TTL for process tree entries.
 pub const PID_TREE_TTL_SECS: u64 = 600;
 
-/// Parameters for process caches (ProcCache and PidTree).
 pub struct CacheParams {
     pub capacity: u64,
     pub ttl_secs: u64,
@@ -77,36 +40,24 @@ impl Default for CacheParams {
     }
 }
 
-/// Create a ProcCache with explicit capacity and TTL overrides.
 pub fn new_cache_with(params: CacheParams) -> ProcCache {
-    Cache::builder()
-        .max_capacity(params.capacity)
-        .time_to_live(Duration::from_secs(params.ttl_secs))
-        .build()
+    ProcCache::new(params.capacity, params.ttl_secs)
 }
 
-/// Create a PidTree with explicit capacity and TTL overrides.
 pub fn new_pid_tree_with(params: CacheParams) -> PidTree {
-    Cache::builder()
-        .max_capacity(params.capacity)
-        .time_to_live(Duration::from_secs(params.ttl_secs))
-        .build()
+    PidTree::new(params.capacity, params.ttl_secs)
 }
 
-/// Snapshot all existing processes from /proc on daemon start.
 pub fn snapshot_process_tree(tree: &PidTree, cache: &ProcCache) {
-    proc_tree::snapshot(&TreeRef(tree), &CacheRef(cache));
+    proc_tree::snapshot(tree, cache);
 }
 
-/// Check if `pid` is a descendant of any process whose cmd == `target_cmd`.
 pub fn is_descendant(tree: &PidTree, pid: u32, target_cmd: &str) -> bool {
-    proc_tree::is_descendant(&TreeRef(tree), pid, target_cmd)
+    proc_tree::is_descendant(tree, pid, target_cmd)
 }
 
-/// Build a chain string from the process tree.
-/// Format: "102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root"
 pub fn build_chain(tree: &PidTree, cache: &ProcCache, pid: u32) -> String {
-    proc_tree::build_chain_string(&TreeRef(tree), &CacheRef(cache), pid)
+    proc_tree::build_chain_string(tree, cache, pid)
 }
 
 // ---- Proc Connector ----
@@ -171,18 +122,19 @@ pub fn handle_proc_events(cache: &ProcCache, tree: &PidTree, data: &[u8], n: usi
     if events.is_empty() {
         return false;
     }
-    proc_tree::handle_events(&TreeRef(tree), &CacheRef(cache), &events);
+    proc_tree::handle_events(tree, cache, &events);
     true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proc_tree::{CacheStore, TreeStore};
 
     #[test]
     fn test_proc_cache_insert_and_get() {
         let cache = new_cache_with(CacheParams::default());
-        cache.insert(
+        cache.insert_info(
             12345,
             ProcInfo {
                 cmd: "test_process".into(),
@@ -192,7 +144,7 @@ mod tests {
                 start_time_ns: 0,
             },
         );
-        let info = cache.get(&12345).unwrap();
+        let info = cache.get_info(12345).unwrap();
         assert_eq!(info.cmd, "test_process");
         assert_eq!(info.ppid, 1);
         assert_eq!(info.tgid, 12345);
@@ -201,10 +153,10 @@ mod tests {
     #[test]
     fn test_is_descendant() {
         let tree = new_pid_tree_with(CacheParams::default());
-        tree.insert(1, PidNode { ppid: 0, cmd: "systemd".into() });
-        tree.insert(100, PidNode { ppid: 1, cmd: "openclaw".into() });
-        tree.insert(101, PidNode { ppid: 100, cmd: "sh".into() });
-        tree.insert(102, PidNode { ppid: 101, cmd: String::new() }); // Fork, no Exec yet
+        tree.insert_node(1, PidNode { ppid: 0, cmd: "systemd".into() });
+        tree.insert_node(100, PidNode { ppid: 1, cmd: "openclaw".into() });
+        tree.insert_node(101, PidNode { ppid: 100, cmd: "sh".into() });
+        tree.insert_node(102, PidNode { ppid: 101, cmd: String::new() });
 
         assert!(is_descendant(&tree, 102, "openclaw"));
         assert!(is_descendant(&tree, 101, "openclaw"));
@@ -216,16 +168,16 @@ mod tests {
     #[test]
     fn test_is_descendant_unknown_pid() {
         let tree = new_pid_tree_with(CacheParams::default());
-        tree.insert(1, PidNode { ppid: 0, cmd: "systemd".into() });
+        tree.insert_node(1, PidNode { ppid: 0, cmd: "systemd".into() });
         assert!(!is_descendant(&tree, 99999, "systemd"));
     }
 
     #[test]
     fn test_is_descendant_cycle() {
         let tree = new_pid_tree_with(CacheParams::default());
-        tree.insert(1, PidNode { ppid: 2, cmd: "a".into() });
-        tree.insert(2, PidNode { ppid: 3, cmd: "b".into() });
-        tree.insert(3, PidNode { ppid: 1, cmd: "c".into() });
+        tree.insert_node(1, PidNode { ppid: 2, cmd: "a".into() });
+        tree.insert_node(2, PidNode { ppid: 3, cmd: "b".into() });
+        tree.insert_node(3, PidNode { ppid: 1, cmd: "c".into() });
         assert!(!is_descendant(&tree, 1, "nginx"));
     }
 
@@ -233,12 +185,12 @@ mod tests {
     fn test_build_chain_cycle() {
         let tree = new_pid_tree_with(CacheParams::default());
         let cache = new_cache_with(CacheParams::default());
-        tree.insert(1, PidNode { ppid: 2, cmd: "a".into() });
-        tree.insert(2, PidNode { ppid: 3, cmd: "b".into() });
-        tree.insert(3, PidNode { ppid: 1, cmd: "c".into() });
-        cache.insert(1, ProcInfo { cmd: "a".into(), user: "u".into(), ppid: 2, tgid: 1, start_time_ns: 0 });
-        cache.insert(2, ProcInfo { cmd: "b".into(), user: "u".into(), ppid: 3, tgid: 2, start_time_ns: 0 });
-        cache.insert(3, ProcInfo { cmd: "c".into(), user: "u".into(), ppid: 1, tgid: 3, start_time_ns: 0 });
+        tree.insert_node(1, PidNode { ppid: 2, cmd: "a".into() });
+        tree.insert_node(2, PidNode { ppid: 3, cmd: "b".into() });
+        tree.insert_node(3, PidNode { ppid: 1, cmd: "c".into() });
+        cache.insert_info(1, ProcInfo { cmd: "a".into(), user: "u".into(), ppid: 2, tgid: 1, start_time_ns: 0 });
+        cache.insert_info(2, ProcInfo { cmd: "b".into(), user: "u".into(), ppid: 3, tgid: 2, start_time_ns: 0 });
+        cache.insert_info(3, ProcInfo { cmd: "c".into(), user: "u".into(), ppid: 1, tgid: 3, start_time_ns: 0 });
         let chain = build_chain(&tree, &cache, 1);
         assert!(!chain.is_empty());
         assert!(chain.starts_with("1|"));
@@ -248,14 +200,14 @@ mod tests {
     fn test_build_chain_from_tree() {
         let tree = new_pid_tree_with(CacheParams::default());
         let cache = new_cache_with(CacheParams::default());
-        tree.insert(1, PidNode { ppid: 0, cmd: "systemd".into() });
-        cache.insert(1, ProcInfo { cmd: "systemd".into(), user: "root".into(), ppid: 0, tgid: 1, start_time_ns: 0 });
-        tree.insert(100, PidNode { ppid: 1, cmd: "openclaw".into() });
-        cache.insert(100, ProcInfo { cmd: "openclaw".into(), user: "root".into(), ppid: 1, tgid: 100, start_time_ns: 0 });
-        tree.insert(101, PidNode { ppid: 100, cmd: "sh".into() });
-        cache.insert(101, ProcInfo { cmd: "sh".into(), user: "root".into(), ppid: 100, tgid: 101, start_time_ns: 0 });
-        tree.insert(102, PidNode { ppid: 101, cmd: "touch".into() });
-        cache.insert(102, ProcInfo { cmd: "touch".into(), user: "root".into(), ppid: 101, tgid: 102, start_time_ns: 0 });
+        tree.insert_node(1, PidNode { ppid: 0, cmd: "systemd".into() });
+        cache.insert_info(1, ProcInfo { cmd: "systemd".into(), user: "root".into(), ppid: 0, tgid: 1, start_time_ns: 0 });
+        tree.insert_node(100, PidNode { ppid: 1, cmd: "openclaw".into() });
+        cache.insert_info(100, ProcInfo { cmd: "openclaw".into(), user: "root".into(), ppid: 1, tgid: 100, start_time_ns: 0 });
+        tree.insert_node(101, PidNode { ppid: 100, cmd: "sh".into() });
+        cache.insert_info(101, ProcInfo { cmd: "sh".into(), user: "root".into(), ppid: 100, tgid: 101, start_time_ns: 0 });
+        tree.insert_node(102, PidNode { ppid: 101, cmd: "touch".into() });
+        cache.insert_info(102, ProcInfo { cmd: "touch".into(), user: "root".into(), ppid: 101, tgid: 102, start_time_ns: 0 });
 
         let chain = build_chain(&tree, &cache, 102);
         assert_eq!(chain, "102|touch|root;101|sh|root;100|openclaw|root;1|systemd|root");
@@ -265,8 +217,8 @@ mod tests {
     fn test_build_chain_single() {
         let tree = new_pid_tree_with(CacheParams::default());
         let cache = new_cache_with(CacheParams::default());
-        tree.insert(1, PidNode { ppid: 0, cmd: "systemd".into() });
-        cache.insert(1, ProcInfo { cmd: "systemd".into(), user: "root".into(), ppid: 0, tgid: 1, start_time_ns: 0 });
+        tree.insert_node(1, PidNode { ppid: 0, cmd: "systemd".into() });
+        cache.insert_info(1, ProcInfo { cmd: "systemd".into(), user: "root".into(), ppid: 0, tgid: 1, start_time_ns: 0 });
 
         let chain = build_chain(&tree, &cache, 1);
         assert_eq!(chain, "1|systemd|root");
@@ -277,12 +229,12 @@ mod tests {
         let tree = new_pid_tree_with(CacheParams::default());
         let cache = new_cache_with(CacheParams::default());
         snapshot_process_tree(&tree, &cache);
-        assert!(tree.contains_key(&1), "PID 1 should exist after snapshot");
-        if let Some(node) = tree.get(&1) {
+        assert!(tree.contains_key(1), "PID 1 should exist after snapshot");
+        if let Some(node) = tree.get_node(1) {
             assert!(!node.cmd.is_empty(), "PID 1 should have a cmd");
             assert_eq!(node.ppid, 0, "PID 1's ppid should be 0");
         }
-        assert!(cache.contains_key(&1), "PID 1 should exist in proc cache after snapshot");
+        assert!(cache.contains_key(1), "PID 1 should exist in proc cache after snapshot");
     }
 
     #[test]

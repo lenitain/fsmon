@@ -4,7 +4,7 @@ pub use sizefilter::{SizeFilter, SizeOp, format_size, parse_size, parse_size_fil
 pub use timefilter::{TimeFilter, TimeOp, format_datetime, parse_time, parse_time_filter};
 
 use crate::proc_cache::{ProcCache, ProcInfo};
-use proc_tree::read_proc_start_time_ns;
+use proc_tree::{CacheStore, read_proc_start_time_ns};
 use chrono::{DateTime, Utc};
 
 /// Extension trait for TimeFilter to provide matching and classification methods.
@@ -83,7 +83,7 @@ pub fn get_process_info_by_pid(
 ) -> ProcInfo {
     // Check proc connector cache first (only source for short-lived processes)
     if let Some(cache) = proc_cache
-        && let Some(info) = cache.get(&pid)
+        && let Some(info) = cache.get_info(pid)
     {
         // Verify the process hasn't been reincarnated with a reused PID.
         let cached_start = info.start_time_ns;

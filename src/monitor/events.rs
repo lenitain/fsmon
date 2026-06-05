@@ -12,6 +12,7 @@ use crate::filters::PathOptions;
 use crate::monitored::PathEntry;
 use crate::proc_cache::build_chain;
 use crate::utils::{format_size, get_process_info_by_pid};
+use proc_tree::{CacheStore, TreeStore};
 use crate::{EventType, FileEvent};
 
 use super::Monitor;
@@ -204,7 +205,7 @@ impl Monitor {
             if ev.cmd == "unknown" || ev.user == "unknown" || ev.ppid == 0 || ev.tgid == 0 {
                 // Try proc_cache (now populated by the second drain)
                 if let Some(ref cache) = self.proc_cache
-                    && let Some(info) = cache.get(&pe.pid)
+                    && let Some(info) = cache.get_info(pe.pid)
                 {
                     if ev.cmd == "unknown" {
                         ev.cmd = info.cmd.clone();
@@ -221,7 +222,7 @@ impl Monitor {
                 }
                 // Also try PidTree for cmd/ppid
                 if let Some(ref tree) = self.pid_tree
-                    && let Some(node) = tree.get(&pe.pid)
+                    && let Some(node) = tree.get_node(pe.pid)
                 {
                     if ev.cmd == "unknown" && !node.cmd.is_empty() {
                         ev.cmd = node.cmd.clone();

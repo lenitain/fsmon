@@ -313,7 +313,7 @@ impl Monitor {
                 debug_log!(
                     self.debug,
                     "  proc_cache:       {}/{} entries",
-                    c.entry_count(),
+                    c.len(),
                     PROC_CACHE_CAP
                 );
             }
@@ -321,7 +321,7 @@ impl Monitor {
                 debug_log!(
                     self.debug,
                     "  pid_tree:         {}/{} entries",
-                    t.entry_count(),
+                    t.len(),
                     PID_TREE_CAP
                 );
             }
