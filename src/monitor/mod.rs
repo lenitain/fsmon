@@ -453,19 +453,7 @@ impl Monitor {
                     }
                 } => {
                     if let Ok(mut guard) = proc_readable {
-                        loop {
-                            match guard.get_inner().recv_raw(&mut proc_buf) {
-                                Ok(n) => {
-                                    proc_cache::handle_proc_events(&proc_cache, &pid_tree, &proc_buf, n);
-                                }
-                                Err(proc_connector::Error::WouldBlock) => break,
-                                Err(proc_connector::Error::Interrupted) => continue,
-                                Err(e) => {
-                                    eprintln!("proc connector error: {e}");
-                                    break;
-                                }
-                            }
-                        }
+                        self.drain_proc_conn(guard.get_inner(), &mut proc_buf, &proc_cache, &pid_tree);
                         guard.clear_ready();
                     }
                 }
@@ -538,6 +526,29 @@ impl Monitor {
     }
 
     /// Drain all pending proc connector events into the caches.
+    fn drain_proc_conn(
+        &self,
+        conn: &proc_connector::ProcConnector,
+        proc_buf: &mut [u8],
+        proc_cache: &ProcCache,
+        pid_tree: &PidTree,
+    ) {
+        loop {
+            match conn.recv_raw(proc_buf) {
+                Ok(n) => {
+                    proc_cache::handle_proc_events(proc_cache, pid_tree, proc_buf, n);
+                }
+                Err(proc_connector::Error::WouldBlock) => break,
+                Err(proc_connector::Error::Interrupted) => continue,
+                Err(e) => {
+                    eprintln!("proc connector error: {e}");
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Convenience wrapper: drain from an optional AsyncFd.
     fn drain_proc_events(
         &self,
         proc_afd: &Option<AsyncFd<proc_connector::ProcConnector>>,
@@ -546,20 +557,7 @@ impl Monitor {
         pid_tree: &PidTree,
     ) {
         if let Some(afd) = proc_afd.as_ref() {
-            let conn = afd.get_ref();
-            loop {
-                match conn.recv_raw(proc_buf) {
-                    Ok(n) => {
-                        proc_cache::handle_proc_events(proc_cache, pid_tree, proc_buf, n);
-                    }
-                    Err(proc_connector::Error::WouldBlock) => break,
-                    Err(proc_connector::Error::Interrupted) => continue,
-                    Err(e) => {
-                        eprintln!("proc connector error: {e}");
-                        break;
-                    }
-                }
-            }
+            self.drain_proc_conn(afd.get_ref(), proc_buf, proc_cache, pid_tree);
         }
     }
 
