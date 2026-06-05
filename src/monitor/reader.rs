@@ -45,10 +45,10 @@ impl Monitor {
         .map_err(std::io::Error::other)
     }
 
-    /// Spawn a tokio reader task for `group_idx` in `fs_groups`.
+    /// Spawn a tokio reader task for `group_key` in `fs_groups`.
     /// Both the fanotify fd and mount fd are duplicated so the reader task
     /// owns independent copies, avoiding double-close with Monitor's OwnedFd.
-    pub(crate) fn spawn_fd_reader(&mut self, group_idx: usize) {
+    pub(crate) fn spawn_fd_reader(&mut self, group_key: super::FsGroupKey) {
         let tx = match self.event_tx.as_ref() {
             Some(t) => t.clone(),
             None => {
@@ -66,7 +66,7 @@ impl Monitor {
         let death_tx = self.reader_death_tx.clone();
         let buf_size = self.buffer_size;
         let debug = self.debug;
-        let group = &self.fs_groups[group_idx];
+        let group = &self.fs_groups[group_key];
 
         // Duplicate fds so the reader task owns independent copies
         let owned_fan_fd = match Self::dup_fd(&group.fan_fd) {
@@ -97,16 +97,16 @@ impl Monitor {
 
         if debug {
             eprintln!(
-                "[DEBUG] spawning reader for group {} (fd {})",
-                group_idx, raw_fd
+                "[DEBUG] spawning reader for group {:?} (fd {})",
+                group_key, raw_fd
             );
         }
 
         tokio::spawn(async move {
             if debug {
                 eprintln!(
-                    "[DEBUG] reader task spawned for group {} (fd {})",
-                    group_idx, raw_fd
+                    "[DEBUG] reader task spawned for group {:?} (fd {})",
+                    group_key, raw_fd
                 );
             }
             let afd = match AsyncFd::new(owned_fan_fd) {
@@ -118,7 +118,7 @@ impl Monitor {
                 }
                 Err(e) => {
                     eprintln!("[ERROR] AsyncFd for fd {}: {}", raw_fd, e);
-                    let _ = death_tx.send(group_idx);
+                    let _ = death_tx.send(group_key);
                     return;
                 }
             };
@@ -164,28 +164,20 @@ impl Monitor {
             }
             if debug {
                 eprintln!(
-                    "[DEBUG] Reader task for group {} (fd {}) exited",
-                    group_idx, raw_fd
+                    "[DEBUG] Reader task for group {:?} (fd {}) exited",
+                    group_key, raw_fd
                 );
             }
-            let _ = death_tx.send(group_idx);
+            let _ = death_tx.send(group_key);
         });
 
         // Track reader state for restart backoff
-        if let Some(state) = self
-            .reader_states
-            .get_mut(group_idx)
-            .and_then(|s| s.as_mut())
-        {
+        if let Some(state) = self.reader_states.get_mut(&group_key) {
             state.restart_count += 1;
             state.last_restart = std::time::Instant::now();
             state.gave_up = false;
         } else {
-            // Ensure reader_states is large enough
-            if group_idx >= self.reader_states.len() {
-                self.reader_states.resize_with(group_idx + 1, || None);
-            }
-            self.reader_states[group_idx] = Some(ReaderState {
+            self.reader_states.insert(group_key, ReaderState {
                 restart_count: 1,
                 last_restart: std::time::Instant::now(),
                 gave_up: false,
@@ -200,27 +192,23 @@ impl Monitor {
     /// If the backoff limit is exceeded, logs a warning and gives up.
     /// On success, the dead task's fds are re-duplicated from FsGroup and
     /// a new reader is spawned.
-    pub(crate) fn restart_reader(&mut self, group_idx: usize) {
+    pub(crate) fn restart_reader(&mut self, group_key: super::FsGroupKey) {
         // Check backoff limits
         let now = std::time::Instant::now();
-        let state = self.reader_states.get(group_idx).and_then(|s| s.as_ref());
+        let state = self.reader_states.get(&group_key);
         if let Some(s) = state {
             let in_window = now.duration_since(s.last_restart) < BACKOFF_WINDOW;
             if in_window && s.restart_count >= MAX_RESTARTS {
                 eprintln!(
-                    "[ERROR] Reader task for group {} has crashed {} times in \
+                    "[ERROR] Reader task for group {:?} has crashed {} times in \
                      the last {}s — giving up. fsmon daemon restart required.",
-                    group_idx,
+                    group_key,
                     MAX_RESTARTS,
                     BACKOFF_WINDOW.as_secs(),
                 );
                 // Mark gave_up so health() reports accurate alive/dead status.
                 // This will be reset when spawn_fd_reader is called again.
-                if let Some(s) = self
-                    .reader_states
-                    .get_mut(group_idx)
-                    .and_then(|s| s.as_mut())
-                {
+                if let Some(s) = self.reader_states.get_mut(&group_key) {
                     s.gave_up = true;
                 }
                 return;
@@ -228,19 +216,19 @@ impl Monitor {
         }
 
         // Verify the FsGroup still exists (may have been removed during shutdown)
-        if group_idx >= self.fs_groups.len() {
+        if !self.fs_groups.contains_key(group_key) {
             eprintln!(
-                "[WARNING] Cannot restart reader for group {}: group no longer exists",
-                group_idx
+                "[WARNING] Cannot restart reader for group {:?}: group no longer exists",
+                group_key
             );
             return;
         }
 
-        let dev_id = self.fs_groups[group_idx].dev_id;
+        let dev_id = self.fs_groups[group_key].dev_id;
         eprintln!(
-            "[INFO] Restarting reader task for group {} (dev_id={})...",
-            group_idx, dev_id
+            "[INFO] Restarting reader task for group {:?} (dev_id={})...",
+            group_key, dev_id
         );
-        self.spawn_fd_reader(group_idx);
+        self.spawn_fd_reader(group_key);
     }
 }

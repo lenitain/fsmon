@@ -1,6 +1,7 @@
 // Initialization methods extracted from Monitor::run() for readability.
 
 use anyhow::{Context, Result, bail};
+use super::FsGroupKey;
 use fanotify_fid::consts::{
     FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_NONBLOCK, FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
 };
@@ -117,7 +118,7 @@ impl Monitor {
         self.setup_inotify_watches();
 
         // Initialize per-filesystem fanotify fds.
-        let mut fs_group_devs: Vec<u64> = Vec::new();
+        let mut fs_group_devs: std::collections::HashMap<u64, FsGroupKey> = std::collections::HashMap::new();
         for (i, canonical) in self.canonical_paths.iter().enumerate() {
             let path_mask = combined_mask;
 
@@ -128,18 +129,9 @@ impl Monitor {
                 .unwrap_or(0);
 
             // Try to reuse an existing FsGroup on the same filesystem
-            let mut reuse_idx = None;
-            for (gi, gdev) in fs_group_devs.iter().enumerate() {
-                if *gdev == dev_id {
-                    reuse_idx = Some(gi);
-                    break;
-                }
-            }
-
-            if let Some(gi) = reuse_idx {
+            if let Some(&key) = fs_group_devs.get(&dev_id) {
                 // Same filesystem — just add inode mark
-                let group = &self.fs_groups[gi];
-                let fan_fd = &group.fan_fd;
+                let fan_fd = &self.fs_groups[key].fan_fd;
                 if let Err(e) = mark_directory(fan_fd, path_mask, canonical) {
                     eprintln!(
                         "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
@@ -158,8 +150,8 @@ impl Monitor {
                         mark_recursive(fan_fd, path_mask, canonical);
                     }
                 }
-                self.fs_groups[gi].ref_count += 1;
-                self.path_to_group.insert(self.paths[i].clone(), gi);
+                self.fs_groups[key].ref_count += 1;
+                self.path_to_group.insert(self.paths[i].clone(), key);
                 continue;
             }
 
@@ -204,15 +196,14 @@ impl Monitor {
                 }
             };
 
-            let gi = self.fs_groups.len();
-            self.fs_groups.push(FsGroup {
+            let key = self.fs_groups.insert(FsGroup {
                 dev_id,
                 fan_fd: new_fd,
                 mount_fd,
                 ref_count: 1,
             });
-            fs_group_devs.push(dev_id);
-            self.path_to_group.insert(self.paths[i].clone(), gi);
+            fs_group_devs.insert(dev_id, key);
+            self.path_to_group.insert(self.paths[i].clone(), key);
         }
 
         let fan_group_count = self.fs_groups.len();
@@ -376,8 +367,9 @@ impl Monitor {
         self.event_tx = Some(event_tx);
         self.shared_dir_cache = Some(dir_cache.clone());
 
-        for gi in 0..self.fs_groups.len() {
-            self.spawn_fd_reader(gi);
+        let keys: Vec<_> = self.fs_groups.keys().collect();
+        for key in keys {
+            self.spawn_fd_reader(key);
         }
 
         // Spawn file writer task

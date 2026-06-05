@@ -19,9 +19,8 @@ impl Monitor {
         let readers: Vec<ReaderHealth> = self
             .fs_groups
             .iter()
-            .enumerate()
-            .map(|(i, g)| {
-                let state = self.reader_states.get(i).and_then(|s| s.as_ref());
+            .map(|(key, g)| {
+                let state = self.reader_states.get(&key);
                 let alive = state.is_some_and(|s| {
                     // Only dead when restart_reader explicitly gave up.
                     // gave_up is reset when spawn_fd_reader attempts recovery.

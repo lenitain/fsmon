@@ -45,6 +45,7 @@ toml = "1.1"
 sizefilter = "0.1"
 timefilter = "0.1"
 libsystemd = "0.7"
+slotmap = "1.1.1"
 
 [profile.release]
 opt-level = 3

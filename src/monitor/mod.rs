@@ -21,6 +21,10 @@ use crate::monitored::PathEntry;
 use crate::proc_cache::{self, PidTree, ProcCache};
 use crate::watchdog::Watchdog;
 use serde_json;
+use slotmap::SlotMap;
+
+/// Key type for FsGroup SlotMap lookups.
+pub(crate) type FsGroupKey = slotmap::DefaultKey;
 
 // ---- Debug logging macro ----
 // Avoids format!() allocation when debug is disabled.
@@ -83,10 +87,11 @@ pub struct Monitor {
     pub(crate) file_size_cache: LruCache<PathBuf, u64>,
     pub(crate) buffer_size: usize,
     pub(crate) socket_listener: Option<tokio::net::UnixListener>,
-    /// One `FsGroup` per unique filesystem (fan_fd + mount_fd dedup'd)
-    pub(crate) fs_groups: Vec<FsGroup>,
-    /// Maps monitored path → index in fs_groups for fast lookup in remove_path
-    pub(crate) path_to_group: HashMap<PathBuf, usize>,
+    /// One `FsGroup` per unique filesystem (fan_fd + mount_fd dedup'd).
+    /// Uses SlotMap for stable keys — removal doesn't invalidate other keys.
+    pub(crate) fs_groups: SlotMap<FsGroupKey, FsGroup>,
+    /// Maps monitored path → key in fs_groups for fast lookup in remove_path
+    pub(crate) path_to_group: HashMap<PathBuf, FsGroupKey>,
     pub(crate) dir_cache: Cache<fanotify_fid::types::HandleKey, PathBuf>,
     /// Shared state for spawning reader tasks during live-add (set in run())
     pub(crate) event_tx: Option<EventSender>,
@@ -105,12 +110,12 @@ pub struct Monitor {
     pub(crate) cache_config: ResolvedCacheConfig,
     /// Enable debug output
     pub(crate) debug: bool,
-    /// Death notifications from reader tasks: each sends its group_idx on exit.
-    pub(crate) reader_death_rx: tokio::sync::mpsc::UnboundedReceiver<usize>,
+    /// Death notifications from reader tasks: each sends its group key on exit.
+    pub(crate) reader_death_rx: tokio::sync::mpsc::UnboundedReceiver<FsGroupKey>,
     /// Cloneable sender for reader tasks to signal death.
-    pub(crate) reader_death_tx: tokio::sync::mpsc::UnboundedSender<usize>,
-    /// Per-group restart tracking (index-aligned with fs_groups).
-    pub(crate) reader_states: Vec<Option<ReaderState>>,
+    pub(crate) reader_death_tx: tokio::sync::mpsc::UnboundedSender<FsGroupKey>,
+    /// Per-group restart tracking (keyed by FsGroupKey).
+    pub(crate) reader_states: HashMap<FsGroupKey, ReaderState>,
     /// Daemon start time, set in run() for uptime calculation.
     pub(crate) started_at: std::time::Instant,
     /// Raw disk-min-free threshold string (e.g. "10%", "5GB"). None = no check.
@@ -130,8 +135,8 @@ pub struct Monitor {
     pub(crate) metrics: MetricsRegistry,
     /// Temporary fanotify marks on parent directories of deleted-and-pending
     /// paths, so that events during the recreate window aren't lost.
-    /// Maps: target_pending_path → (parent_path, group_idx in fs_groups)
-    pub(crate) temp_parent_marks: HashMap<PathBuf, (PathBuf, usize)>,
+    /// Maps: target_pending_path → (parent_path, key in fs_groups)
+    pub(crate) temp_parent_marks: HashMap<PathBuf, (PathBuf, FsGroupKey)>,
     /// Watchdog manager for systemd integration.
     pub(crate) watchdog: Option<Watchdog>,
 }
@@ -203,7 +208,7 @@ impl Monitor {
             monitored_entries.push((resolved.clone(), opts.clone()));
         }
 
-        let (reader_death_tx, reader_death_rx) = tokio::sync::mpsc::unbounded_channel::<usize>();
+        let (reader_death_tx, reader_death_rx) = tokio::sync::mpsc::unbounded_channel::<FsGroupKey>();
 
         let monitor = Self {
             paths,
@@ -225,7 +230,7 @@ impl Monitor {
             cache_config,
             socket_listener,
             debug,
-            fs_groups: Vec::new(),
+            fs_groups: SlotMap::new(),
             path_to_group: HashMap::new(),
             event_tx: None,
             shared_dir_cache: None,
@@ -235,7 +240,7 @@ impl Monitor {
             daemon_pid: std::process::id(),
             reader_death_rx,
             reader_death_tx,
-            reader_states: Vec::new(),
+            reader_states: HashMap::new(),
             started_at: std::time::Instant::now(),
             disk_min_free,
             sync_interval,
@@ -344,7 +349,7 @@ impl Monitor {
         // Move the reader death receiver out of self so tokio::select! can use it.
         let mut reader_death_rx = std::mem::replace(
             &mut self.reader_death_rx,
-            tokio::sync::mpsc::unbounded_channel::<usize>().1,
+            tokio::sync::mpsc::unbounded_channel::<FsGroupKey>().1,
         );
 
         // Notify systemd: READY=1
@@ -560,13 +565,13 @@ impl Monitor {
     ) -> MetricsReport {
         let reader_groups_alive = self
             .reader_states
-            .iter()
-            .filter(|s| s.as_ref().is_some_and(|s| !s.gave_up))
+            .values()
+            .filter(|s| !s.gave_up)
             .count() as u64;
         let reader_groups_gave_up = self
             .reader_states
-            .iter()
-            .filter(|s| s.as_ref().is_some_and(|s| s.gave_up))
+            .values()
+            .filter(|s| s.gave_up)
             .count() as u64;
 
         MetricsReport {
