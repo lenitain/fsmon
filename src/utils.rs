@@ -1,11 +1,10 @@
-use std::collections::HashMap;
 use std::path::Path;
-use std::sync::OnceLock;
 
 pub use sizefilter::{SizeFilter, SizeOp, format_size, parse_size, parse_size_filter};
 pub use timefilter::{TimeFilter, TimeOp, format_datetime, parse_time, parse_time_filter};
 
-use crate::proc_cache::{ProcCache, ProcInfo, read_proc_start_time_ns};
+use crate::proc_cache::{ProcCache, ProcInfo};
+use proc_tree::read_proc_start_time_ns;
 use chrono::{DateTime, Utc};
 
 /// Extension trait for TimeFilter to provide matching and classification methods.
@@ -98,8 +97,8 @@ pub fn get_process_info_by_pid(
     // Fallback to reading /proc directly (for long-lived processes)
     // If the process just exited, /proc/{pid} might still exist briefly
     // as a zombie before the parent reaps it. Retry with short sleep.
-    let cmd = retry(|| read_proc_comm(pid)).unwrap_or_else(|| "unknown".to_string());
-    let (user, ppid, tgid) = retry(|| read_proc_status_fields(pid)).unwrap_or_else(|| {
+    let cmd = retry(|| proc_tree::proc::read_proc_comm(pid)).unwrap_or_else(|| "unknown".to_string());
+    let (user, ppid, tgid) = retry(|| proc_tree::proc::read_proc_status_fields(pid)).unwrap_or_else(|| {
         let fallback_user = read_file_owner(file_path).unwrap_or_else(|| "unknown".to_string());
         (fallback_user, 0u32, 0u32)
     });
@@ -130,61 +129,11 @@ where
     None
 }
 
-fn read_proc_comm(pid: u32) -> Option<String> {
-    std::fs::read_to_string(format!("/proc/{}/comm", pid))
-        .ok()
-        .map(|s| s.trim().to_string())
-}
-
-/// Read user, ppid, tgid from /proc/{pid}/status in one pass.
-pub fn read_proc_status_fields(pid: u32) -> Option<(String, u32, u32)> {
-    let status = std::fs::read_to_string(format!("/proc/{}/status", pid)).ok()?;
-    let mut user = String::new();
-    let mut ppid = 0u32;
-    let mut tgid = 0u32;
-    for line in status.lines() {
-        if let Some(val) = line.strip_prefix("Uid:") {
-            let uid: u32 = val.split_whitespace().next()?.parse().ok()?;
-            user = uid_to_username(uid).unwrap_or_else(|| "unknown".to_string());
-        } else if let Some(val) = line.strip_prefix("PPid:") {
-            ppid = val.trim().parse().ok()?;
-        } else if let Some(val) = line.strip_prefix("Tgid:") {
-            tgid = val.trim().parse().ok()?;
-        }
-    }
-    Some((user, ppid, tgid))
-}
-
 /// Fallback: read file owner UID from filesystem metadata
 fn read_file_owner(path: &Path) -> Option<String> {
     use std::os::unix::fs::MetadataExt;
     let metadata = std::fs::metadata(path).ok()?;
-    uid_to_username(metadata.uid())
-}
-
-fn uid_passwd_map() -> &'static HashMap<u32, String> {
-    static MAP: OnceLock<HashMap<u32, String>> = OnceLock::new();
-    MAP.get_or_init(|| {
-        let mut map = HashMap::new();
-        if let Ok(passwd) = std::fs::read_to_string("/etc/passwd") {
-            for entry in passwd.lines() {
-                let mut parts = entry.splitn(4, ':');
-                let name = parts.next();
-                let _shell = parts.next(); // password field
-                let uid_str = parts.next();
-                if let (Some(name), Some(uid_str)) = (name, uid_str)
-                    && let Ok(uid) = uid_str.parse::<u32>()
-                {
-                    map.insert(uid, name.to_string());
-                }
-            }
-        }
-        map
-    })
-}
-
-pub fn uid_to_username(uid: u32) -> Option<String> {
-    uid_passwd_map().get(&uid).cloned()
+    proc_tree::proc::uid_to_username(metadata.uid())
 }
 
 /// Convert a monitored path to a deterministic, fixed-length log filename.
