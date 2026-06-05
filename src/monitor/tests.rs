@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::fid_parser::mask_to_event_types;
 use crate::filters::PathOptions;
