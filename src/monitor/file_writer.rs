@@ -1,10 +1,14 @@
-use std::collections::{HashSet, VecDeque};
-use std::fs::{self, OpenOptions};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::FileEvent;
 use crate::metrics::MetricsRegistry;
+
+/// Maximum number of open file handles to keep cached.
+const MAX_OPEN_HANDLES: usize = 64;
 
 // ---- FileLogWriter: unified event stream consumer for disk persistence ----
 
@@ -20,6 +24,9 @@ pub(crate) struct FileLogWriter {
     debug: bool,
     local_time: bool,
     metrics: MetricsRegistry,
+    /// Cached open file handles, keyed by log path.
+    /// Avoids open+close per event for high-frequency writes.
+    handles: HashMap<PathBuf, BufWriter<File>>,
 }
 
 impl FileLogWriter {
@@ -40,6 +47,7 @@ impl FileLogWriter {
             metrics,
             debug,
             local_time,
+            handles: HashMap::new(),
         }
     }
 
@@ -93,6 +101,22 @@ impl FileLogWriter {
         self.sync_dirty_logs();
     }
 
+    /// Get or open a BufWriter for the given log path.
+    /// Returns None if the open fails (caller should buffer the event).
+    fn get_or_open(&mut self, log_path: &PathBuf) -> std::io::Result<&mut BufWriter<File>> {
+        if !self.handles.contains_key(log_path) {
+            // Evict oldest handle if at capacity
+            if self.handles.len() >= MAX_OPEN_HANDLES
+                && let Some(evict_path) = self.handles.keys().next().cloned()
+            {
+                self.handles.remove(&evict_path);
+            }
+            let file = open_log_file(log_path, &self.log_dir)?;
+            self.handles.insert(log_path.clone(), BufWriter::new(file));
+        }
+        Ok(self.handles.get_mut(log_path).unwrap())
+    }
+
     /// Write an event to the appropriate JSONL log file.
     /// Returns Ok(()) even if disk is full (event is buffered for retry).
     fn write_event(&mut self, event: &FileEvent, cmd_name: &str) -> std::io::Result<()> {
@@ -105,42 +129,20 @@ impl FileLogWriter {
             self.flush_disk_buf();
         }
 
+        // Serialize before borrowing self.handles
+        let line = self.jsonl_string(event);
         let is_new = !log_path.exists();
-        // Retry once on ENOENT: recreate log directory if deleted at runtime
-        let open_result = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-            .or_else(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    let _ = fs::create_dir_all(&self.log_dir);
-                    let _ = crate::fid_parser::chown_to_user(&self.log_dir);
-                    OpenOptions::new().create(true).append(true).open(&log_path)
-                } else {
-                    Err(e)
-                }
-            });
 
-        match open_result {
-            Ok(file) => {
-                // Chown new log files to the original user
-                if is_new {
-                    match crate::fid_parser::chown_to_user(&log_path) {
-                        Ok(true) => {}
-                        Ok(false) => {}
-                        Err(e) => {
-                            eprintln!(
-                                "[WARNING] Could not chown log file '{}': {}",
-                                log_path.display(),
-                                e
-                            );
-                        }
-                    }
+        match self.get_or_open(&log_path) {
+            Ok(writer) => {
+                if is_new && let Err(e) = crate::fid_parser::chown_to_user(&log_path) {
+                    eprintln!(
+                        "[WARNING] Could not chown log file '{}': {}",
+                        log_path.display(),
+                        e
+                    );
                 }
-                let mut file = std::io::BufWriter::new(file);
-                use std::io::Write;
-                writeln!(file, "{}", self.jsonl_string(event))?;
-                // Track dirty log for periodic fdatasync
+                writeln!(writer, "{}", line)?;
                 if self.sync_interval.is_some() {
                     self.dirty_logs.insert(log_path);
                 }
@@ -149,6 +151,7 @@ impl FileLogWriter {
             }
             Err(e) => {
                 // Disk might be full — buffer the event
+                self.handles.remove(&log_path);
                 self.disk_healthy = false;
                 self.last_disk_check = std::time::Instant::now();
                 if self.disk_buf.len() < 10_000 {
@@ -172,24 +175,11 @@ impl FileLogWriter {
         let mut remaining = VecDeque::new();
         while let Some((event, cmd_name)) = self.disk_buf.pop_front() {
             let log_path = self.log_dir.join(crate::utils::cmd_to_log_name(&cmd_name));
-            let open_result = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_path)
-                .or_else(|e| {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        let _ = fs::create_dir_all(&self.log_dir);
-                        let _ = crate::fid_parser::chown_to_user(&self.log_dir);
-                        OpenOptions::new().create(true).append(true).open(&log_path)
-                    } else {
-                        Err(e)
-                    }
-                });
-            match open_result {
-                Ok(file) => {
-                    let mut file = std::io::BufWriter::new(file);
-                    use std::io::Write;
-                    if writeln!(file, "{}", self.jsonl_string(&event)).is_err() {
+            let line = self.jsonl_string(&event);
+            match self.get_or_open(&log_path) {
+                Ok(writer) => {
+                    if writeln!(writer, "{}", line).is_err() {
+                        self.handles.remove(&log_path);
                         remaining.push_back((event, cmd_name));
                     }
                 }
@@ -212,21 +202,46 @@ impl FileLogWriter {
         }
         let paths: Vec<PathBuf> = self.dirty_logs.drain().collect();
         for path in &paths {
-            match std::fs::OpenOptions::new().write(true).open(path) {
-                Ok(file) => {
-                    if let Err(e) = file.sync_data() {
-                        eprintln!("[WARNING] fdatasync failed for '{}': {}", path.display(), e);
-                    }
+            // Try cached handle first
+            if let Some(writer) = self.handles.get(path) {
+                if let Err(e) = writer.get_ref().sync_data() {
+                    eprintln!("[WARNING] fdatasync failed for '{}': {}", path.display(), e);
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => {
-                    eprintln!(
-                        "[WARNING] Could not open '{}' for sync: {}",
-                        path.display(),
-                        e
-                    );
+            } else {
+                // Fallback: open for sync (handle was evicted)
+                match File::options().write(true).open(path) {
+                    Ok(file) => {
+                        if let Err(e) = file.sync_data() {
+                            eprintln!("[WARNING] fdatasync failed for '{}': {}", path.display(), e);
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => {
+                        eprintln!(
+                            "[WARNING] Could not open '{}' for sync: {}",
+                            path.display(),
+                            e
+                        );
+                    }
                 }
             }
         }
     }
+}
+
+/// Open a log file with create+append, retrying once on ENOENT.
+fn open_log_file(log_path: &PathBuf, log_dir: &PathBuf) -> std::io::Result<File> {
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .or_else(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                let _ = fs::create_dir_all(log_dir);
+                let _ = crate::fid_parser::chown_to_user(log_dir);
+                OpenOptions::new().create(true).append(true).open(log_path)
+            } else {
+                Err(e)
+            }
+        })
 }

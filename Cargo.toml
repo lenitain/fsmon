@@ -1,6 +1,6 @@
 [package]
 name = "fsmon"
-version = "0.4.7"
+version = "0.4.9"
 edition = "2024"
 license = "MIT"
 description = "Lightweight High-Performance File System Change Tracking Tool"
@@ -46,6 +46,7 @@ sizefilter = "0.1"
 timefilter = "0.1"
 libsystemd = "0.7"
 slotmap = "1.1.1"
+proc-tree = "0.1"
 
 [profile.release]
 opt-level = 3

@@ -17,7 +17,8 @@ impl Monitor {
         use crate::socket::{HealthInfo, ReaderHealth};
 
         let readers: Vec<ReaderHealth> = self
-            .fs_groups
+            .fanotify
+            .groups
             .iter()
             .map(|(key, g)| {
                 let state = self.reader_states.get(&key);
@@ -44,7 +45,7 @@ impl Monitor {
             uptime_secs: self.started_at.elapsed().as_secs(),
             channel_type,
             monitored_paths: self.monitored_entries.len(),
-            reader_groups: self.fs_groups.len(),
+            reader_groups: self.fanotify.groups.len(),
             readers,
         })
     }

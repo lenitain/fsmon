@@ -10,9 +10,9 @@ use crate::fid_parser::mask_to_event_types;
 use crate::filters;
 use crate::filters::PathOptions;
 use crate::monitored::PathEntry;
-use crate::proc_cache::build_chain;
 use crate::utils::{format_size, get_process_info_by_pid};
 use crate::{EventType, FileEvent};
+use proc_tree::{CacheStore, TreeStore};
 
 use super::Monitor;
 
@@ -134,9 +134,10 @@ impl Monitor {
         match cmd {
             Some(cmd_name) => {
                 let matched = self
-                    .pid_tree
+                    .proc
+                    .tree
                     .as_ref()
-                    .map(|tree| crate::proc_cache::is_descendant(tree, event_pid, cmd_name))
+                    .map(|tree| proc_tree::is_descendant(tree, event_pid, cmd_name))
                     .unwrap_or(false);
                 debug_log!(
                     self.debug,
@@ -172,7 +173,7 @@ impl Monitor {
             );
         }
         for opts in all_opts {
-            self.pending_paths.push((
+            self.inotify_state.pending_paths.push((
                 path.to_path_buf(),
                 PathEntry {
                     path: path.to_path_buf(),
@@ -203,8 +204,8 @@ impl Monitor {
             let ev = &mut pe.event;
             if ev.cmd == "unknown" || ev.user == "unknown" || ev.ppid == 0 || ev.tgid == 0 {
                 // Try proc_cache (now populated by the second drain)
-                if let Some(ref cache) = self.proc_cache
-                    && let Some(info) = cache.get(&pe.pid)
+                if let Some(ref cache) = self.proc.cache
+                    && let Some(info) = cache.get_info(pe.pid)
                 {
                     if ev.cmd == "unknown" {
                         ev.cmd = info.cmd.clone();
@@ -220,8 +221,8 @@ impl Monitor {
                     }
                 }
                 // Also try PidTree for cmd/ppid
-                if let Some(ref tree) = self.pid_tree
-                    && let Some(node) = tree.get(&pe.pid)
+                if let Some(ref tree) = self.proc.tree
+                    && let Some(node) = tree.get_node(pe.pid)
                 {
                     if ev.cmd == "unknown" && !node.cmd.is_empty() {
                         ev.cmd = node.cmd.clone();
@@ -242,7 +243,7 @@ impl Monitor {
         opts: &PathOptions,
     ) -> FileEvent {
         let pid = raw.pid.unsigned_abs();
-        let info = get_process_info_by_pid(pid, &raw.path, self.proc_cache.as_ref());
+        let info = get_process_info_by_pid(pid, &raw.path, self.proc.cache.as_ref());
 
         let file_size = match event_type {
             EventType::Create | EventType::Modify | EventType::CloseWrite => {
@@ -261,10 +262,11 @@ impl Monitor {
             .cmd
             .as_ref()
             .and_then(|_| {
-                self.pid_tree.as_ref().and_then(|tree| {
-                    self.proc_cache
+                self.proc.tree.as_ref().and_then(|tree| {
+                    self.proc
+                        .cache
                         .as_ref()
-                        .map(|cache| build_chain(tree, cache, pid))
+                        .map(|cache| proc_tree::build_chain_string(tree, cache, pid))
                 })
             })
             .unwrap_or_default();
@@ -313,7 +315,7 @@ impl Monitor {
         );
 
         // Match pending_paths (convert PathEntry → PathOptions)
-        for (pending_path, entry) in &self.pending_paths {
+        for (pending_path, entry) in &self.inotify_state.pending_paths {
             if !Self::path_matches(event_path, pending_path, entry.recursive.unwrap_or(false)) {
                 continue;
             }

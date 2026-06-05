@@ -15,7 +15,7 @@ use crate::fid_parser::{DIR_CACHE_CAP, FsGroup, chown_to_user, mark_directory, m
 use crate::filters::PathOptions;
 use crate::monitored::PathEntry;
 use crate::proc_cache;
-use crate::proc_cache::{PID_TREE_CAP, PROC_CACHE_CAP, snapshot_process_tree};
+use crate::proc_cache::{PID_TREE_CAP, PROC_CACHE_CAP};
 use crate::utils::format_size;
 use proc_connector::ProcConnector;
 
@@ -48,19 +48,12 @@ impl Monitor {
     /// Initialize process cache and pid tree. Returns proc connector for event loop.
     pub(crate) fn init_process_cache(&mut self) -> Option<ProcConnector> {
         let proc_conn = proc_cache::try_create_connector();
-        let proc_params = proc_cache::CacheParams {
-            capacity: proc_cache::PROC_CACHE_CAP,
-            ttl_secs: self.cache_config.proc_ttl_secs,
-        };
-        let proc_cache = proc_cache::new_cache_with(proc_params);
-        self.proc_cache = Some(proc_cache.clone());
-        let tree_params = proc_cache::CacheParams {
-            capacity: proc_cache::PID_TREE_CAP,
-            ttl_secs: self.cache_config.proc_ttl_secs,
-        };
-        let pid_tree = proc_cache::new_pid_tree_with(tree_params);
-        snapshot_process_tree(&pid_tree, &proc_cache);
-        self.pid_tree = Some(pid_tree.clone());
+        let proc_cache =
+            proc_cache::DefaultCache::new(PROC_CACHE_CAP, self.cache_config.proc_ttl_secs);
+        self.proc.cache = Some(proc_cache.clone());
+        let pid_tree = proc_cache::DefaultTree::new(PID_TREE_CAP, self.cache_config.proc_ttl_secs);
+        proc_tree::snapshot(&pid_tree, &proc_cache);
+        self.proc.tree = Some(pid_tree.clone());
         proc_conn
     }
 
@@ -94,7 +87,7 @@ impl Monitor {
                     .collect();
                 self.monitored_entries.retain(|(p, _)| p != &path);
                 for opts in pending_opts {
-                    self.pending_paths.push((
+                    self.inotify_state.pending_paths.push((
                         path.clone(),
                         PathEntry {
                             path: path.clone(),
@@ -114,7 +107,7 @@ impl Monitor {
         }
         self.paths = keep_paths;
         // Initialize inotify for watching parent dirs of pending paths
-        self.inotify = Some(inotify::Inotify::init().context("inotify_init")?);
+        self.inotify_state.inotify = Some(inotify::Inotify::init().context("inotify_init")?);
         self.setup_inotify_watches();
 
         // Initialize per-filesystem fanotify fds.
@@ -132,7 +125,7 @@ impl Monitor {
             // Try to reuse an existing FsGroup on the same filesystem
             if let Some(&key) = fs_group_devs.get(&dev_id) {
                 // Same filesystem — just add inode mark
-                let fan_fd = &self.fs_groups[key].fan_fd;
+                let fan_fd = &self.fanotify.groups[key].fan_fd;
                 if let Err(e) = mark_directory(fan_fd, path_mask, canonical) {
                     eprintln!(
                         "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
@@ -151,8 +144,10 @@ impl Monitor {
                         mark_recursive(fan_fd, path_mask, canonical);
                     }
                 }
-                self.fs_groups[key].ref_count += 1;
-                self.path_to_group.insert(self.paths[i].clone(), key);
+                self.fanotify.groups[key].ref_count += 1;
+                self.fanotify
+                    .path_to_group
+                    .insert(self.paths[i].clone(), key);
                 continue;
             }
 
@@ -197,17 +192,19 @@ impl Monitor {
                 }
             };
 
-            let key = self.fs_groups.insert(FsGroup {
+            let key = self.fanotify.groups.insert(FsGroup {
                 dev_id,
                 fan_fd: new_fd,
                 mount_fd,
                 ref_count: 1,
             });
             fs_group_devs.insert(dev_id, key);
-            self.path_to_group.insert(self.paths[i].clone(), key);
+            self.fanotify
+                .path_to_group
+                .insert(self.paths[i].clone(), key);
         }
 
-        let fan_group_count = self.fs_groups.len();
+        let fan_group_count = self.fanotify.groups.len();
 
         if fan_group_count > 0 {
             // Pre-cache directory handles (shared across fds)
@@ -216,13 +213,13 @@ impl Monitor {
                     let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
                     let recursive = opts.is_some_and(|o| o.recursive);
                     if recursive {
-                        dir_cache::cache_recursive(&self.dir_cache, canonical);
+                        dir_cache::cache_recursive(&self.fanotify.dir_cache, canonical);
                     } else {
-                        dir_cache::cache_dir_handle(&self.dir_cache, canonical);
+                        dir_cache::cache_dir_handle(&self.fanotify.dir_cache, canonical);
                     }
                 }
             }
-        } else if self.pending_paths.is_empty() {
+        } else if self.inotify_state.pending_paths.is_empty() {
             eprintln!(
                 "No entries configured. Waiting for socket commands (use 'fsmon add <cmd> --path <path>')."
             );
@@ -273,8 +270,9 @@ impl Monitor {
         self.metrics
             .set_monitored_paths(self.monitored_entries.len() as i64);
         self.metrics
-            .set_pending_paths(self.pending_paths.len() as i64);
-        self.metrics.set_reader_groups(self.fs_groups.len() as i64);
+            .set_pending_paths(self.inotify_state.pending_paths.len() as i64);
+        self.metrics
+            .set_reader_groups(self.fanotify.groups.len() as i64);
 
         if !self.canonical_paths.is_empty() {
             println!("Active paths ({} fd(s)):", fan_group_count);
@@ -306,22 +304,22 @@ impl Monitor {
             debug_log!(
                 self.debug,
                 "  dir_cache:        {}/{} entries",
-                self.dir_cache.entry_count(),
+                self.fanotify.dir_cache.entry_count(),
                 DIR_CACHE_CAP
             );
-            if let Some(ref c) = self.proc_cache {
+            if let Some(ref c) = self.proc.cache {
                 debug_log!(
                     self.debug,
                     "  proc_cache:       {}/{} entries",
-                    c.entry_count(),
+                    c.len(),
                     PROC_CACHE_CAP
                 );
             }
-            if let Some(ref t) = self.pid_tree {
+            if let Some(ref t) = self.proc.tree {
                 debug_log!(
                     self.debug,
                     "  pid_tree:         {}/{} entries",
-                    t.entry_count(),
+                    t.len(),
                     PID_TREE_CAP
                 );
             }
@@ -332,11 +330,11 @@ impl Monitor {
                 self.file_size_cache.cap()
             );
         }
-        if !self.pending_paths.is_empty() {
+        if !self.inotify_state.pending_paths.is_empty() {
             println!("Pending paths (waiting for directory creation):");
             let mut by_cmd: std::collections::BTreeMap<Option<String>, Vec<&PathBuf>> =
                 std::collections::BTreeMap::new();
-            for (path, entry) in &self.pending_paths {
+            for (path, entry) in &self.inotify_state.pending_paths {
                 let cmd = entry.cmd.as_deref().and_then(|c| {
                     if c == crate::monitored::CMD_GLOBAL {
                         None
@@ -376,13 +374,13 @@ impl Monitor {
                 (EventSender::Unbounded(tx), EventReceiver::Unbounded(rx))
             }
         };
-        let dir_cache = self.dir_cache.clone();
+        let dir_cache = self.fanotify.dir_cache.clone();
 
         // Shared state for live-add
         self.event_tx = Some(event_tx);
-        self.shared_dir_cache = Some(dir_cache.clone());
+        self.fanotify.shared_dir_cache = Some(dir_cache.clone());
 
-        let keys: Vec<_> = self.fs_groups.keys().collect();
+        let keys: Vec<_> = self.fanotify.groups.keys().collect();
         for key in keys {
             self.spawn_fd_reader(key);
         }

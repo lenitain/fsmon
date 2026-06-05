@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.9] - 2026-06-06
+
+### Fixed
+
+- **`proc_tree::proc::read_proc_status_fields` removed**: The published `proc-tree` crate (v0.1.1) only exports `parse_proc_entry`, not `read_proc_status_fields`. Updated `utils.rs` to use `parse_proc_entry` directly, simplifying the fallback logic.
+
+### Changed
+
+- **`Monitor` struct refactored**: Extracted 30+ flat fields into three cohesive sub-structs:
+  - `FanotifyState`: `groups`, `path_to_group`, `dir_cache`, `shared_dir_cache`
+  - `InotifyState`: `inotify`, `watches`, `pending_paths`, `temp_parent_marks`
+  - `ProcessState`: `cache`, `tree`
+  - Pure structural refactoring, no logic changes.
+- **`live_path.rs` split**: 929 lines → three focused modules:
+  - `live_path.rs` (411 lines): `add_path`, `remove_path`, `check_disk_space`
+  - `dir_watcher.rs` (289 lines): inotify setup, event handling, pending paths
+  - `temp_marks.rs` (163 lines): temporary parent mark lifecycle
+- **`Monitor::new()` simplified**: Removed `from_config()` wrapper and `#[allow(clippy::too_many_arguments)]`. `new()` now takes `MonitorConfig` directly. Added `MonitorConfig::default_for_test()` for test convenience.
+- **`FileLogWriter` file handle caching**: Added `handles: HashMap<PathBuf, BufWriter<File>>` (max 64) to avoid open+close per event. `get_or_open()` reuses existing handles, `sync_dirty_logs()` uses cached handles when available.
+- **`handle_proc_events` return type**: Changed from `bool` to `()` — callers never checked the return value.
+- **Proc connector drain dedup**: `proc_readable` branch now calls `drain_proc_conn()` instead of inline match loop.
+
+## [0.4.8] - 2026-06-05
+
+### Changed
+
+- **Process cache refactored to use `proc-tree` crate**: Major simplification of process cache internals
+  - **`proc-tree` integration**: Added `proc-tree` as dependency, replacing custom moka-based process cache implementation
+  - **`proc_cache.rs` simplified**: From ~580 lines to 83 lines, now only handles proc-connector byte parsing and constants
+  - **Removed wrapper functions**: Eliminated `snapshot_process_tree()`, `is_descendant()`, `build_chain()`, `CacheParams`, `new_cache_with()`, `new_pid_tree_with()` wrappers
+  - **Direct trait usage**: Callers now use `proc_tree::snapshot`, `proc_tree::is_descendant`, `proc_tree::build_chain` directly
+  - **Removed duplicate utilities**: Cleaned up `utils.rs` by removing `read_proc_comm`, `read_proc_status_fields`, `uid_to_username` (now in proc-tree)
+  - **Type aliases removed**: `PidTree` and `ProcCache` type aliases replaced with direct `DefaultCache`/`DefaultTree` imports
+  - **moka retained for dir_cache**: `moka` still used for directory cache (separate concern from process cache)
+  - Net result: -543 lines removed, +100 lines added. All 242 tests pass.
+
 ## [0.4.7] - 2026-06-05
 
 ### Fixed

@@ -9,6 +9,8 @@
 - [English](./README.md)
 
 [![Crates.io](https://img.shields.io/crates/v/fsmon)](https://crates.io/crates/fsmon)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/lenitain/fsmon/actions/workflows/ci.yml/badge.svg)](https://github.com/lenitain/fsmon/actions/workflows/ci.yml)
 
 **fsmon** is a real-time Linux filesystem change monitor powered by fanotify. It watches files and directories, captures every event (create, modify, delete, move, attribute change, etc.), and attributes each change back to the process that caused it — including the PID, command name, user, parent PID, thread group ID, and optional full process ancestry chain.
 
@@ -21,6 +23,7 @@
 - **Real-time Monitoring**: Captures 14 fanotify event types (default: 8 core events; use `--types all` for all 14)
 - **Process Attribution**: Tracks PID, command name, user, PPID, and TGID for every file change — even short-lived processes like `touch`, `rm`, `mv`
 - **Process Tree Tracking** (`<CMD>` positional arg): Pinpoint a specific process (e.g., `openclaw`) and fsmon will track it plus all its descendants (fork/exec children), building a complete ancestry chain per event.
+- **Process Cache**: Uses `proc-tree` crate for efficient process tree management with TTL-based caching.
 - **Recursive Monitoring**: Watch entire directory trees with automatic tracking of newly created subdirectories
 - **Complete Deletion Capture**: Captures every file deleted during `rm -rf` via persistent directory handle cache
 - **Capture-time Filtering**: Filter by event type and file size — in-process, nanosecond-fast, no fork.
@@ -462,73 +465,17 @@ Linux Kernel (fanotify FID mode)
       → in tracked tree → build ancestry chain → append to event
     → write  # JSONL → per-cmd log file (<cmd>_log.jsonl)
 
-Process tree (proc connector):
+Process tree (proc connector + proc-tree crate):
     Fork/Exec/Exit events from netlink connector socket
-    → moka cache: pid → {cmd, ppid, user, tgid, start_time}
-    On daemon start: /proc/*/stat snapshot seeds existing processes
-    is_descendant(pid, "openclaw") → O(depth) moka cache lookups
+    → proc-tree cache: pid → {cmd, ppid, user, tgid, start_time}
+    On daemon start: /proc/*/status snapshot seeds existing processes
+    is_descendant(pid, "openclaw") → O(depth) proc-tree cache lookups
 
 User pipe:
     tail -f *.jsonl | jq 'select(...)'
 
 Clean:
     fsmon clean → parse  # JSONL, apply time/size filters, truncate
-```
-
-### Source Tree
-
-```
-src/
-├── bin/
-│   ├── fsmon.rs                 # CLI entry: main(), argument structs, arg tests
-│   ├── tests/
-│   │   └── cli_parsing_tests.rs # CLI argument parsing tests
-│   └── commands/
-│       ├── mod.rs               # run() dispatch, parse_path_entries helper
-│       ├── daemon.rs            # Daemon: load store, Monitor::new(), run()
-│       ├── add.rs               # CLI add: path normalization, store + socket
-│       ├── remove.rs            # CLI remove: store + socket
-│       ├── monitored.rs         # CLI monitored: JSONL output
-│       ├── query.rs             # CLI query: time filter, execute query
-│       ├── clean.rs             # CLI clean: parser delegation
-│       ├── changes.rs           # CLI changes: deduplicated per-path event summary
-│       ├── health.rs            # CLI health: daemon status query
-│       └── init_cd.rs           # CLI init, cd
-│
-├── lib.rs              # FileEvent, EventType, DaemonLock
-├── cli.rs              # CLI argument definitions
-├── config/             # TOML config, SUDO_UID home resolution
-│   ├── mod.rs          #   Config structs, loading, path resolution
-│   └── tests.rs        #   Config unit tests
-├── clean/              # Log file cleanup by time and size
-│   ├── mod.rs          #   Module re-exports
-│   ├── core.rs         #   Clean logic, truncation, size trimming
-│   └── tests.rs        #   Clean unit tests
-├── query/              # Binary-search log query on sorted JSONL
-│   ├── mod.rs          #   Module re-exports
-│   ├── core.rs         #   Query struct, binary search, filtering
-│   └── tests.rs        #   Query unit tests
-├── monitor/            # Fanotify event loop
-│   ├── mod.rs          #   Monitor struct + main event loop
-│   ├── init.rs         #   Monitor initialization, fanotify setup, task spawning
-│   ├── channel.rs      #   EventSender / EventReceiver types
-│   ├── events.rs       #   Event batch processing, matching, building
-│   ├── file_writer.rs  #   FileLogWriter task (broadcast subscriber)
-│   ├── filtering.rs    #   Path scope checks, output filtering
-│   ├── live_path.rs    #   Dynamic add/remove, inotify pending paths
-│   ├── reader.rs       #   Fanotify fd reader task + restart logic
-│   ├── socket_handler.rs # Subscribe handler, subscriber task, health
-│   └── tests.rs        #   Monitor unit tests
-├── metrics.rs          # Atomic counters/gauges for periodic metrics report
-├── monitored.rs        # Monitored paths database (JSONL store)
-├── watchdog.rs         # systemd watchdog config + send_heartbeat
-├── fid_parser.rs       # FID event parsing, two-pass path recovery
-├── filters.rs          # PathOptions, event/size filters, path matching
-├── dir_cache.rs        # Directory handle cache (moka + HandleKey)
-├── proc_cache.rs       # Netlink proc connector: Fork/Exec/Exit, build_chain
-├── socket.rs           # Unix socket protocol (JSON req/resp)
-├── utils.rs            # Size/time parsing, process info lookup, TimeFilter methods
-└── help.rs             # Help text constants
 ```
 
 ## Integrations
