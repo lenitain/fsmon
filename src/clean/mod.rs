@@ -1,5 +1,783 @@
 mod core;
-#[cfg(test)]
-mod tests;
 
 pub use core::{clean_logs, clean_single_log, count_lines, find_tail_offset, should_trim};
+
+#[cfg(test)]
+mod tests {
+    use crate::clean::core::{clean_logs, count_lines, find_tail_offset, should_trim};
+    use crate::utils::TimeOp;
+    use crate::{EventType, FileEvent, SizeFilter, SizeOp, TimeFilter};
+    use chrono::Utc;
+    use std::fs;
+    use std::io::Write;
+    use std::path::{Path, PathBuf};
+
+    fn create_test_file(dir: &Path, name: &str, content: &str) -> PathBuf {
+        let path = dir.join(name);
+        let mut f = fs::File::create(&path).unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_count_lines_basic() {
+        let dir = std::env::temp_dir().join("fsmon_test_count");
+        fs::create_dir_all(&dir).unwrap();
+        let path = create_test_file(&dir, "test.log", "line1\nline2\nline3\n");
+
+        assert_eq!(count_lines(&path, 6).unwrap(), 1);
+        assert_eq!(count_lines(&path, 12).unwrap(), 2);
+        assert_eq!(count_lines(&path, 18).unwrap(), 3);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_count_lines_empty() {
+        let dir = std::env::temp_dir().join("fsmon_test_count_empty");
+        fs::create_dir_all(&dir).unwrap();
+        let path = create_test_file(&dir, "test.log", "");
+
+        assert_eq!(count_lines(&path, 0).unwrap(), 0);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_count_lines_no_trailing_newline() {
+        let dir = std::env::temp_dir().join("fsmon_test_count_no_nl");
+        fs::create_dir_all(&dir).unwrap();
+        let path = create_test_file(&dir, "test.log", "line1\nline2");
+
+        assert_eq!(count_lines(&path, 6).unwrap(), 1);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_tail_offset_small_file() {
+        let dir = std::env::temp_dir().join("fsmon_test_tail_small");
+        fs::create_dir_all(&dir).unwrap();
+        let path = create_test_file(&dir, "test.log", "short\n");
+
+        assert_eq!(find_tail_offset(&path, 1000).unwrap(), 0);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_tail_offset_large_file() {
+        let dir = std::env::temp_dir().join("fsmon_test_tail_large");
+        fs::create_dir_all(&dir).unwrap();
+
+        let line = "aaa\n";
+        let content = line.repeat(2000);
+        let path = create_test_file(&dir, "test.log", &content);
+
+        let offset = find_tail_offset(&path, 512).unwrap();
+        assert!(offset > 0, "offset should be > 0 for large file");
+        assert!(offset <= 8000, "offset should be within file");
+
+        let full = fs::read_to_string(&path).unwrap();
+        if offset > 0 {
+            assert_eq!(
+                full.as_bytes()[offset - 1],
+                b'\n',
+                "tail should start right after a newline"
+            );
+        }
+        assert!(offset < content.len());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_clean_logs_by_time() {
+        let dir = std::env::temp_dir().join("fsmon_test_clean_time");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("_global_log.jsonl");
+
+        let old_event = FileEvent {
+            time: Utc::now() - chrono::Duration::days(60),
+            event_type: EventType::Create,
+            path: PathBuf::from("/tmp/old"),
+            pid: 1,
+            cmd: "test".into(),
+            user: "root".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
+        };
+        let new_event = FileEvent {
+            time: Utc::now(),
+            event_type: EventType::Create,
+            path: PathBuf::from("/tmp/new"),
+            pid: 1,
+            cmd: "test".into(),
+            user: "root".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
+        };
+
+        {
+            let mut f = fs::File::create(&log_path).unwrap();
+            writeln!(f, "{}", old_event.to_jsonl_string()).unwrap();
+            writeln!(f, "{}", new_event.to_jsonl_string()).unwrap();
+        }
+
+        let cutoff = Utc::now() - chrono::Duration::days(30);
+        let time_filter = TimeFilter {
+            op: TimeOp::Gt,
+            time: cutoff,
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let log_dir = log_path.parent().unwrap();
+        rt.block_on(clean_logs(
+            log_dir,
+            "_global",
+            Some(time_filter),
+            None,
+            false,
+        ))
+        .unwrap();
+
+        let content = fs::read_to_string(&log_path).unwrap();
+        let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 1, "expected 1 event line, got {:?}", lines);
+        let remaining = FileEvent::from_jsonl_str(lines[0]).unwrap();
+        assert_eq!(remaining.path, PathBuf::from("/tmp/new"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_clean_logs_dry_run() {
+        let dir = std::env::temp_dir().join("fsmon_test_clean_dryrun");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("_global_log.jsonl");
+
+        let old_event = FileEvent {
+            time: Utc::now() - chrono::Duration::days(60),
+            event_type: EventType::Create,
+            path: PathBuf::from("/tmp/old"),
+            pid: 1,
+            cmd: "test".into(),
+            user: "root".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
+        };
+
+        {
+            let mut f = fs::File::create(&log_path).unwrap();
+            writeln!(f, "{}", old_event.to_jsonl_string()).unwrap();
+        }
+
+        let original_content = fs::read_to_string(&log_path).unwrap();
+
+        let cutoff = Utc::now() - chrono::Duration::days(30);
+        let time_filter = TimeFilter {
+            op: TimeOp::Gt,
+            time: cutoff,
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let log_dir = log_path.parent().unwrap();
+        rt.block_on(clean_logs(
+            log_dir,
+            "_global",
+            Some(time_filter),
+            None,
+            true,
+        ))
+        .unwrap();
+
+        let after_content = fs::read_to_string(&log_path).unwrap();
+        assert_eq!(original_content, after_content);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_clean_logs_nonexistent_file() {
+        let path = PathBuf::from("/tmp/fsmon_nonexistent_dir_clean_test");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let cutoff = Utc::now() - chrono::Duration::days(30);
+        let time_filter = TimeFilter {
+            op: TimeOp::Gt,
+            time: cutoff,
+        };
+        assert!(
+            rt.block_on(clean_logs(&path, "_global", Some(time_filter), None, false))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_clean_logs_by_size() {
+        let dir = std::env::temp_dir().join("fsmon_test_clean_size");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("_global_log.jsonl");
+
+        {
+            let mut f = fs::File::create(&log_path).unwrap();
+            for i in 0..100 {
+                let event = FileEvent {
+                    time: Utc::now(),
+                    event_type: EventType::Create,
+                    path: PathBuf::from(format!("/tmp/file{}", i)),
+                    pid: 1,
+                    cmd: "test".into(),
+                    user: "root".into(),
+                    file_size: 0,
+                    ppid: 0,
+                    tgid: 0,
+                    chain: String::new(),
+                };
+                writeln!(f, "{}", event.to_jsonl_string()).unwrap();
+            }
+        }
+
+        let original_size = fs::metadata(&log_path).unwrap().len();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let log_dir = log_path.parent().unwrap();
+        rt.block_on(clean_logs(
+            log_dir,
+            "_global",
+            None,
+            Some(SizeFilter {
+                op: SizeOp::Gt,
+                bytes: 500,
+            }),
+            false,
+        ))
+        .unwrap();
+
+        let new_size = fs::metadata(&log_path).unwrap().len();
+        assert!(new_size < original_size);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ---- should_trim unit tests ----
+
+    #[test]
+    fn test_should_trim_gt() {
+        assert!(should_trim(
+            100,
+            &SizeFilter {
+                op: SizeOp::Gt,
+                bytes: 50
+            }
+        ));
+        assert!(!should_trim(
+            50,
+            &SizeFilter {
+                op: SizeOp::Gt,
+                bytes: 50
+            }
+        ));
+        assert!(!should_trim(
+            30,
+            &SizeFilter {
+                op: SizeOp::Gt,
+                bytes: 50
+            }
+        ));
+    }
+
+    #[test]
+    fn test_should_trim_ge() {
+        assert!(should_trim(
+            100,
+            &SizeFilter {
+                op: SizeOp::Ge,
+                bytes: 50
+            }
+        ));
+        assert!(should_trim(
+            50,
+            &SizeFilter {
+                op: SizeOp::Ge,
+                bytes: 50
+            }
+        ));
+        assert!(!should_trim(
+            30,
+            &SizeFilter {
+                op: SizeOp::Ge,
+                bytes: 50
+            }
+        ));
+    }
+
+    #[test]
+    fn test_should_trim_lt() {
+        assert!(should_trim(
+            30,
+            &SizeFilter {
+                op: SizeOp::Lt,
+                bytes: 50
+            }
+        ));
+        assert!(!should_trim(
+            50,
+            &SizeFilter {
+                op: SizeOp::Lt,
+                bytes: 50
+            }
+        ));
+        assert!(!should_trim(
+            100,
+            &SizeFilter {
+                op: SizeOp::Lt,
+                bytes: 50
+            }
+        ));
+    }
+
+    #[test]
+    fn test_should_trim_le() {
+        assert!(should_trim(
+            30,
+            &SizeFilter {
+                op: SizeOp::Le,
+                bytes: 50
+            }
+        ));
+        assert!(should_trim(
+            50,
+            &SizeFilter {
+                op: SizeOp::Le,
+                bytes: 50
+            }
+        ));
+        assert!(!should_trim(
+            100,
+            &SizeFilter {
+                op: SizeOp::Le,
+                bytes: 50
+            }
+        ));
+    }
+
+    #[test]
+    fn test_should_trim_eq() {
+        assert!(should_trim(
+            50,
+            &SizeFilter {
+                op: SizeOp::Eq,
+                bytes: 50
+            }
+        ));
+        assert!(!should_trim(
+            100,
+            &SizeFilter {
+                op: SizeOp::Eq,
+                bytes: 50
+            }
+        ));
+        assert!(!should_trim(
+            30,
+            &SizeFilter {
+                op: SizeOp::Eq,
+                bytes: 50
+            }
+        ));
+    }
+
+    // ---- integration: size filter edge cases ----
+
+    #[test]
+    fn test_clean_size_filter_eq_zero_keeps_all() {
+        let dir = std::env::temp_dir().join("fsmon_test_clean_eq0");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("_global_log.jsonl");
+        {
+            let mut f = fs::File::create(&log_path).unwrap();
+            let event = FileEvent {
+                time: Utc::now(),
+                event_type: EventType::Create,
+                path: PathBuf::from("/f"),
+                pid: 1,
+                cmd: "t".into(),
+                user: "r".into(),
+                file_size: 0,
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
+            };
+            writeln!(f, "{}", event.to_jsonl_string()).unwrap();
+        }
+        let original = fs::read_to_string(&log_path).unwrap();
+        let log_dir = log_path.parent().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(clean_logs(
+            log_dir,
+            "_global",
+            None,
+            Some(SizeFilter {
+                op: SizeOp::Eq,
+                bytes: 0,
+            }),
+            false,
+        ))
+        .unwrap();
+        let after = fs::read_to_string(&log_path).unwrap();
+        assert_eq!(
+            original, after,
+            "=0 should NOT delete when file is non-empty"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_clean_size_filter_gt_zero_deletes_all() {
+        let dir = std::env::temp_dir().join("fsmon_test_clean_gt0");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("_global_log.jsonl");
+        {
+            let mut f = fs::File::create(&log_path).unwrap();
+            let event = FileEvent {
+                time: Utc::now(),
+                event_type: EventType::Create,
+                path: PathBuf::from("/f"),
+                pid: 1,
+                cmd: "t".into(),
+                user: "r".into(),
+                file_size: 0,
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
+            };
+            writeln!(f, "{}", event.to_jsonl_string()).unwrap();
+        }
+        let log_dir = log_path.parent().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(clean_logs(
+            log_dir,
+            "_global",
+            None,
+            Some(SizeFilter {
+                op: SizeOp::Gt,
+                bytes: 0,
+            }),
+            false,
+        ))
+        .unwrap();
+        let after = fs::read_to_string(&log_path).unwrap();
+        assert!(
+            after.trim().is_empty(),
+            ">0 should delete all content, got: {:?}",
+            after
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_clean_size_filter_lt_inverts() {
+        let dir = std::env::temp_dir().join("fsmon_test_clean_lt");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("_global_log.jsonl");
+        {
+            let mut f = fs::File::create(&log_path).unwrap();
+            for i in 0..20 {
+                let event = FileEvent {
+                    time: Utc::now(),
+                    event_type: EventType::Create,
+                    path: PathBuf::from(format!("/f{}", i)),
+                    pid: 1,
+                    cmd: "t".into(),
+                    user: "r".into(),
+                    file_size: 0,
+                    ppid: 0,
+                    tgid: 0,
+                    chain: String::new(),
+                };
+                writeln!(f, "{}", event.to_jsonl_string()).unwrap();
+            }
+        }
+        let log_dir = log_path.parent().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let size_filter = SizeFilter {
+            op: SizeOp::Lt,
+            bytes: 100000,
+        };
+        rt.block_on(clean_logs(
+            log_dir,
+            "_global",
+            None,
+            Some(size_filter),
+            false,
+        ))
+        .unwrap();
+        let after = fs::read_to_string(&log_path).unwrap();
+        assert!(!after.is_empty(), "should not be empty after trimming");
+        assert!(
+            after.len() <= 100000,
+            "kept content should be ≤ 100000 bytes"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ---- integration: time filter operators ----
+
+    #[test]
+    fn test_clean_time_filter_ge() {
+        let dir = std::env::temp_dir().join("fsmon_test_clean_time_ge");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("_global_log.jsonl");
+        let now = Utc::now();
+        let old_event = FileEvent {
+            time: now - chrono::Duration::days(10),
+            event_type: EventType::Create,
+            path: PathBuf::from("/old"),
+            pid: 1,
+            cmd: "t".into(),
+            user: "r".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
+        };
+        let mid_event = FileEvent {
+            time: now - chrono::Duration::days(5),
+            event_type: EventType::Create,
+            path: PathBuf::from("/mid"),
+            pid: 1,
+            cmd: "t".into(),
+            user: "r".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
+        };
+        let new_event = FileEvent {
+            time: now,
+            event_type: EventType::Create,
+            path: PathBuf::from("/new"),
+            pid: 1,
+            cmd: "t".into(),
+            user: "r".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
+        };
+        {
+            let mut f = fs::File::create(&log_path).unwrap();
+            writeln!(f, "{}", old_event.to_jsonl_string()).unwrap();
+            writeln!(f, "{}", mid_event.to_jsonl_string()).unwrap();
+            writeln!(f, "{}", new_event.to_jsonl_string()).unwrap();
+        }
+        let cutoff = now - chrono::Duration::days(7);
+        let tf = TimeFilter {
+            op: TimeOp::Ge,
+            time: cutoff,
+        };
+        let log_dir = log_path.parent().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(clean_logs(log_dir, "_global", Some(tf), None, false))
+            .unwrap();
+        let content = fs::read_to_string(&log_path).unwrap();
+        let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 2, ">=7d should keep mid(5d) + new(0d)");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_clean_time_filter_le() {
+        let dir = std::env::temp_dir().join("fsmon_test_clean_time_le");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("_global_log.jsonl");
+        let now = Utc::now();
+        let old_event = FileEvent {
+            time: now - chrono::Duration::days(10),
+            event_type: EventType::Create,
+            path: PathBuf::from("/old"),
+            pid: 1,
+            cmd: "t".into(),
+            user: "r".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
+        };
+        let new_event = FileEvent {
+            time: now,
+            event_type: EventType::Create,
+            path: PathBuf::from("/new"),
+            pid: 1,
+            cmd: "t".into(),
+            user: "r".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
+        };
+        {
+            let mut f = fs::File::create(&log_path).unwrap();
+            writeln!(f, "{}", old_event.to_jsonl_string()).unwrap();
+            writeln!(f, "{}", new_event.to_jsonl_string()).unwrap();
+        }
+        let cutoff = now - chrono::Duration::days(7);
+        let tf = TimeFilter {
+            op: TimeOp::Le,
+            time: cutoff,
+        };
+        let log_dir = log_path.parent().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(clean_logs(log_dir, "_global", Some(tf), None, false))
+            .unwrap();
+        let content = fs::read_to_string(&log_path).unwrap();
+        let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 1, "<=7d should keep old(10d) only");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_clean_no_time_filter_keeps_all() {
+        let dir = std::env::temp_dir().join("fsmon_test_clean_no_time");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("_global_log.jsonl");
+        let now = Utc::now();
+        let old_event = FileEvent {
+            time: now - chrono::Duration::days(100),
+            event_type: EventType::Create,
+            path: PathBuf::from("/old"),
+            pid: 1,
+            cmd: "t".into(),
+            user: "r".into(),
+            file_size: 0,
+            ppid: 0,
+            tgid: 0,
+            chain: String::new(),
+        };
+        {
+            let mut f = fs::File::create(&log_path).unwrap();
+            writeln!(f, "{}", old_event.to_jsonl_string()).unwrap();
+        }
+        let original = fs::read_to_string(&log_path).unwrap();
+        let log_dir = log_path.parent().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(clean_logs(log_dir, "_global", None, None, false))
+            .unwrap();
+        let after = fs::read_to_string(&log_path).unwrap();
+        assert_eq!(original, after, "no time filter should keep all events");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_clean_specific_cmd_only() {
+        let dir = std::env::temp_dir().join("fsmon_test_clean_specific_cmd");
+        fs::create_dir_all(&dir).unwrap();
+        // _global log → old events, should be cleaned
+        let log_global = dir.join(crate::utils::cmd_to_log_name("_global"));
+        // openclaw log → keep marker, untouched
+        let log_oc = dir.join(crate::utils::cmd_to_log_name("openclaw"));
+        {
+            let mut f = fs::File::create(&log_global).unwrap();
+            let event = FileEvent {
+                time: Utc::now() - chrono::Duration::days(100),
+                event_type: EventType::Create,
+                path: PathBuf::from("/a/x"),
+                pid: 1,
+                cmd: "t".into(),
+                user: "r".into(),
+                file_size: 0,
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
+            };
+            writeln!(f, "{}", event.to_jsonl_string()).unwrap();
+        }
+        {
+            let mut f = fs::File::create(&log_oc).unwrap();
+            writeln!(f, "keep").unwrap();
+        }
+        let cutoff = Utc::now();
+        let tf = TimeFilter {
+            op: TimeOp::Gt,
+            time: cutoff,
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(clean_logs(&dir, "_global", Some(tf), None, false))
+            .unwrap();
+        let content_oc = fs::read_to_string(&log_oc).unwrap();
+        assert_eq!(
+            content_oc.trim(),
+            "keep",
+            "openclaw log should be untouched"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_clean_both_time_and_size() {
+        let dir = std::env::temp_dir().join("fsmon_test_clean_both");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("_global_log.jsonl");
+        let now = Utc::now();
+        {
+            let mut f = fs::File::create(&log_path).unwrap();
+            let old = FileEvent {
+                time: now - chrono::Duration::days(60),
+                event_type: EventType::Create,
+                path: PathBuf::from("/old"),
+                pid: 1,
+                cmd: "t".into(),
+                user: "r".into(),
+                file_size: 0,
+                ppid: 0,
+                tgid: 0,
+                chain: String::new(),
+            };
+            writeln!(f, "{}", old.to_jsonl_string()).unwrap();
+            for i in 0..50 {
+                let ev = FileEvent {
+                    time: now,
+                    event_type: EventType::Create,
+                    path: PathBuf::from(format!("/f{}", i)),
+                    pid: 1,
+                    cmd: "t".into(),
+                    user: "r".into(),
+                    file_size: 0,
+                    ppid: 0,
+                    tgid: 0,
+                    chain: String::new(),
+                };
+                writeln!(f, "{}", ev.to_jsonl_string()).unwrap();
+            }
+        }
+        let tf = TimeFilter {
+            op: TimeOp::Gt,
+            time: now - chrono::Duration::days(7),
+        };
+        let sf = SizeFilter {
+            op: SizeOp::Gt,
+            bytes: 2000,
+        };
+        let original_size = fs::metadata(&log_path).unwrap().len();
+        let log_dir = log_path.parent().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(clean_logs(log_dir, "_global", Some(tf), Some(sf), false))
+            .unwrap();
+        let new_size = fs::metadata(&log_path).unwrap().len();
+        assert!(
+            new_size < original_size,
+            "combined filters should reduce size (orig={}, new={})",
+            original_size,
+            new_size
+        );
+        assert!(
+            new_size <= 2200,
+            "should be trimmed to ~2000 bytes (newline-aligned), got {}",
+            new_size
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
