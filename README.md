@@ -476,62 +476,6 @@ Clean:
     fsmon clean → parse  # JSONL, apply time/size filters, truncate
 ```
 
-### Source Tree
-
-```
-src/
-├── bin/
-│   ├── fsmon.rs                 # CLI entry: main(), argument structs, arg tests
-│   ├── tests/
-│   │   └── cli_parsing_tests.rs # CLI argument parsing tests
-│   └── commands/
-│       ├── mod.rs               # run() dispatch, parse_path_entries helper
-│       ├── daemon.rs            # Daemon: load store, Monitor::new(), run()
-│       ├── add.rs               # CLI add: path normalization, store + socket
-│       ├── remove.rs            # CLI remove: store + socket
-│       ├── monitored.rs         # CLI monitored: JSONL output
-│       ├── query.rs             # CLI query: time filter, execute query
-│       ├── clean.rs             # CLI clean: parser delegation
-│       ├── changes.rs           # CLI changes: deduplicated per-path event summary
-│       ├── health.rs            # CLI health: daemon status query
-│       └── init_cd.rs           # CLI init, cd
-│
-├── lib.rs              # FileEvent, EventType, DaemonLock
-├── cli.rs              # CLI argument definitions
-├── config/             # TOML config, SUDO_UID home resolution
-│   ├── mod.rs          #   Config structs, loading, path resolution
-│   └── tests.rs        #   Config unit tests
-├── clean/              # Log file cleanup by time and size
-│   ├── mod.rs          #   Module re-exports
-│   ├── core.rs         #   Clean logic, truncation, size trimming
-│   └── tests.rs        #   Clean unit tests
-├── query/              # Binary-search log query on sorted JSONL
-│   ├── mod.rs          #   Module re-exports
-│   ├── core.rs         #   Query struct, binary search, filtering
-│   └── tests.rs        #   Query unit tests
-├── monitor/            # Fanotify event loop
-│   ├── mod.rs          #   Monitor struct + main event loop
-│   ├── init.rs         #   Monitor initialization, fanotify setup, task spawning
-│   ├── channel.rs      #   EventSender / EventReceiver types
-│   ├── events.rs       #   Event batch processing, matching, building
-│   ├── file_writer.rs  #   FileLogWriter task (broadcast subscriber)
-│   ├── filtering.rs    #   Path scope checks, output filtering
-│   ├── live_path.rs    #   Dynamic add/remove, inotify pending paths
-│   ├── reader.rs       #   Fanotify fd reader task + restart logic
-│   ├── socket_handler.rs # Subscribe handler, subscriber task, health
-│   └── tests.rs        #   Monitor unit tests
-├── metrics.rs          # Atomic counters/gauges for periodic metrics report
-├── monitored.rs        # Monitored paths database (JSONL store)
-├── watchdog.rs         # systemd watchdog config + send_heartbeat
-├── fid_parser.rs       # FID event parsing, two-pass path recovery
-├── filters.rs          # PathOptions, event/size filters, path matching
-├── dir_cache.rs        # Directory handle cache (moka + HandleKey)
-├── proc_cache.rs       # Netlink proc connector: Fork/Exec/Exit (thin adapter over proc-tree crate)
-├── socket.rs           # Unix socket protocol (JSON req/resp)
-├── utils.rs            # Size/time parsing, process info lookup, TimeFilter methods
-└── help.rs             # Help text constants
-```
-
 ## Integrations
 
 fsmon exports file events as standard **JSONL** — one event per line, no custom format.

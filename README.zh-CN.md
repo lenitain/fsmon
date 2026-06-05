@@ -469,62 +469,6 @@ Linux 内核 (fanotify FID 模式)
     fsmon clean → 解析  # JSONL，应用时间/大小过滤器，截断
 ```
 
-### 源码结构
-
-```
-src/
-├── bin/
-│   ├── fsmon.rs                 # CLI 入口：main()、参数结构体、参数测试
-│   ├── tests/
-│   │   └── cli_parsing_tests.rs # CLI 参数解析测试
-│   └── commands/
-│       ├── mod.rs               # run() 分发、parse_path_entries 辅助
-│       ├── daemon.rs            # 守护进程：加载存储、Monitor::new()、run()
-│       ├── add.rs               # CLI add：路径规范化、存储 + 套接字
-│       ├── remove.rs            # CLI remove：存储 + 套接字
-│       ├── monitored.rs         # CLI monitored：JSONL 输出
-│       ├── query.rs             # CLI query：时间过滤、执行查询
-│       ├── clean.rs             # CLI clean：解析器委托
-│       ├── changes.rs           # CLI changes：去重路径事件摘要
-│       ├── health.rs            # CLI health：守护进程健康状态查询
-│       └── init_cd.rs           # CLI init、cd
-│
-├── lib.rs              # FileEvent、EventType、DaemonLock
-├── cli.rs              # CLI 参数定义
-├── config/             # TOML 配置、SUDO_UID home 解析
-│   ├── mod.rs          #   配置结构体、加载、路径解析
-│   └── tests.rs        #   配置单元测试
-├── clean/              # 日志清理引擎：时间/大小修剪
-│   ├── mod.rs          #   模块重导出
-│   ├── core.rs         #   清理逻辑、截断、大小修剪
-│   └── tests.rs        #   清理单元测试
-├── query/              # 对已排序 JSONL 进行二分查找日志查询
-│   ├── mod.rs          #   模块重导出
-│   ├── core.rs         #   Query 结构体、二分查找、过滤
-│   └── tests.rs        #   查询单元测试
-├── monitor/            # Fanotify 事件循环
-│   ├── mod.rs          #   Monitor 结构体 + 主事件循环
-│   ├── init.rs         #   Monitor 初始化、fanotify 设置、任务生成
-│   ├── channel.rs      #   EventSender / EventReceiver 类型
-│   ├── events.rs       #   事件批量处理、匹配、构建
-│   ├── file_writer.rs  #   FileLogWriter 任务（广播订阅者）
-│   ├── filtering.rs    #   路径范围检查、输出过滤
-│   ├── live_path.rs    #   动态 add/remove、inotify 待处理路径
-│   ├── reader.rs       #   Fanotify fd 读取任务 + 重启逻辑
-│   ├── socket_handler.rs # Subscribe 处理器、订阅任务、health
-│   └── tests.rs        #   Monitor 单元测试
-├── metrics.rs          # 原子计数器/仪表，用于定期指标报告
-├── monitored.rs        # 监控路径数据库（JSONL 存储）
-├── watchdog.rs         # systemd watchdog 配置 + send_heartbeat
-├── fid_parser.rs       # FID 事件解析、两遍路径恢复
-├── filters.rs          # PathOptions、事件/大小过滤、路径匹配
-├── dir_cache.rs        # 目录句柄缓存（moka + HandleKey）
-├── proc_cache.rs       # Netlink proc connector：Fork/Exec/Exit（proc-tree crate 薄适配器）
-├── socket.rs           # Unix 套接字协议（JSON 请求/响应）
-├── utils.rs            # 大小/时间解析、进程信息查找、TimeFilter 方法
-└── help.rs             # 帮助文本常量
-```
-
 ## 集成
 
 fsmon 的文件事件以标准 **JSONL** 格式导出 — 每行一条事件，无自定义格式。
