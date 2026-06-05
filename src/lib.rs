@@ -49,8 +49,9 @@ impl DaemonLock {
                 if std::os::unix::net::UnixStream::connect(&path).is_err() {
                     // Stale socket, remove and retry
                     let _ = fs::remove_file(&path);
-                    std::os::unix::net::UnixListener::bind(&path)
-                        .map_err(|e| anyhow::anyhow!("Another fsmon daemon is already running: {}", e))?
+                    std::os::unix::net::UnixListener::bind(&path).map_err(|e| {
+                        anyhow::anyhow!("Another fsmon daemon is already running: {}", e)
+                    })?
                 } else {
                     return Err(anyhow::anyhow!("Another fsmon daemon is already running"));
                 }
