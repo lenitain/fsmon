@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.6] - 2026-06-05
 
+### Fixed
+
+- **CLI socket communication**: Fixed `fsmon health`, `fsmon add` (daemon notification), and other CLI commands receiving empty response from daemon. `send_cmd()` now half-closes the write end after sending the command, so the server's `read_line` loop gets EOF and can process and respond.
+
 ### Changed
 
 - **Code quality refactoring**: Comprehensive cleanup based on thermal-nuclear code review

@@ -129,15 +129,18 @@ pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResponse, S
 
     let json = serde_json::to_string(cmd).map_err(|e| SocketError::Transient(e.to_string()))?;
 
+    // Write JSON command followed by newline, then half-close the write end.
+    // The server's read_line loop needs EOF to stop reading and process the command.
     {
         let mut writer = stream
             .try_clone()
             .map_err(|e| SocketError::Transient(e.to_string()))?;
-        // Write JSON command followed by newline as delimiter
         writeln!(writer, "{json}").map_err(|e| SocketError::Transient(e.to_string()))?;
         writer
             .flush()
             .map_err(|e| SocketError::Transient(e.to_string()))?;
+        // Half-close: signal no more data from client, so server read_line gets EOF
+        let _ = writer.shutdown(std::net::Shutdown::Write);
     }
 
     let mut reader = BufReader::new(stream);
