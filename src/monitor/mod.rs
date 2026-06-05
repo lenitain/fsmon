@@ -372,60 +372,19 @@ impl Monitor {
         loop {
             tokio::select! {
                 Some(events) = event_rx.recv() => {
-                    // 1. Drain proc events before processing (existing behavior)
-                    if let Some(afd) = proc_afd.as_ref() {
-                        let conn = afd.get_ref();
-                        loop {
-                            match conn.recv_raw(&mut proc_buf) {
-                                Ok(n) => {
-                                    proc_cache::handle_proc_events(&proc_cache, &pid_tree, &proc_buf, n);
-                                }
-                                Err(proc_connector::Error::WouldBlock) => break,
-                                Err(proc_connector::Error::Interrupted) => continue,
-                                Err(e) => {
-                                    eprintln!("proc connector error: {e}");
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    // 2. Build events (deferred send)
+                    self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_cache, &pid_tree);
                     let mut pending = self.process_event_batch(&events);
-                    // 3. Second drain: catch Exec events that arrived between step 1 and step 2.
-                    if let Some(afd) = proc_afd.as_ref() {
-                        let conn = afd.get_ref();
-                        loop {
-                            match conn.recv_raw(&mut proc_buf) {
-                                Ok(n) => {
-                                    proc_cache::handle_proc_events(&proc_cache, &pid_tree, &proc_buf, n);
-                                }
-                                Err(proc_connector::Error::WouldBlock) => break,
-                                Err(proc_connector::Error::Interrupted) => continue,
-                                _ => break,
-                            }
-                        }
-                    }
-                    // 4. Patch any "unknown" fields using now-populated caches
+                    self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_cache, &pid_tree);
                     self.patch_pending_events(&mut pending);
-                    // 5. Send to broadcast
                     self.send_pending_events(&pending);
-                    // 6. Retry pending paths
                     self.check_pending();
                 }
                 _ = tokio::signal::ctrl_c() => {
-                    while let Ok(events) = event_rx.try_recv() {
-                        let mut pending = self.process_event_batch(&events);
-                        self.patch_pending_events(&mut pending);
-                        self.send_pending_events(&pending);
-                    }
+                    self.drain_remaining_events(&mut event_rx, &proc_afd, &mut proc_buf, &proc_cache, &pid_tree);
                     break;
                 }
                 _ = sigterm.recv() => {
-                    while let Ok(events) = event_rx.try_recv() {
-                        let mut pending = self.process_event_batch(&events);
-                        self.patch_pending_events(&mut pending);
-                        self.send_pending_events(&pending);
-                    }
+                    self.drain_remaining_events(&mut event_rx, &proc_afd, &mut proc_buf, &proc_cache, &pid_tree);
                     break;
                 }
                 _ = sighup.recv() => {
@@ -496,54 +455,11 @@ impl Monitor {
                 }
                 accept_result = async {
                     match socket_listener.as_ref() {
-                        Some(listener) => {
-                            let (stream, _) = listener.accept().await?;
-                            let (reader, writer) = stream.into_split();
-                            let mut buf_reader = tokio::io::BufReader::new(reader);
-                            let mut message = String::new();
-                            loop {
-                                let mut line = String::new();
-                                let bytes = buf_reader.read_line(&mut line).await?;
-                                if bytes == 0 {
-                                    break;
-                                }
-                                if line.trim().is_empty() && !message.is_empty() {
-                                    break;
-                                }
-                                message.push_str(&line);
-                            }
-                            Ok::<(tokio::net::unix::OwnedWriteHalf, String), std::io::Error>((writer, message.trim().to_string()))
-                        }
+                        Some(listener) => Self::accept_socket_connection(listener).await,
                         None => std::future::pending().await,
                     }
                 } => {
-                    match accept_result {
-                        Ok((writer, cmd_str)) => {
-                            let cmd = match serde_json::from_str::<crate::socket::SocketCmd>(&cmd_str) {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    let resp: Result<crate::socket::SocketResponse, crate::socket::SocketError> = Err(crate::socket::SocketError::Transient(format!("Invalid command: {e}")));
-                                    if let Ok(json_str) = serde_json::to_string(&resp) {
-                                        let _ = tokio_io_oneshot(
-                                            writer,
-                                            &format!("{json_str}\n"),
-                                        ).await;
-                                    }
-                                    continue;
-                                }
-                            };
-                            if let crate::socket::SocketCmd::Subscribe { .. } = cmd {
-                                self.handle_subscribe(writer, &cmd);
-                            } else {
-                                let result = self.handle_socket_cmd(cmd);
-                                if let Ok(json_str) = serde_json::to_string(&result) {
-                                    let resp_bytes = format!("{json_str}\n");
-                                    let _ = tokio_io_oneshot(writer, &resp_bytes).await;
-                                }
-                            }
-                        }
-                        Err(e) => eprintln!("Socket accept error: {e}"),
-                    }
+                    self.handle_socket_accept(accept_result).await;
                 }
                 Some(dead_idx) = reader_death_rx.recv() => {
                     self.restart_reader(dead_idx);
@@ -597,6 +513,100 @@ impl Monitor {
             for pe in pending {
                 let _ = tx.send((pe.event.clone(), pe.cmd_name.clone()));
             }
+        }
+    }
+
+    /// Drain all pending proc connector events into the caches.
+    fn drain_proc_events(
+        &self,
+        proc_afd: &Option<AsyncFd<proc_connector::ProcConnector>>,
+        proc_buf: &mut [u8],
+        proc_cache: &ProcCache,
+        pid_tree: &PidTree,
+    ) {
+        if let Some(afd) = proc_afd.as_ref() {
+            let conn = afd.get_ref();
+            loop {
+                match conn.recv_raw(proc_buf) {
+                    Ok(n) => {
+                        proc_cache::handle_proc_events(proc_cache, pid_tree, proc_buf, n);
+                    }
+                    Err(proc_connector::Error::WouldBlock) => break,
+                    Err(proc_connector::Error::Interrupted) => continue,
+                    Err(e) => {
+                        eprintln!("proc connector error: {e}");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Drain remaining events from the channel and process them before shutdown.
+    fn drain_remaining_events(
+        &mut self,
+        event_rx: &mut EventReceiver,
+        proc_afd: &Option<AsyncFd<proc_connector::ProcConnector>>,
+        proc_buf: &mut [u8],
+        proc_cache: &ProcCache,
+        pid_tree: &PidTree,
+    ) {
+        while let Ok(events) = event_rx.try_recv() {
+            self.drain_proc_events(proc_afd, proc_buf, proc_cache, pid_tree);
+            let mut pending = self.process_event_batch(&events);
+            self.patch_pending_events(&mut pending);
+            self.send_pending_events(&pending);
+        }
+    }
+
+    /// Accept a socket connection and read the command message.
+    async fn accept_socket_connection(
+        listener: &tokio::net::UnixListener,
+    ) -> Result<(tokio::net::unix::OwnedWriteHalf, String), std::io::Error> {
+        let (stream, _) = listener.accept().await?;
+        let (reader, writer) = stream.into_split();
+        let mut buf_reader = tokio::io::BufReader::new(reader);
+        let mut message = String::new();
+        loop {
+            let mut line = String::new();
+            let bytes = buf_reader.read_line(&mut line).await?;
+            if bytes == 0 {
+                break;
+            }
+            if line.trim().is_empty() && !message.is_empty() {
+                break;
+            }
+            message.push_str(&line);
+        }
+        Ok((writer, message.trim().to_string()))
+    }
+
+    /// Handle an accepted socket connection: parse command and dispatch.
+    async fn handle_socket_accept(&mut self, result: Result<(tokio::net::unix::OwnedWriteHalf, String), std::io::Error>) {
+        match result {
+            Ok((writer, cmd_str)) => {
+                let cmd = match serde_json::from_str::<crate::socket::SocketCmd>(&cmd_str) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let resp: Result<crate::socket::SocketResponse, crate::socket::SocketError> =
+                            Err(crate::socket::SocketError::Transient(format!("Invalid command: {e}")));
+                        if let Ok(json_str) = serde_json::to_string(&resp) {
+                            let _ = tokio_io_oneshot(writer, &format!("{json_str}\n")).await;
+                        }
+                        return;
+                    }
+                };
+                if let crate::socket::SocketCmd::Subscribe { .. } = cmd {
+                    self.handle_subscribe(writer, &cmd);
+                } else {
+                    let result = self.handle_socket_cmd(cmd);
+                    if let Ok(json_str) = serde_json::to_string(&result) {
+                        let resp_bytes = format!("{json_str}\n");
+                        let _ = tokio_io_oneshot(writer, &resp_bytes).await;
+                    }
+                }
+            }
+            Err(e) => eprintln!("Socket accept error: {e}"),
         }
     }
 }
