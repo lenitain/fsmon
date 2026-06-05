@@ -163,9 +163,9 @@ pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResponse, S
         ));
     }
 
-    let resp: SocketResponse = serde_json::from_str(response.trim())
+    let resp: Result<SocketResponse, SocketError> = serde_json::from_str(response.trim())
         .map_err(|e| SocketError::Transient(format!("Failed to parse daemon response: {}", e)))?;
-    Ok(resp)
+    resp
 }
 
 #[cfg(test)]
