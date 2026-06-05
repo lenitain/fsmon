@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.8] - 2026-06-05
+
+### Changed
+
+- **Process cache refactored to use `proc-tree` crate**: Major simplification of process cache internals
+  - **`proc-tree` integration**: Added `proc-tree` as dependency, replacing custom moka-based process cache implementation
+  - **`proc_cache.rs` simplified**: From ~580 lines to 83 lines, now only handles proc-connector byte parsing and constants
+  - **Removed wrapper functions**: Eliminated `snapshot_process_tree()`, `is_descendant()`, `build_chain()`, `CacheParams`, `new_cache_with()`, `new_pid_tree_with()` wrappers
+  - **Direct trait usage**: Callers now use `proc_tree::snapshot`, `proc_tree::is_descendant`, `proc_tree::build_chain` directly
+  - **Removed duplicate utilities**: Cleaned up `utils.rs` by removing `read_proc_comm`, `read_proc_status_fields`, `uid_to_username` (now in proc-tree)
+  - **Type aliases removed**: `PidTree` and `ProcCache` type aliases replaced with direct `DefaultCache`/`DefaultTree` imports
+  - **moka retained for dir_cache**: `moka` still used for directory cache (separate concern from process cache)
+  - Net result: -543 lines removed, +100 lines added. All 242 tests pass.
+
+### Chore
+
+- **Formatting**: Applied `cargo fmt` across codebase
+- **CI**: Added CI test workflow
+
 ## [0.4.7] - 2026-06-05
 
 ### Fixed

@@ -21,6 +21,7 @@
 - **实时监控**: 捕获 14 种 fanotify 事件类型（默认 8 种核心事件；`--types all` 开启全部 14 种）
 - **进程追溯**: 追踪每个文件变更的 PID、命令名、用户、PPID、TGID — 包括 `touch`、`rm`、`mv` 等短命进程
 - **进程树追踪**（`<CMD>` 位置参数）：指定进程名（如 `openclaw`），自动追踪它及其所有子进程（fork/exec），每条事件附带完整的进程祖先链
+- **进程缓存**: 使用 `proc-tree` crate 实现高效的进程树管理，支持 TTL 缓存
 - **递归监控**: 监控整个目录树，自动追踪新建子目录
 - **完整删除捕获**: 通过持久化目录句柄缓存，完整捕获 `rm -rf` 中的每个文件
 - **捕获时过滤**: 按事件类型、文件大小过滤 — daemon 进程内完成，纳秒级，无 fork 开销
@@ -455,11 +456,11 @@ Linux 内核 (fanotify FID 模式)
       → 在追踪树中 → 构建祖先链 → 追加到事件
     → 写入  # JSONL → per-cmd 日志文件（<cmd>_log.jsonl）
 
-进程树（proc connector）:
+进程树（proc connector + proc-tree crate）:
     Fork/Exec/Exit 事件来自 netlink connector 套接字
-    → moka 缓存: pid → {cmd, ppid, user, tgid, start_time}
+    → proc-tree 缓存: pid → {cmd, ppid, user, tgid, start_time}
     守护进程启动时：/proc/*/stat 快照种子填充已有进程
-    is_descendant(pid, "openclaw") → O(depth) moka 缓存查找
+    is_descendant(pid, "openclaw") → O(depth) proc-tree 缓存查找
 
 用户管道:
     tail -f *.jsonl | jq 'select(...)'
@@ -518,7 +519,7 @@ src/
 ├── fid_parser.rs       # FID 事件解析、两遍路径恢复
 ├── filters.rs          # PathOptions、事件/大小过滤、路径匹配
 ├── dir_cache.rs        # 目录句柄缓存（moka + HandleKey）
-├── proc_cache.rs       # Netlink proc connector：Fork/Exec/Exit、build_chain
+├── proc_cache.rs       # Netlink proc connector：Fork/Exec/Exit（proc-tree crate 薄适配器）
 ├── socket.rs           # Unix 套接字协议（JSON 请求/响应）
 ├── utils.rs            # 大小/时间解析、进程信息查找、TimeFilter 方法
 └── help.rs             # 帮助文本常量

@@ -21,6 +21,7 @@
 - **Real-time Monitoring**: Captures 14 fanotify event types (default: 8 core events; use `--types all` for all 14)
 - **Process Attribution**: Tracks PID, command name, user, PPID, and TGID for every file change — even short-lived processes like `touch`, `rm`, `mv`
 - **Process Tree Tracking** (`<CMD>` positional arg): Pinpoint a specific process (e.g., `openclaw`) and fsmon will track it plus all its descendants (fork/exec children), building a complete ancestry chain per event.
+- **Process Cache**: Uses `proc-tree` crate for efficient process tree management with TTL-based caching.
 - **Recursive Monitoring**: Watch entire directory trees with automatic tracking of newly created subdirectories
 - **Complete Deletion Capture**: Captures every file deleted during `rm -rf` via persistent directory handle cache
 - **Capture-time Filtering**: Filter by event type and file size — in-process, nanosecond-fast, no fork.
@@ -462,11 +463,11 @@ Linux Kernel (fanotify FID mode)
       → in tracked tree → build ancestry chain → append to event
     → write  # JSONL → per-cmd log file (<cmd>_log.jsonl)
 
-Process tree (proc connector):
+Process tree (proc connector + proc-tree crate):
     Fork/Exec/Exit events from netlink connector socket
-    → moka cache: pid → {cmd, ppid, user, tgid, start_time}
+    → proc-tree cache: pid → {cmd, ppid, user, tgid, start_time}
     On daemon start: /proc/*/stat snapshot seeds existing processes
-    is_descendant(pid, "openclaw") → O(depth) moka cache lookups
+    is_descendant(pid, "openclaw") → O(depth) proc-tree cache lookups
 
 User pipe:
     tail -f *.jsonl | jq 'select(...)'
@@ -525,7 +526,7 @@ src/
 ├── fid_parser.rs       # FID event parsing, two-pass path recovery
 ├── filters.rs          # PathOptions, event/size filters, path matching
 ├── dir_cache.rs        # Directory handle cache (moka + HandleKey)
-├── proc_cache.rs       # Netlink proc connector: Fork/Exec/Exit, build_chain
+├── proc_cache.rs       # Netlink proc connector: Fork/Exec/Exit (thin adapter over proc-tree crate)
 ├── socket.rs           # Unix socket protocol (JSON req/resp)
 ├── utils.rs            # Size/time parsing, process info lookup, TimeFilter methods
 └── help.rs             # Help text constants
