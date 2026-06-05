@@ -1280,10 +1280,11 @@ mod tests {
         // add_path on non-existent path → goes to pending_paths
         let result = m.add_path(&entry);
         assert!(result.is_ok());
-        assert!(m
-            .pending_paths
-            .iter()
-            .any(|(p, _)| p == Path::new("/tmp/test_add")));
+        assert!(
+            m.pending_paths
+                .iter()
+                .any(|(p, _)| p == Path::new("/tmp/test_add"))
+        );
         assert!(!m.paths.contains(&PathBuf::from("/tmp/test_add")));
 
         // remove_path on non-existent path (not in options)
@@ -1346,18 +1347,18 @@ mod tests {
         );
 
         // Path should be moved to pending_paths after cleanup
-        assert!(m
-            .pending_paths
-            .iter()
-            .any(|(p, _)| p == &std::path::PathBuf::from("/tmp/fsmon_test_delete_self")),
+        assert!(
+            m.pending_paths
+                .iter()
+                .any(|(p, _)| p == &std::path::PathBuf::from("/tmp/fsmon_test_delete_self")),
             "canonical root should move to pending_paths after DELETE_SELF"
         );
 
         // Path should be removed from active monitoring
-        assert!(!m
-            .monitored_entries
-            .iter()
-            .any(|(p, _)| p == &std::path::PathBuf::from("/tmp/fsmon_test_delete_self")),
+        assert!(
+            !m.monitored_entries
+                .iter()
+                .any(|(p, _)| p == &std::path::PathBuf::from("/tmp/fsmon_test_delete_self")),
             "canonical root should be removed from monitored_entries"
         );
     }
