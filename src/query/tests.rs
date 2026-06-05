@@ -1,13 +1,13 @@
 #[cfg(test)]
 mod tests {
     use crate::EventType;
+    use crate::query::core::Query;
     use crate::utils::{TimeFilter, TimeOp};
+    use crate::{FileEvent, parse_log_line_jsonl};
     use chrono::Utc;
     use std::fs;
     use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
     use std::path::{Path, PathBuf};
-    use crate::{FileEvent, parse_log_line_jsonl};
-    use crate::query::core::Query;
 
     fn create_log_file(dir: &Path, events: &[FileEvent]) -> PathBuf {
         let path = dir.join("test.jsonl");
@@ -392,7 +392,12 @@ mod tests {
             false,
         );
         let mut result = q.read_events_from(&log_path, None, None).unwrap();
-        result.retain(|event| q.path_filters().unwrap().iter().any(|pf| event.path.starts_with(pf)));
+        result.retain(|event| {
+            q.path_filters()
+                .unwrap()
+                .iter()
+                .any(|pf| event.path.starts_with(pf))
+        });
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/tmp/test"));
         let _ = fs::remove_dir_all(&dir);
@@ -424,7 +429,9 @@ mod tests {
         let q = Query::new(log_dir, None, None, vec![], false);
         let file_len = fs::metadata(&log_path).unwrap().len();
         let target_time = base_time + chrono::Duration::minutes(50);
-        let pos = q.find_first_event_after(file_len, &log_path, target_time).unwrap();
+        let pos = q
+            .find_first_event_after(file_len, &log_path, target_time)
+            .unwrap();
         // Read from that position and verify first event is >= target_time
         let mut reader = BufReader::new(fs::File::open(&log_path).unwrap());
         reader.seek(SeekFrom::Start(pos)).unwrap();
@@ -485,7 +492,8 @@ mod tests {
         let q = Query::new(log_dir, None, None, vec![], false);
         let result = q.read_events_from(&log_path, None, None).unwrap();
         // Should dedup by path, keeping latest event per path
-        let mut latest_by_path: std::collections::HashMap<PathBuf, FileEvent> = std::collections::HashMap::new();
+        let mut latest_by_path: std::collections::HashMap<PathBuf, FileEvent> =
+            std::collections::HashMap::new();
         for event in result {
             match latest_by_path.entry(event.path.clone()) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {

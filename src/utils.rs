@@ -5,17 +5,17 @@ use std::sync::OnceLock;
 pub use sizefilter::{SizeFilter, SizeOp, format_size, parse_size, parse_size_filter};
 pub use timefilter::{TimeFilter, TimeOp, format_datetime, parse_time, parse_time_filter};
 
-use chrono::{DateTime, Utc};
 use crate::proc_cache::{ProcCache, ProcInfo, read_proc_start_time_ns};
+use chrono::{DateTime, Utc};
 
 /// Extension trait for TimeFilter to provide matching and classification methods.
 pub trait TimeFilterExt {
     /// Check if a timestamp matches this filter.
     fn matches(&self, time: DateTime<Utc>) -> bool;
-    
+
     /// Check if this filter is a lower bound (Gt or Ge).
     fn is_lower_bound(&self) -> bool;
-    
+
     /// Check if this filter is an upper bound (Lt or Le).
     fn is_upper_bound(&self) -> bool;
 }
@@ -30,11 +30,11 @@ impl TimeFilterExt for TimeFilter {
             TimeOp::Eq => time == self.time,
         }
     }
-    
+
     fn is_lower_bound(&self) -> bool {
         matches!(self.op, TimeOp::Gt | TimeOp::Ge)
     }
-    
+
     fn is_upper_bound(&self) -> bool {
         matches!(self.op, TimeOp::Lt | TimeOp::Le)
     }

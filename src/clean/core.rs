@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use crate::config::chown_to_original_user;
-use crate::utils::{self, cmd_to_log_name, TimeFilterExt};
+use crate::utils::{self, TimeFilterExt, cmd_to_log_name};
 use crate::{SizeFilter, SizeOp, TimeFilter, parse_log_line_jsonl};
 
 /// Check if `kept_bytes` exceeds the limit per the filter's operator.

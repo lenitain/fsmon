@@ -26,7 +26,7 @@ fn clock_ticks_per_sec() -> i64 {
 use moka::sync::Cache;
 use proc_connector::{NetlinkMessageIter, ProcConnector, ProcEvent};
 
-use crate::utils::{uid_to_username, read_proc_status_fields};
+use crate::utils::{read_proc_status_fields, uid_to_username};
 
 // ---- ProcCache (existing) ----
 

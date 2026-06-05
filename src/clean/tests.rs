@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use crate::{EventType, FileEvent, SizeFilter, SizeOp, TimeFilter};
-    use crate::utils::TimeOp;
     use crate::clean::core::{clean_logs, count_lines, find_tail_offset, should_trim};
+    use crate::utils::TimeOp;
+    use crate::{EventType, FileEvent, SizeFilter, SizeOp, TimeFilter};
     use chrono::Utc;
     use std::fs;
-    use std::io::{Write};
+    use std::io::Write;
     use std::path::{Path, PathBuf};
 
     fn create_test_file(dir: &Path, name: &str, content: &str) -> PathBuf {
