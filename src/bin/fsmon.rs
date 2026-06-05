@@ -183,5 +183,5 @@ fn main() -> Result<()> {
 }
 
 #[cfg(test)]
-#[path = "tests/fsmon_integration_tests.rs"]
+#[path = "tests/cli_parsing_tests.rs"]
 mod tests;
