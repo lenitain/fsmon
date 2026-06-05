@@ -72,6 +72,28 @@ pub struct MonitorConfig {
     pub watchdog_interval: Option<u64>,
 }
 
+impl MonitorConfig {
+    /// Create a default config for tests (all None/false).
+    #[cfg(test)]
+    pub fn default_for_test() -> Self {
+        Self {
+            paths_and_options: Vec::new(),
+            log_dir: None,
+            monitored_path: None,
+            buffer_size: None,
+            socket_listener: None,
+            debug: false,
+            cache_config: None,
+            disk_min_free: None,
+            sync_interval: None,
+            subscribe_buf: None,
+            local_time: false,
+            metrics_interval: None,
+            watchdog_interval: None,
+        }
+    }
+}
+
 // ---- Monitor ----
 
 pub struct Monitor {
@@ -142,24 +164,9 @@ pub struct Monitor {
 }
 
 impl Monitor {
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        paths_and_options: Vec<(PathBuf, PathOptions)>,
-        log_dir: Option<PathBuf>,
-        monitored_path: Option<PathBuf>,
-        buffer_size: Option<usize>,
-        socket_listener: Option<tokio::net::UnixListener>,
-        debug: bool,
-        cache_config: Option<ResolvedCacheConfig>,
-        disk_min_free: Option<String>,
-        sync_interval: Option<std::time::Duration>,
-        subscribe_buf: Option<usize>,
-        local_time: bool,
-        metrics_interval: Option<u64>,
-        watchdog_interval: Option<u64>,
-    ) -> Result<Self> {
-        let cache_config = cache_config.unwrap_or_default();
-        let buffer_size = buffer_size.unwrap_or(cache_config.buffer_size);
+    pub fn new(cfg: MonitorConfig) -> Result<Self> {
+        let cache_config = cfg.cache_config.unwrap_or_default();
+        let buffer_size = cfg.buffer_size.unwrap_or(cache_config.buffer_size);
 
         if buffer_size < 4096 {
             bail!("buffer_size must be at least 4096 bytes (4KB)");
@@ -171,10 +178,11 @@ impl Monitor {
         let mut paths = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let mut monitored_entries = Vec::new();
-        let log_dir_canonical = log_dir
+        let log_dir_canonical = cfg
+            .log_dir
             .as_ref()
             .map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()));
-        for (path, opts) in &paths_and_options {
+        for (path, opts) in &cfg.paths_and_options {
             // Reject paths that overlap with the log directory.
             let resolved = filters::resolve_recursion_check(path);
             if let Some(ref log_dir) = log_dir_canonical {
@@ -211,25 +219,33 @@ impl Monitor {
         let (reader_death_tx, reader_death_rx) =
             tokio::sync::mpsc::unbounded_channel::<FsGroupKey>();
 
+        let debug = cfg.debug;
+        let paths_and_options_len = cfg.paths_and_options.len();
+        let log_dir = cfg.log_dir;
+        let metrics_interval_dur = cfg
+            .metrics_interval
+            .filter(|&n| n > 0)
+            .map(std::time::Duration::from_secs);
+        let subscribe_buf = cfg.subscribe_buf;
+
         let monitor = Self {
             paths,
             canonical_paths: Vec::new(),
             monitored_entries,
             log_dir,
-            monitored_path,
+            monitored_path: cfg.monitored_path,
             proc_cache: None,
             pid_tree: None,
             file_size_cache: LruCache::new(
                 NonZeroUsize::new(cache_config.file_size_capacity).unwrap(),
             ),
             buffer_size,
-
             dir_cache: Cache::builder()
                 .max_capacity(cache_config.dir_capacity)
                 .time_to_live(Duration::from_secs(cache_config.dir_ttl_secs))
                 .build(),
             cache_config,
-            socket_listener,
+            socket_listener: cfg.socket_listener,
             debug,
             fs_groups: SlotMap::new(),
             path_to_group: HashMap::new(),
@@ -237,33 +253,31 @@ impl Monitor {
             shared_dir_cache: None,
             pending_paths: Vec::new(),
             inotify: None,
-            _inotify_watches: Vec::new(), // (path, wd)
+            _inotify_watches: Vec::new(),
             daemon_pid: std::process::id(),
             reader_death_rx,
             reader_death_tx,
             reader_states: HashMap::new(),
             started_at: std::time::Instant::now(),
-            disk_min_free,
-            sync_interval,
-            metrics_interval: metrics_interval
-                .filter(|&n| n > 0)
-                .map(std::time::Duration::from_secs),
+            disk_min_free: cfg.disk_min_free,
+            sync_interval: cfg.sync_interval,
+            metrics_interval: metrics_interval_dur,
             event_stream_tx: {
                 let cap = subscribe_buf.unwrap_or(4096).max(1);
                 let (tx, _) = tokio::sync::broadcast::channel::<(FileEvent, String)>(cap);
                 Some(tx)
             },
-            local_time,
-            metrics: MetricsRegistry::new(metrics_interval.is_some()),
+            local_time: cfg.local_time,
+            metrics: MetricsRegistry::new(cfg.metrics_interval.is_some()),
             temp_parent_marks: HashMap::new(),
-            watchdog: Some(Watchdog::new(watchdog_interval)),
+            watchdog: Some(Watchdog::new(cfg.watchdog_interval)),
         };
         if debug {
             eprintln!(
                 "[DEBUG] Monitor initialized with {} path entries:",
-                paths_and_options.len()
+                paths_and_options_len
             );
-            for (i, (p, o)) in paths_and_options.iter().enumerate() {
+            for (i, (p, o)) in cfg.paths_and_options.iter().enumerate() {
                 let label = o.cmd.as_deref().unwrap_or("global");
                 eprintln!(
                     "[DEBUG]   [{}] {} cmd={} recursive={}",
@@ -277,25 +291,6 @@ impl Monitor {
             eprintln!("[DEBUG] buffer_size: {}", buffer_size);
         }
         Ok(monitor)
-    }
-
-    /// Construct a Monitor from a MonitorConfig struct.
-    pub fn from_config(cfg: MonitorConfig) -> Result<Self> {
-        Self::new(
-            cfg.paths_and_options,
-            cfg.log_dir,
-            cfg.monitored_path,
-            cfg.buffer_size,
-            cfg.socket_listener,
-            cfg.debug,
-            cfg.cache_config,
-            cfg.disk_min_free,
-            cfg.sync_interval,
-            cfg.subscribe_buf,
-            cfg.local_time,
-            cfg.metrics_interval,
-            cfg.watchdog_interval,
-        )
     }
 
     pub async fn run(&mut self) -> Result<()> {

@@ -92,8 +92,8 @@ fn make_monitor(
     event_types: Option<Vec<EventType>>,
     recursive: bool,
 ) -> Monitor {
-    Monitor::new(
-        paths
+    Monitor::new(MonitorConfig {
+        paths_and_options: paths
             .into_iter()
             .map(|p| {
                 (
@@ -102,19 +102,8 @@ fn make_monitor(
                 )
             })
             .collect(),
-        None,
-        None,
-        None,
-        None,
-        false,
-        None,
-        None,
-        None,
-        None,
-        false,
-        None,
-        None,
-    )
+        ..MonitorConfig::default_for_test()
+    })
     .unwrap()
 }
 
@@ -228,21 +217,10 @@ fn test_reject_cmd_fsmon_at_startup() {
         recursive: true,
         cmd: Some("fsmon".to_string()),
     };
-    let result = Monitor::new(
-        vec![(PathBuf::from("/tmp"), opts)],
-        None,
-        None,
-        None,
-        None,
-        false,
-        None,
-        None,
-        None,
-        None,
-        false,
-        None,
-        None,
-    );
+    let result = Monitor::new(MonitorConfig {
+        paths_and_options: vec![(PathBuf::from("/tmp"), opts)],
+        ..MonitorConfig::default_for_test()
+    });
     assert!(result.is_err(), "Monitor::new() should reject cmd=fsmon");
     let err = result.err().unwrap().to_string();
     assert!(
@@ -256,77 +234,35 @@ fn test_reject_cmd_fsmon_at_startup() {
 fn test_monitor_buffer_size_validation() {
     let opts = options(None, None, false);
 
-    let result = Monitor::new(
-        vec![(PathBuf::from("/tmp"), opts.clone())],
-        None,
-        None,
-        Some(1024),
-        None,
-        false,
-        None,
-        None,
-        None,
-        None,
-        false,
-        None,
-        None,
-    );
+    let result = Monitor::new(MonitorConfig {
+        paths_and_options: vec![(PathBuf::from("/tmp"), opts.clone())],
+        buffer_size: Some(1024),
+        ..MonitorConfig::default_for_test()
+    });
     assert!(result.is_err());
     assert!(result.err().unwrap().to_string().contains("at least 4096"));
 
-    let result = Monitor::new(
-        vec![(PathBuf::from("/tmp"), opts.clone())],
-        None,
-        None,
-        Some(2 * 1024 * 1024),
-        None,
-        false,
-        None,
-        None,
-        None,
-        None,
-        false,
-        None,
-        None,
-    );
+    let result = Monitor::new(MonitorConfig {
+        paths_and_options: vec![(PathBuf::from("/tmp"), opts.clone())],
+        buffer_size: Some(2 * 1024 * 1024),
+        ..MonitorConfig::default_for_test()
+    });
     assert!(result.is_err());
     assert!(result.err().unwrap().to_string().contains("not exceed"));
 
-    let result = Monitor::new(
-        vec![(PathBuf::from("/tmp"), opts.clone())],
-        None,
-        None,
-        Some(65536),
-        None,
-        false,
-        None,
-        None,
-        None,
-        None,
-        false,
-        None,
-        None,
-    );
+    let result = Monitor::new(MonitorConfig {
+        paths_and_options: vec![(PathBuf::from("/tmp"), opts.clone())],
+        buffer_size: Some(65536),
+        ..MonitorConfig::default_for_test()
+    });
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_add_path_and_remove_path() {
-    let mut m = Monitor::new(
-        vec![],
-        None,
-        None,
-        None,
-        None,
-        false,
-        None,
-        None,
-        None,
-        None,
-        false,
-        None,
-        None,
-    )
+    let mut m = Monitor::new(MonitorConfig {
+        ..MonitorConfig::default_for_test()
+    })
     .unwrap();
 
     let entry = PathEntry {
@@ -358,8 +294,8 @@ fn test_add_path_and_remove_path() {
 fn test_delete_self_canonical_root_is_recorded() {
     use fanotify_fid::types::FidEvent;
 
-    let mut m = Monitor::new(
-        vec![(
+    let mut m = Monitor::new(MonitorConfig {
+        paths_and_options: vec![(
             std::path::PathBuf::from("/tmp/fsmon_test_delete_self"),
             PathOptions {
                 size_filter: None,
@@ -368,19 +304,8 @@ fn test_delete_self_canonical_root_is_recorded() {
                 cmd: None,
             },
         )],
-        None,
-        None,
-        None,
-        None,
-        false,
-        None,
-        None,
-        None,
-        None,
-        false,
-        None,
-        None,
-    )
+        ..MonitorConfig::default_for_test()
+    })
     .unwrap();
 
     // simulate what run() does: canonicalize the path

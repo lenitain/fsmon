@@ -177,7 +177,7 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
             }
         );
     }
-    let mut monitor = match Monitor::from_config(fsmon::monitor::MonitorConfig {
+    let mut monitor = match Monitor::new(fsmon::monitor::MonitorConfig {
         paths_and_options,
         log_dir,
         monitored_path: Some(store_path),
