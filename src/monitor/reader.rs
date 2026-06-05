@@ -177,11 +177,14 @@ impl Monitor {
             state.last_restart = std::time::Instant::now();
             state.gave_up = false;
         } else {
-            self.reader_states.insert(group_key, ReaderState {
-                restart_count: 1,
-                last_restart: std::time::Instant::now(),
-                gave_up: false,
-            });
+            self.reader_states.insert(
+                group_key,
+                ReaderState {
+                    restart_count: 1,
+                    last_restart: std::time::Instant::now(),
+                    gave_up: false,
+                },
+            );
         }
         self.metrics.set_reader_groups(self.fs_groups.len() as i64);
     }

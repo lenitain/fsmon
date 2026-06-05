@@ -208,7 +208,8 @@ impl Monitor {
             monitored_entries.push((resolved.clone(), opts.clone()));
         }
 
-        let (reader_death_tx, reader_death_rx) = tokio::sync::mpsc::unbounded_channel::<FsGroupKey>();
+        let (reader_death_tx, reader_death_rx) =
+            tokio::sync::mpsc::unbounded_channel::<FsGroupKey>();
 
         let monitor = Self {
             paths,
@@ -360,7 +361,11 @@ impl Monitor {
         // Start watchdog if enabled
         let _watchdog_handle = self.watchdog.as_ref().map(|wd| {
             if self.debug {
-                debug_log!(self.debug, "systemd watchdog enabled (interval: {}s)", wd.interval().as_secs());
+                debug_log!(
+                    self.debug,
+                    "systemd watchdog enabled (interval: {}s)",
+                    wd.interval().as_secs()
+                );
             }
             wd.clone().start()
         });
@@ -479,16 +484,9 @@ impl Monitor {
         proc_cache: &crate::proc_cache::ProcCache,
         pid_tree: &crate::proc_cache::PidTree,
     ) -> MetricsReport {
-        let reader_groups_alive = self
-            .reader_states
-            .values()
-            .filter(|s| !s.gave_up)
-            .count() as u64;
-        let reader_groups_gave_up = self
-            .reader_states
-            .values()
-            .filter(|s| s.gave_up)
-            .count() as u64;
+        let reader_groups_alive = self.reader_states.values().filter(|s| !s.gave_up).count() as u64;
+        let reader_groups_gave_up =
+            self.reader_states.values().filter(|s| s.gave_up).count() as u64;
 
         MetricsReport {
             uptime_secs: self.started_at.elapsed().as_secs(),
@@ -582,14 +580,21 @@ impl Monitor {
     }
 
     /// Handle an accepted socket connection: parse command and dispatch.
-    async fn handle_socket_accept(&mut self, result: Result<(tokio::net::unix::OwnedWriteHalf, String), std::io::Error>) {
+    async fn handle_socket_accept(
+        &mut self,
+        result: Result<(tokio::net::unix::OwnedWriteHalf, String), std::io::Error>,
+    ) {
         match result {
             Ok((writer, cmd_str)) => {
                 let cmd = match serde_json::from_str::<crate::socket::SocketCmd>(&cmd_str) {
                     Ok(c) => c,
                     Err(e) => {
-                        let resp: Result<crate::socket::SocketResponse, crate::socket::SocketError> =
-                            Err(crate::socket::SocketError::Transient(format!("Invalid command: {e}")));
+                        let resp: Result<
+                            crate::socket::SocketResponse,
+                            crate::socket::SocketError,
+                        > = Err(crate::socket::SocketError::Transient(format!(
+                            "Invalid command: {e}"
+                        )));
                         if let Ok(json_str) = serde_json::to_string(&resp) {
                             let _ = tokio_io_oneshot(writer, &format!("{json_str}\n")).await;
                         }

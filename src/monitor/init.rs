@@ -1,7 +1,7 @@
 // Initialization methods extracted from Monitor::run() for readability.
 
-use anyhow::{Context, Result, bail};
 use super::FsGroupKey;
+use anyhow::{Context, Result, bail};
 use fanotify_fid::consts::{
     FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_NONBLOCK, FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
 };
@@ -118,7 +118,8 @@ impl Monitor {
         self.setup_inotify_watches();
 
         // Initialize per-filesystem fanotify fds.
-        let mut fs_group_devs: std::collections::HashMap<u64, FsGroupKey> = std::collections::HashMap::new();
+        let mut fs_group_devs: std::collections::HashMap<u64, FsGroupKey> =
+            std::collections::HashMap::new();
         for (i, canonical) in self.canonical_paths.iter().enumerate() {
             let path_mask = combined_mask;
 
@@ -286,7 +287,11 @@ impl Monitor {
             }
         }
         if self.debug {
-            debug_log!(self.debug, "monitored_entries ({} entries, full list):", self.monitored_entries.len());
+            debug_log!(
+                self.debug,
+                "monitored_entries ({} entries, full list):",
+                self.monitored_entries.len()
+            );
             for (i, (p, o)) in self.monitored_entries.iter().enumerate() {
                 debug_log!(
                     self.debug,
@@ -305,10 +310,20 @@ impl Monitor {
                 DIR_CACHE_CAP
             );
             if let Some(ref c) = self.proc_cache {
-                debug_log!(self.debug, "  proc_cache:       {}/{} entries", c.entry_count(), PROC_CACHE_CAP);
+                debug_log!(
+                    self.debug,
+                    "  proc_cache:       {}/{} entries",
+                    c.entry_count(),
+                    PROC_CACHE_CAP
+                );
             }
             if let Some(ref t) = self.pid_tree {
-                debug_log!(self.debug, "  pid_tree:         {}/{} entries", t.entry_count(), PID_TREE_CAP);
+                debug_log!(
+                    self.debug,
+                    "  pid_tree:         {}/{} entries",
+                    t.entry_count(),
+                    PID_TREE_CAP
+                );
             }
             debug_log!(
                 self.debug,

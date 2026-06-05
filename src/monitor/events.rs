@@ -120,9 +120,7 @@ impl Monitor {
             // After recording DELETE_SELF events: remove the deleted
             // monitored directory from active monitoring and move to
             // pending_paths so it can be re-monitored if recreated.
-            if is_canonical_root
-                && let Some(ref path) = matched_path
-            {
+            if is_canonical_root && let Some(ref path) = matched_path {
                 self.handle_canonical_root_deleted(path);
             }
         }
@@ -160,7 +158,11 @@ impl Monitor {
     /// Moves the path to pending_paths for re-monitoring on recreation,
     /// sets up inotify watches and temporary parent marks.
     fn handle_canonical_root_deleted(&mut self, path: &Path) {
-        debug_log!(self.debug, "monitored directory deleted: {}", path.display());
+        debug_log!(
+            self.debug,
+            "monitored directory deleted: {}",
+            path.display()
+        );
         // Preserve ALL cmd groups before removing
         let all_opts: Vec<PathOptions> = self.opts_for_path(path).into_iter().cloned().collect();
         if let Err(e) = self.remove_path(path, None) {
