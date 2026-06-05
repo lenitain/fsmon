@@ -7,8 +7,8 @@
 use proc_connector::{NetlinkMessageIter, ProcConnector, ProcEvent as PcEvent};
 
 pub use proc_tree::{
-    CacheStore, DefaultCache, DefaultTree, PidNode, ProcEvent, ProcInfo, ProcessLink,
-    TreeStore, read_proc_start_time_ns,
+    CacheStore, DefaultCache, DefaultTree, PidNode, ProcEvent, ProcInfo, ProcessLink, TreeStore,
+    read_proc_start_time_ns,
 };
 
 pub const PROC_CACHE_CAP: u64 = 65536;
@@ -35,16 +35,13 @@ pub fn try_create_connector() -> Option<ProcConnector> {
 }
 
 /// Parse raw proc-connector bytes and delegate to proc_tree::handle_events.
-pub fn handle_proc_events(
-    cache: &DefaultCache,
-    tree: &DefaultTree,
-    data: &[u8],
-    n: usize,
-) -> bool {
+pub fn handle_proc_events(cache: &DefaultCache, tree: &DefaultTree, data: &[u8], n: usize) -> bool {
     let mut events: Vec<ProcEvent> = Vec::new();
     for msg in NetlinkMessageIter::new(data, n) {
         match msg {
-            Ok(Some(PcEvent::Exec { pid, timestamp_ns, .. })) => {
+            Ok(Some(PcEvent::Exec {
+                pid, timestamp_ns, ..
+            })) => {
                 events.push(ProcEvent::Exec { pid, timestamp_ns });
             }
             Ok(Some(PcEvent::Fork {

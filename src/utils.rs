@@ -4,8 +4,8 @@ pub use sizefilter::{SizeFilter, SizeOp, format_size, parse_size, parse_size_fil
 pub use timefilter::{TimeFilter, TimeOp, format_datetime, parse_time, parse_time_filter};
 
 use crate::proc_cache::{DefaultCache as ProcCache, ProcInfo};
-use proc_tree::{CacheStore, read_proc_start_time_ns};
 use chrono::{DateTime, Utc};
+use proc_tree::{CacheStore, read_proc_start_time_ns};
 
 /// Extension trait for TimeFilter to provide matching and classification methods.
 pub trait TimeFilterExt {
@@ -97,11 +97,13 @@ pub fn get_process_info_by_pid(
     // Fallback to reading /proc directly (for long-lived processes)
     // If the process just exited, /proc/{pid} might still exist briefly
     // as a zombie before the parent reaps it. Retry with short sleep.
-    let cmd = retry(|| proc_tree::proc::read_proc_comm(pid)).unwrap_or_else(|| "unknown".to_string());
-    let (user, ppid, tgid) = retry(|| proc_tree::proc::read_proc_status_fields(pid)).unwrap_or_else(|| {
-        let fallback_user = read_file_owner(file_path).unwrap_or_else(|| "unknown".to_string());
-        (fallback_user, 0u32, 0u32)
-    });
+    let cmd =
+        retry(|| proc_tree::proc::read_proc_comm(pid)).unwrap_or_else(|| "unknown".to_string());
+    let (user, ppid, tgid) = retry(|| proc_tree::proc::read_proc_status_fields(pid))
+        .unwrap_or_else(|| {
+            let fallback_user = read_file_owner(file_path).unwrap_or_else(|| "unknown".to_string());
+            (fallback_user, 0u32, 0u32)
+        });
     let start_time_ns = read_proc_start_time_ns(pid);
     ProcInfo {
         cmd,

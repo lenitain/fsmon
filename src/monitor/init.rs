@@ -48,15 +48,10 @@ impl Monitor {
     /// Initialize process cache and pid tree. Returns proc connector for event loop.
     pub(crate) fn init_process_cache(&mut self) -> Option<ProcConnector> {
         let proc_conn = proc_cache::try_create_connector();
-        let proc_cache = proc_cache::DefaultCache::new(
-            PROC_CACHE_CAP,
-            self.cache_config.proc_ttl_secs,
-        );
+        let proc_cache =
+            proc_cache::DefaultCache::new(PROC_CACHE_CAP, self.cache_config.proc_ttl_secs);
         self.proc_cache = Some(proc_cache.clone());
-        let pid_tree = proc_cache::DefaultTree::new(
-            PID_TREE_CAP,
-            self.cache_config.proc_ttl_secs,
-        );
+        let pid_tree = proc_cache::DefaultTree::new(PID_TREE_CAP, self.cache_config.proc_ttl_secs);
         proc_tree::snapshot(&pid_tree, &proc_cache);
         self.pid_tree = Some(pid_tree.clone());
         proc_conn

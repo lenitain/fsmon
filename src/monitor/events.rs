@@ -11,8 +11,8 @@ use crate::filters;
 use crate::filters::PathOptions;
 use crate::monitored::PathEntry;
 use crate::utils::{format_size, get_process_info_by_pid};
-use proc_tree::{CacheStore, TreeStore};
 use crate::{EventType, FileEvent};
+use proc_tree::{CacheStore, TreeStore};
 
 use super::Monitor;
 
