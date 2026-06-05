@@ -183,6 +183,5 @@ fn main() -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    include!("private/fsmon_tests.rs");
-}
+#[path = "tests/fsmon_integration_tests.rs"]
+mod tests;

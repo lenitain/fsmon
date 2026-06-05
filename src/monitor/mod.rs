@@ -616,6 +616,5 @@ fn get_rss_mb() -> f64 {
 }
 
 #[cfg(test)]
-mod tests {
-    include!("tests.rs");
-}
+#[path = "tests.rs"]
+mod tests;

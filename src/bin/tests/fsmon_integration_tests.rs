@@ -1,7 +1,5 @@
 // Tests that require binary-internal types (Cli, Commands) or binary-internal
 // functions (commands::cmd_add, cmd_remove, cmd_clean).
-//
-// Included via `include!` from src/bin/fsmon.rs to keep them in the binary crate.
 
 use super::*;
 use clap::Parser;
@@ -174,9 +172,8 @@ fn with_isolated_home(f: impl FnOnce(&Path, &Path)) {
             ("SUDO_UID", None::<&str>),
         ],
         || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                f(&dir, &monitored_path)
-            }));
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&dir, &monitored_path)));
             let _ = fs::remove_dir_all(&dir);
             if let Err(e) = result {
                 std::panic::resume_unwind(e);
@@ -248,8 +245,7 @@ fn test_integration_add_with_types() {
 fn test_integration_add_recursive() {
     with_isolated_home(|home, mp| {
         let p = mp.to_string_lossy();
-        let args =
-            AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref(), "-r"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref(), "-r"]).unwrap();
         super::commands::cmd_add(args).unwrap();
 
         let store = load_store(home);
@@ -390,8 +386,7 @@ fn test_integration_add_fsmon_cmd_fails() {
 fn test_integration_add_duplicate_replaces() {
     with_isolated_home(|home, mp| {
         let p = mp.to_string_lossy();
-        let args =
-            AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref(), "-r"]).unwrap();
+        let args = AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref(), "-r"]).unwrap();
         super::commands::cmd_add(args).unwrap();
         assert_eq!(load_store(home).entry_count(), 1);
 
@@ -413,9 +408,8 @@ fn test_integration_add_duplicate_replaces() {
 fn test_integration_add_with_size() {
     with_isolated_home(|home, mp| {
         let p = mp.to_string_lossy();
-        let args =
-            AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref(), "-s", ">1MB"])
-                .unwrap();
+        let args = AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref(), "-s", ">1MB"])
+            .unwrap();
         super::commands::cmd_add(args).unwrap();
 
         let store = load_store(home);
@@ -443,8 +437,7 @@ fn test_integration_remove_path_not_in_cmd_fails() {
         let args = AddArgs::try_parse_from(["add", "_global", "--path", p.as_ref()]).unwrap();
         super::commands::cmd_add(args).unwrap();
 
-        let result =
-            super::commands::cmd_remove(Some("wrong_cmd".into()), vec![mp.to_path_buf()]);
+        let result = super::commands::cmd_remove(Some("wrong_cmd".into()), vec![mp.to_path_buf()]);
         assert!(result.is_err(), "path in wrong cmd should fail");
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not found under cmd"), "got: {}", err);
