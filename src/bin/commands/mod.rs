@@ -1,8 +1,6 @@
 use anyhow::Result;
-use fsmon::EventType;
 use fsmon::filters::PathOptions;
 use fsmon::monitored::PathEntry;
-use fsmon::utils::parse_size_filter;
 use std::path::PathBuf;
 
 mod add;

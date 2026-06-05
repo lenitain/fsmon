@@ -1,11 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::EventType;
-    use crate::utils::{TimeFilter, TimeOp, TimeFilterExt, cmd_to_log_name};
+    use crate::utils::{TimeFilter, TimeOp};
     use chrono::Utc;
     use std::fs;
-    use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+    use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
     use std::path::{Path, PathBuf};
     use crate::{FileEvent, parse_log_line_jsonl};
     use crate::query::core::Query;

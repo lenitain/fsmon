@@ -1,8 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{EventType, FileEvent, SizeFilter, SizeOp, TimeFilter, parse_log_line_jsonl};
-    use crate::utils::{TimeOp, cmd_to_log_name, TimeFilterExt};
+    use crate::{EventType, FileEvent, SizeFilter, SizeOp, TimeFilter};
+    use crate::utils::TimeOp;
     use crate::clean::core::{clean_logs, count_lines, find_tail_offset, should_trim};
     use chrono::Utc;
     use std::fs;

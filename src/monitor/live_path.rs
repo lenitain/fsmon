@@ -8,12 +8,10 @@ use fanotify_fid::consts::{
 };
 use fanotify_fid::prelude::*;
 
-use crate::EventType;
 use crate::dir_cache;
 use crate::fid_parser::{FsGroup, mark_directory, mark_recursive, path_mask_from_options};
 use crate::filters::{self, PathOptions};
 use crate::monitored::PathEntry;
-use crate::utils::parse_size_filter;
 
 use super::Monitor;
 

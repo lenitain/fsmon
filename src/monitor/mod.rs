@@ -44,12 +44,6 @@ mod filtering;
 mod live_path;
 mod reader;
 mod socket_handler;
-mod fanotify_mgr;
-mod inotify_mgr;
-mod event_bus_mod;
-mod socket_server_mod;
-mod proc_mgr;
-mod metrics_collect;
 
 pub(crate) use channel::{EventReceiver, EventSender};
 pub(crate) use events::PendingEvent;
