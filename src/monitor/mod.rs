@@ -30,11 +30,8 @@ mod file_writer;
 mod filtering;
 mod init;
 mod live_path;
-mod monitor_config;
 mod reader;
 mod socket_handler;
-
-pub use monitor_config::MonitorConfig;
 
 pub(crate) use channel::{EventReceiver, EventSender};
 pub(crate) use events::PendingEvent;
@@ -43,6 +40,25 @@ pub(crate) use reader::ReaderState;
 #[cfg(test)]
 pub(crate) use socket_handler::chains_contain;
 pub(crate) use socket_handler::tokio_io_oneshot;
+
+// ---- MonitorConfig ----
+
+/// Configuration for creating a Monitor instance.
+pub struct MonitorConfig {
+    pub paths_and_options: Vec<(PathBuf, PathOptions)>,
+    pub log_dir: Option<PathBuf>,
+    pub monitored_path: Option<PathBuf>,
+    pub buffer_size: Option<usize>,
+    pub socket_listener: Option<tokio::net::UnixListener>,
+    pub debug: bool,
+    pub cache_config: Option<ResolvedCacheConfig>,
+    pub disk_min_free: Option<String>,
+    pub sync_interval: Option<std::time::Duration>,
+    pub subscribe_buf: Option<usize>,
+    pub local_time: bool,
+    pub metrics_interval: Option<u64>,
+    pub watchdog_interval: Option<u64>,
+}
 
 // ---- Monitor ----
 
@@ -114,7 +130,7 @@ pub struct Monitor {
 
 impl Monitor {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    fn new(
         paths_and_options: Vec<(PathBuf, PathOptions)>,
         log_dir: Option<PathBuf>,
         monitored_path: Option<PathBuf>,
