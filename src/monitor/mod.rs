@@ -439,10 +439,10 @@ impl Monitor {
                         None => std::future::pending().await,
                     }
                 } => {
-                    if let Some(ref wd) = self.watchdog {
-                        if let Err(e) = wd.send_heartbeat() {
-                            eprintln!("[ERROR] systemd watchdog notify failed: {}", e);
-                        }
+                    if let Some(ref wd) = self.watchdog
+                        && let Err(e) = wd.send_heartbeat()
+                    {
+                        eprintln!("[ERROR] systemd watchdog notify failed: {}", e);
                     }
                 }
 
