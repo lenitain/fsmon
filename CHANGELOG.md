@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.7] - 2026-06-05
+
+### Changed
+
+- **Structural refactoring**: Major code quality improvements for maintainability and readability
+  - **Config module**: Moved from flat `config.rs` to `config/` directory structure for consistency
+  - **Monitor event loop**: Extracted `run()` into focused helper methods (`matches_process_tree()`, `handle_canonical_root_deleted()`, etc.)
+  - **FsGroup storage**: Replaced `Vec<FsGroup>` with `SlotMap` to eliminate index fixup logic and improve safety
+  - **Helper extraction**: Added `path_matches()` and `collect_matching_entries()` helpers to reduce code duplication
+  - **Debug logging**: Extracted `debug_log!` macro, replacing 31 debug sites with consistent macro calls
+  - **MonitorConfig**: Inlined `MonitorConfig` struct, made `new()` private for better encapsulation
+  - **Test organization**: Unified test structure by inlining all unit tests and moving CLI tests to `tests/cli_tests.rs`
+
+### Fixed
+
+- **Singleton lock**: Replaced `flock` with Unix socket for daemon singleton lock to improve reliability
+- **Lock file permissions**: Explicitly set `chmod 666` after creating lock file to prevent permission issues
+- **Watchdog tests**: Handled `Permission denied` in watchdog validation tests for proper CI execution
+- **Daemon restart**: Removed `chown` on daemon lock file to prevent permission denied errors on restart
+- **Clippy warnings**: Resolved `module_inception` warning to pass CI checks
+
+### Chore
+
+- **Cleanup**: Removed temporary plan/todo files and unused skeleton modules
+- **Formatting**: Applied `cargo fmt` across codebase for consistent style
+- **Dead code**: Removed unused `debug_log` method and macro
+
 ## [0.4.6] - 2026-06-05
 
 ### Changed
