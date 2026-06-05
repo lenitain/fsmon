@@ -9,7 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **CLI socket communication**: Fixed `fsmon health`, `fsmon add` (daemon notification), and other CLI commands receiving empty response from daemon. `send_cmd()` now half-closes the write end after sending the command, so the server's `read_line` loop gets EOF and can process and respond.
+- **CLI socket communication (two bugs)**:
+  1. **Half-close**: `send_cmd()` did not shut down the write end after sending the command. The server's `read_line` loop blocked waiting for more data, never got EOF, and never sent a response. Added `writer.shutdown(Shutdown::Write)` after flush.
+  2. **Response parsing**: Client parsed response as `SocketResponse` but server sends `Result<SocketResponse, SocketError>` (with `Ok`/`Err` wrapper). Client now parses the `Result` type directly.
+  - Affected commands: `fsmon health`, `fsmon add` (daemon notification), `fsmon remove` (daemon notification), and all CLI→daemon socket commands.
 
 ### Changed
 
