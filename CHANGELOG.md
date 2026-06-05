@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.7] - 2026-06-05
+
+### Fixed
+
+- **Watchdog liveness detection**: Moved heartbeat from separate tokio task into the main event loop (`tokio::select!`). Previously the watchdog was a standalone task that kept sending `WATCHDOG=1` regardless of whether the main loop was responsive. If a synchronous operation blocked the main loop (e.g., `fs::metadata` on NFS), systemd couldn't detect the hang because heartbeats continued. Now the heartbeat is a tick branch in `select!` — if the main loop blocks, the tick can't be polled, heartbeats stop, and systemd restarts the service.
+  - `watchdog.rs`: Removed `start()` task spawn, added `send_heartbeat()` method
+  - `monitor/mod.rs`: Added `heartbeat_tick` branch to main `select!` loop
+
+### Changed
+
+- **Docs**: Updated README file trees to reflect current source structure (added `watchdog.rs`, `cli.rs`, `config/` directory, `monitor/init.rs`, `monitor/tests.rs`, `bin/tests/`)
+
 ## [0.4.6] - 2026-06-05
 
 ### Changed
