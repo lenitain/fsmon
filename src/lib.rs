@@ -17,79 +17,65 @@ pub use utils::{
     parse_time, parse_time_filter,
 };
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
 use std::path::PathBuf;
 
-/// Enforces single daemon instance via `flock`.
-/// Lock file at `/tmp/fsmon-<UID>.lock`.
-/// Lock released automatically when process exits or crashes.
+/// Enforces single daemon instance via Unix socket binding.
+/// Socket at `/tmp/fsmon-<UID>.lock.sock`.
+/// Released automatically when process exits or crashes.
 pub struct DaemonLock {
     #[allow(dead_code)]
-    file: fs::File,
+    listener: std::os::unix::net::UnixListener,
+    path: PathBuf,
 }
 
 impl DaemonLock {
     /// Acquire exclusive lock. Fails if another daemon is already running.
     pub fn acquire(uid: u32) -> Result<Self> {
-        let path = PathBuf::from(format!("/tmp/fsmon-{}.lock", uid));
+        let path = PathBuf::from(format!("/tmp/fsmon-{}.lock.sock", uid));
 
+        // Try to bind — success means no other instance
+        // If EADDRINUSE, another daemon is running
+        let listener = match std::os::unix::net::UnixListener::bind(&path) {
+            Ok(l) => l,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                // Check if the socket is actually responding (stale vs active)
+                // Try to connect — if connection fails, socket is stale
+                if std::os::unix::net::UnixStream::connect(&path).is_err() {
+                    // Stale socket, remove and retry
+                    let _ = fs::remove_file(&path);
+                    std::os::unix::net::UnixListener::bind(&path)
+                        .map_err(|e| anyhow::anyhow!("Another fsmon daemon is already running: {}", e))?
+                } else {
+                    return Err(anyhow::anyhow!("Another fsmon daemon is already running"));
+                }
+            }
+            Err(e) => return Err(anyhow::anyhow!("Failed to bind lock socket: {}", e)),
+        };
+
+        // Set permissions so CLI commands can check lock status
         use std::os::unix::fs::PermissionsExt;
-
-        let file = fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&path)
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to open daemon lock file '{}': {}",
-                    path.display(),
-                    e
-                )
-            })?;
-
-        // Set permissions to 666 (world read/write) so CLI commands
-        // can check lock status regardless of who created the file.
         let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o666));
 
-        // When running as root (daemon), chown lock file to original user
-        // so CLI commands (running as user) can read/manage it.
+        // Chown to original user when running as root
         crate::config::chown_to_original_user(&path);
 
-        match file.try_lock_exclusive() {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // Read existing PID for helpful message
-                let pid_str = fs::read_to_string(&path).unwrap_or_default();
-                let pid_hint = if pid_str.trim().is_empty() {
-                    String::new()
-                } else {
-                    format!(" (PID {})", pid_str.trim())
-                };
-                bail!("Another fsmon daemon is already running{}", pid_hint);
-            }
-            Err(e) => bail!("Failed to acquire daemon lock: {}", e),
-        }
-
-        // Write PID for diagnostic purposes (not relied on for correctness)
-        let _ = fs::write(&path, format!("{}", std::process::id()));
-
-        Ok(DaemonLock { file })
+        Ok(DaemonLock { listener, path })
     }
 }
 
 impl Drop for DaemonLock {
     fn drop(&mut self) {
-        // fd closes → kernel releases flock automatically
+        // Clean up socket file on exit
+        let _ = fs::remove_file(&self.path);
     }
 }
+
 use std::str::FromStr;
 
 pub const DEFAULT_KEEP_DAYS: u32 = 30;
