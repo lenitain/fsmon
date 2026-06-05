@@ -39,13 +39,13 @@ impl DaemonLock {
     pub fn acquire(uid: u32) -> Result<Self> {
         let path = PathBuf::from(format!("/tmp/fsmon-{}.lock", uid));
 
-        use std::os::unix::fs::OpenOptionsExt;
+        use std::os::unix::fs::PermissionsExt;
+
         let file = fs::OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
-            .mode(0o666)  // Set permissions on creation
             .open(&path)
             .map_err(|e| {
                 anyhow::anyhow!(
@@ -54,6 +54,10 @@ impl DaemonLock {
                     e
                 )
             })?;
+
+        // Set permissions to 666 (world read/write) so CLI commands
+        // can check lock status regardless of who created the file.
+        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o666));
 
         // When running as root (daemon), chown lock file to original user
         // so CLI commands (running as user) can read/manage it.
