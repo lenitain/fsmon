@@ -46,7 +46,7 @@ Usage:
   sudo fsmon daemon --channel-capacity 1024   Event channel cap (default: unbounded)
   sudo fsmon daemon --subscribe-buf 8192      Subscribe broadcast buffer
   sudo fsmon daemon --cache-dir-cap 200000    Override dir_cache capacity
-  sudo fsmon daemon --watchdog-interval 15    systemd watchdog heartbeat (secs)
+  sudo fsmon daemon --watchdog-interval 15    watchdog heartbeat in main loop (secs)
   sudo fsmon daemon --watchdog-multiplier 3   WatchdogSec = interval × multiplier
   fsmon add openclaw --path /home -r          Track openclaw on /home (recursive)
   fsmon monitored                             List monitored paths

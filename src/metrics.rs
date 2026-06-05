@@ -10,7 +10,7 @@ use std::sync::{Arc, RwLock};
 
 // ── CounterVec ────────────────────────────────────────────────────────
 
-/// Thread-safe counter with string labels (like Prometheus CounterVec).
+/// Thread-safe counter with string labels.
 /// Labels are interned lazily: first `inc()` call for a label set creates a counter.
 /// When `enabled` is false, all operations are no-ops (zero overhead).
 #[derive(Clone)]

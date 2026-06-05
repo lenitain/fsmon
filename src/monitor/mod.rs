@@ -358,17 +358,24 @@ impl Monitor {
             eprintln!("[WARNING] systemd notify READY failed: {}", e);
         }
 
-        // Start watchdog if enabled
-        let _watchdog_handle = self.watchdog.as_ref().map(|wd| {
-            if self.debug {
-                debug_log!(
-                    self.debug,
-                    "systemd watchdog enabled (interval: {}s)",
-                    wd.interval().as_secs()
-                );
-            }
-            wd.clone().start()
-        });
+        // Heartbeat tick: integrated into the main event loop (not a separate task).
+        // If the main loop blocks, this tick won't fire → systemd times out → restart.
+        let mut heartbeat_tick: Option<tokio::time::Interval> =
+            self.watchdog.as_ref().and_then(|wd| {
+                if !wd.is_enabled() {
+                    return None;
+                }
+                if self.debug {
+                    debug_log!(
+                        self.debug,
+                        "systemd watchdog enabled (interval: {}s, heartbeat in main loop)",
+                        wd.interval().as_secs()
+                    );
+                }
+                // First tick fires after one interval (not immediately).
+                let start = tokio::time::Instant::now() + wd.interval();
+                Some(tokio::time::interval_at(start, wd.interval()))
+            });
 
         let mut metrics_tick: Option<tokio::time::Interval> =
             self.metrics_interval.map(tokio::time::interval);
@@ -421,6 +428,22 @@ impl Monitor {
                         report.pending_paths,
                         report.disk_buffer_events,
                     );
+                }
+
+                // Watchdog heartbeat: fires only when the main event loop is responsive.
+                // If any synchronous operation blocks the loop, this tick won't fire
+                // and systemd will restart the service after WatchdogSec timeout.
+                _ = async {
+                    match heartbeat_tick.as_mut() {
+                        Some(t) => t.tick().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    if let Some(ref wd) = self.watchdog {
+                        if let Err(e) = wd.send_heartbeat() {
+                            eprintln!("[ERROR] systemd watchdog notify failed: {}", e);
+                        }
+                    }
                 }
 
                 proc_readable = async {

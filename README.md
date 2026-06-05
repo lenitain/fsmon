@@ -207,7 +207,7 @@ sudo fsmon daemon --cache-file-size 20000     # File size cache capacity (defaul
 sudo fsmon daemon --cache-proc-ttl 1200       # Process cache TTL (default: 600secs)
 sudo fsmon daemon --cache-stats-interval 0    # Disable periodic cache stats (default: 60secs)
 sudo fsmon daemon --metrics-interval 30       # Print status report to stderr every 30s
-sudo fsmon daemon --watchdog-interval 15      # systemd watchdog heartbeat interval (secs)
+sudo fsmon daemon --watchdog-interval 15      # watchdog heartbeat interval (secs), in main loop
 sudo fsmon daemon --watchdog-multiplier 3     # WatchdogSec = interval × multiplier
 ```
 
@@ -394,7 +394,7 @@ channel_capacity = 1024         # Event channel bound (omit = unbounded)
 subscribe_buf = 4096            # Broadcast buffer for subscribe consumers
 
 # [watchdog]
-# interval_secs = 15            # systemd watchdog heartbeat interval (secs)
+# interval_secs = 15            # heartbeat interval (secs), runs in main event loop
 # multiplier = 2                # WatchdogSec = interval × multiplier (MUST be > 1)
 ```
 

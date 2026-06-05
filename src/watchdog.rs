@@ -1,9 +1,29 @@
 use libsystemd::daemon;
 use std::time::Duration;
-use tokio::time::interval;
 
-/// Watchdog manager for systemd integration.
-/// Sends periodic WATCHDOG=1 notifications to systemd.
+/// Watchdog configuration for systemd integration.
+///
+/// Heartbeat lives inside the main event loop (tokio::select!), NOT as a
+/// separate task, ensuring liveness detection.
+//
+//  main loop (tokio::select!)  ──── poll all branches each iteration
+//    event_rx.recv()             fanotify events
+//    heartbeat_tick.tick()       periodic timer
+//    proc_readable               proc connector
+//    inotify_ready               dir creation
+//    socket_listener             client commands
+//    ...                         ...
+//
+//    whichever is ready first gets executed, rest keep awaiting
+//
+//  heartbeat_tick fires:
+//    wd.send_heartbeat()  ──▶  systemd WATCHDOG=1
+//
+//  if handler blocks (e.g. fs::metadata on NFS):
+//    select! can't poll heartbeat_tick  ──▶  no heartbeat  ──▶  systemd restarts
+//
+//  if idle (no events):
+//    heartbeat_tick still fires on schedule  ──▶  heartbeat sent  ──▶  all good
 #[derive(Clone)]
 pub struct Watchdog {
     interval: Duration,
@@ -29,32 +49,13 @@ impl Watchdog {
         self.interval
     }
 
-    /// Start watchdog heartbeat task.
-    /// Returns JoinHandle that can be aborted on shutdown.
-    pub fn start(self) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            if !self.enabled {
-                return;
-            }
-
-            // Verify watchdog is supported by systemd
-            let watchdog_timeout = daemon::watchdog_enabled(false);
-            if watchdog_timeout.is_none() {
-                eprintln!("[WARNING] systemd watchdog not enabled in service unit");
-                return;
-            }
-
-            let mut ticker = interval(self.interval);
-            // Skip first tick (immediate)
-            ticker.tick().await;
-
-            loop {
-                ticker.tick().await;
-                if let Err(e) = daemon::notify(false, &[daemon::NotifyState::Watchdog]) {
-                    eprintln!("[ERROR] systemd watchdog notify failed: {}", e);
-                }
-            }
-        })
+    /// Send WATCHDOG=1 to systemd.
+    /// Called from the main event loop's heartbeat tick.
+    /// Returns Ok(()) on success, or error message on failure.
+    pub fn send_heartbeat(&self) -> Result<(), String> {
+        daemon::notify(false, &[daemon::NotifyState::Watchdog])
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -122,5 +123,19 @@ mod tests {
     fn test_libsystemd_watchdog_enabled() {
         // In non-systemd environment, this returns None
         let _ = daemon::watchdog_enabled(false);
+    }
+
+    #[test]
+    fn test_send_heartbeat_disabled() {
+        let wd = Watchdog::new(None);
+        // send_heartbeat will fail in non-systemd environment — that's fine
+        let _ = wd.send_heartbeat();
+    }
+
+    #[test]
+    fn test_send_heartbeat_enabled() {
+        let wd = Watchdog::new(Some(15));
+        // send_heartbeat will fail in non-systemd environment — that's fine
+        let _ = wd.send_heartbeat();
     }
 }
