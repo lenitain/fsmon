@@ -84,25 +84,7 @@ impl Monitor {
             }
             for (_monitored_path, opts) in &matching_entries {
                 // Check process tree filter
-                let cmd_match = if let Some(ref cmd_name) = opts.cmd {
-                    let matched = self
-                        .pid_tree
-                        .as_ref()
-                        .map(|tree| crate::proc_cache::is_descendant(tree, event_pid, cmd_name))
-                        .unwrap_or(false);
-                    debug_log!(
-                        self.debug,
-                        "  check cmd=\"{}\" pid={}: {}",
-                        cmd_name,
-                        event_pid,
-                        if matched { "MATCH" } else { "SKIP" }
-                    );
-                    matched
-                } else {
-                    debug_log!(self.debug, "  check cmd=global pid={}: MATCH", event_pid);
-                    true
-                };
-                if !cmd_match {
+                if !self.matches_process_tree(opts.cmd.as_deref(), event_pid) {
                     continue;
                 }
 
@@ -138,50 +120,78 @@ impl Monitor {
             // After recording DELETE_SELF events: remove the deleted
             // monitored directory from active monitoring and move to
             // pending_paths so it can be re-monitored if recreated.
-            if is_canonical_root {
-                debug_log!(self.debug, "monitored directory deleted: {}", raw.path.display());
-                if let Some(ref path) = matched_path {
-                    // Preserve ALL cmd groups before removing
-                    let all_opts: Vec<PathOptions> =
-                        self.opts_for_path(path).into_iter().cloned().collect();
-                    if let Err(e) = self.remove_path(path, None) {
-                        eprintln!(
-                            "[WARNING] Failed to remove deleted path '{}': {e}",
-                            path.display()
-                        );
-                    }
-                    for opts in all_opts {
-                        self.pending_paths.push((
-                            path.clone(),
-                            PathEntry {
-                                path: path.clone(),
-                                recursive: Some(opts.recursive),
-                                types: opts
-                                    .event_types
-                                    .as_ref()
-                                    .map(|v| v.iter().map(|t| t.to_string()).collect()),
-                                size: opts
-                                    .size_filter
-                                    .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
-                                cmd: opts.cmd,
-                            },
-                        ));
-                    }
-                    self.setup_inotify_watches();
-                    // Add a temporary fanotify mark on the nearest existing
-                    // ancestor directory so that events during the recreate
-                    // window (mkdir, touch, etc.) are not lost.
-                    if self.add_temp_parent_mark(path) {
-                        debug_log!(self.debug, "temp parent mark active for {}", path.display());
-                    }
-                    // Path may have been recreated before the inotify watch was
-                    // established. Check immediately to avoid missing the window.
-                    self.check_pending();
-                }
+            if is_canonical_root
+                && let Some(ref path) = matched_path
+            {
+                self.handle_canonical_root_deleted(path);
             }
         }
 
         pending
+    }
+
+    /// Check if an event's PID matches the process tree filter for a cmd group.
+    /// Returns true if no filter is set or if the PID is a descendant of the target cmd.
+    fn matches_process_tree(&self, cmd: Option<&str>, event_pid: u32) -> bool {
+        match cmd {
+            Some(cmd_name) => {
+                let matched = self
+                    .pid_tree
+                    .as_ref()
+                    .map(|tree| crate::proc_cache::is_descendant(tree, event_pid, cmd_name))
+                    .unwrap_or(false);
+                debug_log!(
+                    self.debug,
+                    "  check cmd=\"{}\" pid={}: {}",
+                    cmd_name,
+                    event_pid,
+                    if matched { "MATCH" } else { "SKIP" }
+                );
+                matched
+            }
+            None => {
+                debug_log!(self.debug, "  check cmd=global pid={}: MATCH", event_pid);
+                true
+            }
+        }
+    }
+
+    /// Handle deletion of a monitored canonical root directory.
+    /// Moves the path to pending_paths for re-monitoring on recreation,
+    /// sets up inotify watches and temporary parent marks.
+    fn handle_canonical_root_deleted(&mut self, path: &Path) {
+        debug_log!(self.debug, "monitored directory deleted: {}", path.display());
+        // Preserve ALL cmd groups before removing
+        let all_opts: Vec<PathOptions> = self.opts_for_path(path).into_iter().cloned().collect();
+        if let Err(e) = self.remove_path(path, None) {
+            eprintln!(
+                "[WARNING] Failed to remove deleted path '{}': {e}",
+                path.display()
+            );
+        }
+        for opts in all_opts {
+            self.pending_paths.push((
+                path.to_path_buf(),
+                PathEntry {
+                    path: path.to_path_buf(),
+                    recursive: Some(opts.recursive),
+                    types: opts
+                        .event_types
+                        .as_ref()
+                        .map(|v| v.iter().map(|t| t.to_string()).collect()),
+                    size: opts
+                        .size_filter
+                        .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
+                    cmd: opts.cmd,
+                },
+            ));
+        }
+        self.setup_inotify_watches();
+        if self.add_temp_parent_mark(path) {
+            debug_log!(self.debug, "temp parent mark active for {}", path.display());
+        }
+        // Path may have been recreated before the inotify watch was established.
+        self.check_pending();
     }
 
     /// Resolve "unknown" fields in pending events after proc events have been drained.

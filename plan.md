@@ -5,15 +5,11 @@
 
 ## Steps
 
-- [ ] 1. 提取 debug 日志宏（最简单，全局收益）
-- [ ] 2. 统一 matching_opts_for_event() 匹配逻辑
-- [ ] 3. 提取 CacheState 子结构体（减少 Monitor 字段数）
-- [ ] 4. 提取 PathState 子结构体
-- [ ] 5. 提取 FanotifyState 子结构体
-- [ ] 6. 提取 process_event_batch() 子方法
-- [ ] 7. to_jsonl_string_local() 改用 serde serializer
-- [ ] 8. run() 事件循环提取 handler 方法
-- [ ] 9. handle_socket_cmd() 错误分类用枚举
+- [x] 1. 提取 debug 日志宏（最简单，全局收益）
+- [x] 2. 统一 matching_opts_for_event() 匹配逻辑
+- [x] 3. 用 SlotMap 替代 Vec+index 管理 FsGroup（消除索引修复逻辑）
+- [ ] 4. 提取 process_event_batch() 子方法
+- [ ] 5. run() 事件循环提取 handler 方法
 
 ## Files
 - Modify: src/monitor/mod.rs, src/monitor/events.rs, src/monitor/live_path.rs
