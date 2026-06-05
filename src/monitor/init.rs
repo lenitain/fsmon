@@ -15,7 +15,7 @@ use crate::fid_parser::{DIR_CACHE_CAP, FsGroup, chown_to_user, mark_directory, m
 use crate::filters::PathOptions;
 use crate::monitored::PathEntry;
 use crate::proc_cache;
-use crate::proc_cache::{PID_TREE_CAP, PROC_CACHE_CAP, snapshot_process_tree};
+use crate::proc_cache::{PID_TREE_CAP, PROC_CACHE_CAP};
 use crate::utils::format_size;
 use proc_connector::ProcConnector;
 
@@ -48,18 +48,16 @@ impl Monitor {
     /// Initialize process cache and pid tree. Returns proc connector for event loop.
     pub(crate) fn init_process_cache(&mut self) -> Option<ProcConnector> {
         let proc_conn = proc_cache::try_create_connector();
-        let proc_params = proc_cache::CacheParams {
-            capacity: proc_cache::PROC_CACHE_CAP,
-            ttl_secs: self.cache_config.proc_ttl_secs,
-        };
-        let proc_cache = proc_cache::new_cache_with(proc_params);
+        let proc_cache = proc_cache::DefaultCache::new(
+            PROC_CACHE_CAP,
+            self.cache_config.proc_ttl_secs,
+        );
         self.proc_cache = Some(proc_cache.clone());
-        let tree_params = proc_cache::CacheParams {
-            capacity: proc_cache::PID_TREE_CAP,
-            ttl_secs: self.cache_config.proc_ttl_secs,
-        };
-        let pid_tree = proc_cache::new_pid_tree_with(tree_params);
-        snapshot_process_tree(&pid_tree, &proc_cache);
+        let pid_tree = proc_cache::DefaultTree::new(
+            PID_TREE_CAP,
+            self.cache_config.proc_ttl_secs,
+        );
+        proc_tree::snapshot(&pid_tree, &proc_cache);
         self.pid_tree = Some(pid_tree.clone());
         proc_conn
     }

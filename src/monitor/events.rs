@@ -10,7 +10,6 @@ use crate::fid_parser::mask_to_event_types;
 use crate::filters;
 use crate::filters::PathOptions;
 use crate::monitored::PathEntry;
-use crate::proc_cache::build_chain;
 use crate::utils::{format_size, get_process_info_by_pid};
 use proc_tree::{CacheStore, TreeStore};
 use crate::{EventType, FileEvent};
@@ -137,7 +136,7 @@ impl Monitor {
                 let matched = self
                     .pid_tree
                     .as_ref()
-                    .map(|tree| crate::proc_cache::is_descendant(tree, event_pid, cmd_name))
+                    .map(|tree| proc_tree::is_descendant(tree, event_pid, cmd_name))
                     .unwrap_or(false);
                 debug_log!(
                     self.debug,
@@ -265,7 +264,7 @@ impl Monitor {
                 self.pid_tree.as_ref().and_then(|tree| {
                     self.proc_cache
                         .as_ref()
-                        .map(|cache| build_chain(tree, cache, pid))
+                        .map(|cache| proc_tree::build_chain_string(tree, cache, pid))
                 })
             })
             .unwrap_or_default();

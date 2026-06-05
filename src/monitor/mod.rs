@@ -18,7 +18,7 @@ use crate::fid_parser::FsGroup;
 use crate::filters::{self, PathOptions};
 use crate::metrics::MetricsRegistry;
 use crate::monitored::PathEntry;
-use crate::proc_cache::{self, PidTree, ProcCache};
+use crate::proc_cache::{self, DefaultCache as ProcCache, DefaultTree as PidTree};
 use crate::watchdog::Watchdog;
 use serde_json;
 use slotmap::SlotMap;
@@ -504,8 +504,8 @@ impl Monitor {
     pub(crate) fn collect_metrics(
         &self,
         dir_cache: &moka::sync::Cache<fanotify_fid::types::HandleKey, std::path::PathBuf>,
-        proc_cache: &crate::proc_cache::ProcCache,
-        pid_tree: &crate::proc_cache::PidTree,
+        proc_cache: &ProcCache,
+        pid_tree: &PidTree,
     ) -> MetricsReport {
         let reader_groups_alive = self.reader_states.values().filter(|s| !s.gave_up).count() as u64;
         let reader_groups_gave_up =

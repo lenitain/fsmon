@@ -3,7 +3,7 @@ use std::path::Path;
 pub use sizefilter::{SizeFilter, SizeOp, format_size, parse_size, parse_size_filter};
 pub use timefilter::{TimeFilter, TimeOp, format_datetime, parse_time, parse_time_filter};
 
-use crate::proc_cache::{ProcCache, ProcInfo};
+use crate::proc_cache::{DefaultCache as ProcCache, ProcInfo};
 use proc_tree::{CacheStore, read_proc_start_time_ns};
 use chrono::{DateTime, Utc};
 
