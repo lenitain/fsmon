@@ -38,11 +38,14 @@ impl DaemonLock {
     /// Acquire exclusive lock. Fails if another daemon is already running.
     pub fn acquire(uid: u32) -> Result<Self> {
         let path = PathBuf::from(format!("/tmp/fsmon-{}.lock", uid));
+
+        use std::os::unix::fs::OpenOptionsExt;
         let file = fs::OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
+            .mode(0o666)  // Set permissions on creation
             .open(&path)
             .map_err(|e| {
                 anyhow::anyhow!(
@@ -52,9 +55,9 @@ impl DaemonLock {
                 )
             })?;
 
-        // Note: lock file is NOT chowned to original user because
-        // only the daemon (running as root) needs to access it.
-        // Chowning would cause permission issues on subsequent starts.
+        // When running as root (daemon), chown lock file to original user
+        // so CLI commands (running as user) can read/manage it.
+        crate::config::chown_to_original_user(&path);
 
         match file.try_lock_exclusive() {
             Ok(()) => {}
