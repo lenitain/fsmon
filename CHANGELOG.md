@@ -7,13 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.6] - 2026-06-05
 
-### Fixed
-
-- **CLI socket communication (two bugs)**:
-  1. **Half-close**: `send_cmd()` did not shut down the write end after sending the command. The server's `read_line` loop blocked waiting for more data, never got EOF, and never sent a response. Added `writer.shutdown(Shutdown::Write)` after flush.
-  2. **Response parsing**: Client parsed response as `SocketResponse` but server sends `Result<SocketResponse, SocketError>` (with `Ok`/`Err` wrapper). Client now parses the `Result` type directly.
-  - Affected commands: `fsmon health`, `fsmon add` (daemon notification), `fsmon remove` (daemon notification), and all CLI→daemon socket commands.
-
 ### Changed
 
 - **Code quality refactoring**: Comprehensive cleanup based on thermal-nuclear code review
@@ -40,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Watchdog tests**: Handled `Permission denied` in watchdog validation tests for proper CI execution
 - **Daemon restart**: Removed `chown` on daemon lock file to prevent permission denied errors on restart
 - **Clippy warnings**: Resolved `module_inception` warning to pass CI checks
+- **CLI socket communication (two bugs)**:
+  1. **Half-close**: `send_cmd()` did not shut down the write end after sending the command. The server's `read_line` loop blocked waiting for more data, never got EOF, and never sent a response. Added `writer.shutdown(Shutdown::Write)` after flush.
+  2. **Response parsing**: Client parsed response as `SocketResponse` but server sends `Result<SocketResponse, SocketError>` (with `Ok`/`Err` wrapper). Client now parses the `Result` type directly.
+  - Affected commands: `fsmon health`, `fsmon add` (daemon notification), `fsmon remove` (daemon notification), and all CLI→daemon socket commands.
 
 ### Chore
 
