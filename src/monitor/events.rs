@@ -291,39 +291,20 @@ impl Monitor {
     pub(crate) fn matching_opts_for_event(&self, event_path: &Path) -> Vec<(PathBuf, PathOptions)> {
         let mut result = Vec::new();
         debug_log!(self.debug, "matching path={}", event_path.display());
-        for (monitored_path, opts) in &self.monitored_entries {
-            let matches = if opts.recursive {
-                event_path.starts_with(monitored_path)
-            } else {
-                event_path == monitored_path.as_path()
-                    || event_path.parent() == Some(monitored_path.as_path())
-            };
-            debug_log!(
-                self.debug,
-                "  check {} (cmd={}, recursive={}): {}",
-                monitored_path.display(),
-                opts.cmd.as_deref().unwrap_or("global"),
-                opts.recursive,
-                if matches { "MATCH" } else { "no" }
-            );
-            if matches {
-                result.push((monitored_path.clone(), opts.clone()));
-            }
-        }
 
-        // Also match against pending paths — these are monitored via temporary
-        // parent marks and need to generate events during the recreate window.
+        // Match monitored_entries
+        Self::collect_matching_entries(
+            event_path,
+            &self.monitored_entries,
+            &mut result,
+            self.debug,
+        );
+
+        // Match pending_paths (convert PathEntry → PathOptions)
         for (pending_path, entry) in &self.pending_paths {
-            let pending_matches = if entry.recursive.unwrap_or(false) {
-                event_path.starts_with(pending_path)
-            } else {
-                event_path == pending_path.as_path()
-                    || event_path.parent() == Some(pending_path.as_path())
-            };
-            if !pending_matches {
+            if !Self::path_matches(event_path, pending_path, entry.recursive.unwrap_or(false)) {
                 continue;
             }
-            // Convert PathEntry → PathOptions for matching/filtering
             let opts = match PathOptions::try_from(entry) {
                 Ok(o) => o,
                 Err(_) => continue,
@@ -341,5 +322,37 @@ impl Monitor {
             debug_log!(self.debug, "  -> no matching entries");
         }
         result
+    }
+
+    /// Check if an event path matches a monitored path (recursive or direct).
+    fn path_matches(event_path: &Path, entry_path: &Path, recursive: bool) -> bool {
+        if recursive {
+            event_path.starts_with(entry_path)
+        } else {
+            event_path == entry_path || event_path.parent() == Some(entry_path)
+        }
+    }
+
+    /// Collect matching (path, opts) from a slice into result, with debug logging.
+    fn collect_matching_entries(
+        event_path: &Path,
+        entries: &[(PathBuf, PathOptions)],
+        result: &mut Vec<(PathBuf, PathOptions)>,
+        debug: bool,
+    ) {
+        for (monitored_path, opts) in entries {
+            let matches = Self::path_matches(event_path, monitored_path, opts.recursive);
+            debug_log!(
+                debug,
+                "  check {} (cmd={}, recursive={}): {}",
+                monitored_path.display(),
+                opts.cmd.as_deref().unwrap_or("global"),
+                opts.recursive,
+                if matches { "MATCH" } else { "no" }
+            );
+            if matches {
+                result.push((monitored_path.clone(), opts.clone()));
+            }
+        }
     }
 }
