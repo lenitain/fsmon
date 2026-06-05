@@ -268,13 +268,6 @@ impl Monitor {
         )
     }
 
-    /// Log a debug message if debug mode is enabled.
-    pub(crate) fn debug_log(&self, msg: &str) {
-        if self.debug {
-            eprintln!("[DEBUG] {}", msg);
-        }
-    }
-
     pub async fn run(&mut self) -> Result<()> {
         self.check_root()?;
 
