@@ -22,6 +22,14 @@ use crate::proc_cache::{self, PidTree, ProcCache};
 use crate::watchdog::Watchdog;
 use serde_json;
 
+// ---- Debug logging macro ----
+// Avoids format!() allocation when debug is disabled.
+macro_rules! debug_log {
+    ($debug:expr, $($arg:tt)*) => {
+        if $debug { eprintln!("[DEBUG] {}", format!($($arg)*)); }
+    };
+}
+
 // ---- Submodules ----
 
 mod channel;
@@ -347,10 +355,7 @@ impl Monitor {
         // Start watchdog if enabled
         let _watchdog_handle = self.watchdog.as_ref().map(|wd| {
             if self.debug {
-                eprintln!(
-                    "[DEBUG] systemd watchdog enabled (interval: {}s)",
-                    wd.interval().as_secs()
-                );
+                debug_log!(self.debug, "systemd watchdog enabled (interval: {}s)", wd.interval().as_secs());
             }
             wd.clone().start()
         });
@@ -478,9 +483,7 @@ impl Monitor {
                         None => std::future::pending().await,
                     }
                 } => {
-                    if self.debug {
-                        eprintln!("[DEBUG] inotify fd became readable");
-                    }
+                    debug_log!(self.debug, "inotify fd became readable");
                     if let Ok(mut guard) = inotify_ready {
                         self.handle_inotify_events();
                         guard.clear_ready();

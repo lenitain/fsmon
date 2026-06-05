@@ -17,23 +17,17 @@ use super::Monitor;
 
 impl Monitor {
     pub fn add_path(&mut self, entry: &PathEntry) -> anyhow::Result<()> {
-        if self.debug {
-            let cmd = entry.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
-            eprintln!(
-                "[DEBUG] add_path: path={} cmd={}",
-                entry.path.display(),
-                cmd
-            );
-        }
+        debug_log!(
+            self.debug,
+            "add_path: path={} cmd={}",
+            entry.path.display(),
+            entry.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL)
+        );
         let path = filters::resolve_recursion_check(&entry.path);
 
         let is_new_path = !self.paths.contains(&path);
         if !is_new_path {
-            if self.debug {
-                eprintln!(
-                    "[DEBUG]   path already monitored — adding cmd and updating fanotify mask"
-                );
-            }
+            debug_log!(self.debug, "  path already monitored — adding cmd and updating fanotify mask");
             let opts = PathOptions::try_from(entry)?;
             self.monitored_entries.push((path.clone(), opts.clone()));
 
@@ -53,9 +47,7 @@ impl Monitor {
                     .and_then(|i| self.canonical_paths.get(i).cloned())
                     .unwrap_or_else(|| path.clone());
                 let _ = mark_directory(fan_fd, new_mask, &canonical);
-                if self.debug {
-                    eprintln!("[DEBUG]   updated fanotify mask to {:#x}", new_mask);
-                }
+                debug_log!(self.debug, "  updated fanotify mask to {:#x}", new_mask);
             }
             let cmd_label = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
             println!(
@@ -258,10 +250,7 @@ impl Monitor {
     }
 
     pub fn remove_path(&mut self, path: &Path, cmd: Option<&str>) -> anyhow::Result<()> {
-        if self.debug {
-            let label = cmd.unwrap_or("*");
-            eprintln!("[DEBUG] remove_path: path={} cmd={}", path.display(), label);
-        }
+        debug_log!(self.debug, "remove_path: path={} cmd={}", path.display(), cmd.unwrap_or("*"));
 
         // Save path options BEFORE removing entries from monitored_entries.
         // first_opt_for_path() queries monitored_entries, so it must be called
@@ -340,12 +329,7 @@ impl Monitor {
                     .unwrap_or_else(|| path.to_path_buf());
                 let _ = mark_directory(fan_fd, new_mask, &canonical);
             }
-            if self.debug {
-                eprintln!(
-                    "[DEBUG]   updated fanotify mask to {:#x} (other cmd groups remain)",
-                    new_mask
-                );
-            }
+            debug_log!(self.debug, "  updated fanotify mask to {:#x} (other cmd groups remain)", new_mask);
             let label = cmd.unwrap_or("?");
             println!("Removed entry: [{}] {}", label, path.display());
         }
@@ -493,12 +477,7 @@ impl Monitor {
             if !watches.iter().any(|(p, _)| p == path)
                 && let Ok(wd) = ino.watches().add(path, dir_root_mask)
             {
-                if self.debug {
-                    eprintln!(
-                        "[DEBUG] inotify watch added on {} (mask: CREATE|MOVED_TO|DELETE_SELF|MOVE_SELF)",
-                        path.display()
-                    );
-                }
+                debug_log!(self.debug, "inotify watch added on {} (mask: CREATE|MOVED_TO|DELETE_SELF|MOVE_SELF)", path.display());
                 watches.push((path.clone(), wd));
             }
         }
@@ -548,16 +527,12 @@ impl Monitor {
             Some(ino) => ino,
             None => return,
         };
-        if self.debug {
-            eprintln!("[DEBUG] handle_inotify_events: called");
-        }
+        debug_log!(self.debug, "handle_inotify_events: called");
         let mut buf = [0u8; 4096];
         let events = match inotify.read_events(&mut buf) {
             Ok(ev) => ev,
             Err(e) => {
-                if self.debug {
-                    eprintln!("[DEBUG] handle_inotify_events: read_events error: {e}");
-                }
+                debug_log!(self.debug, "handle_inotify_events: read_events error: {e}");
                 self.check_pending();
                 return;
             }
@@ -595,12 +570,7 @@ impl Monitor {
             deleted_paths.push(watched);
         }
         for path in &deleted_paths {
-            if self.debug {
-                eprintln!(
-                    "[DEBUG] inotify: monitored directory deleted (self): {}",
-                    path.display()
-                );
-            }
+            debug_log!(self.debug, "inotify: monitored directory deleted (self): {}", path.display());
             let all_opts: Vec<PathOptions> =
                 self.opts_for_path(path).into_iter().cloned().collect();
             if let Err(e) = self.remove_path(path, None) {
@@ -681,13 +651,7 @@ impl Monitor {
             .map(|(_, o)| path_mask_from_options(o))
             .fold(0, |a, b| a | b);
 
-        if self.debug {
-            eprintln!(
-                "[DEBUG] new subdirectory under recursive watch: {} (dev={})",
-                canonical.display(),
-                dev_id
-            );
-        }
+        debug_log!(self.debug, "new subdirectory under recursive watch: {} (dev={})", canonical.display(), dev_id);
 
         let fan_fd = &self.fs_groups[gi].fan_fd;
         if mark_directory(fan_fd, path_mask, &canonical).is_err() {
@@ -726,11 +690,8 @@ impl Monitor {
             return;
         }
 
-        if self.debug && !self.pending_paths.is_empty() {
-            eprintln!(
-                "[DEBUG] check_pending: {} pending path(s)",
-                self.pending_paths.len()
-            );
+        if !self.pending_paths.is_empty() {
+            debug_log!(self.debug, "check_pending: {} pending path(s)", self.pending_paths.len());
         }
         let mut i = 0;
         while i < self.pending_paths.len() {
@@ -873,13 +834,7 @@ impl Monitor {
             idx
         };
 
-        if self.debug {
-            eprintln!(
-                "[DEBUG] temp parent mark: {} ← watching for {}",
-                canonical.display(),
-                target_path.display()
-            );
-        }
+        debug_log!(self.debug, "temp parent mark: {} ← watching for {}", canonical.display(), target_path.display());
         self.temp_parent_marks
             .insert(target_path.to_path_buf(), (parent, group_idx));
         true
@@ -929,12 +884,7 @@ impl Monitor {
 
             self.fs_groups[gi].ref_count = self.fs_groups[gi].ref_count.saturating_sub(1);
             if self.fs_groups[gi].ref_count == 0 {
-                if self.debug {
-                    eprintln!(
-                        "[DEBUG] temp parent mark removed, freeing FsGroup {} (fd {})",
-                        gi, fan_fd_raw
-                    );
-                }
+                debug_log!(self.debug, "temp parent mark removed, freeing FsGroup {} (fd {})", gi, fan_fd_raw);
                 self.fs_groups.remove(gi);
                 self.path_to_group.iter_mut().for_each(|(_, idx)| {
                     if *idx > gi {

@@ -111,9 +111,7 @@ impl Monitor {
         &mut self,
         cmd: SocketCmd,
     ) -> Result<SocketResponse, SocketError> {
-        if self.debug {
-            eprintln!("[DEBUG] socket command: {:?}", cmd);
-        }
+        debug_log!(self.debug, "socket command: {:?}", cmd);
         match cmd {
             SocketCmd::Add {
                 path,
@@ -206,9 +204,7 @@ impl Monitor {
     }
 
     pub(crate) fn reload_config(&mut self) -> anyhow::Result<()> {
-        if self.debug {
-            eprintln!("[DEBUG] reload_config");
-        }
+        debug_log!(self.debug, "reload_config");
         let monitored_path = self
             .monitored_path
             .as_ref()

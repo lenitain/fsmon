@@ -71,9 +71,7 @@ impl Monitor {
             .iter()
             .map(|(_, opts)| crate::fid_parser::path_mask_from_options(opts))
             .fold(0, |a, b| a | b);
-        if self.debug {
-            eprintln!("[DEBUG] combined fanotify mask: {:#x}", combined_mask);
-        }
+        debug_log!(self.debug, "combined fanotify mask: {:#x}", combined_mask);
 
         // Collect canonical paths — non-existent paths go to pending_paths
         let mut keep_paths: Vec<PathBuf> = Vec::new();
@@ -297,44 +295,33 @@ impl Monitor {
             }
         }
         if self.debug {
-            eprintln!(
-                "[DEBUG] monitored_entries ({} entries, full list):",
-                self.monitored_entries.len()
-            );
+            debug_log!(self.debug, "monitored_entries ({} entries, full list):", self.monitored_entries.len());
             for (i, (p, o)) in self.monitored_entries.iter().enumerate() {
-                let label = o.cmd.as_deref().unwrap_or("global");
-                eprintln!(
-                    "[DEBUG]   [{}] {} cmd={} recursive={}",
+                debug_log!(
+                    self.debug,
+                    "  [{}] {} cmd={} recursive={}",
                     i,
                     p.display(),
-                    label,
+                    o.cmd.as_deref().unwrap_or("global"),
                     o.recursive
                 );
             }
-        }
-        if self.debug {
-            eprintln!("[DEBUG] --- cache stats ---");
-            eprintln!(
-                "[DEBUG]   dir_cache:        {}/{} entries",
+            debug_log!(self.debug, "--- cache stats ---");
+            debug_log!(
+                self.debug,
+                "  dir_cache:        {}/{} entries",
                 self.dir_cache.entry_count(),
                 DIR_CACHE_CAP
             );
             if let Some(ref c) = self.proc_cache {
-                eprintln!(
-                    "[DEBUG]   proc_cache:       {}/{} entries",
-                    c.entry_count(),
-                    PROC_CACHE_CAP
-                );
+                debug_log!(self.debug, "  proc_cache:       {}/{} entries", c.entry_count(), PROC_CACHE_CAP);
             }
             if let Some(ref t) = self.pid_tree {
-                eprintln!(
-                    "[DEBUG]   pid_tree:         {}/{} entries",
-                    t.entry_count(),
-                    PID_TREE_CAP
-                );
+                debug_log!(self.debug, "  pid_tree:         {}/{} entries", t.entry_count(), PID_TREE_CAP);
             }
-            eprintln!(
-                "[DEBUG]   file_size_cache:  {}/{} entries",
+            debug_log!(
+                self.debug,
+                "  file_size_cache:  {}/{} entries",
                 self.file_size_cache.len(),
                 self.file_size_cache.cap()
             );
