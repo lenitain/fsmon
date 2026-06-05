@@ -1,4 +1,5 @@
 pub mod clean;
+pub mod cli;
 pub mod config;
 pub mod dir_cache;
 pub mod fid_parser;
@@ -12,6 +13,7 @@ pub mod query;
 pub mod socket;
 pub mod utils;
 pub mod watchdog;
+pub use cli::{AddArgs, ChangesArgs, CleanArgs, QueryArgs};
 pub use utils::{
     SizeFilter, SizeOp, TimeFilter, TimeOp, format_datetime, parse_size, parse_size_filter,
     parse_time, parse_time_filter,
