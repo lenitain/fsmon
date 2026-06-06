@@ -145,7 +145,9 @@ impl Monitor {
                     }
                 }
                 self.fanotify.groups[key].ref_count += 1;
-                self.fanotify.path_to_group.insert(self.paths[i].clone(), key);
+                self.fanotify
+                    .path_to_group
+                    .insert(self.paths[i].clone(), key);
                 continue;
             }
 
@@ -197,7 +199,9 @@ impl Monitor {
                 ref_count: 1,
             });
             fs_group_devs.insert(dev_id, key);
-            self.fanotify.path_to_group.insert(self.paths[i].clone(), key);
+            self.fanotify
+                .path_to_group
+                .insert(self.paths[i].clone(), key);
         }
 
         let fan_group_count = self.fanotify.groups.len();
@@ -267,7 +271,8 @@ impl Monitor {
             .set_monitored_paths(self.monitored_entries.len() as i64);
         self.metrics
             .set_pending_paths(self.inotify_state.pending_paths.len() as i64);
-        self.metrics.set_reader_groups(self.fanotify.groups.len() as i64);
+        self.metrics
+            .set_reader_groups(self.fanotify.groups.len() as i64);
 
         if !self.canonical_paths.is_empty() {
             println!("Active paths ({} fd(s)):", fan_group_count);

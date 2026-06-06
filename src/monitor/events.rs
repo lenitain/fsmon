@@ -134,7 +134,8 @@ impl Monitor {
         match cmd {
             Some(cmd_name) => {
                 let matched = self
-                    .proc.tree
+                    .proc
+                    .tree
                     .as_ref()
                     .map(|tree| proc_tree::is_descendant(tree, event_pid, cmd_name))
                     .unwrap_or(false);
@@ -262,7 +263,8 @@ impl Monitor {
             .as_ref()
             .and_then(|_| {
                 self.proc.tree.as_ref().and_then(|tree| {
-                    self.proc.cache
+                    self.proc
+                        .cache
                         .as_ref()
                         .map(|cache| proc_tree::build_chain_string(tree, cache, pid))
                 })

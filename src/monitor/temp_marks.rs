@@ -55,51 +55,55 @@ impl Monitor {
             .map(|m| std::os::linux::fs::MetadataExt::st_dev(&m))
             .unwrap_or(0);
 
-        let group_key =
-            if let Some((key, _)) = self.fanotify.groups.iter().find(|(_, g)| g.dev_id == dev_id) {
-                let fan_fd = &self.fanotify.groups[key].fan_fd;
-                if mark_directory(fan_fd, path_mask, &canonical).is_err() {
-                    return false;
-                }
-                self.fanotify.groups[key].ref_count += 1;
-                key
-            } else {
-                use fanotify_fid::consts::{
-                    FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_NONBLOCK, FAN_REPORT_DIR_FID, FAN_REPORT_FID,
-                    FAN_REPORT_NAME,
-                };
-                let new_fd = match fanotify_fid::prelude::fanotify_init(
-                    FAN_CLOEXEC
-                        | FAN_NONBLOCK
-                        | FAN_CLASS_NOTIF
-                        | FAN_REPORT_FID
-                        | FAN_REPORT_DIR_FID
-                        | FAN_REPORT_NAME,
-                    (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
-                ) {
-                    Ok(fd) => fd,
-                    Err(_) => return false,
-                };
-                if mark_directory(&new_fd, path_mask, &canonical).is_err() {
+        let group_key = if let Some((key, _)) = self
+            .fanotify
+            .groups
+            .iter()
+            .find(|(_, g)| g.dev_id == dev_id)
+        {
+            let fan_fd = &self.fanotify.groups[key].fan_fd;
+            if mark_directory(fan_fd, path_mask, &canonical).is_err() {
+                return false;
+            }
+            self.fanotify.groups[key].ref_count += 1;
+            key
+        } else {
+            use fanotify_fid::consts::{
+                FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_NONBLOCK, FAN_REPORT_DIR_FID, FAN_REPORT_FID,
+                FAN_REPORT_NAME,
+            };
+            let new_fd = match fanotify_fid::prelude::fanotify_init(
+                FAN_CLOEXEC
+                    | FAN_NONBLOCK
+                    | FAN_CLASS_NOTIF
+                    | FAN_REPORT_FID
+                    | FAN_REPORT_DIR_FID
+                    | FAN_REPORT_NAME,
+                (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
+            ) {
+                Ok(fd) => fd,
+                Err(_) => return false,
+            };
+            if mark_directory(&new_fd, path_mask, &canonical).is_err() {
+                drop(new_fd);
+                return false;
+            }
+            let mount_fd = match Self::open_dir(&canonical) {
+                Ok(fd) => fd,
+                Err(_) => {
                     drop(new_fd);
                     return false;
                 }
-                let mount_fd = match Self::open_dir(&canonical) {
-                    Ok(fd) => fd,
-                    Err(_) => {
-                        drop(new_fd);
-                        return false;
-                    }
-                };
-                let key = self.fanotify.groups.insert(FsGroup {
-                    dev_id,
-                    fan_fd: new_fd,
-                    mount_fd,
-                    ref_count: 1,
-                });
-                self.spawn_fd_reader(key);
-                key
             };
+            let key = self.fanotify.groups.insert(FsGroup {
+                dev_id,
+                fan_fd: new_fd,
+                mount_fd,
+                ref_count: 1,
+            });
+            self.spawn_fd_reader(key);
+            key
+        };
 
         debug_log!(
             self.debug,
@@ -107,7 +111,8 @@ impl Monitor {
             canonical.display(),
             target_path.display()
         );
-        self.inotify_state.temp_parent_marks
+        self.inotify_state
+            .temp_parent_marks
             .insert(target_path.to_path_buf(), (parent, group_key));
         true
     }
@@ -151,7 +156,8 @@ impl Monitor {
                 &canonical,
             );
 
-            self.fanotify.groups[key].ref_count = self.fanotify.groups[key].ref_count.saturating_sub(1);
+            self.fanotify.groups[key].ref_count =
+                self.fanotify.groups[key].ref_count.saturating_sub(1);
             if self.fanotify.groups[key].ref_count == 0 {
                 debug_log!(
                     self.debug,

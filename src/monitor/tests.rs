@@ -277,7 +277,8 @@ fn test_add_path_and_remove_path() {
     let result = m.add_path(&entry);
     assert!(result.is_ok());
     assert!(
-        m.inotify_state.pending_paths
+        m.inotify_state
+            .pending_paths
             .iter()
             .any(|(p, _)| p == Path::new("/tmp/test_add"))
     );
@@ -333,7 +334,8 @@ fn test_delete_self_canonical_root_is_recorded() {
 
     // Path should be moved to pending_paths after cleanup
     assert!(
-        m.inotify_state.pending_paths
+        m.inotify_state
+            .pending_paths
             .iter()
             .any(|(p, _)| p == &std::path::PathBuf::from("/tmp/fsmon_test_delete_self")),
         "canonical root should move to pending_paths after DELETE_SELF"

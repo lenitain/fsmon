@@ -186,7 +186,8 @@ impl Monitor {
                 },
             );
         }
-        self.metrics.set_reader_groups(self.fanotify.groups.len() as i64);
+        self.metrics
+            .set_reader_groups(self.fanotify.groups.len() as i64);
     }
 
     /// Restart a reader task that has died.

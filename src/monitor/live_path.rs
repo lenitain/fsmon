@@ -95,7 +95,9 @@ impl Monitor {
                     "[INFO] Path '{}' does not exist yet — will start monitoring when created.",
                     path.display()
                 );
-                self.inotify_state.pending_paths.push((path.clone(), entry.clone()));
+                self.inotify_state
+                    .pending_paths
+                    .push((path.clone(), entry.clone()));
                 self.setup_inotify_watches();
             }
             return Ok(());
@@ -127,7 +129,8 @@ impl Monitor {
             .unwrap_or(0);
 
         let existing_key = self
-            .fanotify.groups
+            .fanotify
+            .groups
             .iter()
             .find_map(|(key, g)| if g.dev_id == dev_id { Some(key) } else { None });
 
@@ -321,7 +324,8 @@ impl Monitor {
         }
         self.metrics
             .set_monitored_paths(self.monitored_entries.len() as i64);
-        self.metrics.set_reader_groups(self.fanotify.groups.len() as i64);
+        self.metrics
+            .set_reader_groups(self.fanotify.groups.len() as i64);
         Ok(())
     }
 

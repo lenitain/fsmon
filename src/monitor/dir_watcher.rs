@@ -119,7 +119,8 @@ impl Monitor {
                 continue;
             }
             let Some(watched) = self
-                .inotify_state.watches
+                .inotify_state
+                .watches
                 .iter()
                 .find(|(_, wd)| *wd == event.wd)
                 .map(|(p, _)| p.clone())
@@ -177,7 +178,8 @@ impl Monitor {
             }
             let Some(name) = event.name else { continue };
             let Some(parent) = self
-                .inotify_state.watches
+                .inotify_state
+                .watches
                 .iter()
                 .find(|(_, wd)| *wd == event.wd)
                 .map(|(p, _)| p.clone())
@@ -203,7 +205,12 @@ impl Monitor {
             Ok(d) => d,
             Err(_) => return,
         };
-        let Some((gi, _)) = self.fanotify.groups.iter().find(|(_, g)| g.dev_id == dev_id) else {
+        let Some((gi, _)) = self
+            .fanotify
+            .groups
+            .iter()
+            .find(|(_, g)| g.dev_id == dev_id)
+        else {
             return;
         };
         let path_mask = self
@@ -246,7 +253,9 @@ impl Monitor {
 
     /// Retry monitoring for paths that didn't exist at add time.
     pub(crate) fn check_pending(&mut self) {
-        if self.inotify_state.pending_paths.is_empty() && self.inotify_state.temp_parent_marks.is_empty() {
+        if self.inotify_state.pending_paths.is_empty()
+            && self.inotify_state.temp_parent_marks.is_empty()
+        {
             return;
         }
 
