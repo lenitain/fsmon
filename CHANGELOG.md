@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.10] - 2026-06-06
+
+### Changed
+
+- **Project structure reorganized**: Moved all implementation code from `src/` root to `src/common/` module.
+  - Created minimal `src/lib.rs` (3 lines) that only re-exports `pub mod common`.
+  - All `use fsmon::xxx` imports changed to `use fsmon::common::xxx`.
+  - No `#[path]` hacks — clean module hierarchy.
+- **Test files renamed**: Removed meaningless `p1_` prefix from integration tests.
+  - `p1_cli.rs` → `cli.rs`
+  - `p1_monitor.rs` → `monitor.rs`
+  - `p1_utils.rs` → `utils.rs`
+  - `p1_crash_recovery.rs` → `crash_recovery.rs`
+  - `p1_metrics.rs` → `metrics.rs`
+  - `p1_watchdog.rs` → `watchdog.rs`
+  - `p1_watchdog_validation.rs` → `watchdog_validation.rs`
+- **Unused code removed**: Deleted `CounterVec` struct, `ErrorKind` enum, and unused methods (`is_enabled`, `set_subscribers`, `reader_groups`).
+- **Dead code tags cleaned**: Removed unnecessary `#[allow(dead_code)]` and `#[allow(unused_imports)]` where possible. Remaining tags are for RAII guards or test-only code.
+
 ## [0.4.9] - 2026-06-06
 
 ### Fixed
