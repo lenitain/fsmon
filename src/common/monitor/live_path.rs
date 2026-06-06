@@ -21,7 +21,10 @@ impl Monitor {
             self.debug,
             "add_path: path={} cmd={}",
             entry.path.display(),
-            entry.cmd.as_deref().unwrap_or(crate::common::monitored::CMD_GLOBAL)
+            entry
+                .cmd
+                .as_deref()
+                .unwrap_or(crate::common::monitored::CMD_GLOBAL)
         );
         let path = filters::resolve_recursion_check(&entry.path);
 
@@ -52,7 +55,10 @@ impl Monitor {
                 let _ = mark_directory(fan_fd, new_mask, &canonical);
                 debug_log!(self.debug, "  updated fanotify mask to {:#x}", new_mask);
             }
-            let cmd_label = opts.cmd.as_deref().unwrap_or(crate::common::monitored::CMD_GLOBAL);
+            let cmd_label = opts
+                .cmd
+                .as_deref()
+                .unwrap_or(crate::common::monitored::CMD_GLOBAL);
             println!(
                 "Monitoring entry: [{}] {} (recursive={})",
                 cmd_label,
@@ -115,7 +121,10 @@ impl Monitor {
 
         let path_mask = path_mask_from_options(&opts);
 
-        let cmd_label = opts.cmd.as_deref().unwrap_or(crate::common::monitored::CMD_GLOBAL);
+        let cmd_label = opts
+            .cmd
+            .as_deref()
+            .unwrap_or(crate::common::monitored::CMD_GLOBAL);
         println!(
             "Monitoring entry: [{}] {} (recursive={})",
             cmd_label,

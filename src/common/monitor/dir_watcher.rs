@@ -156,9 +156,9 @@ impl Monitor {
                             .event_types
                             .as_ref()
                             .map(|v| v.iter().map(|t| t.to_string()).collect()),
-                        size: opts
-                            .size_filter
-                            .map(|f| format!("{}{}", f.op, crate::common::utils::format_size(f.bytes))),
+                        size: opts.size_filter.map(|f| {
+                            format!("{}{}", f.op, crate::common::utils::format_size(f.bytes))
+                        }),
                         cmd: opts.cmd,
                     },
                 ));

@@ -120,7 +120,9 @@ impl FileLogWriter {
     /// Write an event to the appropriate JSONL log file.
     /// Returns Ok(()) even if disk is full (event is buffered for retry).
     fn write_event(&mut self, event: &FileEvent, cmd_name: &str) -> std::io::Result<()> {
-        let log_path = self.log_dir.join(crate::common::utils::cmd_to_log_name(cmd_name));
+        let log_path = self
+            .log_dir
+            .join(crate::common::utils::cmd_to_log_name(cmd_name));
 
         // Try to flush buffer if disk was previously unhealthy
         if !self.disk_healthy
@@ -174,7 +176,9 @@ impl FileLogWriter {
 
         let mut remaining = VecDeque::new();
         while let Some((event, cmd_name)) = self.disk_buf.pop_front() {
-            let log_path = self.log_dir.join(crate::common::utils::cmd_to_log_name(&cmd_name));
+            let log_path = self
+                .log_dir
+                .join(crate::common::utils::cmd_to_log_name(&cmd_name));
             let line = self.jsonl_string(&event);
             match self.get_or_open(&log_path) {
                 Ok(writer) => {

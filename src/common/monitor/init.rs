@@ -11,7 +11,9 @@ use std::path::PathBuf;
 
 use super::{EventReceiver, EventSender, FileLogWriter, Monitor};
 use crate::common::dir_cache;
-use crate::common::fid_parser::{DIR_CACHE_CAP, FsGroup, chown_to_user, mark_directory, mark_recursive};
+use crate::common::fid_parser::{
+    DIR_CACHE_CAP, FsGroup, chown_to_user, mark_directory, mark_recursive,
+};
 use crate::common::filters::PathOptions;
 use crate::common::monitored::PathEntry;
 use crate::common::proc_cache;

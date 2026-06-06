@@ -1,6 +1,8 @@
 //! P1 — Utility function tests (parse_size, parse_time, cmd_to_log_name).
 
-use fsmon::common::{SizeOp, TimeOp, format_datetime, parse_size, parse_size_filter, parse_time_filter};
+use fsmon::common::{
+    SizeOp, TimeOp, format_datetime, parse_size, parse_size_filter, parse_time_filter,
+};
 
 // ---- parse_size ----
 
