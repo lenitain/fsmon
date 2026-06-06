@@ -466,7 +466,7 @@ Linux Kernel (fanotify FID mode)
 Process tree (proc connector + proc-tree crate):
     Fork/Exec/Exit events from netlink connector socket
     → proc-tree cache: pid → {cmd, ppid, user, tgid, start_time}
-    On daemon start: /proc/*/stat snapshot seeds existing processes
+    On daemon start: /proc/*/status snapshot seeds existing processes
     is_descendant(pid, "openclaw") → O(depth) proc-tree cache lookups
 
 User pipe:

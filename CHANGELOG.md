@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.9] - 2026-06-06
+
+### Fixed
+
+- **`proc_tree::proc::read_proc_status_fields` removed**: The published `proc-tree` crate (v0.1.1) only exports `parse_proc_entry`, not `read_proc_status_fields`. Updated `utils.rs` to use `parse_proc_entry` directly, simplifying the fallback logic.
+
+### Changed
+
+- **`Monitor` struct refactored**: Extracted 30+ flat fields into three cohesive sub-structs:
+  - `FanotifyState`: `groups`, `path_to_group`, `dir_cache`, `shared_dir_cache`
+  - `InotifyState`: `inotify`, `watches`, `pending_paths`, `temp_parent_marks`
+  - `ProcessState`: `cache`, `tree`
+  - Pure structural refactoring, no logic changes.
+- **`live_path.rs` split**: 929 lines → three focused modules:
+  - `live_path.rs` (411 lines): `add_path`, `remove_path`, `check_disk_space`
+  - `dir_watcher.rs` (289 lines): inotify setup, event handling, pending paths
+  - `temp_marks.rs` (163 lines): temporary parent mark lifecycle
+- **`Monitor::new()` simplified**: Removed `from_config()` wrapper and `#[allow(clippy::too_many_arguments)]`. `new()` now takes `MonitorConfig` directly. Added `MonitorConfig::default_for_test()` for test convenience.
+- **`FileLogWriter` file handle caching**: Added `handles: HashMap<PathBuf, BufWriter<File>>` (max 64) to avoid open+close per event. `get_or_open()` reuses existing handles, `sync_dirty_logs()` uses cached handles when available.
+- **`handle_proc_events` return type**: Changed from `bool` to `()` — callers never checked the return value.
+- **Proc connector drain dedup**: `proc_readable` branch now calls `drain_proc_conn()` instead of inline match loop.
+
 ## [0.4.8] - 2026-06-05
 
 ### Changed

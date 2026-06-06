@@ -459,7 +459,7 @@ Linux 内核 (fanotify FID 模式)
 进程树（proc connector + proc-tree crate）:
     Fork/Exec/Exit 事件来自 netlink connector 套接字
     → proc-tree 缓存: pid → {cmd, ppid, user, tgid, start_time}
-    守护进程启动时：/proc/*/stat 快照种子填充已有进程
+    守护进程启动时：/proc/*/status 快照种子填充已有进程
     is_descendant(pid, "openclaw") → O(depth) proc-tree 缓存查找
 
 用户管道:
