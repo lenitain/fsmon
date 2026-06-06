@@ -37,6 +37,7 @@ macro_rules! debug_log {
 // ---- Submodules ----
 
 mod channel;
+mod dir_watcher;
 mod events;
 mod file_writer;
 mod filtering;
@@ -44,6 +45,7 @@ mod init;
 mod live_path;
 mod reader;
 mod socket_handler;
+mod temp_marks;
 
 pub(crate) use channel::{EventReceiver, EventSender};
 pub(crate) use events::PendingEvent;
