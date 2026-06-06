@@ -96,6 +96,41 @@ impl MonitorConfig {
     }
 }
 
+// ---- Sub-structures for Monitor ----
+
+/// Fanotify state: per-filesystem groups and directory handle cache.
+pub(crate) struct FanotifyState {
+    /// One `FsGroup` per unique filesystem (fan_fd + mount_fd dedup'd).
+    /// Uses SlotMap for stable keys — removal doesn't invalidate other keys.
+    pub groups: SlotMap<FsGroupKey, FsGroup>,
+    /// Maps monitored path → key in groups for fast lookup in remove_path.
+    pub path_to_group: HashMap<PathBuf, FsGroupKey>,
+    /// Directory handle → path cache (shared with reader tasks).
+    pub dir_cache: Cache<fanotify_fid::types::HandleKey, PathBuf>,
+    /// Clone of dir_cache for spawning reader tasks during live-add.
+    pub shared_dir_cache: Option<Cache<fanotify_fid::types::HandleKey, PathBuf>>,
+}
+
+/// Inotify state: watches for pending paths and new subdirectory detection.
+pub(crate) struct InotifyState {
+    /// inotify instance watching parent dirs of pending paths.
+    pub inotify: Option<inotify::Inotify>,
+    /// Watch descriptors kept alive so watches stay active.
+    pub watches: Vec<(PathBuf, inotify::WatchDescriptor)>,
+    /// Paths that didn't exist at add/startup time, retried on directory creation.
+    pub pending_paths: Vec<(PathBuf, PathEntry)>,
+    /// Temporary fanotify marks on parent directories of deleted-and-pending paths.
+    pub temp_parent_marks: HashMap<PathBuf, (PathBuf, FsGroupKey)>,
+}
+
+/// Process tree state: proc connector cache and PID tree.
+pub(crate) struct ProcessState {
+    /// Process info cache (PID → cmd/user/ppid/tgid).
+    pub cache: Option<ProcCache>,
+    /// PID tree for ancestry chain queries.
+    pub tree: Option<PidTree>,
+}
+
 // ---- Monitor ----
 
 pub struct Monitor {
@@ -106,27 +141,14 @@ pub struct Monitor {
     pub(crate) monitored_entries: Vec<(PathBuf, PathOptions)>,
     pub(crate) log_dir: Option<PathBuf>,
     pub(crate) monitored_path: Option<PathBuf>,
-    pub(crate) proc_cache: Option<ProcCache>,
-    pub(crate) pid_tree: Option<PidTree>,
+    pub(crate) fanotify: FanotifyState,
+    pub(crate) inotify_state: InotifyState,
+    pub(crate) proc: ProcessState,
     pub(crate) file_size_cache: LruCache<PathBuf, u64>,
     pub(crate) buffer_size: usize,
     pub(crate) socket_listener: Option<tokio::net::UnixListener>,
-    /// One `FsGroup` per unique filesystem (fan_fd + mount_fd dedup'd).
-    /// Uses SlotMap for stable keys — removal doesn't invalidate other keys.
-    pub(crate) fs_groups: SlotMap<FsGroupKey, FsGroup>,
-    /// Maps monitored path → key in fs_groups for fast lookup in remove_path
-    pub(crate) path_to_group: HashMap<PathBuf, FsGroupKey>,
-    pub(crate) dir_cache: Cache<fanotify_fid::types::HandleKey, PathBuf>,
     /// Shared state for spawning reader tasks during live-add (set in run())
     pub(crate) event_tx: Option<EventSender>,
-    pub(crate) shared_dir_cache: Option<Cache<fanotify_fid::types::HandleKey, PathBuf>>,
-    /// Paths that didn't exist at add/startup time, retried on directory creation
-    pub(crate) pending_paths: Vec<(PathBuf, PathEntry)>,
-    /// inotify instance watching parent dirs of pending paths
-    pub(crate) inotify: Option<inotify::Inotify>,
-    /// Watch descriptors kept alive so watches stay active
-    /// (watched_path, watch_descriptor) — maps wd back to the directory we're watching.
-    pub(crate) _inotify_watches: Vec<(PathBuf, inotify::WatchDescriptor)>,
     /// PID of the fsmon daemon itself — events from this PID (or its children)
     /// are discarded to prevent self-triggering feedback loops.
     pub(crate) daemon_pid: u32,
@@ -148,19 +170,12 @@ pub struct Monitor {
     sync_interval: Option<std::time::Duration>,
     /// Metrics report interval. None = disabled.
     metrics_interval: Option<std::time::Duration>,
-
     /// Unified event stream: broadcast channel for all consumers.
-    /// Carries (FileEvent, cmd_name) — cmd_name is for file routing.
-    /// Subscribe tasks extract FileEvent, file writer uses both.
     pub(crate) event_stream_tx: Option<tokio::sync::broadcast::Sender<(FileEvent, String)>>,
     /// Use local time instead of UTC in timestamp serialization.
     pub(crate) local_time: bool,
     /// Atomic metrics counters (thread-safe, cloneable).
     pub(crate) metrics: MetricsRegistry,
-    /// Temporary fanotify marks on parent directories of deleted-and-pending
-    /// paths, so that events during the recreate window aren't lost.
-    /// Maps: target_pending_path → (parent_path, key in fs_groups)
-    pub(crate) temp_parent_marks: HashMap<PathBuf, (PathBuf, FsGroupKey)>,
     /// Watchdog manager for systemd integration.
     pub(crate) watchdog: Option<Watchdog>,
 }
@@ -236,26 +251,33 @@ impl Monitor {
             monitored_entries,
             log_dir,
             monitored_path: cfg.monitored_path,
-            proc_cache: None,
-            pid_tree: None,
+            fanotify: FanotifyState {
+                groups: SlotMap::new(),
+                path_to_group: HashMap::new(),
+                dir_cache: Cache::builder()
+                    .max_capacity(cache_config.dir_capacity)
+                    .time_to_live(Duration::from_secs(cache_config.dir_ttl_secs))
+                    .build(),
+                shared_dir_cache: None,
+            },
+            inotify_state: InotifyState {
+                inotify: None,
+                watches: Vec::new(),
+                pending_paths: Vec::new(),
+                temp_parent_marks: HashMap::new(),
+            },
+            proc: ProcessState {
+                cache: None,
+                tree: None,
+            },
             file_size_cache: LruCache::new(
                 NonZeroUsize::new(cache_config.file_size_capacity).unwrap(),
             ),
             buffer_size,
-            dir_cache: Cache::builder()
-                .max_capacity(cache_config.dir_capacity)
-                .time_to_live(Duration::from_secs(cache_config.dir_ttl_secs))
-                .build(),
             cache_config,
             socket_listener: cfg.socket_listener,
             debug,
-            fs_groups: SlotMap::new(),
-            path_to_group: HashMap::new(),
             event_tx: None,
-            shared_dir_cache: None,
-            pending_paths: Vec::new(),
-            inotify: None,
-            _inotify_watches: Vec::new(),
             daemon_pid: std::process::id(),
             reader_death_rx,
             reader_death_tx,
@@ -271,7 +293,6 @@ impl Monitor {
             },
             local_time: cfg.local_time,
             metrics: MetricsRegistry::new(cfg.metrics_interval.is_some()),
-            temp_parent_marks: HashMap::new(),
             watchdog: Some(Watchdog::new(cfg.watchdog_interval)),
         };
         if debug {
@@ -322,7 +343,7 @@ impl Monitor {
         let socket_listener = self.socket_listener.take();
 
         // Build inotify AsyncFd for tokio event loop
-        let inotify_async = self.inotify.as_ref().map(|ino| {
+        let inotify_async = self.inotify_state.inotify.as_ref().map(|ino| {
             let fd = ino.as_raw_fd();
             AsyncFd::new(crate::fid_parser::FanFd(fd)).expect("inotify AsyncFd")
         });
@@ -341,8 +362,8 @@ impl Monitor {
         let mut proc_buf = vec![0u8; 65536];
 
         // Clone caches for event loop use
-        let proc_cache = self.proc_cache.clone().unwrap();
-        let pid_tree = self.pid_tree.clone().unwrap();
+        let proc_cache = self.proc.cache.clone().unwrap();
+        let pid_tree = self.proc.tree.clone().unwrap();
 
         // Move the reader death receiver out of self so tokio::select! can use it.
         let mut reader_death_rx = std::mem::replace(
@@ -503,7 +524,7 @@ impl Monitor {
             proc_cache_entries: proc_cache.len() as u64,
             pid_tree_entries: pid_tree.len() as u64,
             file_size_cache_entries: self.file_size_cache.len() as u64,
-            reader_groups_total: self.fs_groups.len() as u64,
+            reader_groups_total: self.fanotify.groups.len() as u64,
             reader_groups_alive,
             reader_groups_gave_up,
             subscribers: self.metrics.subscribers() as u64,

@@ -15,9 +15,9 @@ impl Monitor {
     pub(crate) fn setup_inotify_watches(&mut self) {
         use inotify::WatchMask;
 
-        self._inotify_watches.clear();
+        self.inotify_state.watches.clear();
 
-        let ino = match self.inotify.as_ref() {
+        let ino = match self.inotify_state.inotify.as_ref() {
             Some(ino) => ino,
             None => return,
         };
@@ -27,11 +27,11 @@ impl Monitor {
         let dir_root_mask = mask | dir_self_mask;
 
         // 1. Watch parent dirs of pending paths
-        for (path, _) in &self.pending_paths {
+        for (path, _) in &self.inotify_state.pending_paths {
             if let Some(parent) = Self::nearest_existing_ancestor(path)
                 && let Ok(wd) = ino.watches().add(&parent, mask)
             {
-                self._inotify_watches.push((parent, wd));
+                self.inotify_state.watches.push((parent, wd));
             }
         }
 
@@ -40,7 +40,7 @@ impl Monitor {
             if !opts.recursive || !path.is_dir() {
                 continue;
             }
-            if !self._inotify_watches.iter().any(|(p, _)| p == path)
+            if !self.inotify_state.watches.iter().any(|(p, _)| p == path)
                 && let Ok(wd) = ino.watches().add(path, dir_root_mask)
             {
                 debug_log!(
@@ -48,7 +48,7 @@ impl Monitor {
                     "inotify watch added on {} (mask: CREATE|MOVED_TO|DELETE_SELF|MOVE_SELF)",
                     path.display()
                 );
-                self._inotify_watches.push((path.clone(), wd));
+                self.inotify_state.watches.push((path.clone(), wd));
             }
         }
 
@@ -57,10 +57,10 @@ impl Monitor {
             if opts.recursive || !path.is_dir() {
                 continue;
             }
-            if !self._inotify_watches.iter().any(|(p, _)| p == path)
+            if !self.inotify_state.watches.iter().any(|(p, _)| p == path)
                 && let Ok(wd) = ino.watches().add(path, dir_self_mask)
             {
-                self._inotify_watches.push((path.clone(), wd));
+                self.inotify_state.watches.push((path.clone(), wd));
             }
         }
     }
@@ -90,7 +90,7 @@ impl Monitor {
 
     /// Parse inotify events: handle directory deletion and new subdirectory creation.
     pub(crate) fn handle_inotify_events(&mut self) {
-        let inotify = match self.inotify.as_mut() {
+        let inotify = match self.inotify_state.inotify.as_mut() {
             Some(ino) => ino,
             None => return,
         };
@@ -119,7 +119,7 @@ impl Monitor {
                 continue;
             }
             let Some(watched) = self
-                ._inotify_watches
+                .inotify_state.watches
                 .iter()
                 .find(|(_, wd)| *wd == event.wd)
                 .map(|(p, _)| p.clone())
@@ -146,7 +146,7 @@ impl Monitor {
                 );
             }
             for opts in all_opts {
-                self.pending_paths.push((
+                self.inotify_state.pending_paths.push((
                     path.clone(),
                     PathEntry {
                         path: path.clone(),
@@ -177,7 +177,7 @@ impl Monitor {
             }
             let Some(name) = event.name else { continue };
             let Some(parent) = self
-                ._inotify_watches
+                .inotify_state.watches
                 .iter()
                 .find(|(_, wd)| *wd == event.wd)
                 .map(|(p, _)| p.clone())
@@ -203,7 +203,7 @@ impl Monitor {
             Ok(d) => d,
             Err(_) => return,
         };
-        let Some((gi, _)) = self.fs_groups.iter().find(|(_, g)| g.dev_id == dev_id) else {
+        let Some((gi, _)) = self.fanotify.groups.iter().find(|(_, g)| g.dev_id == dev_id) else {
             return;
         };
         let path_mask = self
@@ -219,21 +219,21 @@ impl Monitor {
             dev_id
         );
 
-        let fan_fd = &self.fs_groups[gi].fan_fd;
+        let fan_fd = &self.fanotify.groups[gi].fan_fd;
         if mark_directory(fan_fd, path_mask, &canonical).is_err() {
             return;
         }
 
-        if let Some(ref cache) = self.shared_dir_cache {
+        if let Some(ref cache) = self.fanotify.shared_dir_cache {
             dir_cache::cache_dir_handle(cache, &canonical);
         }
         mark_recursive(fan_fd, path_mask, &canonical);
-        if let Some(ref cache) = self.shared_dir_cache {
+        if let Some(ref cache) = self.fanotify.shared_dir_cache {
             dir_cache::cache_recursive(cache, &canonical);
         }
 
-        let ino = self.inotify.as_ref();
-        let watches = &mut self._inotify_watches;
+        let ino = self.inotify_state.inotify.as_ref();
+        let watches = &mut self.inotify_state.watches;
         if let Some(inotify) = ino {
             Self::watch_recursive(
                 inotify,
@@ -246,21 +246,21 @@ impl Monitor {
 
     /// Retry monitoring for paths that didn't exist at add time.
     pub(crate) fn check_pending(&mut self) {
-        if self.pending_paths.is_empty() && self.temp_parent_marks.is_empty() {
+        if self.inotify_state.pending_paths.is_empty() && self.inotify_state.temp_parent_marks.is_empty() {
             return;
         }
 
-        if !self.pending_paths.is_empty() {
+        if !self.inotify_state.pending_paths.is_empty() {
             debug_log!(
                 self.debug,
                 "check_pending: {} pending path(s)",
-                self.pending_paths.len()
+                self.inotify_state.pending_paths.len()
             );
         }
         let mut i = 0;
-        while i < self.pending_paths.len() {
-            if self.pending_paths[i].0.exists() {
-                let entry = self.pending_paths.remove(i);
+        while i < self.inotify_state.pending_paths.len() {
+            if self.inotify_state.pending_paths[i].0.exists() {
+                let entry = self.inotify_state.pending_paths.remove(i);
                 match self.add_path(&entry.1) {
                     Ok(()) => {
                         eprintln!(
@@ -273,7 +273,7 @@ impl Monitor {
                             "[WARNING] Path '{}' exists but monitoring setup failed: {e}",
                             entry.0.display()
                         );
-                        self.pending_paths.push(entry);
+                        self.inotify_state.pending_paths.push(entry);
                     }
                 }
             } else {
@@ -284,6 +284,6 @@ impl Monitor {
         self.cleanup_temp_parent_marks();
         self.setup_inotify_watches();
         self.metrics
-            .set_pending_paths(self.pending_paths.len() as i64);
+            .set_pending_paths(self.inotify_state.pending_paths.len() as i64);
     }
 }

@@ -29,6 +29,7 @@ impl Monitor {
             .cloned()
             .collect();
         let pending_opts: Vec<PathOptions> = self
+            .inotify_state
             .pending_paths
             .iter()
             .filter(|(p, _)| p == target_path)
@@ -55,12 +56,12 @@ impl Monitor {
             .unwrap_or(0);
 
         let group_key =
-            if let Some((key, _)) = self.fs_groups.iter().find(|(_, g)| g.dev_id == dev_id) {
-                let fan_fd = &self.fs_groups[key].fan_fd;
+            if let Some((key, _)) = self.fanotify.groups.iter().find(|(_, g)| g.dev_id == dev_id) {
+                let fan_fd = &self.fanotify.groups[key].fan_fd;
                 if mark_directory(fan_fd, path_mask, &canonical).is_err() {
                     return false;
                 }
-                self.fs_groups[key].ref_count += 1;
+                self.fanotify.groups[key].ref_count += 1;
                 key
             } else {
                 use fanotify_fid::consts::{
@@ -90,7 +91,7 @@ impl Monitor {
                         return false;
                     }
                 };
-                let key = self.fs_groups.insert(FsGroup {
+                let key = self.fanotify.groups.insert(FsGroup {
                     dev_id,
                     fan_fd: new_fd,
                     mount_fd,
@@ -106,7 +107,7 @@ impl Monitor {
             canonical.display(),
             target_path.display()
         );
-        self.temp_parent_marks
+        self.inotify_state.temp_parent_marks
             .insert(target_path.to_path_buf(), (parent, group_key));
         true
     }
@@ -114,6 +115,7 @@ impl Monitor {
     /// Remove all temporary parent marks whose target path is now actively monitored.
     pub(crate) fn cleanup_temp_parent_marks(&mut self) {
         let to_remove: Vec<_> = self
+            .inotify_state
             .temp_parent_marks
             .keys()
             .filter(|target| self.paths.contains(target))
@@ -126,13 +128,13 @@ impl Monitor {
 
     /// Remove a single temporary parent mark and tear down its fanotify resources.
     fn remove_temp_parent_mark(&mut self, target_path: &Path) {
-        let Some((parent, key)) = self.temp_parent_marks.remove(target_path) else {
+        let Some((parent, key)) = self.inotify_state.temp_parent_marks.remove(target_path) else {
             return;
         };
 
         let canonical = parent.canonicalize().unwrap_or_else(|_| parent.clone());
 
-        if let Some(group) = self.fs_groups.get(key) {
+        if let Some(group) = self.fanotify.groups.get(key) {
             let fan_fd_raw = group.fan_fd.as_raw_fd();
             let _ = fanotify_mark(
                 &group.fan_fd,
@@ -149,14 +151,14 @@ impl Monitor {
                 &canonical,
             );
 
-            self.fs_groups[key].ref_count = self.fs_groups[key].ref_count.saturating_sub(1);
-            if self.fs_groups[key].ref_count == 0 {
+            self.fanotify.groups[key].ref_count = self.fanotify.groups[key].ref_count.saturating_sub(1);
+            if self.fanotify.groups[key].ref_count == 0 {
                 debug_log!(
                     self.debug,
                     "temp parent mark removed, freeing FsGroup (fd {})",
                     fan_fd_raw
                 );
-                self.fs_groups.remove(key);
+                self.fanotify.groups.remove(key);
             }
         }
     }

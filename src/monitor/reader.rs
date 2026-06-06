@@ -56,7 +56,7 @@ impl Monitor {
                 return;
             }
         };
-        let dc = match &self.shared_dir_cache {
+        let dc = match &self.fanotify.shared_dir_cache {
             Some(d) => d.clone(),
             None => {
                 eprintln!("[ERROR] Cannot spawn reader: shared_dir_cache not initialized");
@@ -66,7 +66,7 @@ impl Monitor {
         let death_tx = self.reader_death_tx.clone();
         let buf_size = self.buffer_size;
         let debug = self.debug;
-        let group = &self.fs_groups[group_key];
+        let group = &self.fanotify.groups[group_key];
 
         // Duplicate fds so the reader task owns independent copies
         let owned_fan_fd = match Self::dup_fd(&group.fan_fd) {
@@ -186,7 +186,7 @@ impl Monitor {
                 },
             );
         }
-        self.metrics.set_reader_groups(self.fs_groups.len() as i64);
+        self.metrics.set_reader_groups(self.fanotify.groups.len() as i64);
     }
 
     /// Restart a reader task that has died.
@@ -219,7 +219,7 @@ impl Monitor {
         }
 
         // Verify the FsGroup still exists (may have been removed during shutdown)
-        if !self.fs_groups.contains_key(group_key) {
+        if !self.fanotify.groups.contains_key(group_key) {
             eprintln!(
                 "[WARNING] Cannot restart reader for group {:?}: group no longer exists",
                 group_key
@@ -227,7 +227,7 @@ impl Monitor {
             return;
         }
 
-        let dev_id = self.fs_groups[group_key].dev_id;
+        let dev_id = self.fanotify.groups[group_key].dev_id;
         eprintln!(
             "[INFO] Restarting reader task for group {:?} (dev_id={})...",
             group_key, dev_id

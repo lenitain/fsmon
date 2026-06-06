@@ -41,8 +41,8 @@ impl Monitor {
                 .filter(|(p, _)| p == &path)
                 .map(|(_, o)| path_mask_from_options(o))
                 .fold(0, |a, b| a | b);
-            if let Some(&gi) = self.path_to_group.get(&path) {
-                let fan_fd = &self.fs_groups[gi].fan_fd;
+            if let Some(&gi) = self.fanotify.path_to_group.get(&path) {
+                let fan_fd = &self.fanotify.groups[gi].fan_fd;
                 let canonical = self
                     .paths
                     .iter()
@@ -86,6 +86,7 @@ impl Monitor {
 
         if !path.exists() {
             let already_pending = self
+                .inotify_state
                 .pending_paths
                 .iter()
                 .any(|(p, e)| p == &path && e.cmd == entry.cmd);
@@ -94,7 +95,7 @@ impl Monitor {
                     "[INFO] Path '{}' does not exist yet — will start monitoring when created.",
                     path.display()
                 );
-                self.pending_paths.push((path.clone(), entry.clone()));
+                self.inotify_state.pending_paths.push((path.clone(), entry.clone()));
                 self.setup_inotify_watches();
             }
             return Ok(());
@@ -126,12 +127,12 @@ impl Monitor {
             .unwrap_or(0);
 
         let existing_key = self
-            .fs_groups
+            .fanotify.groups
             .iter()
             .find_map(|(key, g)| if g.dev_id == dev_id { Some(key) } else { None });
 
         let group_key = if let Some(key) = existing_key {
-            let fan_fd = &self.fs_groups[key].fan_fd;
+            let fan_fd = &self.fanotify.groups[key].fan_fd;
             if let Err(e) = mark_directory(fan_fd, path_mask, &canonical) {
                 eprintln!(
                     "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
@@ -142,11 +143,11 @@ impl Monitor {
             } else if opts.recursive && canonical.is_dir() {
                 mark_recursive(fan_fd, path_mask, &canonical);
             }
-            self.fs_groups[key].ref_count += 1;
+            self.fanotify.groups[key].ref_count += 1;
             eprintln!(
                 "[INFO] Monitoring {} on existing fd {}",
                 canonical.display(),
-                self.fs_groups[key].fan_fd.as_raw_fd()
+                self.fanotify.groups[key].fan_fd.as_raw_fd()
             );
             key
         } else {
@@ -175,7 +176,7 @@ impl Monitor {
 
             let mount_fd = Self::open_dir(&canonical)?;
 
-            let key = self.fs_groups.insert(FsGroup {
+            let key = self.fanotify.groups.insert(FsGroup {
                 dev_id,
                 fan_fd: new_fd,
                 mount_fd,
@@ -186,13 +187,13 @@ impl Monitor {
             key
         };
 
-        self.path_to_group.insert(path.clone(), group_key);
+        self.fanotify.path_to_group.insert(path.clone(), group_key);
         self.paths.push(path.clone());
         self.canonical_paths.push(canonical.clone());
         self.monitored_entries.push((path.clone(), opts.clone()));
 
         if canonical.is_dir()
-            && let Some(ref cache) = self.shared_dir_cache
+            && let Some(ref cache) = self.fanotify.shared_dir_cache
         {
             if opts.recursive {
                 dir_cache::cache_recursive(cache, &canonical);
@@ -269,9 +270,9 @@ impl Monitor {
             if let Some(pos) = self.paths.iter().position(|p| p == path) {
                 if let Some(ref opts) = saved_opts {
                     let path_mask = path_mask_from_options(opts);
-                    if let Some(&key) = self.path_to_group.get(path) {
+                    if let Some(&key) = self.fanotify.path_to_group.get(path) {
                         let canonical = &self.canonical_paths[pos];
-                        let fan_fd = &self.fs_groups[key].fan_fd;
+                        let fan_fd = &self.fanotify.groups[key].fan_fd;
                         let _ = fanotify_mark(
                             fan_fd,
                             FAN_MARK_REMOVE | FAN_MARK_FILESYSTEM,
@@ -281,16 +282,16 @@ impl Monitor {
                         );
                         let _ =
                             fanotify_mark(fan_fd, FAN_MARK_REMOVE, path_mask, AT_FDCWD, canonical);
-                        self.fs_groups[key].ref_count =
-                            self.fs_groups[key].ref_count.saturating_sub(1);
-                        if self.fs_groups[key].ref_count == 0 {
-                            self.fs_groups.remove(key);
+                        self.fanotify.groups[key].ref_count =
+                            self.fanotify.groups[key].ref_count.saturating_sub(1);
+                        if self.fanotify.groups[key].ref_count == 0 {
+                            self.fanotify.groups.remove(key);
                         }
                     }
                 }
                 self.paths.remove(pos);
                 self.canonical_paths.remove(pos);
-                self.path_to_group.remove(path);
+                self.fanotify.path_to_group.remove(path);
             }
             println!("Removed entry: {}", path.display());
         } else {
@@ -300,8 +301,8 @@ impl Monitor {
                 .filter(|(p, _)| p == path)
                 .map(|(_, o)| path_mask_from_options(o))
                 .fold(0, |a, b| a | b);
-            if let Some(&gi) = self.path_to_group.get(path) {
-                let fan_fd = &self.fs_groups[gi].fan_fd;
+            if let Some(&gi) = self.fanotify.path_to_group.get(path) {
+                let fan_fd = &self.fanotify.groups[gi].fan_fd;
                 let canonical = self
                     .paths
                     .iter()
@@ -320,7 +321,7 @@ impl Monitor {
         }
         self.metrics
             .set_monitored_paths(self.monitored_entries.len() as i64);
-        self.metrics.set_reader_groups(self.fs_groups.len() as i64);
+        self.metrics.set_reader_groups(self.fanotify.groups.len() as i64);
         Ok(())
     }
 
