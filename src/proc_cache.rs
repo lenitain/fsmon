@@ -35,7 +35,7 @@ pub fn try_create_connector() -> Option<ProcConnector> {
 }
 
 /// Parse raw proc-connector bytes and delegate to proc_tree::handle_events.
-pub fn handle_proc_events(cache: &DefaultCache, tree: &DefaultTree, data: &[u8], n: usize) -> bool {
+pub fn handle_proc_events(cache: &DefaultCache, tree: &DefaultTree, data: &[u8], n: usize) {
     let mut events: Vec<ProcEvent> = Vec::new();
     for msg in NetlinkMessageIter::new(data, n) {
         match msg {
@@ -72,9 +72,7 @@ pub fn handle_proc_events(cache: &DefaultCache, tree: &DefaultTree, data: &[u8],
             }
         }
     }
-    if events.is_empty() {
-        return false;
+    if !events.is_empty() {
+        proc_tree::handle_events(tree, cache, &events);
     }
-    proc_tree::handle_events(tree, cache, &events);
-    true
 }
