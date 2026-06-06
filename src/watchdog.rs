@@ -24,6 +24,7 @@ use std::time::Duration;
 //
 //  if idle (no events):
 //    heartbeat_tick still fires on schedule  ──▶  heartbeat sent  ──▶  all good
+/// Watchdog timer for systemd service health monitoring.
 #[derive(Clone)]
 pub struct Watchdog {
     interval: Duration,

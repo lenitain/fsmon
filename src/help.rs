@@ -1,3 +1,4 @@
+/// Help topic for fsmon commands.
 pub enum HelpTopic {
     Root,
     Daemon,
@@ -11,6 +12,7 @@ pub enum HelpTopic {
     Changes,
 }
 
+/// Get short description for a help topic.
 pub const fn about(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::Root => "Lightweight high-performance file change tracking tool",
@@ -26,6 +28,7 @@ pub const fn about(topic: HelpTopic) -> &'static str {
     }
 }
 
+/// Get detailed description for a help topic.
 pub const fn long_about(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::Root => "",
@@ -242,6 +245,7 @@ Examples:
     }
 }
 
+/// Get help text displayed after command help.
 pub const fn after_help() -> &'static str {
     r#"Use 'fsmon <COMMAND> --help' for detailed help
 

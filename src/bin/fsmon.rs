@@ -17,6 +17,7 @@ struct Cli {
     command: Commands,
 }
 
+/// fsmon CLI commands.
 #[derive(Subcommand)]
 pub enum Commands {
     /// Run the fsmon daemon (requires sudo for fanotify)

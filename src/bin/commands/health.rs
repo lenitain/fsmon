@@ -2,6 +2,7 @@ use anyhow::Result;
 use fsmon::config::Config;
 use fsmon::socket::{self, SocketCmd};
 
+/// Query daemon health status.
 pub fn cmd_health() -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;

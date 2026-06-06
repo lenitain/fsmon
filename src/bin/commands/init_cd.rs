@@ -2,6 +2,7 @@ use anyhow::{Context, Result, ensure};
 use std::path::{Path, PathBuf};
 use std::process;
 
+/// Initialize fsmon configuration and directories.
 pub fn cmd_init(service: bool) -> Result<()> {
     fsmon::config::Config::init_dirs()?;
     if service {
@@ -125,6 +126,7 @@ fn install_service() -> Result<()> {
     Ok(())
 }
 
+/// Open a subshell in the monitored path or log directory.
 pub fn cmd_cd(monitored: bool) -> Result<()> {
     let mut cfg = fsmon::config::Config::load()?;
     cfg.resolve_paths()?;

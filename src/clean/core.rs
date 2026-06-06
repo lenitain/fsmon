@@ -145,6 +145,7 @@ pub async fn clean_logs(
     clean_single_log(&log_file, time_filter, max_size, dry_run).await
 }
 
+/// Find the byte offset to keep approximately `max_bytes` from the tail.
 pub fn find_tail_offset(path: &Path, max_bytes: usize) -> Result<usize> {
     use std::io::{Read, Seek, SeekFrom};
 
@@ -180,6 +181,7 @@ pub fn find_tail_offset(path: &Path, max_bytes: usize) -> Result<usize> {
     Ok(offset)
 }
 
+/// Truncate a file by removing bytes from the start.
 pub fn truncate_from_start(path: &Path, offset: usize) -> Result<()> {
     if offset == 0 {
         return Ok(());
@@ -220,6 +222,7 @@ pub fn truncate_from_start(path: &Path, offset: usize) -> Result<()> {
     Ok(())
 }
 
+/// Count newlines in the first `upto` bytes of a file.
 pub fn count_lines(path: &Path, upto: usize) -> Result<usize> {
     use std::io::Read;
 

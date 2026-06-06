@@ -5,6 +5,10 @@ use crate::{EventType, FileEvent};
 
 // ---- PathOptions ----
 
+/// Options for filtering filesystem events by path.
+///
+/// Contains size filters, event type filters, recursion settings,
+/// and optional command name filtering.
 #[derive(Clone)]
 pub struct PathOptions {
     pub size_filter: Option<SizeFilter>,

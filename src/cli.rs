@@ -1,6 +1,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 
+/// Arguments for the `fsmon add` command.
 #[derive(Parser, Clone)]
 pub struct AddArgs {
     /// Process name to track (positional). Use '_global' for global monitoring.

@@ -2,6 +2,7 @@ use anyhow::Result;
 use fsmon::config::Config;
 use fsmon::monitored::Monitored;
 
+/// List all monitored paths with their configuration.
 pub fn cmd_monitored() -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;

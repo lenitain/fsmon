@@ -22,16 +22,18 @@ pub struct Config {
     pub watchdog: Option<WatchdogConfig>,
 }
 
+/// Configuration for the monitored paths store.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitoredConfig {
     pub path: PathBuf,
 }
 
+/// Configuration for log file output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
     /// Log file output directory. None or absent = file logging disabled.
     /// Set a path to enable persistent JSONL log file writing.
-    /// Same pattern as [metrics].listen: absent = off, present = on.
+    /// Same pattern as metrics.listen: absent = off, present = on.
     pub path: Option<PathBuf>,
     /// Keep log entries for at most this many days (default: 30).
     pub keep_days: Option<u32>,

@@ -81,9 +81,14 @@ impl Drop for DaemonLock {
 
 use std::str::FromStr;
 
+/// Default number of days to keep log files before cleanup.
 pub const DEFAULT_KEEP_DAYS: u32 = 30;
+/// Default maximum log file size before cleanup (1 GB).
 pub const DEFAULT_MAX_SIZE: &str = ">=1GB";
 
+/// Type of filesystem event captured by fsmon.
+///
+/// Each variant corresponds to a fanotify event type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum EventType {
@@ -168,6 +173,10 @@ impl FromStr for EventType {
     }
 }
 
+/// A single filesystem event record.
+///
+/// Contains all metadata about a file change: timestamp, event type,
+/// affected path, process information, and optional process ancestry chain.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEvent {
     pub time: DateTime<Utc>,

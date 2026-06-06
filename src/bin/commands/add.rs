@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use crate::AddArgs;
 
+/// Add a path to the monitoring list.
 pub fn cmd_add(args: AddArgs) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;

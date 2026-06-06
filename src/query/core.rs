@@ -9,6 +9,7 @@ use crate::{FileEvent, parse_log_line_jsonl};
 
 const SCAN_BACK_BYTES: u64 = 4096;
 
+/// Query engine for searching historical file change events.
 pub struct Query {
     log_dir: PathBuf,
     /// Cmd name to filter by (None = read all log files).

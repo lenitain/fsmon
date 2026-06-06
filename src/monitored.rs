@@ -158,7 +158,7 @@ impl Monitored {
         repaired
     }
 
-    /// Flatten all groups into a Vec<PathEntry> (compatibility with legacy code).
+    /// Flatten all groups into a `Vec<PathEntry>` (compatibility with legacy code).
     pub fn flatten(&self) -> Vec<PathEntry> {
         let mut entries = Vec::new();
         for group in &self.groups {
