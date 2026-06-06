@@ -2,6 +2,6 @@
 .cargo_vcs_info.json
 Cargo.lock
 Cargo.toml.orig
-target/**
+target/
 __pycache__/
 .temp/
