@@ -194,7 +194,6 @@ sudo fsmon daemon                             # 前台启动守护进程
 sudo fsmon daemon &                           # 后台启动守护进程
 sudo fsmon daemon --debug                     # 启用调试输出（事件匹配 + 缓存指标）
 sudo fsmon daemon --disk-min-free 10%         # 磁盘空间不足时告警
-sudo fsmon daemon --sync-interval 5           # 每 5s fdatasync 日志文件
 sudo fsmon daemon --local-time                # 时间戳使用本地时区
 sudo fsmon daemon --buffer-size 65536         # Fanotify 读取缓冲区（默认 32768）
 sudo fsmon daemon --channel-capacity 1024     # 事件通道上限（默认无界）
@@ -255,13 +254,22 @@ fsmon remove _global --path /home  # 从全局组移除 /home
 
 ### monitored
 
-列出所有监控路径及其过滤配置（JSONL 格式）。
+以人类可读格式列出所有监控路径及其过滤配置。
 
 ```
 fsmon monitored                显示所有监控路径组
 ```
 
-每行是一个包含 `cmd` 和 `paths` 字段的 JSON 对象。可管道给 `jq` 过滤。
+输出示例：
+```
+=== Monitored Paths ===
+
+Process: touch
+  /home/pilot/.config/what (recursive)
+
+Process: _global (all processes)
+  /tmp/fsmon_benchmark (recursive, types: ACCESS, MODIFY, CLOSE_WRITE... (14 total))
+```
 
 ### changes
 
@@ -374,7 +382,6 @@ path = "~/.local/state/fsmon"
 keep_days = 30
 size = ">=1GB"
 disk_min_free = "10%"           # 磁盘空闲低于阈值时告警
-sync_interval_secs = 5          # 每 N 秒 fdatasync（0 或不设置 = 禁用）
 local_time = false              # 时间戳使用本地时区
 
 [socket]

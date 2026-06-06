@@ -2,10 +2,13 @@
 
 ## Test Files
 
-- `p1_cli.rs` — CLI end-to-end tests (add, monitored, remove, query, changes, clean)
-- `p1_monitor.rs` — Event parsing, serialization, and EventType completeness
-- `p1_crash_recovery.rs` — Crash recovery and fault tolerance tests
-- `p1_utils.rs` — Utility function tests (parse_size, parse_size_filter, parse_time_filter)
+- `cli.rs` — CLI end-to-end tests (add, monitored, remove, query, changes, clean)
+- `monitor.rs` — Event parsing, serialization, and EventType completeness
+- `crash_recovery.rs` — Crash recovery and fault tolerance tests
+- `utils.rs` — Utility function tests (parse_size, parse_size_filter, parse_time_filter)
+- `watchdog.rs` — Watchdog configuration tests
+- `watchdog_validation.rs` — Watchdog CLI argument validation
+- `metrics.rs` — Metrics registry tests
 
 ## Running Tests
 
@@ -17,7 +20,7 @@ cargo test
 cargo test --test '*'
 
 # A single test
-cargo test --test p1_cli add_global_with_path
+cargo test --test cli add_global_with_path
 ```
 
 ## Test Layers

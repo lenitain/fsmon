@@ -1,11 +1,12 @@
 use anyhow::{Result, bail};
-use fsmon::config::Config;
-use fsmon::monitored::{CMD_GLOBAL, Monitored, PathEntry};
-use fsmon::socket::{self, SocketCmd, SocketError, SocketResponse};
+use fsmon::common::config::Config;
+use fsmon::common::monitored::{CMD_GLOBAL, Monitored, PathEntry};
+use fsmon::common::socket::{self, SocketCmd, SocketError, SocketResponse};
 use std::path::PathBuf;
 
 use crate::AddArgs;
 
+/// Add a path to the monitoring list.
 pub fn cmd_add(args: AddArgs) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
@@ -108,7 +109,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         None
     } else if args.types.iter().any(|s| s.eq_ignore_ascii_case("all")) {
         Some(
-            fsmon::EventType::ALL
+            fsmon::common::EventType::ALL
                 .iter()
                 .map(|t| t.to_string())
                 .collect(),
@@ -163,9 +164,8 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             store.save(&cfg.monitored.path)?;
             eprintln!("Error: {}", msg);
         }
-        Err(SocketError::Transient(msg)) => {
+        Err(SocketError::Transient(_)) => {
             println!("Entry added: {}", entry.path.display());
-            eprintln!("Daemon error: {}", msg);
         }
     }
     Ok(())

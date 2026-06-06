@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use fsmon::DaemonLock;
-use fsmon::config::{CacheConfig, CliCacheOverride, Config};
-use fsmon::monitor::Monitor;
-use fsmon::monitored::Monitored;
+use fsmon::common::DaemonLock;
+use fsmon::common::config::{CacheConfig, CliCacheOverride, Config};
+use fsmon::common::monitor::Monitor;
+use fsmon::common::monitored::Monitored;
 use std::fs;
 use std::path::Path;
 
@@ -13,7 +13,6 @@ pub struct DaemonOptions {
     pub debug: bool,
     pub cli_cache: CliCacheOverride,
     pub disk_min_free: Option<String>,
-    pub sync_interval: Option<u64>,
     pub local_time: bool,
     pub metrics_interval: Option<u64>,
     pub watchdog_interval: Option<u64>,
@@ -25,14 +24,13 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
         debug,
         cli_cache,
         disk_min_free,
-        sync_interval,
         local_time,
         metrics_interval,
         watchdog_interval,
         watchdog_multiplier,
     } = opts;
     // Acquire singleton lock first — only one daemon instance allowed
-    let (uid, _gid) = fsmon::config::resolve_uid_gid();
+    let (uid, _gid) = fsmon::common::config::resolve_uid_gid();
     let _lock = DaemonLock::acquire(uid)?;
 
     let mut cfg = Config::load()?;
@@ -72,7 +70,7 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
 
     // Chown store parent dir to the original user (daemon runs as root)
     if let Some(parent) = cfg.monitored.path.parent() {
-        fsmon::config::chown_to_original_user(parent);
+        fsmon::common::config::chown_to_original_user(parent);
     }
 
     // Merge cache config: CLI > fsmon.toml > code defaults
@@ -118,12 +116,6 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
     // Merge disk_min_free: CLI > config > None
     let disk_min_free = disk_min_free.or_else(|| cfg.logging.disk_min_free.clone());
 
-    // Merge sync_interval: CLI > config > None (disabled)
-    let sync_interval = sync_interval
-        .or(cfg.logging.sync_interval_secs)
-        .filter(|&n| n > 0)
-        .map(std::time::Duration::from_secs);
-
     // Merge watchdog_interval: CLI > config > None (disabled)
     let watchdog_interval = watchdog_interval
         .or(cfg.watchdog.as_ref().and_then(|w| w.interval_secs))
@@ -148,11 +140,6 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
     let watchdog_sec = watchdog_interval.map(|i| i * watchdog_multiplier);
 
     if debug {
-        if let Some(d) = sync_interval {
-            eprintln!("[DEBUG]   sync_interval:      {}s", d.as_secs());
-        } else {
-            eprintln!("[DEBUG]   sync_interval:      disabled");
-        }
         if let Some(i) = watchdog_interval {
             eprintln!("[DEBUG]   watchdog_interval:  {}s", i);
             eprintln!("[DEBUG]   watchdog_multiplier: {}x", watchdog_multiplier);
@@ -177,7 +164,7 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
             }
         );
     }
-    let mut monitor = match Monitor::new(fsmon::monitor::MonitorConfig {
+    let mut monitor = match Monitor::new(fsmon::common::monitor::MonitorConfig {
         paths_and_options,
         log_dir,
         monitored_path: Some(store_path),
@@ -186,7 +173,6 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
         debug,
         cache_config: Some(cache_cfg),
         disk_min_free,
-        sync_interval,
         subscribe_buf: Some(subscribe_buf),
         local_time: local_time || cfg.logging.local_time.unwrap_or(false),
         metrics_interval,
@@ -202,7 +188,7 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
 
     if !store.is_empty() {
         for group in &store.groups {
-            let cmd_label = if group.cmd == fsmon::monitored::CMD_GLOBAL {
+            let cmd_label = if group.cmd == fsmon::common::monitored::CMD_GLOBAL {
                 "[global]".to_string()
             } else {
                 format!("[{}]", group.cmd)

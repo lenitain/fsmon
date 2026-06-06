@@ -4,7 +4,7 @@
 
 #![allow(dead_code)]
 
-use fsmon::FileEvent;
+use fsmon::common::FileEvent;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -52,13 +52,30 @@ pub fn run_fsmon_raw(args: &[&str]) -> (bool, String, String) {
     )
 }
 
-/// Parse `fsmon monitored` output (one JSON object per line) into Vec<Value>.
-pub fn parse_monitored_output(stdout: &str) -> Vec<serde_json::Value> {
-    stdout
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| serde_json::from_str(l).expect("valid JSON in monitored output"))
-        .collect()
+/// Parse `fsmon monitored` output (human-readable format) into Vec<(process, path)>.
+pub fn parse_monitored_output(stdout: &str) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+    let mut current_process = None;
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if let Some(stripped) = trimmed.strip_prefix("Process: ") {
+            current_process = Some(stripped.to_string());
+        } else if trimmed.starts_with('/')
+            && let Some(ref process) = current_process
+        {
+            // Extract path (remove optional details in parentheses)
+            let path_end = trimmed.find(" (").unwrap_or(trimmed.len());
+            let path = trimmed[..path_end].to_string();
+            result.push((process.clone(), path));
+        }
+    }
+
+    result
 }
 
 /// Parse `fsmon query` / `fsmon changes` output (JSONL FileEvent lines).

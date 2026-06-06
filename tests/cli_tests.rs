@@ -4,7 +4,7 @@
 //! Moved from src/bin/fsmon.rs to reduce binary file size.
 
 use clap::Parser;
-use fsmon::{AddArgs, ChangesArgs, CleanArgs, QueryArgs};
+use fsmon::common::{AddArgs, ChangesArgs, CleanArgs, QueryArgs};
 use std::path::PathBuf;
 
 // ---- AddArgs CLI parsing ----

@@ -1,6 +1,6 @@
 use anyhow::Result;
-use fsmon::filters::PathOptions;
-use fsmon::monitored::PathEntry;
+use fsmon::common::filters::PathOptions;
+use fsmon::common::monitored::PathEntry;
 use std::path::PathBuf;
 
 mod add;
@@ -38,13 +38,12 @@ pub fn run(command: crate::Commands) -> Result<()> {
             channel_capacity,
             subscribe_buf,
             disk_min_free,
-            sync_interval,
             local_time,
             metrics_interval,
             watchdog_interval,
             watchdog_multiplier,
         } => {
-            let cli_cache = fsmon::config::CliCacheOverride {
+            let cli_cache = fsmon::common::config::CliCacheOverride {
                 dir_capacity: cache_dir_cap,
                 dir_ttl_secs: cache_dir_ttl,
                 file_size_capacity: cache_file_size,
@@ -58,7 +57,6 @@ pub fn run(command: crate::Commands) -> Result<()> {
                 debug,
                 cli_cache,
                 disk_min_free,
-                sync_interval,
                 local_time,
                 metrics_interval,
                 watchdog_interval,
@@ -119,7 +117,7 @@ pub fn parse_path_options(entry: &PathEntry) -> Result<PathOptions> {
 pub fn resolve_path_arg(raw: &std::path::Path) -> std::path::PathBuf {
     use path_clean::PathClean;
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let expanded = fsmon::config::expand_tilde(raw, &home);
+    let expanded = fsmon::common::config::expand_tilde(raw, &home);
     let cleaned = expanded.clean();
     match cleaned.canonicalize() {
         Ok(c) => c,

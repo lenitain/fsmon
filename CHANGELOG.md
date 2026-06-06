@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.10] - 2026-06-07
+
+### Added
+
+- **Benchmark suite** (`benchmark/`): complete performance and correctness test framework
+  - event correctness tests (create/modify/delete/move/recursive/stress)
+  - post-processing performance tests (query/clean)
+  - perf collection scripts (`perf/stress.sh`, `perf/query.sh`, `perf/clean.sh`)
+  - Shared config `common.sh`: reads paths from `fsmon.toml`, no hardcoded paths
+  - Each script manages its own daemon lifecycle
+
+### Changed
+
+- **Removed `--sync-interval` / `sync_interval_secs` config**: Log files are now flushed and synced to disk every 1 second automatically.
+  - Previously, data stayed in BufWriter until buffer full or daemon exit, causing empty log files during runtime.
+  - Now: `BufWriter → flush() → OS buffer → fdatasync() → Disk` every second.
+  - Simpler configuration: one less knob to tune.
+- **`fsmon monitored` human-readable output**: Replaced JSONL output with a structured, human-readable format.
+  - Shows process groups with clear headers (`Process: <cmd>`).
+  - Lists paths with details (recursive/non-recursive, event types, size filters).
+  - Displays all event types when fewer than 14 are selected; shows all 14 when all are selected.
+  - Example output:
+    ```
+    === Monitored Paths ===
+
+    Process: nginx
+      /var/www/myapp (recursive, types: MODIFY, CREATE)
+    ```
+- **Project structure reorganized**: Moved all implementation code from `src/` root to `src/common/` module.
+  - Created minimal `src/lib.rs` (3 lines) that only re-exports `pub mod common`.
+  - All `use fsmon::xxx` imports changed to `use fsmon::common::xxx`.
+  - No `#[path]` hacks — clean module hierarchy.
+- **Test files renamed**: Removed meaningless `p1_` prefix from integration tests.
+- **CLI hint improved**: `fsmon add` and socket error messages more user-friendly.
+
 ## [0.4.9] - 2026-06-06
 
 ### Fixed

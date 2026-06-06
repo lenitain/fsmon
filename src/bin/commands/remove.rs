@@ -1,9 +1,10 @@
 use anyhow::{Result, bail};
-use fsmon::config::Config;
-use fsmon::monitored::{CMD_GLOBAL, Monitored};
-use fsmon::socket::{self, SocketCmd};
+use fsmon::common::config::Config;
+use fsmon::common::monitored::{CMD_GLOBAL, Monitored};
+use fsmon::common::socket::{self, SocketCmd};
 use std::path::PathBuf;
 
+/// Remove one or more paths from the monitoring list.
 pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
