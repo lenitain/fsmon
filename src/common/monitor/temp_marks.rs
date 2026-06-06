@@ -3,8 +3,8 @@ use std::path::Path;
 
 use fanotify_fid::prelude::*;
 
-use crate::fid_parser::{FsGroup, mark_directory, path_mask_from_options};
-use crate::filters::PathOptions;
+use crate::common::fid_parser::{FsGroup, mark_directory, path_mask_from_options};
+use crate::common::filters::PathOptions;
 
 use super::Monitor;
 

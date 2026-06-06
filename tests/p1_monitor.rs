@@ -1,6 +1,6 @@
 //! P1 — Event parsing and serialization tests.
 
-use fsmon::{EventType, FileEvent, parse_log_line_jsonl};
+use fsmon::common::{EventType, FileEvent, parse_log_line_jsonl};
 
 #[test]
 fn parse_valid_jsonl_event() {

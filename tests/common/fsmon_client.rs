@@ -4,7 +4,7 @@
 
 #![allow(dead_code)]
 
-use fsmon::FileEvent;
+use fsmon::common::FileEvent;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 

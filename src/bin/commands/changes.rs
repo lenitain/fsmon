@@ -1,8 +1,8 @@
 use anyhow::Result;
-use fsmon::config::Config;
-use fsmon::monitored::CMD_GLOBAL;
-use fsmon::query::Query;
-use fsmon::{TimeFilter, parse_time_filter};
+use fsmon::common::config::Config;
+use fsmon::common::monitored::CMD_GLOBAL;
+use fsmon::common::query::Query;
+use fsmon::common::{TimeFilter, parse_time_filter};
 
 use crate::ChangesArgs;
 

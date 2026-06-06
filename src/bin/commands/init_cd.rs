@@ -4,7 +4,7 @@ use std::process;
 
 /// Initialize fsmon configuration and directories.
 pub fn cmd_init(service: bool) -> Result<()> {
-    fsmon::config::Config::init_dirs()?;
+    fsmon::common::config::Config::init_dirs()?;
     if service {
         install_service()?;
     }
@@ -61,14 +61,14 @@ fn install_service() -> Result<()> {
         .to_string();
 
     // Resolve the original user's home directory
-    let uid = fsmon::config::resolve_uid();
-    let home = fsmon::config::resolve_home(uid)
+    let uid = fsmon::common::config::resolve_uid();
+    let home = fsmon::common::config::resolve_home(uid)
         .context("Failed to resolve home directory")?
         .to_string_lossy()
         .to_string();
 
     // Load config to check watchdog settings
-    let cfg = fsmon::config::Config::load()?;
+    let cfg = fsmon::common::config::Config::load()?;
     let watchdog_cfg = cfg.watchdog.as_ref();
     let watchdog_sec = watchdog_cfg.and_then(|w| {
         w.interval_secs.map(|interval| {
@@ -89,7 +89,7 @@ fn install_service() -> Result<()> {
         return Ok(());
     }
 
-    fsmon::config::chown_to_original_user(
+    fsmon::common::config::chown_to_original_user(
         service_path
             .parent()
             .expect("/etc/systemd/system should exist"),
@@ -128,7 +128,7 @@ fn install_service() -> Result<()> {
 
 /// Open a subshell in the monitored path or log directory.
 pub fn cmd_cd(monitored: bool) -> Result<()> {
-    let mut cfg = fsmon::config::Config::load()?;
+    let mut cfg = fsmon::common::config::Config::load()?;
     cfg.resolve_paths()?;
 
     let dir = if monitored {
@@ -142,10 +142,10 @@ pub fn cmd_cd(monitored: bool) -> Result<()> {
             .unwrap_or_else(|| store_file.clone())
     } else {
         // -l: cd to log directory (identical to old `fsmon cd`)
-        let mut cfg = fsmon::config::Config::load()?;
+        let mut cfg = fsmon::common::config::Config::load()?;
         cfg.resolve_paths()?;
         cfg.logging.path.unwrap_or_else(|| {
-            let home = fsmon::config::guess_home();
+            let home = fsmon::common::config::guess_home();
             PathBuf::from(format!("{}/.local/state/fsmon", home))
         })
     };
@@ -153,7 +153,7 @@ pub fn cmd_cd(monitored: bool) -> Result<()> {
     if !dir.exists() {
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("Failed to create directory: {}", dir.display()))?;
-        fsmon::config::chown_to_original_user(&dir);
+        fsmon::common::config::chown_to_original_user(&dir);
         eprintln!("Created directory: {}", dir.display());
     }
 

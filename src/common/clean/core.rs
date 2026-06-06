@@ -3,9 +3,9 @@ use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use crate::config::chown_to_original_user;
-use crate::utils::{self, TimeFilterExt, cmd_to_log_name};
-use crate::{SizeFilter, SizeOp, TimeFilter, parse_log_line_jsonl};
+use crate::common::config::chown_to_original_user;
+use crate::common::utils::{self, TimeFilterExt, cmd_to_log_name};
+use crate::common::{SizeFilter, SizeOp, TimeFilter, parse_log_line_jsonl};
 
 /// Check if `kept_bytes` exceeds the limit per the filter's operator.
 pub fn should_trim(kept_bytes: usize, filter: &SizeFilter) -> bool {

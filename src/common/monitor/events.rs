@@ -5,13 +5,13 @@ use chrono::Utc;
 use fanotify_fid::consts::FAN_Q_OVERFLOW;
 use fanotify_fid::types::FidEvent;
 
-use crate::fid_parser::mask_to_event_types;
+use crate::common::fid_parser::mask_to_event_types;
 #[cfg(test)]
-use crate::filters;
-use crate::filters::PathOptions;
-use crate::monitored::PathEntry;
-use crate::utils::{format_size, get_process_info_by_pid};
-use crate::{EventType, FileEvent};
+use crate::common::filters;
+use crate::common::filters::PathOptions;
+use crate::common::monitored::PathEntry;
+use crate::common::utils::{format_size, get_process_info_by_pid};
+use crate::common::{EventType, FileEvent};
 use proc_tree::{CacheStore, TreeStore};
 
 use super::Monitor;
@@ -105,7 +105,7 @@ impl Monitor {
                         let cmd_name = opts
                             .cmd
                             .as_deref()
-                            .unwrap_or(crate::monitored::CMD_GLOBAL)
+                            .unwrap_or(crate::common::monitored::CMD_GLOBAL)
                             .to_string();
 
                         pending.push(PendingEvent {

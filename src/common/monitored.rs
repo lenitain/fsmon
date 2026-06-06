@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
-use crate::config::chown_to_original_user;
+use crate::common::config::chown_to_original_user;
 
 /// Sentinel value for the global cmd group (no specific process).
 pub const CMD_GLOBAL: &str = "_global";
@@ -69,21 +69,21 @@ pub struct PathEntry {
 
 impl PathParams {}
 
-impl TryFrom<&PathEntry> for crate::filters::PathOptions {
+impl TryFrom<&PathEntry> for crate::common::filters::PathOptions {
     type Error = anyhow::Error;
 
     fn try_from(entry: &PathEntry) -> Result<Self> {
         let size_filter = entry
             .size
             .as_ref()
-            .map(|s| crate::utils::parse_size_filter(s))
+            .map(|s| crate::common::utils::parse_size_filter(s))
             .transpose()?;
         let event_types = entry
             .types
             .as_ref()
             .map(|v| {
                 v.iter()
-                    .map(|s| s.parse::<crate::EventType>())
+                    .map(|s| s.parse::<crate::common::EventType>())
                     .collect::<std::result::Result<Vec<_>, _>>()
             })
             .transpose()
@@ -95,7 +95,7 @@ impl TryFrom<&PathEntry> for crate::filters::PathOptions {
                 Some(c.to_string())
             }
         });
-        Ok(crate::filters::PathOptions {
+        Ok(crate::common::filters::PathOptions {
             size_filter,
             event_types,
             recursive: entry.recursive.unwrap_or(false),

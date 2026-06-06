@@ -10,13 +10,13 @@ use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 
 use super::{EventReceiver, EventSender, FileLogWriter, Monitor};
-use crate::dir_cache;
-use crate::fid_parser::{DIR_CACHE_CAP, FsGroup, chown_to_user, mark_directory, mark_recursive};
-use crate::filters::PathOptions;
-use crate::monitored::PathEntry;
-use crate::proc_cache;
-use crate::proc_cache::{PID_TREE_CAP, PROC_CACHE_CAP};
-use crate::utils::format_size;
+use crate::common::dir_cache;
+use crate::common::fid_parser::{DIR_CACHE_CAP, FsGroup, chown_to_user, mark_directory, mark_recursive};
+use crate::common::filters::PathOptions;
+use crate::common::monitored::PathEntry;
+use crate::common::proc_cache;
+use crate::common::proc_cache::{PID_TREE_CAP, PROC_CACHE_CAP};
+use crate::common::utils::format_size;
 use proc_connector::ProcConnector;
 
 impl Monitor {
@@ -63,7 +63,7 @@ impl Monitor {
         let combined_mask = self
             .monitored_entries
             .iter()
-            .map(|(_, opts)| crate::fid_parser::path_mask_from_options(opts))
+            .map(|(_, opts)| crate::common::fid_parser::path_mask_from_options(opts))
             .fold(0, |a, b| a | b);
         debug_log!(self.debug, "combined fanotify mask: {:#x}", combined_mask);
 
@@ -336,7 +336,7 @@ impl Monitor {
                 std::collections::BTreeMap::new();
             for (path, entry) in &self.inotify_state.pending_paths {
                 let cmd = entry.cmd.as_deref().and_then(|c| {
-                    if c == crate::monitored::CMD_GLOBAL {
+                    if c == crate::common::monitored::CMD_GLOBAL {
                         None
                     } else {
                         Some(c.to_string())

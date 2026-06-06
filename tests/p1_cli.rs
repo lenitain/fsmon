@@ -15,8 +15,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use common::fsmon_client::*;
-use fsmon::config::Config;
-use fsmon::monitored::Monitored;
+use fsmon::common::config::Config;
+use fsmon::common::monitored::Monitored;
 
 /// Global mutex for tests that modify HOME env var.
 static ENV_LOCK: Mutex<()> = Mutex::new(());

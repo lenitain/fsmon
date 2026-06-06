@@ -4,9 +4,9 @@ pub use core::{clean_logs, clean_single_log, count_lines, find_tail_offset, shou
 
 #[cfg(test)]
 mod tests {
-    use crate::clean::core::{clean_logs, count_lines, find_tail_offset, should_trim};
-    use crate::utils::TimeOp;
-    use crate::{EventType, FileEvent, SizeFilter, SizeOp, TimeFilter};
+    use crate::common::clean::core::{clean_logs, count_lines, find_tail_offset, should_trim};
+    use crate::common::utils::TimeOp;
+    use crate::common::{EventType, FileEvent, SizeFilter, SizeOp, TimeFilter};
     use chrono::Utc;
     use std::fs;
     use std::io::Write;
@@ -676,9 +676,9 @@ mod tests {
         let dir = std::env::temp_dir().join("fsmon_test_clean_specific_cmd");
         fs::create_dir_all(&dir).unwrap();
         // _global log → old events, should be cleaned
-        let log_global = dir.join(crate::utils::cmd_to_log_name("_global"));
+        let log_global = dir.join(crate::common::utils::cmd_to_log_name("_global"));
         // openclaw log → keep marker, untouched
-        let log_oc = dir.join(crate::utils::cmd_to_log_name("openclaw"));
+        let log_oc = dir.join(crate::common::utils::cmd_to_log_name("openclaw"));
         {
             let mut f = fs::File::create(&log_global).unwrap();
             let event = FileEvent {

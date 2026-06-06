@@ -1,5 +1,5 @@
-use crate::EventType;
-use crate::filters::PathOptions;
+use crate::common::EventType;
+use crate::common::filters::PathOptions;
 use anyhow::{Context, Result};
 use fanotify_fid::consts::{
     AT_FDCWD, FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE,
@@ -346,7 +346,7 @@ pub const DEFAULT_EVENT_MASK: u64 = FAN_CLOSE_WRITE
 /// does not support ownership changes (vfat/exfat/NFS no_root_squash, etc.),
 /// and `Err` for genuine errors (bad path, IO failure).
 pub fn chown_to_user(path: &Path) -> std::io::Result<bool> {
-    let (uid, gid) = crate::config::resolve_uid_gid();
+    let (uid, gid) = crate::common::config::resolve_uid_gid();
     let cpath = CString::new(path.to_string_lossy().as_bytes())
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains null"))?;
     match nix::unistd::chown(
@@ -394,7 +394,7 @@ pub fn mark_recursive(fan_fd: &OwnedFd, mask: u64, dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::EventType;
+    use crate::common::EventType;
     use fanotify_fid::consts::{
         FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE,
         FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_FS_ERROR, FAN_MODIFY, FAN_MOVE_SELF,

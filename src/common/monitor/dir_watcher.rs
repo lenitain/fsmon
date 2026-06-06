@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use crate::dir_cache;
-use crate::fid_parser::{mark_directory, mark_recursive, path_mask_from_options};
-use crate::filters::PathOptions;
-use crate::monitored::PathEntry;
+use crate::common::dir_cache;
+use crate::common::fid_parser::{mark_directory, mark_recursive, path_mask_from_options};
+use crate::common::filters::PathOptions;
+use crate::common::monitored::PathEntry;
 
 use super::Monitor;
 
@@ -158,7 +158,7 @@ impl Monitor {
                             .map(|v| v.iter().map(|t| t.to_string()).collect()),
                         size: opts
                             .size_filter
-                            .map(|f| format!("{}{}", f.op, crate::utils::format_size(f.bytes))),
+                            .map(|f| format!("{}{}", f.op, crate::common::utils::format_size(f.bytes))),
                         cmd: opts.cmd,
                     },
                 ));

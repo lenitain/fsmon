@@ -301,10 +301,10 @@ fn test_expand_tilde_basic() {
 #[test]
 fn test_cache_config_defaults() {
     let r = ResolvedCacheConfig::default();
-    assert_eq!(r.dir_capacity, crate::fid_parser::DIR_CACHE_CAP);
-    assert_eq!(r.dir_ttl_secs, crate::fid_parser::DIR_CACHE_TTL_SECS);
-    assert_eq!(r.file_size_capacity, crate::fid_parser::FILE_SIZE_CACHE_CAP);
-    assert_eq!(r.proc_ttl_secs, crate::proc_cache::PROC_CACHE_TTL_SECS);
+    assert_eq!(r.dir_capacity, crate::common::fid_parser::DIR_CACHE_CAP);
+    assert_eq!(r.dir_ttl_secs, crate::common::fid_parser::DIR_CACHE_TTL_SECS);
+    assert_eq!(r.file_size_capacity, crate::common::fid_parser::FILE_SIZE_CACHE_CAP);
+    assert_eq!(r.proc_ttl_secs, crate::common::proc_cache::PROC_CACHE_TTL_SECS);
     assert_eq!(r.buffer_size, 4096 * 8);
     assert_eq!(r.stats_interval_secs, 60);
 }
@@ -355,9 +355,9 @@ fn test_cache_config_resolve_config_over_default() {
     let cli = CliCacheOverride::default();
     let r = cfg.resolve_with_cli(&cli);
     assert_eq!(r.dir_capacity, 200000);
-    assert_eq!(r.dir_ttl_secs, crate::fid_parser::DIR_CACHE_TTL_SECS);
+    assert_eq!(r.dir_ttl_secs, crate::common::fid_parser::DIR_CACHE_TTL_SECS);
     assert_eq!(r.file_size_capacity, 20000);
-    assert_eq!(r.proc_ttl_secs, crate::proc_cache::PROC_CACHE_TTL_SECS);
+    assert_eq!(r.proc_ttl_secs, crate::common::proc_cache::PROC_CACHE_TTL_SECS);
 }
 
 #[test]

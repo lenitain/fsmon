@@ -4,8 +4,8 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::FileEvent;
-use crate::metrics::MetricsRegistry;
+use crate::common::FileEvent;
+use crate::common::metrics::MetricsRegistry;
 
 /// Maximum number of open file handles to keep cached.
 const MAX_OPEN_HANDLES: usize = 64;
@@ -120,7 +120,7 @@ impl FileLogWriter {
     /// Write an event to the appropriate JSONL log file.
     /// Returns Ok(()) even if disk is full (event is buffered for retry).
     fn write_event(&mut self, event: &FileEvent, cmd_name: &str) -> std::io::Result<()> {
-        let log_path = self.log_dir.join(crate::utils::cmd_to_log_name(cmd_name));
+        let log_path = self.log_dir.join(crate::common::utils::cmd_to_log_name(cmd_name));
 
         // Try to flush buffer if disk was previously unhealthy
         if !self.disk_healthy
@@ -135,7 +135,7 @@ impl FileLogWriter {
 
         match self.get_or_open(&log_path) {
             Ok(writer) => {
-                if is_new && let Err(e) = crate::fid_parser::chown_to_user(&log_path) {
+                if is_new && let Err(e) = crate::common::fid_parser::chown_to_user(&log_path) {
                     eprintln!(
                         "[WARNING] Could not chown log file '{}': {}",
                         log_path.display(),
@@ -174,7 +174,7 @@ impl FileLogWriter {
 
         let mut remaining = VecDeque::new();
         while let Some((event, cmd_name)) = self.disk_buf.pop_front() {
-            let log_path = self.log_dir.join(crate::utils::cmd_to_log_name(&cmd_name));
+            let log_path = self.log_dir.join(crate::common::utils::cmd_to_log_name(&cmd_name));
             let line = self.jsonl_string(&event);
             match self.get_or_open(&log_path) {
                 Ok(writer) => {
@@ -238,7 +238,7 @@ fn open_log_file(log_path: &PathBuf, log_dir: &PathBuf) -> std::io::Result<File>
         .or_else(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 let _ = fs::create_dir_all(log_dir);
-                let _ = crate::fid_parser::chown_to_user(log_dir);
+                let _ = crate::common::fid_parser::chown_to_user(log_dir);
                 OpenOptions::new().create(true).append(true).open(log_path)
             } else {
                 Err(e)

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use crate::FileEvent;
-use crate::filters::{self, PathOptions};
+use crate::common::FileEvent;
+use crate::common::filters::{self, PathOptions};
 
 use super::Monitor;
 

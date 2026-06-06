@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use fsmon::help::{self, HelpTopic};
-pub use fsmon::{AddArgs, ChangesArgs, CleanArgs, QueryArgs};
+use fsmon::common::help::{self, HelpTopic};
+pub use fsmon::common::{AddArgs, ChangesArgs, CleanArgs, QueryArgs};
 use std::path::PathBuf;
 
 mod commands;

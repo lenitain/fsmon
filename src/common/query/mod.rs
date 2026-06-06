@@ -4,10 +4,10 @@ pub use core::Query;
 
 #[cfg(test)]
 mod tests {
-    use crate::EventType;
-    use crate::query::core::Query;
-    use crate::utils::{TimeFilter, TimeOp};
-    use crate::{FileEvent, parse_log_line_jsonl};
+    use crate::common::EventType;
+    use crate::common::query::core::Query;
+    use crate::common::utils::{TimeFilter, TimeOp};
+    use crate::common::{FileEvent, parse_log_line_jsonl};
     use chrono::Utc;
     use std::fs;
     use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};

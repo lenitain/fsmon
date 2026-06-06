@@ -123,10 +123,10 @@ pub struct ResolvedCacheConfig {
 impl Default for ResolvedCacheConfig {
     fn default() -> Self {
         Self {
-            dir_capacity: crate::fid_parser::DIR_CACHE_CAP,
-            dir_ttl_secs: crate::fid_parser::DIR_CACHE_TTL_SECS,
-            file_size_capacity: crate::fid_parser::FILE_SIZE_CACHE_CAP,
-            proc_ttl_secs: crate::proc_cache::PROC_CACHE_TTL_SECS,
+            dir_capacity: crate::common::fid_parser::DIR_CACHE_CAP,
+            dir_ttl_secs: crate::common::fid_parser::DIR_CACHE_TTL_SECS,
+            file_size_capacity: crate::common::fid_parser::FILE_SIZE_CACHE_CAP,
+            proc_ttl_secs: crate::common::proc_cache::PROC_CACHE_TTL_SECS,
             buffer_size: 4096 * 8, // 32KB — default from Monitor::new()
             stats_interval_secs: 60,
             channel_capacity: None, // unbounded by default
@@ -242,7 +242,7 @@ pub fn resolve_uid_gid() -> (u32, u32) {
 /// Chown a path to the original user (daemon runs as root, files should go to the user).
 /// Silently no-ops if already running as the target user (no sudo).
 pub fn chown_to_original_user(path: &Path) {
-    let _ = crate::fid_parser::chown_to_user(path);
+    let _ = crate::common::fid_parser::chown_to_user(path);
 }
 
 /// Resolve the original user's UID:

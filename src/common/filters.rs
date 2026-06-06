@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use crate::utils::{SizeFilter, SizeOp};
-use crate::{EventType, FileEvent};
+use crate::common::utils::{SizeFilter, SizeOp};
+use crate::common::{EventType, FileEvent};
 
 // ---- PathOptions ----
 
@@ -21,7 +21,7 @@ pub struct PathOptions {
 /// (follows symlinks). Falls back to tilde-expanded path if can't canonicalize.
 pub fn resolve_recursion_check(path: &Path) -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let expanded = crate::config::expand_tilde(path, &home);
+    let expanded = crate::common::config::expand_tilde(path, &home);
     expanded.canonicalize().unwrap_or(expanded)
 }
 
@@ -147,7 +147,7 @@ pub fn is_path_in_scope(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EventType, FileEvent};
+    use crate::common::{EventType, FileEvent};
     use chrono::Utc;
     use std::path::{Path, PathBuf};
 

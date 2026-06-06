@@ -8,10 +8,10 @@ use fanotify_fid::consts::{
 };
 use fanotify_fid::prelude::*;
 
-use crate::dir_cache;
-use crate::fid_parser::{FsGroup, mark_directory, mark_recursive, path_mask_from_options};
-use crate::filters::{self, PathOptions};
-use crate::monitored::PathEntry;
+use crate::common::dir_cache;
+use crate::common::fid_parser::{FsGroup, mark_directory, mark_recursive, path_mask_from_options};
+use crate::common::filters::{self, PathOptions};
+use crate::common::monitored::PathEntry;
 
 use super::Monitor;
 
@@ -21,7 +21,7 @@ impl Monitor {
             self.debug,
             "add_path: path={} cmd={}",
             entry.path.display(),
-            entry.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL)
+            entry.cmd.as_deref().unwrap_or(crate::common::monitored::CMD_GLOBAL)
         );
         let path = filters::resolve_recursion_check(&entry.path);
 
@@ -52,7 +52,7 @@ impl Monitor {
                 let _ = mark_directory(fan_fd, new_mask, &canonical);
                 debug_log!(self.debug, "  updated fanotify mask to {:#x}", new_mask);
             }
-            let cmd_label = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
+            let cmd_label = opts.cmd.as_deref().unwrap_or(crate::common::monitored::CMD_GLOBAL);
             println!(
                 "Monitoring entry: [{}] {} (recursive={})",
                 cmd_label,
@@ -115,7 +115,7 @@ impl Monitor {
 
         let path_mask = path_mask_from_options(&opts);
 
-        let cmd_label = opts.cmd.as_deref().unwrap_or(crate::monitored::CMD_GLOBAL);
+        let cmd_label = opts.cmd.as_deref().unwrap_or(crate::common::monitored::CMD_GLOBAL);
         println!(
             "Monitoring entry: [{}] {} (recursive={})",
             cmd_label,
@@ -331,7 +331,7 @@ impl Monitor {
 
     /// Check disk space for the log directory against the configured threshold.
     pub(crate) fn check_disk_space(log_dir: &std::path::Path, threshold_str: &str) {
-        let threshold = match crate::utils::parse_disk_min_free(threshold_str) {
+        let threshold = match crate::common::utils::parse_disk_min_free(threshold_str) {
             Ok(t) => t,
             Err(e) => {
                 eprintln!("[WARNING] Invalid disk-min-free '{}': {}", threshold_str, e);
@@ -360,7 +360,7 @@ impl Monitor {
         }
 
         let below = match threshold {
-            crate::utils::DiskFreeThreshold::Percent(min_pct) => {
+            crate::common::utils::DiskFreeThreshold::Percent(min_pct) => {
                 let free_pct = (free as f64 / total as f64) * 100.0;
                 if free_pct < min_pct {
                     eprintln!(
@@ -368,8 +368,8 @@ impl Monitor {
                          threshold is {}%",
                         log_dir.display(),
                         free_pct,
-                        crate::utils::format_size(free as i64),
-                        crate::utils::format_size(total as i64),
+                        crate::common::utils::format_size(free as i64),
+                        crate::common::utils::format_size(total as i64),
                         min_pct,
                     );
                     true
@@ -377,13 +377,13 @@ impl Monitor {
                     false
                 }
             }
-            crate::utils::DiskFreeThreshold::Bytes(min_bytes) => {
+            crate::common::utils::DiskFreeThreshold::Bytes(min_bytes) => {
                 if free < min_bytes {
                     eprintln!(
                         "[WARNING] Low disk space on '{}': {} free, threshold is {}",
                         log_dir.display(),
-                        crate::utils::format_size(free as i64),
-                        crate::utils::format_size(min_bytes as i64),
+                        crate::common::utils::format_size(free as i64),
+                        crate::common::utils::format_size(min_bytes as i64),
                     );
                     true
                 } else {
@@ -396,7 +396,7 @@ impl Monitor {
             eprintln!(
                 "[INFO] Disk space OK on '{}': {} free",
                 log_dir.display(),
-                crate::utils::format_size(free as i64),
+                crate::common::utils::format_size(free as i64),
             );
         }
     }

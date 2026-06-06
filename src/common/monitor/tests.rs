@@ -1,9 +1,9 @@
 use super::*;
-use crate::fid_parser::mask_to_event_types;
-use crate::filters::PathOptions;
-use crate::monitored::PathEntry;
-use crate::utils::{SizeFilter, SizeOp};
-use crate::{EventType, FileEvent};
+use crate::common::fid_parser::mask_to_event_types;
+use crate::common::filters::PathOptions;
+use crate::common::monitored::PathEntry;
+use crate::common::utils::{SizeFilter, SizeOp};
+use crate::common::{EventType, FileEvent};
 use fanotify_fid::consts::{
     FAN_CREATE, FAN_DELETE, FAN_EVENT_ON_CHILD, FAN_MARK_ADD, FAN_MARK_FILESYSTEM, FAN_MODIFY,
     FAN_ONDIR,
@@ -328,7 +328,7 @@ fn test_delete_self_canonical_root_is_recorded() {
     assert!(
         pending
             .iter()
-            .any(|pe| pe.event.event_type == crate::EventType::DeleteSelf),
+            .any(|pe| pe.event.event_type == crate::common::EventType::DeleteSelf),
         "DELETE_SELF for canonical root should be recorded"
     );
 

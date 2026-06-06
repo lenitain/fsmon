@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use fsmon::DaemonLock;
-use fsmon::config::{CacheConfig, CliCacheOverride, Config};
-use fsmon::monitor::Monitor;
-use fsmon::monitored::Monitored;
+use fsmon::common::DaemonLock;
+use fsmon::common::config::{CacheConfig, CliCacheOverride, Config};
+use fsmon::common::monitor::Monitor;
+use fsmon::common::monitored::Monitored;
 use std::fs;
 use std::path::Path;
 
@@ -32,7 +32,7 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
         watchdog_multiplier,
     } = opts;
     // Acquire singleton lock first — only one daemon instance allowed
-    let (uid, _gid) = fsmon::config::resolve_uid_gid();
+    let (uid, _gid) = fsmon::common::config::resolve_uid_gid();
     let _lock = DaemonLock::acquire(uid)?;
 
     let mut cfg = Config::load()?;
@@ -72,7 +72,7 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
 
     // Chown store parent dir to the original user (daemon runs as root)
     if let Some(parent) = cfg.monitored.path.parent() {
-        fsmon::config::chown_to_original_user(parent);
+        fsmon::common::config::chown_to_original_user(parent);
     }
 
     // Merge cache config: CLI > fsmon.toml > code defaults
@@ -177,7 +177,7 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
             }
         );
     }
-    let mut monitor = match Monitor::new(fsmon::monitor::MonitorConfig {
+    let mut monitor = match Monitor::new(fsmon::common::monitor::MonitorConfig {
         paths_and_options,
         log_dir,
         monitored_path: Some(store_path),
@@ -202,7 +202,7 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
 
     if !store.is_empty() {
         for group in &store.groups {
-            let cmd_label = if group.cmd == fsmon::monitored::CMD_GLOBAL {
+            let cmd_label = if group.cmd == fsmon::common::monitored::CMD_GLOBAL {
                 "[global]".to_string()
             } else {
                 format!("[{}]", group.cmd)

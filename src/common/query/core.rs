@@ -4,8 +4,8 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use crate::utils::{TimeFilter, TimeFilterExt, cmd_to_log_name};
-use crate::{FileEvent, parse_log_line_jsonl};
+use crate::common::utils::{TimeFilter, TimeFilterExt, cmd_to_log_name};
+use crate::common::{FileEvent, parse_log_line_jsonl};
 
 const SCAN_BACK_BYTES: u64 = 4096;
 

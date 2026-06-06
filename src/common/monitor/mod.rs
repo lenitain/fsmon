@@ -12,14 +12,14 @@ use tokio::signal::unix::{SignalKind, signal};
 
 use moka::sync::Cache;
 
-use crate::FileEvent;
-use crate::config::ResolvedCacheConfig;
-use crate::fid_parser::FsGroup;
-use crate::filters::{self, PathOptions};
-use crate::metrics::MetricsRegistry;
-use crate::monitored::PathEntry;
-use crate::proc_cache::{self, DefaultCache as ProcCache, DefaultTree as PidTree};
-use crate::watchdog::Watchdog;
+use crate::common::FileEvent;
+use crate::common::config::ResolvedCacheConfig;
+use crate::common::fid_parser::FsGroup;
+use crate::common::filters::{self, PathOptions};
+use crate::common::metrics::MetricsRegistry;
+use crate::common::monitored::PathEntry;
+use crate::common::proc_cache::{self, DefaultCache as ProcCache, DefaultTree as PidTree};
+use crate::common::watchdog::Watchdog;
 use serde_json;
 use slotmap::SlotMap;
 
@@ -345,7 +345,7 @@ impl Monitor {
         // Build inotify AsyncFd for tokio event loop
         let inotify_async = self.inotify_state.inotify.as_ref().map(|ino| {
             let fd = ino.as_raw_fd();
-            AsyncFd::new(crate::fid_parser::FanFd(fd)).expect("inotify AsyncFd")
+            AsyncFd::new(crate::common::fid_parser::FanFd(fd)).expect("inotify AsyncFd")
         });
 
         // Build proc connector AsyncFd for tokio event loop
@@ -372,7 +372,7 @@ impl Monitor {
         );
 
         // Notify systemd: READY=1
-        if let Err(e) = crate::watchdog::sd_notify(libsystemd::daemon::NotifyState::Ready) {
+        if let Err(e) = crate::common::watchdog::sd_notify(libsystemd::daemon::NotifyState::Ready) {
             eprintln!("[WARNING] systemd notify READY failed: {}", e);
         }
 
@@ -625,13 +625,13 @@ impl Monitor {
     ) {
         match result {
             Ok((writer, cmd_str)) => {
-                let cmd = match serde_json::from_str::<crate::socket::SocketCmd>(&cmd_str) {
+                let cmd = match serde_json::from_str::<crate::common::socket::SocketCmd>(&cmd_str) {
                     Ok(c) => c,
                     Err(e) => {
                         let resp: Result<
-                            crate::socket::SocketResponse,
-                            crate::socket::SocketError,
-                        > = Err(crate::socket::SocketError::Transient(format!(
+                            crate::common::socket::SocketResponse,
+                            crate::common::socket::SocketError,
+                        > = Err(crate::common::socket::SocketError::Transient(format!(
                             "Invalid command: {e}"
                         )));
                         if let Ok(json_str) = serde_json::to_string(&resp) {
@@ -640,7 +640,7 @@ impl Monitor {
                         return;
                     }
                 };
-                if let crate::socket::SocketCmd::Subscribe { .. } = cmd {
+                if let crate::common::socket::SocketCmd::Subscribe { .. } = cmd {
                     self.handle_subscribe(writer, &cmd);
                 } else {
                     let result = self.handle_socket_cmd(cmd);

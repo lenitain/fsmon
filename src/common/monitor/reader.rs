@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tokio::io::unix::AsyncFd;
 
-use crate::fid_parser::read_fid_events_cached;
+use crate::common::fid_parser::read_fid_events_cached;
 
 use super::Monitor;
 use super::channel::EventSender;

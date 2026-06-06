@@ -1,7 +1,7 @@
 use anyhow::{Result, bail};
-use fsmon::config::Config;
-use fsmon::monitored::{CMD_GLOBAL, Monitored, PathEntry};
-use fsmon::socket::{self, SocketCmd, SocketError, SocketResponse};
+use fsmon::common::config::Config;
+use fsmon::common::monitored::{CMD_GLOBAL, Monitored, PathEntry};
+use fsmon::common::socket::{self, SocketCmd, SocketError, SocketResponse};
 use std::path::PathBuf;
 
 use crate::AddArgs;
@@ -109,7 +109,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         None
     } else if args.types.iter().any(|s| s.eq_ignore_ascii_case("all")) {
         Some(
-            fsmon::EventType::ALL
+            fsmon::common::EventType::ALL
                 .iter()
                 .map(|t| t.to_string())
                 .collect(),

@@ -2,11 +2,11 @@ use anyhow::Context;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 
-use crate::metrics::MetricsRegistry;
-use crate::monitored::{Monitored, PathEntry};
-use crate::socket::{SocketCmd, SocketError, SocketResponse};
-use crate::utils::format_size;
-use crate::{EventType, FileEvent};
+use crate::common::metrics::MetricsRegistry;
+use crate::common::monitored::{Monitored, PathEntry};
+use crate::common::socket::{SocketCmd, SocketError, SocketResponse};
+use crate::common::utils::format_size;
+use crate::common::{EventType, FileEvent};
 use serde_json;
 
 use super::Monitor;
@@ -14,7 +14,7 @@ use super::Monitor;
 impl Monitor {
     /// Build a health snapshot for the `health` socket command.
     pub(crate) fn health(&self) -> SocketResponse {
-        use crate::socket::{HealthInfo, ReaderHealth};
+        use crate::common::socket::{HealthInfo, ReaderHealth};
 
         let readers: Vec<ReaderHealth> = self
             .fanotify
@@ -121,7 +121,7 @@ impl Monitor {
                 track_cmd,
             } => {
                 let track_cmd = track_cmd.as_deref().and_then(|c| {
-                    if c == crate::monitored::CMD_GLOBAL {
+                    if c == crate::common::monitored::CMD_GLOBAL {
                         None
                     } else {
                         Some(c.to_string())
@@ -178,7 +178,7 @@ impl Monitor {
                         let cmd = opts
                             .cmd
                             .clone()
-                            .or(Some(crate::monitored::CMD_GLOBAL.to_string()));
+                            .or(Some(crate::common::monitored::CMD_GLOBAL.to_string()));
                         PathEntry {
                             path: p.clone(),
                             recursive: Some(opts.recursive),
@@ -286,7 +286,7 @@ pub(crate) async fn subscriber_task(
                 // Optional filter by cmd group.
                 // Global events have empty chains (no process tracking).
                 if let Some(ref wanted) = track_cmd {
-                    let keep = if wanted == crate::monitored::CMD_GLOBAL {
+                    let keep = if wanted == crate::common::monitored::CMD_GLOBAL {
                         event.chain.is_empty()
                     } else {
                         !event.chain.is_empty() && chains_contain(&event.chain, wanted)

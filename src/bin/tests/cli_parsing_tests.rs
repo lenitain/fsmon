@@ -131,8 +131,8 @@ fn test_cd_both_args_error() {
 
 // ---- Integration tests (require commands module) ----
 
-use fsmon::config::Config;
-use fsmon::monitored::Monitored;
+use fsmon::common::config::Config;
+use fsmon::common::monitored::Monitored;
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
@@ -479,7 +479,7 @@ fn test_integration_remove_keeps_other_cmds() {
 
 #[test]
 fn test_integration_query_missing_cmd_fails() {
-    use fsmon::query::Query;
+    use fsmon::common::query::Query;
     let q = Query::new(PathBuf::from("/nonexistent"), None, None, vec![], false);
     assert!(q.resolve_log_files().unwrap().is_empty());
 }
@@ -487,7 +487,7 @@ fn test_integration_query_missing_cmd_fails() {
 #[test]
 fn test_integration_query_cmd_no_log_file() {
     with_isolated_home(|_home, _mp| {
-        use fsmon::query::Query;
+        use fsmon::common::query::Query;
         let q = Query::new(
             PathBuf::from("/nonexistent_log_dir"),
             Some("ghost".into()),
@@ -537,13 +537,13 @@ fn test_integration_clean_and_query_round_trip() {
     with_isolated_home(|home, _mp| {
         use std::io::Write;
         let log_dir = {
-            let mut cfg = fsmon::config::Config::load().unwrap();
+            let mut cfg = fsmon::common::config::Config::load().unwrap();
             cfg.logging.path = Some(std::path::PathBuf::from("~/.local/state/fsmon"));
             cfg.resolve_paths().unwrap();
             cfg.logging.path.unwrap()
         };
         fs::create_dir_all(&log_dir).unwrap();
-        let log_path = log_dir.join(fsmon::utils::cmd_to_log_name("_global"));
+        let log_path = log_dir.join(fsmon::common::utils::cmd_to_log_name("_global"));
         {
             let mut f = fs::File::create(&log_path).unwrap();
             use chrono::Utc;
@@ -561,7 +561,7 @@ fn test_integration_clean_and_query_round_trip() {
         }
 
         {
-            use fsmon::query::Query;
+            use fsmon::common::query::Query;
             let q = Query::new(log_dir.clone(), Some("_global".into()), None, vec![], false);
             let files = q.resolve_log_files().unwrap();
             assert_eq!(files.len(), 1, "should find _global_log.jsonl");

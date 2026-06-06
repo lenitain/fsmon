@@ -9,7 +9,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json;
 
-use crate::monitored::PathEntry;
+use crate::common::monitored::PathEntry;
 
 /// Type-safe socket commands.
 #[derive(Debug, Clone, Serialize, Deserialize)]

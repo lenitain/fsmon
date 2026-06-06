@@ -4,8 +4,8 @@
 
 use std::fs;
 
-use fsmon::DaemonLock;
-use fsmon::parse_log_line_jsonl;
+use fsmon::common::DaemonLock;
+use fsmon::common::parse_log_line_jsonl;
 
 // ---- DaemonLock ----
 
@@ -36,7 +36,7 @@ fn lock_acquire_and_reacquire() {
 
 #[test]
 fn monitored_save_load_roundtrip() {
-    use fsmon::monitored::Monitored;
+    use fsmon::common::monitored::Monitored;
 
     let dir = std::env::temp_dir().join(format!("fsmon-atomic-{}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
@@ -56,7 +56,7 @@ fn monitored_save_load_roundtrip() {
 
 #[test]
 fn monitored_load_missing_file_fails() {
-    use fsmon::monitored::Monitored;
+    use fsmon::common::monitored::Monitored;
 
     let path = std::env::temp_dir().join(format!("fsmon-nonexistent-{}.jsonl", std::process::id()));
     let _ = fs::remove_file(&path);
@@ -71,7 +71,7 @@ fn monitored_load_missing_file_fails() {
 
 #[test]
 fn config_loads_defaults_when_no_file() {
-    use fsmon::config::Config;
+    use fsmon::common::config::Config;
 
     let dir = std::env::temp_dir().join(format!("fsmon-config-{}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
@@ -139,7 +139,7 @@ fn jsonl_multiple_complete_events_all_parse() {
 
 #[test]
 fn cmd_to_log_name_format() {
-    use fsmon::utils::cmd_to_log_name;
+    use fsmon::common::utils::cmd_to_log_name;
     assert_eq!(cmd_to_log_name("_global"), "_global_log.jsonl");
     assert_eq!(cmd_to_log_name("myapp"), "myapp_log.jsonl");
     assert_eq!(cmd_to_log_name("nginx"), "nginx_log.jsonl");

@@ -1,6 +1,6 @@
 use anyhow::Result;
-use fsmon::config::Config;
-use fsmon::socket::{self, SocketCmd};
+use fsmon::common::config::Config;
+use fsmon::common::socket::{self, SocketCmd};
 
 /// Query daemon health status.
 pub fn cmd_health() -> Result<()> {
