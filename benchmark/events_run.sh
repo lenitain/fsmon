@@ -27,4 +27,8 @@ echo ""
 echo "========================================="
 echo "  事件测试: $total_pass/${#suites[@]} 套件通过"
 echo "========================================="
+
+# 清理最后一个 suite 留下的 daemon
+sudo killall fsmon 2>/dev/null || true
+
 [ "$total_fail" -eq 0 ]

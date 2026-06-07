@@ -26,7 +26,6 @@ restart_daemon() {
 }
 
 register() { fsmon add _global --path "$BENCH_DIR" -r -t all; sleep 2; }
-unregister() { fsmon remove _global --path "$BENCH_DIR" 2>/dev/null || true; }
 cleanup() { rm -rf "$BENCH_DIR"; }
 
 count_type() {
