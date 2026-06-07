@@ -48,7 +48,10 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
     } else {
         eprintln!("  Event logs:     disabled (path not configured)");
     }
-    eprintln!("  Command socket: {}", fsmon::common::socket::socket_path().display());
+    eprintln!(
+        "  Command socket: {}",
+        fsmon::common::socket::socket_path().display()
+    );
 
     let store = Monitored::load(&cfg.monitored.path)?;
 
