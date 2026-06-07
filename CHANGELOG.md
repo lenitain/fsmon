@@ -10,9 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Benchmark suite** (`benchmark/`): complete performance and correctness test framework
-  - 6 event correctness tests (create/modify/delete/move/recursive/stress)
-  - 2 post-processing performance tests (query/clean)
-  - 3 perf collection scripts (`perf/stress.sh`, `perf/query.sh`, `perf/clean.sh`)
+  - event correctness tests (create/modify/delete/move/recursive/stress)
+  - post-processing performance tests (query/clean)
+  - perf collection scripts (`perf/stress.sh`, `perf/query.sh`, `perf/clean.sh`)
   - Shared config `common.sh`: reads paths from `fsmon.toml`, no hardcoded paths
   - Each script manages its own daemon lifecycle
 
