@@ -42,9 +42,6 @@ pub struct LoggingConfig {
     /// Minimum free disk space before warning (e.g. "10%", "5GB").
     /// None = no check. Only applies to the log directory filesystem.
     pub disk_min_free: Option<String>,
-    /// Log file sync interval in seconds. 0 or None = disabled.
-    /// When set, fdatasync is called on all dirty log files every N seconds.
-    pub sync_interval_secs: Option<u64>,
     /// Use local time instead of UTC in event timestamps. Default: false.
     /// When true, timestamps in JSONL output are converted to local timezone
     /// (e.g. "2026-05-27T07:12:50+08:00" instead of "2026-05-26T23:12:50Z").
@@ -313,7 +310,6 @@ impl Default for Config {
                 keep_days: None,
                 size: None,
                 disk_min_free: None,
-                sync_interval_secs: None,
                 local_time: None,
             },
             socket: SocketConfig {
@@ -439,11 +435,6 @@ path = "~/.local/state/fsmon"
 # Format: percentage ("10%") or absolute ("5GB").
 # Default: no check. CLI: --disk-min-free 10%
 # disk_min_free = "10%"
-#
-# Periodic fdatasync interval in seconds.
-# Prevents event loss on crash (kill -9, power loss).
-# Recommended: 5. Default: disabled. CLI: --sync-interval 5
-# sync_interval_secs = 5
 #
 # Use local time instead of UTC in event timestamps.
 # Default: false (UTC). CLI: --local-time

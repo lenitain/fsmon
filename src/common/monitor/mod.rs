@@ -67,7 +67,6 @@ pub struct MonitorConfig {
     pub debug: bool,
     pub cache_config: Option<ResolvedCacheConfig>,
     pub disk_min_free: Option<String>,
-    pub sync_interval: Option<std::time::Duration>,
     pub subscribe_buf: Option<usize>,
     pub local_time: bool,
     pub metrics_interval: Option<u64>,
@@ -87,7 +86,6 @@ impl MonitorConfig {
             debug: false,
             cache_config: None,
             disk_min_free: None,
-            sync_interval: None,
             subscribe_buf: None,
             local_time: false,
             metrics_interval: None,
@@ -166,8 +164,6 @@ pub struct Monitor {
     pub(crate) started_at: std::time::Instant,
     /// Raw disk-min-free threshold string (e.g. "10%", "5GB"). None = no check.
     disk_min_free: Option<String>,
-    /// Log file sync interval. None = disabled.
-    sync_interval: Option<std::time::Duration>,
     /// Metrics report interval. None = disabled.
     metrics_interval: Option<std::time::Duration>,
     /// Unified event stream: broadcast channel for all consumers.
@@ -284,7 +280,6 @@ impl Monitor {
             reader_states: HashMap::new(),
             started_at: std::time::Instant::now(),
             disk_min_free: cfg.disk_min_free,
-            sync_interval: cfg.sync_interval,
             metrics_interval: metrics_interval_dur,
             event_stream_tx: {
                 let cap = subscribe_buf.unwrap_or(4096).max(1);

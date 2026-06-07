@@ -389,7 +389,6 @@ impl Monitor {
 
         // Spawn file writer task
         let fw_log_dir = self.log_dir.clone();
-        let fw_sync = self.sync_interval;
         let fw_debug = self.debug;
         let fw_local = self.local_time;
         let fw_metrics = self.metrics.clone();
@@ -397,7 +396,7 @@ impl Monitor {
             && let Some(ref tx) = self.event_stream_tx
         {
             let fw_rx = tx.subscribe();
-            let fw = FileLogWriter::new(fw_log_dir, fw_sync, fw_debug, fw_local, fw_metrics);
+            let fw = FileLogWriter::new(fw_log_dir, fw_debug, fw_local, fw_metrics);
             tokio::spawn(async move {
                 fw.run(fw_rx).await;
             });

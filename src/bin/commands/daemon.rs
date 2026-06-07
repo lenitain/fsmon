@@ -13,7 +13,6 @@ pub struct DaemonOptions {
     pub debug: bool,
     pub cli_cache: CliCacheOverride,
     pub disk_min_free: Option<String>,
-    pub sync_interval: Option<u64>,
     pub local_time: bool,
     pub metrics_interval: Option<u64>,
     pub watchdog_interval: Option<u64>,
@@ -25,7 +24,6 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
         debug,
         cli_cache,
         disk_min_free,
-        sync_interval,
         local_time,
         metrics_interval,
         watchdog_interval,
@@ -118,12 +116,6 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
     // Merge disk_min_free: CLI > config > None
     let disk_min_free = disk_min_free.or_else(|| cfg.logging.disk_min_free.clone());
 
-    // Merge sync_interval: CLI > config > None (disabled)
-    let sync_interval = sync_interval
-        .or(cfg.logging.sync_interval_secs)
-        .filter(|&n| n > 0)
-        .map(std::time::Duration::from_secs);
-
     // Merge watchdog_interval: CLI > config > None (disabled)
     let watchdog_interval = watchdog_interval
         .or(cfg.watchdog.as_ref().and_then(|w| w.interval_secs))
@@ -148,11 +140,6 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
     let watchdog_sec = watchdog_interval.map(|i| i * watchdog_multiplier);
 
     if debug {
-        if let Some(d) = sync_interval {
-            eprintln!("[DEBUG]   sync_interval:      {}s", d.as_secs());
-        } else {
-            eprintln!("[DEBUG]   sync_interval:      disabled");
-        }
         if let Some(i) = watchdog_interval {
             eprintln!("[DEBUG]   watchdog_interval:  {}s", i);
             eprintln!("[DEBUG]   watchdog_multiplier: {}x", watchdog_multiplier);
@@ -186,7 +173,6 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
         debug,
         cache_config: Some(cache_cfg),
         disk_min_free,
-        sync_interval,
         subscribe_buf: Some(subscribe_buf),
         local_time: local_time || cfg.logging.local_time.unwrap_or(false),
         metrics_interval,

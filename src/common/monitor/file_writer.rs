@@ -9,9 +9,9 @@ use crate::common::metrics::MetricsRegistry;
 
 /// Maximum number of open file handles to keep cached.
 const MAX_OPEN_HANDLES: usize = 64;
-/// Default flush interval: flush BufWriter to OS buffer every second.
-/// Ensures data is visible in log files during runtime, not just on shutdown.
-const DEFAULT_FLUSH_INTERVAL: Duration = Duration::from_secs(1);
+/// Flush + sync interval: flush BufWriter to OS buffer and fdatasync to disk every second.
+/// Ensures data is visible and persisted during runtime, not just on shutdown.
+const FLUSH_SYNC_INTERVAL: Duration = Duration::from_secs(1);
 
 // ---- FileLogWriter: unified event stream consumer for disk persistence ----
 
@@ -23,7 +23,6 @@ pub(crate) struct FileLogWriter {
     disk_healthy: bool,
     last_disk_check: std::time::Instant,
     dirty_logs: HashSet<PathBuf>,
-    sync_interval: Option<Duration>,
     debug: bool,
     local_time: bool,
     metrics: MetricsRegistry,
@@ -35,7 +34,6 @@ pub(crate) struct FileLogWriter {
 impl FileLogWriter {
     pub(crate) fn new(
         log_dir: PathBuf,
-        sync_interval: Option<Duration>,
         debug: bool,
         local_time: bool,
         metrics: MetricsRegistry,
@@ -46,7 +44,6 @@ impl FileLogWriter {
             disk_healthy: true,
             last_disk_check: std::time::Instant::now(),
             dirty_logs: HashSet::new(),
-            sync_interval,
             metrics,
             debug,
             local_time,
@@ -70,11 +67,8 @@ impl FileLogWriter {
     ) {
         use tokio::time::interval;
 
-        // Always-active flush timer: moves data from BufWriter to OS buffer.
-        // Without this, data stays in BufWriter until buffer full or daemon exit.
-        let mut flush_timer = interval(DEFAULT_FLUSH_INTERVAL);
-        // Optional sync timer: additionally does fdatasync for durability.
-        let mut sync_timer = self.sync_interval.map(|d| interval(d));
+        // Single timer: flush BufWriter → OS buffer + fdatasync → disk every second.
+        let mut flush_sync_timer = interval(FLUSH_SYNC_INTERVAL);
 
         loop {
             tokio::select! {
@@ -94,23 +88,14 @@ impl FileLogWriter {
                         }
                     }
                 }
-                // Flush BufWriter → OS buffer (always active)
-                _ = flush_timer.tick() => {
-                    self.flush_all();
-                }
-                // fdatasync OS buffer → disk (only when sync_interval configured)
-                _ = async {
-                    match sync_timer.as_mut() {
-                        Some(timer) => timer.tick().await,
-                        None => std::future::pending().await,
-                    }
-                } => {
-                    self.sync_dirty_logs();
+                // Flush + sync: BufWriter → OS buffer → disk
+                _ = flush_sync_timer.tick() => {
+                    self.flush_and_sync_dirty_logs();
                 }
             }
         }
 
-        self.sync_dirty_logs();
+        self.flush_and_sync_dirty_logs();
         self.flush_all();
     }
 
@@ -220,10 +205,10 @@ impl FileLogWriter {
         }
     }
 
-    /// Sync all dirty log files to disk via flush + fdatasync.
+    /// Flush + sync all dirty log files.
     /// Flush moves data from BufWriter (user-space) to OS buffer,
     /// then fdatasync persists OS buffer to disk.
-    fn sync_dirty_logs(&mut self) {
+    fn flush_and_sync_dirty_logs(&mut self) {
         if self.dirty_logs.is_empty() {
             return;
         }

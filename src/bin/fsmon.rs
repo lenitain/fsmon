@@ -75,13 +75,6 @@ pub enum Commands {
         #[arg(long, value_name = "THRESHOLD")]
         disk_min_free: Option<String>,
 
-        /// Log file sync interval in seconds (default: disabled).
-        /// When set to N > 0, calls fdatasync on all dirty log files every N seconds.
-        /// Prevents event loss on crash (kill -9, power loss) at the cost of
-        /// ~10-50ms disk I/O per interval. Recommended: 5.
-        #[arg(long, value_name = "SECS")]
-        sync_interval: Option<u64>,
-
         /// Use local time instead of UTC in event timestamps.
         /// When set, timestamps show local timezone offset (e.g. +08:00)
         /// instead of Z suffix.

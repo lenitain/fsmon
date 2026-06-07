@@ -4,30 +4,6 @@
 use super::*;
 use clap::Parser;
 
-// ---- DaemonArgs CLI parsing ----
-
-#[test]
-fn test_daemon_sync_interval() {
-    let cli = Cli::try_parse_from(["fsmon", "daemon", "--sync-interval", "5"]).unwrap();
-    match cli.command {
-        Commands::Daemon { sync_interval, .. } => {
-            assert_eq!(sync_interval, Some(5));
-        }
-        _ => panic!("expected Daemon"),
-    }
-}
-
-#[test]
-fn test_daemon_sync_interval_default() {
-    let cli = Cli::try_parse_from(["fsmon", "daemon"]).unwrap();
-    match cli.command {
-        Commands::Daemon { sync_interval, .. } => {
-            assert_eq!(sync_interval, None);
-        }
-        _ => panic!("expected Daemon"),
-    }
-}
-
 // ---- Remove command (positional paths) ----
 
 #[test]
