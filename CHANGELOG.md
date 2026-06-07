@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.11] - 2026-06-07
+
+### Changed
+
+- **Socket path hardcoded to XDG_RUNTIME_DIR**: Removed `[socket]` config section and `SocketConfig` struct. Socket paths are now:
+  - Command socket: `/run/user/<UID>/fsmon.sock` (was `/tmp/fsmon-<UID>.sock`)
+  - Singleton lock: `/run/user/<UID>/fsmon.lock.sock` (was `/tmp/fsmon-<UID>.lock.sock`)
+  - Follows XDG Base Directory Specification (`$XDG_RUNTIME_DIR`)
+  - More secure: runtime dir is 0700 per-user, no world-writable `/tmp/`
+  - No cleanup risk from `tmpwatch` or `systemd-tmpfiles`
+  - Hardcoded (not configurable, no CLI flag) — consistent with other Linux user daemons (systemd, D-Bus, PipeWire)
+- **Daemon startup output**: Now prints both singleton lock and command socket paths
+
 ## [0.4.10] - 2026-06-07
 
 ### Added

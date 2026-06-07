@@ -154,10 +154,11 @@ journalctl -u fsmon -f          # Logs
 | Infrastructure config | `~/.config/fsmon/fsmon.toml` | TOML (created by `fsmon init`, all-commented — defaults apply) |
 | Monitored paths database | `~/.local/share/fsmon/monitored.jsonl` | JSONL (grouped by cmd, paths as map keys) |
 | Event logs | `~/.local/state/fsmon/*_log.jsonl` | JSONL (one event per line) |
-| Unix socket | `/tmp/fsmon-<UID>.sock` | JSON over stream |
+| Unix socket | `/run/user/<UID>/fsmon.sock` | JSON over stream |
 
-Both the store path and log directory are configurable in `~/.config/fsmon/fsmon.toml`
+The store path and log directory are configurable in `~/.config/fsmon/fsmon.toml`
 (see `[monitored].path` and `[logging].path`).
+Socket path is hardcoded (not configurable).
 
 The daemon runs as root (via sudo) but resolves your original user's home directory
 via `SUDO_UID` + `getpwuid_r`, so it writes to `/home/<you>/...` not `/root/...`.
@@ -391,8 +392,7 @@ size = ">=1GB"
 disk_min_free = "10%"           # Warn when free space drops below threshold
 local_time = false              # Use local timezone in timestamps
 
-[socket]
-path = "/tmp/fsmon-<UID>.sock"
+# Socket path is hardcoded to /run/user/<UID>/fsmon.sock (not configurable).
 
 [cache]
 dir_capacity = 100000
@@ -511,8 +511,8 @@ filebeat.inputs:
 Connect to `cmd = "subscribe"` socket — receives the same JSONL events in real time:
 
 ```bash
-nc -U /tmp/fsmon-$(id -u).sock | jq 'select(.cmd == "nginx")'
-nc -U /tmp/fsmon-$(id -u).sock | kafkacat -b broker:9092 -t fsmon-events
+nc -U /run/user/$(id -u)/fsmon.sock | jq 'select(.cmd == "nginx")'
+nc -U /run/user/$(id -u)/fsmon.sock | kafkacat -b broker:9092 -t fsmon-events
 ```
 
 ## License
