@@ -88,6 +88,17 @@ Or use the helper script for quick single-run profiling:
 bash perf_fsmon.sh
 ```
 
+### Profile stress test
+
+To collect perf data during the stress test:
+
+```bash
+bash perf_stress.sh [stress_count]   # default: 5000
+
+# View report
+sudo perf report -i /tmp/perf_stress.data
+```
+
 ## Test Details
 
 ### Event Tests (`tests/events/`)
