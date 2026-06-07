@@ -28,9 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
     Process: nginx
       /var/www/myapp (recursive, types: MODIFY, CREATE)
-
-    Process: _global (all processes)
-      /tmp/data (recursive, types: ACCESS, MODIFY, CLOSE_WRITE, CLOSE_NOWRITE, OPEN, OPEN_EXEC, ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF, FS_ERROR)
     ```
 - **Project structure reorganized**: Moved all implementation code from `src/` root to `src/common/` module.
   - Created minimal `src/lib.rs` (3 lines) that only re-exports `pub mod common`.
