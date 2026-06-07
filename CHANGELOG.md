@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Socket path hardcoded to XDG_RUNTIME_DIR**: Removed `[socket]` config section and `SocketConfig` struct. Socket paths are now:
-  - Command socket: `/run/user/<UID>/fsmon.sock` (was `/tmp/fsmon-<UID>.sock`)
-  - Singleton lock: `/run/user/<UID>/fsmon.lock.sock` (was `/tmp/fsmon-<UID>.lock.sock`)
+  - Command socket: `/run/user/<UID>/fsmon/daemon.sock` (was `/run/user/<UID>/fsmon.sock`)
+  - Singleton lock: `/run/user/<UID>/fsmon/lock.sock` (was `/run/user/<UID>/fsmon.lock.sock`)
   - Follows XDG Base Directory Specification (`$XDG_RUNTIME_DIR`)
   - More secure: runtime dir is 0700 per-user, no world-writable `/tmp/`
   - No cleanup risk from `tmpwatch` or `systemd-tmpfiles`

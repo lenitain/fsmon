@@ -153,7 +153,7 @@ journalctl -u fsmon -f          # 日志
 | 基础设施配置 | `~/.config/fsmon/fsmon.toml` | TOML（由 `fsmon init` 创建，全部注释 — 不修改则使用默认值） |
 | 监控路径数据库 | `~/.local/share/fsmon/monitored.jsonl` | JSONL（按 cmd 分组，路径为 map 键） |
 | 事件日志 | `~/.local/state/fsmon/*_log.jsonl` | JSONL（每行一个事件） |
-| Unix 套接字 | `/run/user/<UID>/fsmon.sock` | JSON over stream |
+| Unix 套接字 | `/run/user/<UID>/fsmon/daemon.sock` | JSON over stream |
 
 存储路径和日志目录均可通过 `~/.config/fsmon/fsmon.toml` 配置（参见 `[monitored].path` 和 `[logging].path`）。
 Socket 路径硬编码，不可配置。
@@ -385,7 +385,7 @@ size = ">=1GB"
 disk_min_free = "10%"           # 磁盘空闲低于阈值时告警
 local_time = false              # 时间戳使用本地时区
 
-# Socket 路径硬编码为 /run/user/<UID>/fsmon.sock（不可配置）。
+# Socket 路径硬编码为 /run/user/<UID>/fsmon/daemon.sock（不可配置）。
 
 [cache]
 dir_capacity = 100000
@@ -504,8 +504,8 @@ filebeat.inputs:
 连接 daemon socket 即可接收同样的 JSONL 事件：
 
 ```bash
-nc -U /run/user/$(id -u)/fsmon.sock | jq 'select(.cmd == "nginx")'
-nc -U /run/user/$(id -u)/fsmon.sock | kafkacat -b broker:9092 -t fsmon-events
+nc -U /run/user/$(id -u)/fsmon/daemon.sock | jq 'select(.cmd == "nginx")'
+nc -U /run/user/$(id -u)/fsmon/daemon.sock | kafkacat -b broker:9092 -t fsmon-events
 ```
 
 ## 许可证

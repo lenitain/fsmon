@@ -11,7 +11,7 @@ use serde_json;
 
 use crate::common::monitored::PathEntry;
 
-/// Hardcoded socket path: `/run/user/<UID>/fsmon.sock`.
+/// Hardcoded socket path: `/run/user/<UID>/fsmon/daemon.sock`.
 /// Uses `$XDG_RUNTIME_DIR` if set, falls back to `/run/user/<UID>`.
 /// Panics if the runtime directory does not exist.
 pub fn socket_path() -> PathBuf {
@@ -19,16 +19,16 @@ pub fn socket_path() -> PathBuf {
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(format!("/run/user/{}", uid)));
-    runtime_dir.join("fsmon.sock")
+    runtime_dir.join("fsmon/daemon.sock")
 }
 
-/// Hardcoded lock socket path: `/run/user/<UID>/fsmon.lock.sock`.
+/// Hardcoded lock socket path: `/run/user/<UID>/fsmon/lock.sock`.
 pub fn lock_socket_path() -> PathBuf {
     let uid = crate::common::config::resolve_uid();
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(format!("/run/user/{}", uid)));
-    runtime_dir.join("fsmon.lock.sock")
+    runtime_dir.join("fsmon/lock.sock")
 }
 
 /// Type-safe socket commands.

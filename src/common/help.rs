@@ -62,7 +62,7 @@ For systemd integration:
 Config:           ~/.config/fsmon/fsmon.toml
 Monitored:        ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
 Log dir:          ~/.local/state/fsmon/ (configurable via [logging].path)
-Socket:           /run/user/<UID>/fsmon.sock (hardcoded, not configurable)"
+Socket:           /run/user/<UID>/fsmon/daemon.sock (hardcoded, not configurable)"
         }
         HelpTopic::Init => {
             r"Create the config file only (chezmoi-style).
@@ -280,7 +280,7 @@ Clean (config defaults: keep_days=30, size=>=1GB):
 Config:  ~/.config/fsmon/fsmon.toml (created by fsmon init, defaults apply without modification)
 Monitor: ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
 Logs:    ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].path)
-Socket:  /run/user/<UID>/fsmon.sock (hardcoded)
+Socket:  /run/user/<UID>/fsmon/daemon.sock (hardcoded)
 
 3 data exit points:
   ① JSONL log files (on by default, configurable via [logging].path)
