@@ -424,8 +424,6 @@ path = "~/.local/state/fsmon"
 # Default: false (UTC). CLI: --local-time
 # local_time = false
 
-# Socket path is hardcoded to /run/user/<UID>/fsmon.sock (not configurable).
-
 # ----------------------------------------------------------------
 # Cache settings. Uncomment to override defaults.
 # ----------------------------------------------------------------
