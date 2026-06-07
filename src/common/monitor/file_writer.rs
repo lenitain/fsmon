@@ -99,6 +99,7 @@ impl FileLogWriter {
         }
 
         self.sync_dirty_logs();
+        self.flush_all();
     }
 
     /// Get or open a BufWriter for the given log path.
@@ -199,7 +200,19 @@ impl FileLogWriter {
             .set_disk_buffer_events(self.disk_buf.len() as i64);
     }
 
-    /// Sync all dirty log files to disk via fdatasync.
+    /// Flush all open BufWriters to OS buffers.
+    /// Called on shutdown to ensure no data is lost in user-space buffers.
+    fn flush_all(&mut self) {
+        for (path, writer) in &mut self.handles {
+            if let Err(e) = writer.flush() {
+                eprintln!("[WARNING] flush failed for '{}': {}", path.display(), e);
+            }
+        }
+    }
+
+    /// Sync all dirty log files to disk via flush + fdatasync.
+    /// Flush moves data from BufWriter (user-space) to OS buffer,
+    /// then fdatasync persists OS buffer to disk.
     fn sync_dirty_logs(&mut self) {
         if self.dirty_logs.is_empty() {
             return;
@@ -207,7 +220,13 @@ impl FileLogWriter {
         let paths: Vec<PathBuf> = self.dirty_logs.drain().collect();
         for path in &paths {
             // Try cached handle first
-            if let Some(writer) = self.handles.get(path) {
+            if let Some(writer) = self.handles.get_mut(path) {
+                // Flush BufWriter's user-space buffer to OS
+                if let Err(e) = writer.flush() {
+                    eprintln!("[WARNING] flush failed for '{}': {}", path.display(), e);
+                    continue;
+                }
+                // Then sync OS buffer to disk
                 if let Err(e) = writer.get_ref().sync_data() {
                     eprintln!("[WARNING] fdatasync failed for '{}': {}", path.display(), e);
                 }
