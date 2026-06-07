@@ -1,6 +1,6 @@
 use anyhow::Result;
 use fsmon::common::config::Config;
-use fsmon::common::monitored::{Monitored, CMD_GLOBAL};
+use fsmon::common::monitored::{CMD_GLOBAL, Monitored};
 
 /// List all monitored paths with their configuration.
 pub fn cmd_monitored() -> Result<()> {
@@ -30,7 +30,14 @@ pub fn cmd_monitored() -> Result<()> {
 
             let mut details = Vec::new();
             if let Some(recursive) = params.recursive {
-                details.push(if recursive { "recursive" } else { "non-recursive" }.to_string());
+                details.push(
+                    if recursive {
+                        "recursive"
+                    } else {
+                        "non-recursive"
+                    }
+                    .to_string(),
+                );
             }
             if let Some(ref types) = params.types {
                 if types.is_empty() {
@@ -38,7 +45,11 @@ pub fn cmd_monitored() -> Result<()> {
                 } else if types.len() <= 3 {
                     details.push(format!("types: {}", types.join(", ")));
                 } else {
-                    details.push(format!("types: {}... ({} total)", types[..3].join(", "), types.len()));
+                    details.push(format!(
+                        "types: {}... ({} total)",
+                        types[..5].join(", "),
+                        types.len()
+                    ));
                 }
             }
             if let Some(ref size) = params.size {
