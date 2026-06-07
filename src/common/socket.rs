@@ -120,8 +120,7 @@ pub enum ErrorKind {
 pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResponse, SocketError> {
     let stream = UnixStream::connect(socket_path).map_err(|e| {
         SocketError::Transient(format!(
-            "Failed to connect to fsmon daemon at {}. Is the daemon running? \
-             Start it with: sudo fsmon daemon: {}",
+            "Failed to connect to daemon at {}. Daemon not running: {}",
             socket_path.display(),
             e
         ))

@@ -164,9 +164,8 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             store.save(&cfg.monitored.path)?;
             eprintln!("Error: {}", msg);
         }
-        Err(SocketError::Transient(msg)) => {
+        Err(SocketError::Transient(_)) => {
             println!("Entry added: {}", entry.path.display());
-            eprintln!("Daemon error: {}", msg);
         }
     }
     Ok(())
