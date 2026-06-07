@@ -48,11 +48,11 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
     } else {
         eprintln!("  Event logs:     disabled (path not configured)");
     }
-    eprintln!("  Command socket: {}", cfg.socket.path.display());
+    eprintln!("  Command socket: {}", fsmon::common::socket::socket_path().display());
 
     let store = Monitored::load(&cfg.monitored.path)?;
 
-    let socket_path = cfg.socket.path.clone();
+    let socket_path = fsmon::common::socket::socket_path();
 
     // Create parent directories for socket
     if socket_path.exists() {

@@ -17,7 +17,6 @@ use users::os::unix::UserExt;
 pub struct Config {
     pub monitored: MonitoredConfig,
     pub logging: LoggingConfig,
-    pub socket: SocketConfig,
     pub cache: Option<CacheConfig>,
     pub watchdog: Option<WatchdogConfig>,
 }
@@ -46,11 +45,6 @@ pub struct LoggingConfig {
     /// When true, timestamps in JSONL output are converted to local timezone
     /// (e.g. "2026-05-27T07:12:50+08:00" instead of "2026-05-26T23:12:50Z").
     pub local_time: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SocketConfig {
-    pub path: PathBuf,
 }
 
 /// Cache configuration (optional — missing fields use code defaults).
@@ -312,9 +306,6 @@ impl Default for Config {
                 disk_min_free: None,
                 local_time: None,
             },
-            socket: SocketConfig {
-                path: PathBuf::from("/tmp/fsmon-<UID>.sock"),
-            },
             cache: None,
             watchdog: None,
         }
@@ -351,20 +342,13 @@ impl Config {
     }
 
     /// Expand `~` in all paths using the original user's home directory.
-    /// Replace `<UID>` in socket path with the actual numeric UID.
     pub fn resolve_paths(&mut self) -> Result<()> {
         let home = guess_home();
-        let uid = resolve_uid();
 
         self.monitored.path = expand_tilde(&self.monitored.path, &home);
         if let Some(ref mut p) = self.logging.path {
             *p = expand_tilde(p, &home);
         }
-
-        let socket_str = self.socket.path.to_string_lossy().to_string();
-        self.socket.path = PathBuf::from(socket_str.replace("<UID>", &uid.to_string()));
-        // Also expand tilde in socket path if present
-        self.socket.path = expand_tilde(&self.socket.path, &home);
 
         Ok(())
     }
@@ -440,11 +424,7 @@ path = "~/.local/state/fsmon"
 # Default: false (UTC). CLI: --local-time
 # local_time = false
 
-[socket]
-# Unix socket for CLI-to-daemon communication.
-# <UID> is replaced with the actual user ID at runtime.
-# Config-only (no CLI flag).
-path = "/tmp/fsmon-<UID>.sock"
+# Socket path is hardcoded to /run/user/<UID>/fsmon.sock (not configurable).
 
 # ----------------------------------------------------------------
 # Cache settings. Uncomment to override defaults.

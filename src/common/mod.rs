@@ -28,7 +28,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Enforces single daemon instance via Unix socket binding.
-/// Socket at `/tmp/fsmon-<UID>.lock.sock`.
+/// Lock socket at `/run/user/<UID>/fsmon.lock.sock`.
 /// Released automatically when process exits or crashes.
 pub struct DaemonLock {
     #[allow(dead_code)]
@@ -38,8 +38,13 @@ pub struct DaemonLock {
 
 impl DaemonLock {
     /// Acquire exclusive lock. Fails if another daemon is already running.
-    pub fn acquire(uid: u32) -> Result<Self> {
-        let path = PathBuf::from(format!("/tmp/fsmon-{}.lock.sock", uid));
+    pub fn acquire(_uid: u32) -> Result<Self> {
+        let path = crate::common::socket::lock_socket_path();
+
+        // Ensure parent directory exists (e.g. /run/user/1000)
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
 
         // Try to bind — success means no other instance
         // If EADDRINUSE, another daemon is running

@@ -137,7 +137,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     store.save(&cfg.monitored.path)?;
 
     // Try live update via socket (non-fatal if fails)
-    let socket_path = cfg.socket.path.clone();
+    let socket_path = socket::socket_path();
     let result = socket::send_cmd(
         &socket_path,
         &SocketCmd::Add {

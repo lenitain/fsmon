@@ -1,13 +1,9 @@
 use anyhow::Result;
-use fsmon::common::config::Config;
 use fsmon::common::socket::{self, SocketCmd};
 
 /// Query daemon health status.
 pub fn cmd_health() -> Result<()> {
-    let mut cfg = Config::load()?;
-    cfg.resolve_paths()?;
-
-    let socket_path = cfg.socket.path.clone();
+    let socket_path = socket::socket_path();
     let cmd = SocketCmd::Health;
 
     match socket::send_cmd(&socket_path, &cmd) {

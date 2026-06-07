@@ -52,7 +52,6 @@ fn test_load_returns_default_when_no_file() {
             cfg.logging.path,
             Some(PathBuf::from("~/.local/state/fsmon"))
         );
-        assert_eq!(cfg.socket.path.to_string_lossy(), "/tmp/fsmon-<UID>.sock");
     });
 }
 
@@ -67,16 +66,12 @@ path = "/custom/monitored.jsonl"
 
 [logging]
 path = "/custom/logs"
-
-[socket]
-path = "/tmp/custom.sock"
 "#;
         fs::write(&config_path, content).unwrap();
 
         let cfg = Config::load().unwrap();
         assert_eq!(cfg.monitored.path, PathBuf::from("/custom/monitored.jsonl"));
         assert_eq!(cfg.logging.path, Some(PathBuf::from("/custom/logs")));
-        assert_eq!(cfg.socket.path, PathBuf::from("/tmp/custom.sock"));
     });
 }
 
@@ -113,10 +108,9 @@ fn test_load_empty_file_returns_defaults() {
 }
 
 #[test]
-fn test_resolve_paths_expands_tilde_and_uid() {
+fn test_resolve_paths_expands_tilde() {
     with_isolated_home(|home| {
         let mut cfg = Config::default();
-        // Set log path explicitly for test (default is None now)
         cfg.logging.path = Some(PathBuf::from("~/.local/state/fsmon"));
         cfg.resolve_paths().unwrap();
 
@@ -135,14 +129,6 @@ fn test_resolve_paths_expands_tilde_and_uid() {
                 .to_string_lossy()
                 .starts_with(&*home_str),
             "logging.path should start with home dir"
-        );
-        assert!(
-            cfg.socket.path.to_string_lossy().contains("/tmp/fsmon-"),
-            "socket should contain /tmp/fsmon-"
-        );
-        assert!(
-            !cfg.socket.path.to_string_lossy().contains("<UID>"),
-            "socket should not contain <UID> placeholder"
         );
     });
 }
@@ -217,9 +203,6 @@ path = "~/.local/share/fsmon/monitored.jsonl"
 
 [logging]
 path = "~/.local/state/fsmon"
-
-[socket]
-path = "/tmp/fsmon-<UID>.sock"
 "#,
         )
         .unwrap();
@@ -253,9 +236,6 @@ path = "{}/my_data/paths.jsonl"
 
 [logging]
 path = "{}/my_logs"
-
-[socket]
-path = "/tmp/test.sock"
 "#,
             home.to_string_lossy(),
             home.to_string_lossy(),
@@ -413,9 +393,6 @@ path = "/tmp/test.jsonl"
 
 [logging]
 path = "/tmp/logs"
-
-[socket]
-path = "/tmp/sock"
 
 [cache]
 dir_capacity = 123456

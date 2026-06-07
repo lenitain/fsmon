@@ -57,7 +57,7 @@ pub fn cmd_remove(cmd: Option<String>, paths: Vec<PathBuf>) -> Result<()> {
     store.save(&cfg.monitored.path)?;
 
     // Try live update via socket (non-fatal if fails)
-    let socket_path = cfg.socket.path.clone();
+    let socket_path = socket::socket_path();
     for p in &paths {
         if socket::send_cmd(
             &socket_path,
