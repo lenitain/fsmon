@@ -49,6 +49,10 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
         eprintln!("  Event logs:     disabled (path not configured)");
     }
     eprintln!(
+        "  Singleton lock: {}",
+        fsmon::common::socket::lock_socket_path().display()
+    );
+    eprintln!(
         "  Command socket: {}",
         fsmon::common::socket::socket_path().display()
     );
