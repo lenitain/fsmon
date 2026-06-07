@@ -50,6 +50,11 @@ impl Monitor {
             let event_pid = raw.pid.unsigned_abs();
 
             // Exclude fsmon daemon's own events to prevent self-triggering.
+            // This is the safety net that also covers socket files (lock.sock,
+            // daemon.sock): their bind/unlink produce FAN_CREATE/FAN_DELETE,
+            // but those events carry daemon_pid and are skipped here.  See
+            // also the comment in add.rs explaining why sockets don't need
+            // a dedicated path guard.
             if event_pid == self.daemon_pid {
                 debug_log!(self.debug, "skip daemon self-event (pid={})", event_pid);
                 continue;
