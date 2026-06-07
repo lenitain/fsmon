@@ -18,6 +18,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`fsmon monitored` human-readable output**: Replaced JSONL output with a structured, human-readable format.
+  - Shows process groups with clear headers (`Process: <cmd>`).
+  - Lists paths with details (recursive/non-recursive, event types, size filters).
+  - Displays all event types when fewer than 14 are selected; shows all 14 when all are selected.
+  - Example output:
+    ```
+    === Monitored Paths ===
+
+    Process: nginx
+      /var/www/myapp (recursive, types: MODIFY, CREATE)
+
+    Process: _global (all processes)
+      /tmp/data (recursive, types: ACCESS, MODIFY, CLOSE_WRITE, CLOSE_NOWRITE, OPEN, OPEN_EXEC, ATTRIB, CREATE, DELETE, DELETE_SELF, MOVED_FROM, MOVED_TO, MOVE_SELF, FS_ERROR)
+    ```
 - **Project structure reorganized**: Moved all implementation code from `src/` root to `src/common/` module.
   - Created minimal `src/lib.rs` (3 lines) that only re-exports `pub mod common`.
   - All `use fsmon::xxx` imports changed to `use fsmon::common::xxx`.
