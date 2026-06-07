@@ -63,15 +63,15 @@ pub fn parse_monitored_output(stdout: &str) -> Vec<(String, String)> {
             continue;
         }
 
-        if trimmed.starts_with("Process: ") {
-            current_process = Some(trimmed[9..].to_string());
-        } else if trimmed.starts_with("/") {
-            if let Some(ref process) = current_process {
-                // Extract path (remove optional details in parentheses)
-                let path_end = trimmed.find(" (").unwrap_or(trimmed.len());
-                let path = trimmed[..path_end].to_string();
-                result.push((process.clone(), path));
-            }
+        if let Some(stripped) = trimmed.strip_prefix("Process: ") {
+            current_process = Some(stripped.to_string());
+        } else if trimmed.starts_with('/')
+            && let Some(ref process) = current_process
+        {
+            // Extract path (remove optional details in parentheses)
+            let path_end = trimmed.find(" (").unwrap_or(trimmed.len());
+            let path = trimmed[..path_end].to_string();
+            result.push((process.clone(), path));
         }
     }
 
