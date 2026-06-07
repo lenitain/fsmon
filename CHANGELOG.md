@@ -7,13 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-### Changed
-
-- **Removed `--sync-interval` / `sync_interval_secs` config**: Log files are now flushed and synced to disk every 1 second automatically.
-  - Previously, data stayed in BufWriter until buffer full or daemon exit, causing empty log files during runtime.
-  - Now: `BufWriter → flush() → OS buffer → fdatasync() → Disk` every second.
-  - Simpler configuration: one less knob to tune.
-
 ### Added
 
 - **Benchmark suite** (`benchmark/`): complete performance and correctness test framework
@@ -25,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Removed `--sync-interval` / `sync_interval_secs` config**: Log files are now flushed and synced to disk every 1 second automatically.
+  - Previously, data stayed in BufWriter until buffer full or daemon exit, causing empty log files during runtime.
+  - Now: `BufWriter → flush() → OS buffer → fdatasync() → Disk` every second.
+  - Simpler configuration: one less knob to tune.
 - **`fsmon monitored` human-readable output**: Replaced JSONL output with a structured, human-readable format.
   - Shows process groups with clear headers (`Process: <cmd>`).
   - Lists paths with details (recursive/non-recursive, event types, size filters).
