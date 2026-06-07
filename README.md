@@ -199,7 +199,6 @@ sudo fsmon daemon                             # Start daemon in foreground
 sudo fsmon daemon &                           # Start daemon in background
 sudo fsmon daemon --debug                     # Enable debug output (event matching + cache stats)
 sudo fsmon daemon --disk-min-free 10%         # Warn when disk space drops below threshold
-sudo fsmon daemon --sync-interval 5           # fdatasync log files every 5s
 sudo fsmon daemon --local-time                # Use local timezone in timestamps
 sudo fsmon daemon --buffer-size 65536         # Fanotify read buffer (default: 32768)
 sudo fsmon daemon --channel-capacity 1024     # Event channel bound (default: unbounded)
@@ -390,7 +389,6 @@ path = "~/.local/state/fsmon"
 keep_days = 30
 size = ">=1GB"
 disk_min_free = "10%"           # Warn when free space drops below threshold
-sync_interval_secs = 5          # fdatasync every N secs (0 or omit = disabled)
 local_time = false              # Use local timezone in timestamps
 
 [socket]

@@ -43,7 +43,6 @@ Usage:
   sudo fsmon daemon &                     Start daemon in background
   sudo fsmon daemon --debug               Enable debug output
   sudo fsmon daemon --disk-min-free 10%       Warn when disk < 10% free
-  sudo fsmon daemon --sync-interval 5         fdatasync log files every 5s
   sudo fsmon daemon --local-time              Use local timezone in timestamps
   sudo fsmon daemon --buffer-size 65536       Fanotify read buffer
   sudo fsmon daemon --channel-capacity 1024   Event channel cap (default: unbounded)

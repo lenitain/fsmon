@@ -194,7 +194,6 @@ sudo fsmon daemon                             # 前台启动守护进程
 sudo fsmon daemon &                           # 后台启动守护进程
 sudo fsmon daemon --debug                     # 启用调试输出（事件匹配 + 缓存指标）
 sudo fsmon daemon --disk-min-free 10%         # 磁盘空间不足时告警
-sudo fsmon daemon --sync-interval 5           # 每 5s fdatasync 日志文件
 sudo fsmon daemon --local-time                # 时间戳使用本地时区
 sudo fsmon daemon --buffer-size 65536         # Fanotify 读取缓冲区（默认 32768）
 sudo fsmon daemon --channel-capacity 1024     # 事件通道上限（默认无界）
@@ -383,7 +382,6 @@ path = "~/.local/state/fsmon"
 keep_days = 30
 size = ">=1GB"
 disk_min_free = "10%"           # 磁盘空闲低于阈值时告警
-sync_interval_secs = 5          # 每 N 秒 fdatasync（0 或不设置 = 禁用）
 local_time = false              # 时间戳使用本地时区
 
 [socket]
