@@ -1,128 +1,101 @@
 # fsmon Benchmark
 
-Performance and correctness test suite for fsmon.
+性能与正确性测试套件。
 
-## Structure
+## 目录结构
 
 ```
 benchmark/
-├── events_run.sh           # Event capture tests entry
-├── post_run.sh             # Post-processing tests entry (query / clean)
-├── perf_fsmon.sh           # perf sampling helper
+├── common.sh               # 共享配置与工具函数（从 fsmon.toml 读取路径）
+├── events_run.sh           # 事件正确性测试入口
+├── post_run.sh             # 后期处理性能测试入口
+├── perf/
+│   ├── stress.sh           # 事件压力 perf 采集（默认 5000）
+│   ├── query.sh            # 查询性能 perf 采集（默认 5000）
+│   ├── clean.sh            # 清理性能 perf 采集（默认 5000）
+│   └── manual.sh           # 快速 perf 采集（手动用）
 └── tests/
-    ├── events/             # Event reception tests
-    │   ├── create.sh       # CREATE events (100 files)
-    │   ├── modify.sh       # MODIFY events (50 files)
-    │   ├── delete.sh       # DELETE events (50 files)
-    │   ├── move.sh         # MOVE events (30 files)
-    │   ├── recursive.sh    # Recursive monitoring (2-level subdirs)
-    │   └── stress.sh       # Stress test (1000 files + 10 parallel modifiers)
-    └── post/               # Post-processing tests
-        ├── query.sh        # Query performance (100/1000/5000 events + jq pipeline)
-        └── clean.sh        # Clean performance (by count/time/dry-run)
+    ├── events/             # 事件捕获正确性测试
+    │   ├── create.sh       # CREATE 事件 (100 文件)
+    │   ├── modify.sh       # MODIFY 事件 (50 文件)
+    │   ├── delete.sh       # DELETE 事件 (50 文件)
+    │   ├── move.sh         # MOVE 事件 (30 文件)
+    │   ├── recursive.sh    # 递归监控 (2 层子目录)
+    │   └── stress.sh       # 压力测试 (5000 文件顺序修改)
+    └── post/               # 后期处理性能测试
+        ├── query.sh        # 查询性能 (100/1000/5000 事件 + jq 管道)
+        └── clean.sh        # 清理性能 (按数量/时间/dry-run)
 ```
 
-Each test script is self-contained with its own setup, assertions, and cleanup.
+所有脚本通过 `source common.sh` 共享配置，路径从 `~/.config/fsmon/fsmon.toml` 读取，无硬编码。
 
-## Prerequisites
+## 前置条件
 
 ```bash
-# Build fsmon
 cargo build --release
-
-# Initialize config
 fsmon init
-
-# Install systemd service (optional)
-sudo fsmon init --service
 ```
 
-## Running Tests
+## 测试流程
 
-### Prerequisites
+### 1. 功能验证
 
 ```bash
-# Start daemon (requires sudo for fanotify)
-sudo fsmon daemon &
+bash events_run.sh      # 6 个事件测试套件
+bash post_run.sh        # 2 个后期处理套件
 ```
 
-### Run all event tests
+### 2. 性能采集
 
 ```bash
-bash events_run.sh
+bash perf/stress.sh [count]     # 事件压力（默认 5000）
+bash perf/query.sh [count]      # 查询性能（默认 5000）
+bash perf/clean.sh [count]      # 清理性能（默认 5000）
 ```
 
-### Run all post-processing tests
+查看报告：
 
 ```bash
-bash post_run.sh
-```
-
-### Step 2: Profile performance
-
-Use perf to analyze where fsmon spends CPU time during event capture:
-
-```bash
-# Terminal 1: start perf recording on fsmon daemon
-sudo perf record -g -a -p $(pgrep -x fsmon) -o /tmp/perf_events.data &
-
-# Terminal 2: run event tests
-bash events_run.sh
-
-# Terminal 1: stop perf (Ctrl+C), then analyze
-sudo perf report -i /tmp/perf_events.data
-```
-
-Profile post-processing separately:
-
-```bash
-sudo perf record -g -a -p $(pgrep -x fsmon) -o /tmp/perf_post.data &
-bash post_run.sh
-# Ctrl+C, then:
-sudo perf report -i /tmp/perf_post.data
-```
-
-Or use the helper script for quick single-run profiling:
-
-```bash
-bash perf_fsmon.sh
-```
-
-### Profile stress test
-
-To collect perf data during the stress test:
-
-```bash
-bash perf_stress.sh [stress_count]   # default: 5000
-
-# View report
 sudo perf report -i /tmp/perf_stress.data
+sudo perf report -i /tmp/perf_query.data
+sudo perf report -i /tmp/perf_clean.data
 ```
 
-## Test Details
+快速手动采集（需 fsmon 已运行）：
 
-### Event Tests (`tests/events/`)
+```bash
+bash perf/manual.sh
+```
 
-| Test | What it does | Pass criteria |
-|------|-------------|---------------|
-| create.sh | Creates 100 files, queries CREATE events | Exactly 100 events |
-| modify.sh | Creates 50 files then appends to each | Exactly 50 MODIFY events |
-| delete.sh | Creates 50 files then deletes them | Exactly 50 DELETE events |
-| move.sh | Moves 30 files to a subdirectory | Exactly 30 MovedTo events (or warn if inotify limitation) |
-| recursive.sh | Creates files in 2-level nested dirs | All 3 files captured |
-| stress.sh | Creates 1000 files in 21ms, then 10 parallel processes modify 100 files each | Exactly 1000 CREATE + 1000 MODIFY |
+### 推荐顺序
 
-### Post-Processing Tests (`tests/post/`)
+```bash
+bash events_run.sh && bash perf/stress.sh && bash perf/query.sh && bash perf/clean.sh
+```
 
-| Test | What it does | Pass criteria |
-|------|-------------|---------------|
-| query.sh | Queries 100/1000/5000 events, measures jq pipeline | All queries < threshold |
-| clean.sh | Cleans by count, time filter, and dry-run | All cleans < threshold |
+## 测试详情
 
-## Design Notes
+### 事件测试 (`tests/events/`)
 
-- **Test isolation**: Each event test uses a unique directory (`/tmp/fsmon_create`, `/tmp/fsmon_modify`, etc.) to avoid event cross-contamination between tests.
-- **Move events**: `MovedTo` is captured when the destination directory is being monitored. This is expected inotify behavior — events are only reported for watched directories.
-- **Recursive monitoring**: Covers directories that exist when `fsmon add` is called. New subdirectories created after monitoring starts require re-registration.
-- **Event counts**: Tests verify exact counts (`==`). If concurrent operations lose events, that's a bug the test should catch.
-- **No sudo in tests**: Test scripts do not use sudo. The daemon must be started manually before running tests.
+| 测试 | 内容 | 通过条件 |
+|------|------|----------|
+| create.sh | 创建 100 个文件 | 捕获 100 条 CREATE |
+| modify.sh | 修改 50 个文件 | 捕获 50 条 MODIFY |
+| delete.sh | 删除 50 个文件 | 捕获 50 条 DELETE |
+| move.sh | 移动 30 个文件 | 捕获 30 条 MovedFrom + MovedTo |
+| recursive.sh | 2 层子目录创建文件 | 3 个文件全部捕获 |
+| stress.sh | 顺序修改 5000 个文件 | 捕获 5000 条 MODIFY |
+
+### 后期处理测试 (`tests/post/`)
+
+| 测试 | 内容 | 通过条件 |
+|------|------|----------|
+| query.sh | 查询 100/1000/5000 事件 + jq 管道 | 各查询 < 阈值 |
+| clean.sh | 按数量/时间/dry-run 清理 | 各清理 < 阈值 |
+
+## 设计原则
+
+- **Daemon 生命周期**：每个脚本自行管理 fsmon 启停，不依赖外部状态
+- **Perf 绑定**：`perf/*` 脚本内联测试逻辑，perf 全程绑定 fsmon PID 不变
+- **路径配置**：`LOG_FILE` 从 `fsmon.toml` 的 `[logging].path` 读取，`BENCH_DIR` 统一为 `/tmp/fsmon_benchmark`
+- **事件计数**：验证精确数量（`==`），丢事件即为 bug

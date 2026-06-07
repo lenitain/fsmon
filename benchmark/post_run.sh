@@ -9,10 +9,6 @@ echo "========================================="
 echo "  fsmon post-process benchmark"
 echo "========================================="
 
-if ! pgrep -x fsmon > /dev/null; then
-    echo "[ERROR] fsmon daemon 未运行"; exit 1
-fi
-
 total_pass=0
 total_fail=0
 suites=("query" "clean")
@@ -31,4 +27,8 @@ echo ""
 echo "========================================="
 echo "  后期测试: $total_pass/${#suites[@]} 套件通过"
 echo "========================================="
+
+# 清理（与 events_run.sh 一致）
+sudo killall fsmon 2>/dev/null || true
+
 [ "$total_fail" -eq 0 ]

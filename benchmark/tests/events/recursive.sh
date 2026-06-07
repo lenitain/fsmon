@@ -3,30 +3,11 @@
 
 set -o pipefail
 
-BENCH_DIR="/tmp/fsmon_recursive"
-LOG_FILE="$HOME/.local/state/fsmon/_global_log.jsonl"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../../common.sh"
+
 passed=0
 failed=0
-
-RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
-info()  { echo -e "${CYAN}[INFO]${NC} $*"; }
-ok()    { echo -e "${GREEN}[PASS]${NC} $*"; passed=$((passed + 1)); }
-fail()  { echo -e "${RED}[FAIL]${NC} $*"; failed=$((failed + 1)); }
-
-restart_daemon() {
-    sudo killall fsmon 2>/dev/null || true
-    sleep 1
-    sudo rm -f "$LOG_FILE"
-    sudo fsmon daemon &>/dev/null &
-    sleep 3
-    if ! fsmon monitored &>/dev/null; then
-        echo "[ERROR] daemon 启动失败，请确保有 sudo 权限"
-        exit 1
-    fi
-}
-
-register() { fsmon add _global --path "$BENCH_DIR" -r -t all; sleep 2; }
-cleanup() { rm -rf "$BENCH_DIR"; }
 
 check_path() {
     local c

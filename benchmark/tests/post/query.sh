@@ -3,28 +3,20 @@
 
 set -euo pipefail
 
-BENCH_DIR="/tmp/fsmon_benchmark"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../../common.sh"
+
 passed=0
 failed=0
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-info()  { echo -e "${CYAN}[INFO]${NC} $*"; }
-ok()    { echo -e "${GREEN}[PASS]${NC} $*"; passed=$((passed + 1)); }
-fail()  { echo -e "${RED}[FAIL]${NC} $*"; failed=$((failed + 1)); }
 
 cleanup() {
     rm -rf "$BENCH_DIR"
     fsmon remove _global 2>/dev/null || true
-    : > ~/.local/state/fsmon/_global_log.jsonl 2>/dev/null
+    sudo rm -f "$LOG_FILE" 2>/dev/null || true
 }
 
 setup() {
-    cleanup
+    restart_daemon
     mkdir -p "$BENCH_DIR"
     fsmon add _global --path "$BENCH_DIR" -r -t all
     sleep 0.5
@@ -121,17 +113,15 @@ test_jq_pipeline() {
 # ─────────────────────────────────────────────
 # 主流程
 # ─────────────────────────────────────────────
-if ! pgrep -x fsmon > /dev/null; then
-    echo "[ERROR] fsmon daemon 未运行"
-    exit 1
-fi
-
 setup
 
 test_query_small
 test_query_medium
 test_query_large
 test_jq_pipeline
+
+echo ""
+cleanup
 
 echo ""
 echo "========================================="

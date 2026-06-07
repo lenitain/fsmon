@@ -3,28 +3,20 @@
 
 set -euo pipefail
 
-BENCH_DIR="/tmp/fsmon_benchmark"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../../common.sh"
+
 passed=0
 failed=0
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-info()  { echo -e "${CYAN}[INFO]${NC} $*"; }
-ok()    { echo -e "${GREEN}[PASS]${NC} $*"; passed=$((passed + 1)); }
-fail()  { echo -e "${RED}[FAIL]${NC} $*"; failed=$((failed + 1)); }
 
 cleanup() {
     rm -rf "$BENCH_DIR"
     fsmon remove _global 2>/dev/null || true
-    : > ~/.local/state/fsmon/_global_log.jsonl 2>/dev/null
+    sudo rm -f "$LOG_FILE" 2>/dev/null || true
 }
 
 setup() {
-    cleanup
+    restart_daemon
     mkdir -p "$BENCH_DIR"
     fsmon add _global --path "$BENCH_DIR" -r -t all
     sleep 0.5
@@ -54,9 +46,8 @@ bench_clean() {
 
 # 获取日志文件大小
 log_size() {
-    local log_dir="$HOME/.local/state/fsmon"
-    if [ -d "$log_dir" ]; then
-        du -sh "$log_dir" 2>/dev/null | cut -f1
+    if [ -d "$LOG_DIR" ]; then
+        du -sh "$LOG_DIR" 2>/dev/null | cut -f1
     else
         echo "0"
     fi
@@ -146,11 +137,6 @@ test_clean_dry_run() {
 # ─────────────────────────────────────────────
 # 主流程
 # ─────────────────────────────────────────────
-if ! pgrep -x fsmon > /dev/null; then
-    echo "[ERROR] fsmon daemon 未运行"
-    exit 1
-fi
-
 setup
 
 test_clean_small
@@ -158,6 +144,9 @@ test_clean_medium
 test_clean_large
 test_clean_by_time
 test_clean_dry_run
+
+echo ""
+cleanup
 
 echo ""
 echo "========================================="
