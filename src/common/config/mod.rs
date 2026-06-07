@@ -15,11 +15,23 @@ use users::os::unix::UserExt;
 /// Monitored path entries are stored in the separate store file (see `[monitored].path`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    pub daemon: Option<DaemonConfig>,
     pub monitored: MonitoredConfig,
     pub logging: LoggingConfig,
-    pub socket: SocketConfig,
     pub cache: Option<CacheConfig>,
     pub watchdog: Option<WatchdogConfig>,
+}
+
+/// Daemon runtime configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonConfig {
+    /// Enable debug output (event matching, routing decisions). Default: false.
+    /// CLI: --debug
+    pub debug: Option<bool>,
+    /// Metrics report interval in seconds. Default: disabled (0).
+    /// When set to N > 0, prints a one-line status report to stderr every N seconds.
+    /// CLI: --metrics-interval SECS
+    pub metrics_interval: Option<u64>,
 }
 
 /// Configuration for the monitored paths store.
@@ -48,11 +60,6 @@ pub struct LoggingConfig {
     pub local_time: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SocketConfig {
-    pub path: PathBuf,
-}
-
 /// Cache configuration (optional — missing fields use code defaults).
 ///
 /// Priority: CLI args > fsmon.toml > code defaults.
@@ -73,9 +80,6 @@ pub struct CacheConfig {
     /// Applies to both proc_cache and pid_tree. Shorter TTL cleans up
     /// zombie process entries faster; longer TTL reduces /proc reads.
     pub proc_ttl_secs: Option<u64>,
-    /// Interval in seconds between periodic cache stats log output in debug
-    /// mode (default: 60). Set to 0 to disable periodic cache stats.
-    pub stats_interval_secs: Option<u64>,
     /// Event channel capacity between reader tasks and the main loop.
     /// Default: unbounded. Set to a finite number (e.g. 1024) to cap
     /// memory under extreme event storms — reader tasks block when
@@ -86,6 +90,9 @@ pub struct CacheConfig {
     /// dropping oldest for slow subscribers. Default: 4096.
     /// Raise for high-throughput workloads with many subscribers.
     pub subscribe_buf: Option<usize>,
+    /// Fanotify read buffer size in bytes (default: 32768).
+    /// Raise for high-throughput event volumes.
+    pub buffer_size: Option<usize>,
 }
 
 /// Watchdog configuration for systemd integration.
@@ -110,7 +117,6 @@ pub struct ResolvedCacheConfig {
     pub file_size_capacity: usize,
     pub proc_ttl_secs: u64,
     pub buffer_size: usize,
-    pub stats_interval_secs: u64,
     /// None = unbounded, Some(N) = bounded(N).
     pub channel_capacity: Option<usize>,
     /// Subscribe event stream buffer capacity.
@@ -124,8 +130,7 @@ impl Default for ResolvedCacheConfig {
             dir_ttl_secs: crate::common::fid_parser::DIR_CACHE_TTL_SECS,
             file_size_capacity: crate::common::fid_parser::FILE_SIZE_CACHE_CAP,
             proc_ttl_secs: crate::common::proc_cache::PROC_CACHE_TTL_SECS,
-            buffer_size: 4096 * 8, // 32KB — default from Monitor::new()
-            stats_interval_secs: 60,
+            buffer_size: 4096 * 8,  // 32KB — default from Monitor::new()
             channel_capacity: None, // unbounded by default
             subscribe_buf: 4096,
         }
@@ -149,11 +154,14 @@ impl CacheConfig {
         if let Some(v) = self.proc_ttl_secs {
             r.proc_ttl_secs = v;
         }
-        if let Some(v) = self.stats_interval_secs {
-            r.stats_interval_secs = v;
-        }
         if let Some(v) = self.channel_capacity {
             r.channel_capacity = Some(v);
+        }
+        if let Some(v) = self.subscribe_buf {
+            r.subscribe_buf = v;
+        }
+        if let Some(v) = self.buffer_size {
+            r.buffer_size = v;
         }
         // Apply CLI overrides (highest priority)
         if let Some(v) = cli.dir_capacity {
@@ -167,9 +175,6 @@ impl CacheConfig {
         }
         if let Some(v) = cli.proc_ttl_secs {
             r.proc_ttl_secs = v;
-        }
-        if let Some(v) = cli.stats_interval_secs {
-            r.stats_interval_secs = v;
         }
         if let Some(v) = cli.buffer_size {
             r.buffer_size = v;
@@ -194,7 +199,6 @@ pub struct CliCacheOverride {
     pub dir_ttl_secs: Option<u64>,
     pub file_size_capacity: Option<usize>,
     pub proc_ttl_secs: Option<u64>,
-    pub stats_interval_secs: Option<u64>,
     pub buffer_size: Option<usize>,
     pub channel_capacity: Option<usize>,
     pub subscribe_buf: Option<usize>,
@@ -302,6 +306,7 @@ pub fn expand_tilde(path: &Path, home: &str) -> PathBuf {
 impl Default for Config {
     fn default() -> Self {
         Config {
+            daemon: None,
             monitored: MonitoredConfig {
                 path: PathBuf::from("~/.local/share/fsmon/monitored.jsonl"),
             },
@@ -311,9 +316,6 @@ impl Default for Config {
                 size: None,
                 disk_min_free: None,
                 local_time: None,
-            },
-            socket: SocketConfig {
-                path: PathBuf::from("/tmp/fsmon-<UID>.sock"),
             },
             cache: None,
             watchdog: None,
@@ -351,20 +353,13 @@ impl Config {
     }
 
     /// Expand `~` in all paths using the original user's home directory.
-    /// Replace `<UID>` in socket path with the actual numeric UID.
     pub fn resolve_paths(&mut self) -> Result<()> {
         let home = guess_home();
-        let uid = resolve_uid();
 
         self.monitored.path = expand_tilde(&self.monitored.path, &home);
         if let Some(ref mut p) = self.logging.path {
             *p = expand_tilde(p, &home);
         }
-
-        let socket_str = self.socket.path.to_string_lossy().to_string();
-        self.socket.path = PathBuf::from(socket_str.replace("<UID>", &uid.to_string()));
-        // Also expand tilde in socket path if present
-        self.socket.path = expand_tilde(&self.socket.path, &home);
 
         Ok(())
     }
@@ -398,107 +393,125 @@ impl Config {
         if !config_path.exists() {
             Self::create_default_config(&config_path)?;
         } else {
-            eprintln!("Exists config:        {}", config_path.display());
+            eprintln!("Exists config: {}", config_path.display());
         }
         Ok(())
     }
 
     /// Return the default config as a TOML string with all values commented out.
+    ///
+    /// Format convention:
+    /// - `##` = descriptive comments (documentation, leave as-is)
+    /// - `#`  = commented-out config options (remove one `#` to enable)
     fn default_commented_toml() -> String {
-        r#"# ================================================================
-# fsmon configuration file
-# ================================================================
-#
-# All settings are optional. Commented values show defaults.
-# Uncomment to override. Changes take effect on next daemon start.
-# CLI flags override config file values.
+        r#"## ================================================================
+## fsmon configuration file
+## ================================================================
+##
+## All settings are optional. Commented values show defaults.
+## Uncomment to override. Changes take effect on next daemon start.
+## CLI flags override config file values.
+##
+## Legend:
+##   ##  = descriptive comment (documentation)
+##   #   = commented-out option (remove one # to enable)
 
 [monitored]
-# Monitored paths database file path.
-# Config-only (no CLI flag).
+## Monitored paths database file path.
+## Config-only (no CLI flag).
 path = "~/.local/share/fsmon/monitored.jsonl"
 
+## ----------------------------------------------------------------
+## Daemon runtime settings.
+## ----------------------------------------------------------------
+# [daemon]
+
+## Enable debug output (event matching, routing decisions).
+## Default: false. CLI: --debug
+# debug = false
+
+## Metrics report interval in seconds.
+## When set to N > 0, prints a one-line status report to stderr
+## every N seconds (uptime, RSS, caches, readers).
+## Default: disabled (0). CLI: --metrics-interval SECS
+# metrics_interval = 0
+
 [logging]
-# Log file output directory. Remove this section to disable file logging.
-# Config-only (no CLI flag).
+## Log file output directory. Remove this section to disable file logging.
+## Config-only (no CLI flag).
 path = "~/.local/state/fsmon"
-#
-# Auto-clean: keep entries for at most N days.
-# Config-only (clean command accepts -t/--time per invocation).
+
+## Auto-clean: keep entries for at most N days.
+## Config-only (clean command accepts -t/--time per invocation).
 # keep_days = 30
-#
-# Auto-clean: truncate log file when it exceeds this size.
-# Config-only (clean command accepts -s/--size per invocation).
+
+## Auto-clean: truncate log file when it exceeds this size.
+## Config-only (clean command accepts -s/--size per invocation).
 # size = ">=1GB"
-#
-# Warn when free disk space drops below this threshold.
-# Format: percentage ("10%") or absolute ("5GB").
-# Default: no check. CLI: --disk-min-free 10%
+
+## Warn when free disk space drops below this threshold.
+## Format: percentage ("10%") or absolute ("5GB").
+## Default: no check. CLI: --logging-disk-free 10%
 # disk_min_free = "10%"
-#
-# Use local time instead of UTC in event timestamps.
-# Default: false (UTC). CLI: --local-time
+
+## Use local time instead of UTC in event timestamps.
+## Default: false (UTC). CLI: --logging-local-time
 # local_time = false
 
-[socket]
-# Unix socket for CLI-to-daemon communication.
-# <UID> is replaced with the actual user ID at runtime.
-# Config-only (no CLI flag).
-path = "/tmp/fsmon-<UID>.sock"
-
-# ----------------------------------------------------------------
-# Cache settings. Uncomment to override defaults.
-# ----------------------------------------------------------------
+## ----------------------------------------------------------------
+## Cache settings. Uncomment to override defaults.
+## ----------------------------------------------------------------
 # [cache]
-#
-# Directory handle cache capacity.
-# Each entry is ~150-200 bytes. Lower on memory-constrained systems.
-# Default: 100000. CLI: --cache-dir-cap N
+
+## Directory handle cache capacity.
+## Each entry is ~150-200 bytes. Lower on memory-constrained systems.
+## Default: 100000. CLI: --cache-dir-cap N
 # dir_capacity = 100000
-#
-# Directory handle cache TTL in seconds.
-# Shorter = faster memory reclaim for volatile directories.
-# Default: 3600. CLI: --cache-dir-ttl SECS
+
+## Directory handle cache TTL in seconds.
+## Shorter = faster memory reclaim for volatile directories.
+## Default: 3600. CLI: --cache-dir-ttl SECS
 # dir_ttl_secs = 3600
-#
-# File size cache capacity.
-# Raise for high-file-volume workloads.
-# Default: 10000. CLI: --cache-file-size N
+
+## File size cache capacity.
+## Raise for high-file-volume workloads.
+## Default: 10000. CLI: --cache-file-size N
 # file_size_capacity = 10000
-#
-# Process cache TTL in seconds.
-# Applies to proc_cache and pid_tree.
-# Default: 600. CLI: --cache-proc-ttl SECS
+
+## Process cache TTL in seconds.
+## Applies to proc_cache and pid_tree.
+## Default: 600. CLI: --cache-proc-ttl SECS
 # proc_ttl_secs = 600
-#
-# Cache stats output interval in debug mode (seconds).
-# Set to 0 to disable. Default: 60. CLI: --cache-stats-interval SECS
-# stats_interval_secs = 60
-#
-# Event channel capacity between reader tasks and main loop.
-# Default: unbounded. CLI: --channel-capacity N
+
+## Fanotify read buffer size in bytes.
+## Raise for high-throughput event volumes.
+## Default: 32768. CLI: --cache-buffer BYTES
+# buffer_size = 32768
+
+## Event channel capacity between reader tasks and main loop.
+## Default: unbounded. CLI: --cache-channel N
 # channel_capacity = 1024
-#
-# Subscribe event stream buffer capacity.
-# Events buffered for slow subscribers before dropping oldest.
-# Default: 4096. CLI: --subscribe-buf N
+
+## Subscribe event stream buffer capacity.
+## Events buffered for slow subscribers before dropping oldest.
+## Default: 4096. CLI: --cache-subscribe N
 # subscribe_buf = 4096
 
-# ----------------------------------------------------------------
-# systemd watchdog integration.
-# Sends periodic WATCHDOG=1 to prevent systemd from restarting.
-# ----------------------------------------------------------------
+## ----------------------------------------------------------------
+## systemd watchdog integration.
+## Sends periodic WATCHDOG=1 to prevent systemd from restarting.
+## ----------------------------------------------------------------
 # [watchdog]
-#
-# Heartbeat interval in seconds.
-# Must be > 0 to enable watchdog. Default: disabled.
-# CLI: --watchdog-interval SECS
+
+## Heartbeat interval in seconds.
+## Must be > 0 to enable watchdog. Default: disabled.
+## CLI: --watchdog-interval SECS
 # interval_secs = 15
-#
-# Timeout multiplier. WatchdogSec = interval_secs × multiplier.
-# MUST be > 1 (daemon refuses to start otherwise).
-# Recommended: 2-4. Higher = more tolerant of transient stalls.
-# Default: 2. CLI: --watchdog-multiplier N
+
+## Timeout multiplier. WatchdogSec = interval_secs × multiplier.
+## MUST be > 1 (daemon refuses to start otherwise).
+## Recommended: 2-4. Higher = more tolerant of transient stalls.
+## Default: 2. CLI: --watchdog-multiplier N
 # multiplier = 2
 "#
         .to_string()

@@ -42,11 +42,11 @@ restarting the daemon.
 Usage:
   sudo fsmon daemon &                     Start daemon in background
   sudo fsmon daemon --debug               Enable debug output
-  sudo fsmon daemon --disk-min-free 10%       Warn when disk < 10% free
-  sudo fsmon daemon --local-time              Use local timezone in timestamps
-  sudo fsmon daemon --buffer-size 65536       Fanotify read buffer
-  sudo fsmon daemon --channel-capacity 1024   Event channel cap (default: unbounded)
-  sudo fsmon daemon --subscribe-buf 8192      Subscribe broadcast buffer
+  sudo fsmon daemon --logging-disk-free 10%   Warn when disk < 10% free
+  sudo fsmon daemon --logging-local-time      Use local timezone in timestamps
+  sudo fsmon daemon --cache-buffer 65536      Fanotify read buffer
+  sudo fsmon daemon --cache-channel 1024      Event channel cap (default: unbounded)
+  sudo fsmon daemon --cache-subscribe 8192    Subscribe broadcast buffer
   sudo fsmon daemon --cache-dir-cap 200000    Override dir_cache capacity
   sudo fsmon daemon --watchdog-interval 15    watchdog heartbeat in main loop (secs)
   sudo fsmon daemon --watchdog-multiplier 3   WatchdogSec = interval × multiplier
@@ -62,7 +62,7 @@ For systemd integration:
 Config:           ~/.config/fsmon/fsmon.toml
 Monitored:        ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
 Log dir:          ~/.local/state/fsmon/ (configurable via [logging].path)
-Socket:           /tmp/fsmon-<UID>.sock (configurable via [socket].path)"
+Socket:           /run/user/<UID>/fsmon/daemon.sock (hardcoded, not configurable)"
         }
         HelpTopic::Init => {
             r"Create the config file only (chezmoi-style).
@@ -280,6 +280,7 @@ Clean (config defaults: keep_days=30, size=>=1GB):
 Config:  ~/.config/fsmon/fsmon.toml (created by fsmon init, defaults apply without modification)
 Monitor: ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
 Logs:    ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].path)
+Socket:  /run/user/<UID>/fsmon/daemon.sock (hardcoded)
 
 3 data exit points:
   ① JSONL log files (on by default, configurable via [logging].path)

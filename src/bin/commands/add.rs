@@ -64,6 +64,17 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
                 );
             }
         }
+        // NOTE: Socket paths (lock.sock, daemon.sock) under /run/user/<UID>/fsmon/
+        // do NOT need the same guard as the log directory above.  Reasons:
+        //   1. Unix domain socket I/O (connect/send/recv) does NOT generate
+        //      fanotify filesystem events — only bind() and unlink() do.
+        //   2. bind/unlink are one-shot operations at daemon startup/shutdown,
+        //      not a continuous write loop like log appending.
+        //   3. Even if those rare events are captured, the daemon PID filter
+        //      (events.rs: `event_pid == self.daemon_pid`) skips them.
+        //   4. Moving socket files into a subdirectory was a cosmetic cleanup;
+        //      the old flat layout (/run/user/<UID>/fsmon.sock) was equally safe
+        //      for the same reasons.
         Some(resolved)
     } else {
         None
@@ -137,7 +148,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     store.save(&cfg.monitored.path)?;
 
     // Try live update via socket (non-fatal if fails)
-    let socket_path = cfg.socket.path.clone();
+    let socket_path = socket::socket_path();
     let result = socket::send_cmd(
         &socket_path,
         &SocketCmd::Add {

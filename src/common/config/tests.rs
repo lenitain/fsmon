@@ -52,7 +52,6 @@ fn test_load_returns_default_when_no_file() {
             cfg.logging.path,
             Some(PathBuf::from("~/.local/state/fsmon"))
         );
-        assert_eq!(cfg.socket.path.to_string_lossy(), "/tmp/fsmon-<UID>.sock");
     });
 }
 
@@ -67,16 +66,12 @@ path = "/custom/monitored.jsonl"
 
 [logging]
 path = "/custom/logs"
-
-[socket]
-path = "/tmp/custom.sock"
 "#;
         fs::write(&config_path, content).unwrap();
 
         let cfg = Config::load().unwrap();
         assert_eq!(cfg.monitored.path, PathBuf::from("/custom/monitored.jsonl"));
         assert_eq!(cfg.logging.path, Some(PathBuf::from("/custom/logs")));
-        assert_eq!(cfg.socket.path, PathBuf::from("/tmp/custom.sock"));
     });
 }
 
@@ -113,10 +108,9 @@ fn test_load_empty_file_returns_defaults() {
 }
 
 #[test]
-fn test_resolve_paths_expands_tilde_and_uid() {
+fn test_resolve_paths_expands_tilde() {
     with_isolated_home(|home| {
         let mut cfg = Config::default();
-        // Set log path explicitly for test (default is None now)
         cfg.logging.path = Some(PathBuf::from("~/.local/state/fsmon"));
         cfg.resolve_paths().unwrap();
 
@@ -135,14 +129,6 @@ fn test_resolve_paths_expands_tilde_and_uid() {
                 .to_string_lossy()
                 .starts_with(&*home_str),
             "logging.path should start with home dir"
-        );
-        assert!(
-            cfg.socket.path.to_string_lossy().contains("/tmp/fsmon-"),
-            "socket should contain /tmp/fsmon-"
-        );
-        assert!(
-            !cfg.socket.path.to_string_lossy().contains("<UID>"),
-            "socket should not contain <UID> placeholder"
         );
     });
 }
@@ -217,9 +203,6 @@ path = "~/.local/share/fsmon/monitored.jsonl"
 
 [logging]
 path = "~/.local/state/fsmon"
-
-[socket]
-path = "/tmp/fsmon-<UID>.sock"
 "#,
         )
         .unwrap();
@@ -253,9 +236,6 @@ path = "{}/my_data/paths.jsonl"
 
 [logging]
 path = "{}/my_logs"
-
-[socket]
-path = "/tmp/test.sock"
 "#,
             home.to_string_lossy(),
             home.to_string_lossy(),
@@ -315,7 +295,6 @@ fn test_cache_config_defaults() {
         crate::common::proc_cache::PROC_CACHE_TTL_SECS
     );
     assert_eq!(r.buffer_size, 4096 * 8);
-    assert_eq!(r.stats_interval_secs, 60);
 }
 
 #[test]
@@ -326,16 +305,15 @@ fn test_cache_config_resolve_with_cli_override() {
         dir_ttl_secs: None,
         file_size_capacity: None,
         proc_ttl_secs: None,
-        stats_interval_secs: None,
         channel_capacity: None,
         subscribe_buf: None,
+        buffer_size: None,
     };
     let cli = CliCacheOverride {
         dir_capacity: Some(50000),
         dir_ttl_secs: Some(7200),
         file_size_capacity: Some(5000),
         proc_ttl_secs: Some(300),
-        stats_interval_secs: Some(30),
         buffer_size: Some(65536),
         channel_capacity: None,
         subscribe_buf: None,
@@ -345,7 +323,6 @@ fn test_cache_config_resolve_with_cli_override() {
     assert_eq!(r.dir_ttl_secs, 7200);
     assert_eq!(r.file_size_capacity, 5000);
     assert_eq!(r.proc_ttl_secs, 300);
-    assert_eq!(r.stats_interval_secs, 30);
     assert_eq!(r.buffer_size, 65536);
 }
 
@@ -357,9 +334,9 @@ fn test_cache_config_resolve_config_over_default() {
         dir_ttl_secs: None,
         file_size_capacity: Some(20000),
         proc_ttl_secs: None,
-        stats_interval_secs: None,
         channel_capacity: None,
         subscribe_buf: None,
+        buffer_size: None,
     };
     let cli = CliCacheOverride::default();
     let r = cfg.resolve_with_cli(&cli);
@@ -383,16 +360,15 @@ fn test_cache_config_cli_highest_priority() {
         dir_ttl_secs: Some(100),
         file_size_capacity: Some(500),
         proc_ttl_secs: Some(50),
-        stats_interval_secs: None,
         channel_capacity: None,
         subscribe_buf: None,
+        buffer_size: None,
     };
     let cli = CliCacheOverride {
         dir_capacity: Some(99999),
         dir_ttl_secs: None,
         file_size_capacity: Some(999),
         proc_ttl_secs: None,
-        stats_interval_secs: Some(120),
         buffer_size: None,
         channel_capacity: None,
         subscribe_buf: None,
@@ -413,9 +389,6 @@ path = "/tmp/test.jsonl"
 
 [logging]
 path = "/tmp/logs"
-
-[socket]
-path = "/tmp/sock"
 
 [cache]
 dir_capacity = 123456

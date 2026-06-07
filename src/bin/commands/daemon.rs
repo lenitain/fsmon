@@ -48,11 +48,18 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
     } else {
         eprintln!("  Event logs:     disabled (path not configured)");
     }
-    eprintln!("  Command socket: {}", cfg.socket.path.display());
+    eprintln!(
+        "  Singleton lock: {}",
+        fsmon::common::socket::lock_socket_path().display()
+    );
+    eprintln!(
+        "  Command socket: {}",
+        fsmon::common::socket::socket_path().display()
+    );
 
     let store = Monitored::load(&cfg.monitored.path)?;
 
-    let socket_path = cfg.socket.path.clone();
+    let socket_path = fsmon::common::socket::socket_path();
 
     // Create parent directories for socket
     if socket_path.exists() {
@@ -73,6 +80,14 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
         fsmon::common::config::chown_to_original_user(parent);
     }
 
+    // Merge daemon config: CLI > fsmon.toml > code defaults
+    // debug: CLI --debug wins, otherwise config [daemon] debug, default false
+    let debug = debug || cfg.daemon.as_ref().and_then(|d| d.debug).unwrap_or(false);
+    // metrics_interval: CLI --metrics-interval wins, otherwise config [daemon] metrics_interval
+    let metrics_interval = metrics_interval
+        .or(cfg.daemon.as_ref().and_then(|d| d.metrics_interval))
+        .filter(|&n| n > 0);
+
     // Merge cache config: CLI > fsmon.toml > code defaults
     let cache_cfg = cfg
         .cache
@@ -84,9 +99,9 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
                 dir_ttl_secs: None,
                 file_size_capacity: None,
                 proc_ttl_secs: None,
-                stats_interval_secs: None,
                 channel_capacity: None,
                 subscribe_buf: None,
+                buffer_size: None,
             };
             empty.resolve_with_cli(&cli_cache)
         });
@@ -100,10 +115,6 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
             cache_cfg.file_size_capacity
         );
         eprintln!("[DEBUG]   proc_ttl_secs:      {}", cache_cfg.proc_ttl_secs);
-        eprintln!(
-            "[DEBUG]   stats_interval_secs: {}",
-            cache_cfg.stats_interval_secs
-        );
         eprintln!("[DEBUG]   buffer_size:        {}", cache_cfg.buffer_size);
         match cache_cfg.channel_capacity {
             Some(cap) => eprintln!("[DEBUG]   channel_capacity:   {} (bounded)", cap),
