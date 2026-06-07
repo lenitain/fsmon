@@ -9,6 +9,9 @@ use crate::common::metrics::MetricsRegistry;
 
 /// Maximum number of open file handles to keep cached.
 const MAX_OPEN_HANDLES: usize = 64;
+/// Default flush interval: flush BufWriter to OS buffer every second.
+/// Ensures data is visible in log files during runtime, not just on shutdown.
+const DEFAULT_FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 
 // ---- FileLogWriter: unified event stream consumer for disk persistence ----
 
@@ -67,6 +70,10 @@ impl FileLogWriter {
     ) {
         use tokio::time::interval;
 
+        // Always-active flush timer: moves data from BufWriter to OS buffer.
+        // Without this, data stays in BufWriter until buffer full or daemon exit.
+        let mut flush_timer = interval(DEFAULT_FLUSH_INTERVAL);
+        // Optional sync timer: additionally does fdatasync for durability.
         let mut sync_timer = self.sync_interval.map(|d| interval(d));
 
         loop {
@@ -87,6 +94,11 @@ impl FileLogWriter {
                         }
                     }
                 }
+                // Flush BufWriter → OS buffer (always active)
+                _ = flush_timer.tick() => {
+                    self.flush_all();
+                }
+                // fdatasync OS buffer → disk (only when sync_interval configured)
                 _ = async {
                     match sync_timer.as_mut() {
                         Some(timer) => timer.tick().await,
@@ -146,9 +158,7 @@ impl FileLogWriter {
                     );
                 }
                 writeln!(writer, "{}", line)?;
-                if self.sync_interval.is_some() {
-                    self.dirty_logs.insert(log_path);
-                }
+                self.dirty_logs.insert(log_path);
                 self.disk_healthy = true;
                 Ok(())
             }
