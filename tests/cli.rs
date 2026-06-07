@@ -256,6 +256,7 @@ fn monitored_lists_entries() {
         let stdout = run_fsmon_success(&["monitored"]);
         let entries = parse_monitored_output(&stdout);
         assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "_global (all processes)");
     });
 }
 
@@ -263,8 +264,8 @@ fn monitored_lists_entries() {
 fn monitored_empty_when_no_paths() {
     with_isolated_home(|_home, _mp| {
         let stdout = run_fsmon_success(&["monitored"]);
-        // Empty output or just newlines
-        assert!(stdout.trim().is_empty() || parse_monitored_output(&stdout).is_empty());
+        // Should show "No monitored paths."
+        assert!(stdout.trim().contains("No monitored paths."));
     });
 }
 

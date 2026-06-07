@@ -260,13 +260,22 @@ fsmon remove _global --path /home  # Remove /home from global group
 
 ### monitored
 
-List all monitored paths with their filtering configuration (JSONL).
+List all monitored paths with their filtering configuration in a human-readable format.
 
 ```
 fsmon monitored  # Show all monitored path groups
 ```
 
-Each line is a JSON object with `cmd` and `paths` fields. Pipe to `jq` for filtering.
+Output example:
+```
+=== Monitored Paths ===
+
+Process: touch
+  /home/pilot/.config/what (recursive)
+
+Process: _global (all processes)
+  /tmp/fsmon_benchmark (recursive, types: ACCESS, MODIFY, CLOSE_WRITE... (14 total))
+```
 
 ### changes
 

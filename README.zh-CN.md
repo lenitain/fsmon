@@ -255,13 +255,22 @@ fsmon remove _global --path /home  # 从全局组移除 /home
 
 ### monitored
 
-列出所有监控路径及其过滤配置（JSONL 格式）。
+以人类可读格式列出所有监控路径及其过滤配置。
 
 ```
 fsmon monitored                显示所有监控路径组
 ```
 
-每行是一个包含 `cmd` 和 `paths` 字段的 JSON 对象。可管道给 `jq` 过滤。
+输出示例：
+```
+=== Monitored Paths ===
+
+Process: touch
+  /home/pilot/.config/what (recursive)
+
+Process: _global (all processes)
+  /tmp/fsmon_benchmark (recursive, types: ACCESS, MODIFY, CLOSE_WRITE... (14 total))
+```
 
 ### changes
 
