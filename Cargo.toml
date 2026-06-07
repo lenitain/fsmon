@@ -4,7 +4,6 @@ version = "0.4.9"
 edition = "2024"
 license = "MIT"
 description = "Lightweight High-Performance File System Change Tracking Tool"
-documentation = "https://docs.rs/fsmon"
 repository = "https://github.com/lenitain/fsmon"
 readme = "README.md"
 keywords = ["filesystem", "monitor", "linux", "fanotify"]

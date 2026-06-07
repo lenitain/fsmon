@@ -9,7 +9,6 @@
 - [English](./README.md)
 
 [![Crates.io](https://img.shields.io/crates/v/fsmon)](https://crates.io/crates/fsmon)
-[![Docs.rs](https://docs.rs/fsmon/badge.svg)](https://docs.rs/fsmon)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/lenitain/fsmon/actions/workflows/ci.yml/badge.svg)](https://github.com/lenitain/fsmon/actions/workflows/ci.yml)
 
