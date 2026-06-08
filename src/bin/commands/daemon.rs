@@ -91,7 +91,6 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
                 dir_ttl_secs: None,
                 file_size_capacity: None,
                 proc_ttl_secs: None,
-                stats_interval_secs: None,
                 channel_capacity: None,
                 subscribe_buf: None,
             };
@@ -107,10 +106,6 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
             cache_cfg.file_size_capacity
         );
         eprintln!("[DEBUG]   proc_ttl_secs:      {}", cache_cfg.proc_ttl_secs);
-        eprintln!(
-            "[DEBUG]   stats_interval_secs: {}",
-            cache_cfg.stats_interval_secs
-        );
         eprintln!("[DEBUG]   buffer_size:        {}", cache_cfg.buffer_size);
         match cache_cfg.channel_capacity {
             Some(cap) => eprintln!("[DEBUG]   channel_capacity:   {} (bounded)", cap),

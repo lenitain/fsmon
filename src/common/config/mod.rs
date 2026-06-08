@@ -67,9 +67,6 @@ pub struct CacheConfig {
     /// Applies to both proc_cache and pid_tree. Shorter TTL cleans up
     /// zombie process entries faster; longer TTL reduces /proc reads.
     pub proc_ttl_secs: Option<u64>,
-    /// Interval in seconds between periodic cache stats log output in debug
-    /// mode (default: 60). Set to 0 to disable periodic cache stats.
-    pub stats_interval_secs: Option<u64>,
     /// Event channel capacity between reader tasks and the main loop.
     /// Default: unbounded. Set to a finite number (e.g. 1024) to cap
     /// memory under extreme event storms — reader tasks block when
@@ -104,7 +101,6 @@ pub struct ResolvedCacheConfig {
     pub file_size_capacity: usize,
     pub proc_ttl_secs: u64,
     pub buffer_size: usize,
-    pub stats_interval_secs: u64,
     /// None = unbounded, Some(N) = bounded(N).
     pub channel_capacity: Option<usize>,
     /// Subscribe event stream buffer capacity.
@@ -119,7 +115,6 @@ impl Default for ResolvedCacheConfig {
             file_size_capacity: crate::common::fid_parser::FILE_SIZE_CACHE_CAP,
             proc_ttl_secs: crate::common::proc_cache::PROC_CACHE_TTL_SECS,
             buffer_size: 4096 * 8, // 32KB — default from Monitor::new()
-            stats_interval_secs: 60,
             channel_capacity: None, // unbounded by default
             subscribe_buf: 4096,
         }
@@ -143,9 +138,6 @@ impl CacheConfig {
         if let Some(v) = self.proc_ttl_secs {
             r.proc_ttl_secs = v;
         }
-        if let Some(v) = self.stats_interval_secs {
-            r.stats_interval_secs = v;
-        }
         if let Some(v) = self.channel_capacity {
             r.channel_capacity = Some(v);
         }
@@ -161,9 +153,6 @@ impl CacheConfig {
         }
         if let Some(v) = cli.proc_ttl_secs {
             r.proc_ttl_secs = v;
-        }
-        if let Some(v) = cli.stats_interval_secs {
-            r.stats_interval_secs = v;
         }
         if let Some(v) = cli.buffer_size {
             r.buffer_size = v;
@@ -188,7 +177,6 @@ pub struct CliCacheOverride {
     pub dir_ttl_secs: Option<u64>,
     pub file_size_capacity: Option<usize>,
     pub proc_ttl_secs: Option<u64>,
-    pub stats_interval_secs: Option<u64>,
     pub buffer_size: Option<usize>,
     pub channel_capacity: Option<usize>,
     pub subscribe_buf: Option<usize>,
@@ -456,10 +444,6 @@ path = "~/.local/state/fsmon"
 ## Applies to proc_cache and pid_tree.
 ## Default: 600. CLI: --cache-proc-ttl SECS
 # proc_ttl_secs = 600
-
-## Cache stats output interval in debug mode (seconds).
-## Set to 0 to disable. Default: 60. CLI: --cache-stats-interval SECS
-# stats_interval_secs = 60
 
 ## Event channel capacity between reader tasks and main loop.
 ## Default: unbounded. CLI: --channel-capacity N

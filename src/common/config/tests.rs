@@ -295,7 +295,6 @@ fn test_cache_config_defaults() {
         crate::common::proc_cache::PROC_CACHE_TTL_SECS
     );
     assert_eq!(r.buffer_size, 4096 * 8);
-    assert_eq!(r.stats_interval_secs, 60);
 }
 
 #[test]
@@ -306,7 +305,6 @@ fn test_cache_config_resolve_with_cli_override() {
         dir_ttl_secs: None,
         file_size_capacity: None,
         proc_ttl_secs: None,
-        stats_interval_secs: None,
         channel_capacity: None,
         subscribe_buf: None,
     };
@@ -315,7 +313,6 @@ fn test_cache_config_resolve_with_cli_override() {
         dir_ttl_secs: Some(7200),
         file_size_capacity: Some(5000),
         proc_ttl_secs: Some(300),
-        stats_interval_secs: Some(30),
         buffer_size: Some(65536),
         channel_capacity: None,
         subscribe_buf: None,
@@ -325,7 +322,6 @@ fn test_cache_config_resolve_with_cli_override() {
     assert_eq!(r.dir_ttl_secs, 7200);
     assert_eq!(r.file_size_capacity, 5000);
     assert_eq!(r.proc_ttl_secs, 300);
-    assert_eq!(r.stats_interval_secs, 30);
     assert_eq!(r.buffer_size, 65536);
 }
 
@@ -337,7 +333,6 @@ fn test_cache_config_resolve_config_over_default() {
         dir_ttl_secs: None,
         file_size_capacity: Some(20000),
         proc_ttl_secs: None,
-        stats_interval_secs: None,
         channel_capacity: None,
         subscribe_buf: None,
     };
@@ -363,7 +358,6 @@ fn test_cache_config_cli_highest_priority() {
         dir_ttl_secs: Some(100),
         file_size_capacity: Some(500),
         proc_ttl_secs: Some(50),
-        stats_interval_secs: None,
         channel_capacity: None,
         subscribe_buf: None,
     };
@@ -372,7 +366,6 @@ fn test_cache_config_cli_highest_priority() {
         dir_ttl_secs: None,
         file_size_capacity: Some(999),
         proc_ttl_secs: None,
-        stats_interval_secs: Some(120),
         buffer_size: None,
         channel_capacity: None,
         subscribe_buf: None,
