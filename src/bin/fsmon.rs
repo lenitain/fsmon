@@ -12,7 +12,6 @@ mod commands;
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = help::about(HelpTopic::Root))]
 #[command(after_help = help::after_help())]
-#[command(disable_help_subcommand = true)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
