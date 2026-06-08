@@ -13,7 +13,7 @@ pub struct AddArgs {
     pub path: Option<PathBuf>,
 
     /// Watch subdirectories recursively
-    #[arg(short)]
+    #[arg(short, long)]
     pub recursive: bool,
 
     /// Event types to monitor (repeatable; use "all" for all 14 types). Controls kernel mask.
