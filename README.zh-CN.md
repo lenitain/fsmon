@@ -186,7 +186,22 @@ sudo crontab -e
 
 ## 完整命令
 
-### daemon
+所有命令都支持简短别名：
+
+| 命令 | 别名 | 说明 |
+|------|------|------|
+| `daemon` | `d` | 启动守护进程 |
+| `add` | `a` | 添加监控路径 |
+| `remove` | `r` | 移除监控路径 |
+| `monitored` | `m` | 列出监控路径 |
+| `query` | `q` | 查询历史事件 |
+| `clean` | `cl` | 清理日志文件 |
+| `changes` | `ch` | 显示最新变更 |
+| `init` | `i` | 创建配置文件 |
+| `cd` | — | 打开子 shell |
+| `health` | `h` | 查询守护进程健康状态 |
+
+### daemon（别名：`d`）
 
 启动 fsmon 守护进程 — 需要 `sudo` 以使用 fanotify。
 
@@ -217,7 +232,7 @@ sudo fsmon daemon --watchdog-multiplier 3     # 倍率（WatchdogSec = interval 
 
 通过 `[logging].path` 配置项控制文件输出（默认开启）。
 
-### add
+### add（别名：`a`）
 
 添加监控路径（可选指定进程追踪）。不需要 sudo。
 
@@ -241,7 +256,7 @@ fsmon add _global --path /home --size '>=1MB'     # 只记录 >=1MB 的文件变
 - 可添加多个不同 `<CMD>` 的条目（各条目间为 OR 逻辑）。
 - `--path` 是必填参数。全局监控请使用 `_global` 作为 CMD。
 
-### remove
+### remove（别名：`r`）
 
 移除一个或多个监控路径。不需要 sudo。
 
@@ -252,7 +267,7 @@ fsmon remove nginx --path /home    # 从 nginx 组移除 /home
 fsmon remove _global --path /home  # 从全局组移除 /home
 ```
 
-### monitored
+### monitored（别名：`m`）
 
 以人类可读格式列出所有监控路径及其过滤配置。
 
@@ -271,7 +286,7 @@ Process: _global (all processes)
   /tmp/fsmon_benchmark (recursive, types: ACCESS, MODIFY, CLOSE_WRITE... (14 total))
 ```
 
-### changes
+### changes（别名：`ch`）
 
 显示每个路径的最新事件 — 去重摘要。与 `query` 使用相同的过滤器，
 但每个路径只显示最新一条事件，按时间降序排列。
@@ -282,7 +297,7 @@ fsmon changes _global -t '>2026-05-01'    # 从指定日期开始
 fsmon changes _global --path /var/www     # 按路径前缀过滤
 ```
 
-### health
+### health（别名：`h`）
 
 通过 Unix socket 查询守护进程健康状态。
 
@@ -290,7 +305,7 @@ fsmon changes _global --path /var/www     # 按路径前缀过滤
 fsmon health
 ```
 
-### query
+### query（别名：`q`）
 
 查询历史事件日志。输出 JSONL — 管道给 `jq` 过滤。
 
@@ -319,7 +334,7 @@ fsmon query _global | jq 'select(.event_type == "DELETE")'
 fsmon query _global | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 ```
 
-### clean
+### clean（别名：`cl`）
 
 清理指定 cmd 组的日志文件。默认值来自 `fsmon.toml`：`keep_days=30`，`size=>=1GB`。
 
@@ -346,7 +361,7 @@ find ~/.local/state/fsmon/ -name '*.jsonl' -mtime +30 -delete
 
 > **注意：** 原生 `fsmon clean` 精确解析 JSONL（不会截断到行中间），同时处理时间和大小约束。直接使用 Unix 工具更简单，但可能产生不完整的行。
 
-### init
+### init（别名：`i`）
 
 在 `~/.config/fsmon/fsmon.toml` 创建配置文件（全部采用默认值）。
 不创建日志或监控目录 — 这些目录由 `fsmon add`（monitored）和 `fsmon daemon` / `fsmon cd`（logs）在首次使用时创建。

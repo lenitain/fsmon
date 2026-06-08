@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Command aliases**: All subcommands now support short aliases for faster typing:
+  - `daemon` → `d`
+  - `add` → `a`
+  - `remove` → `r`
+  - `monitored` → `m`
+  - `query` → `q`
+  - `clean` → `cl`
+  - `changes` → `ch`
+  - `init` → `i`
+  - `health` → `h`
+  - `cd` (no alias, already short)
+- Aliases are displayed in `--help` output for discoverability.
+- Updated documentation in both README.md and README.zh-CN.md with alias tables.
+
 ## [0.4.11] - 2026-06-08
 
 ### Removed
