@@ -33,16 +33,12 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::Root => "",
         HelpTopic::Daemon => {
-            r"Run the fsmon daemon as a foreground process (requires sudo for fanotify).
-
-The daemon monitors all configured paths via fanotify and logs events.
-Use 'fsmon add'/'fsmon remove' to manage paths dynamically without
-restarting the daemon.
+            r"Monitors all configured paths via fanotify and logs events.
+Use 'fsmon add'/'fsmon remove' to manage paths dynamically without restarting.
 
 Examples:
   sudo fsmon daemon &                     Start daemon in background
   sudo fsmon daemon --debug               Enable debug output
-  sudo fsmon daemon --logging-disk-free 10%   Warn when disk < 10% free
 
 For systemd integration:
   sudo fsmon init --service             Install systemd service
@@ -53,9 +49,7 @@ Config: ~/.config/fsmon/fsmon.toml
 Logs:   ~/.local/state/fsmon/"
         }
         HelpTopic::Init => {
-            r"Create the config file only.
-
-Directories are created on first use:
+            r"Directories are created on first use:
   - Monitored dir: by 'fsmon add' on first run
   - Log dir: by 'fsmon daemon' or 'fsmon cd -l' on first run
 
@@ -63,15 +57,11 @@ With --service, also installs a systemd service:
   sudo fsmon init --service"
         }
         HelpTopic::Cd => {
-            r"Open a subshell in the monitored path or log directory.
-
-Spawns a new shell (using $SHELL, fallback /bin/sh).
+            r"Spawns a new shell (using $SHELL, fallback /bin/sh).
 Type 'exit' to return to the original directory."
         }
         HelpTopic::Add => {
-            r"Add a path or process to the monitoring list.
-
-The entry is added immediately if the daemon is running, and persisted
+            r"The entry is added immediately if the daemon is running, and persisted
 in the monitored paths database for automatic monitoring on daemon restart.
 
 No sudo needed — store is updated immediately.
@@ -80,35 +70,25 @@ No sudo needed — store is updated immediately.
 Use '_global' to monitor all events on a path (no process tracking)."
         }
         HelpTopic::Remove => {
-            r"Remove one or more paths from the monitoring list.
-
-Without --path, removes the entire cmd group.
+            r"Without --path, removes the entire cmd group.
 With --path, removes only the specified paths. Multiple paths are atomic:
 all must exist, or nothing is removed."
         }
         HelpTopic::Monitored => {
-            r"List all monitored paths with their configuration.
-
-Displays each path with its recursive flag, event type filters,
+            r"Displays each path with its recursive flag, event type filters,
 size threshold, path/cmd exclusion patterns."
         }
         HelpTopic::Query => {
-            r"Query historical file change events from log files.
-
-Output is JSONL (one JSON object per line), pipe to jq for custom filtering.
+            r"Output is JSONL (one JSON object per line), pipe to jq for custom filtering.
 
 Native fsmon query uses binary search and is significantly faster on large logs."
         }
         HelpTopic::Clean => {
-            r"Clean a log file for a specific cmd group, retain by time or size.
-
-Defaults: keep_days=30, size=>=1GB (from fsmon.toml or code fallback).
+            r"Defaults: keep_days=30, size=>=1GB (from fsmon.toml or code fallback).
 CLI args override config. Daemon does not auto-clean; use cron/systemd timer."
         }
         HelpTopic::Changes => {
-            r"Show the most recent event per path — a deduplicated summary.
-
-Same format as 'query', but with duplicate paths collapsed:
+            r"Same format as 'query', but with duplicate paths collapsed:
 only the latest event for each unique path is shown, sorted by time descending."
         }
     }
