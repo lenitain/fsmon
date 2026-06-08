@@ -48,33 +48,33 @@ pub enum Commands {
 
         /// Fanotify read buffer size in bytes (default: 32768, min: 4096, max: 1048576).
         /// Raise for high-throughput event volumes.
-        #[arg(long, value_name = "BYTES")]
-        buffer_size: Option<usize>,
+        #[arg(long = "cache-buffer", value_name = "BYTES")]
+        cache_buffer: Option<usize>,
 
         /// Event channel capacity between reader tasks and the main loop.
         /// Default: unbounded. Set to a finite number (e.g. 1024) to cap
         /// memory under extreme event storms — reader tasks block when
         /// the buffer is full, with fanotify overflow as the final backstop.
-        #[arg(long, value_name = "N")]
-        channel_capacity: Option<usize>,
+        #[arg(long = "cache-channel", value_name = "N")]
+        cache_channel: Option<usize>,
 
         /// Subscribe event stream buffer capacity (default: 4096).
         /// Number of events the broadcast channel can buffer for slow
         /// subscribers before dropping oldest. Raise for high-throughput
         /// workloads with many concurrent subscribers.
-        #[arg(long, value_name = "N")]
-        subscribe_buf: Option<usize>,
+        #[arg(long = "cache-subscribe", value_name = "N")]
+        cache_subscribe: Option<usize>,
 
         /// Minimum free disk space before warning (e.g. "10%", "5GB").
         /// Default: no check. Only applies to the log directory filesystem.
-        #[arg(long, value_name = "THRESHOLD")]
-        disk_min_free: Option<String>,
+        #[arg(long = "logging-disk-free", value_name = "THRESHOLD")]
+        logging_disk_free: Option<String>,
 
         /// Use local time instead of UTC in event timestamps.
         /// When set, timestamps show local timezone offset (e.g. +08:00)
         /// instead of Z suffix.
-        #[arg(long)]
-        local_time: bool,
+        #[arg(long = "logging-local-time")]
+        logging_local_time: bool,
 
         /// Metrics report interval in seconds (default: disabled).
         /// When set to N > 0, prints a one-line status report to stderr every N seconds.

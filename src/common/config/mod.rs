@@ -15,10 +15,23 @@ use users::os::unix::UserExt;
 /// Monitored path entries are stored in the separate store file (see `[monitored].path`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    pub daemon: Option<DaemonConfig>,
     pub monitored: MonitoredConfig,
     pub logging: LoggingConfig,
     pub cache: Option<CacheConfig>,
     pub watchdog: Option<WatchdogConfig>,
+}
+
+/// Daemon runtime configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonConfig {
+    /// Enable debug output (event matching, routing decisions). Default: false.
+    /// CLI: --debug
+    pub debug: Option<bool>,
+    /// Metrics report interval in seconds. Default: disabled (0).
+    /// When set to N > 0, prints a one-line status report to stderr every N seconds.
+    /// CLI: --metrics-interval SECS
+    pub metrics_interval: Option<u64>,
 }
 
 /// Configuration for the monitored paths store.
@@ -77,6 +90,9 @@ pub struct CacheConfig {
     /// dropping oldest for slow subscribers. Default: 4096.
     /// Raise for high-throughput workloads with many subscribers.
     pub subscribe_buf: Option<usize>,
+    /// Fanotify read buffer size in bytes (default: 32768).
+    /// Raise for high-throughput event volumes.
+    pub buffer_size: Option<usize>,
 }
 
 /// Watchdog configuration for systemd integration.
@@ -140,6 +156,12 @@ impl CacheConfig {
         }
         if let Some(v) = self.channel_capacity {
             r.channel_capacity = Some(v);
+        }
+        if let Some(v) = self.subscribe_buf {
+            r.subscribe_buf = v;
+        }
+        if let Some(v) = self.buffer_size {
+            r.buffer_size = v;
         }
         // Apply CLI overrides (highest priority)
         if let Some(v) = cli.dir_capacity {
@@ -284,6 +306,7 @@ pub fn expand_tilde(path: &Path, home: &str) -> PathBuf {
 impl Default for Config {
     fn default() -> Self {
         Config {
+            daemon: None,
             monitored: MonitoredConfig {
                 path: PathBuf::from("~/.local/share/fsmon/monitored.jsonl"),
             },
@@ -398,6 +421,21 @@ impl Config {
 ## Config-only (no CLI flag).
 path = "~/.local/share/fsmon/monitored.jsonl"
 
+## ----------------------------------------------------------------
+## Daemon runtime settings.
+## ----------------------------------------------------------------
+# [daemon]
+
+## Enable debug output (event matching, routing decisions).
+## Default: false. CLI: --debug
+# debug = false
+
+## Metrics report interval in seconds.
+## When set to N > 0, prints a one-line status report to stderr
+## every N seconds (uptime, RSS, caches, readers).
+## Default: disabled (0). CLI: --metrics-interval SECS
+# metrics_interval = 0
+
 [logging]
 ## Log file output directory. Remove this section to disable file logging.
 ## Config-only (no CLI flag).
@@ -413,11 +451,11 @@ path = "~/.local/state/fsmon"
 
 ## Warn when free disk space drops below this threshold.
 ## Format: percentage ("10%") or absolute ("5GB").
-## Default: no check. CLI: --disk-min-free 10%
+## Default: no check. CLI: --logging-disk-free 10%
 # disk_min_free = "10%"
 
 ## Use local time instead of UTC in event timestamps.
-## Default: false (UTC). CLI: --local-time
+## Default: false (UTC). CLI: --logging-local-time
 # local_time = false
 
 ## ----------------------------------------------------------------
@@ -445,13 +483,18 @@ path = "~/.local/state/fsmon"
 ## Default: 600. CLI: --cache-proc-ttl SECS
 # proc_ttl_secs = 600
 
+## Fanotify read buffer size in bytes.
+## Raise for high-throughput event volumes.
+## Default: 32768. CLI: --cache-buffer BYTES
+# buffer_size = 32768
+
 ## Event channel capacity between reader tasks and main loop.
-## Default: unbounded. CLI: --channel-capacity N
+## Default: unbounded. CLI: --cache-channel N
 # channel_capacity = 1024
 
 ## Subscribe event stream buffer capacity.
 ## Events buffered for slow subscribers before dropping oldest.
-## Default: 4096. CLI: --subscribe-buf N
+## Default: 4096. CLI: --cache-subscribe N
 # subscribe_buf = 4096
 
 ## ----------------------------------------------------------------

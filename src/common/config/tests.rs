@@ -307,6 +307,7 @@ fn test_cache_config_resolve_with_cli_override() {
         proc_ttl_secs: None,
         channel_capacity: None,
         subscribe_buf: None,
+        buffer_size: None,
     };
     let cli = CliCacheOverride {
         dir_capacity: Some(50000),
@@ -335,6 +336,7 @@ fn test_cache_config_resolve_config_over_default() {
         proc_ttl_secs: None,
         channel_capacity: None,
         subscribe_buf: None,
+        buffer_size: None,
     };
     let cli = CliCacheOverride::default();
     let r = cfg.resolve_with_cli(&cli);
@@ -360,6 +362,7 @@ fn test_cache_config_cli_highest_priority() {
         proc_ttl_secs: Some(50),
         channel_capacity: None,
         subscribe_buf: None,
+        buffer_size: None,
     };
     let cli = CliCacheOverride {
         dir_capacity: Some(99999),

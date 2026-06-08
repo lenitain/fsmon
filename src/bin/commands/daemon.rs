@@ -80,6 +80,14 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
         fsmon::common::config::chown_to_original_user(parent);
     }
 
+    // Merge daemon config: CLI > fsmon.toml > code defaults
+    // debug: CLI --debug wins, otherwise config [daemon] debug, default false
+    let debug = debug || cfg.daemon.as_ref().and_then(|d| d.debug).unwrap_or(false);
+    // metrics_interval: CLI --metrics-interval wins, otherwise config [daemon] metrics_interval
+    let metrics_interval = metrics_interval
+        .or(cfg.daemon.as_ref().and_then(|d| d.metrics_interval))
+        .filter(|&n| n > 0);
+
     // Merge cache config: CLI > fsmon.toml > code defaults
     let cache_cfg = cfg
         .cache
@@ -93,6 +101,7 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
                 proc_ttl_secs: None,
                 channel_capacity: None,
                 subscribe_buf: None,
+                buffer_size: None,
             };
             empty.resolve_with_cli(&cli_cache)
         });
