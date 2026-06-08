@@ -1,17 +1,23 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, builder::styling};
 use fsmon::common::help::{self, HelpTopic};
 pub use fsmon::common::{AddArgs, ChangesArgs, CleanArgs, QueryArgs};
 use std::path::PathBuf;
 
 mod commands;
 
+const STYLES: styling::Styles = styling::Styles::styled()
+    .header(styling::AnsiColor::Yellow.on_default())
+    .usage(styling::AnsiColor::Green.on_default())
+    .literal(styling::AnsiColor::Green.on_default())
+    .placeholder(styling::AnsiColor::Green.on_default());
+
 #[derive(Parser)]
 #[command(name = "fsmon")]
 #[command(author = "fsmon contributors")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = help::about(HelpTopic::Root))]
-#[command(after_help = help::after_help())]
+#[command(styles = STYLES)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
