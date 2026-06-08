@@ -7,7 +7,7 @@ Pipe output to jq for filtering.
 
 import os, socket, json, sys
 
-SOCKET = f"/tmp/fsmon-{os.getuid()}.sock"
+SOCKET = os.path.join(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"), "fsmon", "daemon.sock")
 
 if not os.path.exists(SOCKET):
     sys.exit("daemon not running? missing " + SOCKET)

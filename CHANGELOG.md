@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.12] - 2026-06-09
+
+### Added
+
+- **Command aliases**: All subcommands now support short aliases for faster typing:
+  - `daemon` → `d`
+  - `add` → `a`
+  - `remove` → `r`
+  - `monitored` → `m`
+  - `query` → `q`
+  - `clean` → `cl`
+  - `changes` → `ch`
+  - `init` → `i`
+  - `health` → `h`
+  - `cd` (no alias, already short)
+- Aliases are displayed in `--help` output for discoverability.
+- **Version flag**: Both `-v` and `-V` now work for `--version` (previously only `-V`).
+- **Zellij-style colors**: Help output uses yellow headers and green literals (matching zellij's style).
+
+### Fixed
+
+- **Event type validation**: `fsmon add` now rejects invalid event types (e.g. `INVALID_TYPE`) with an error instead of silently accepting them.
+- **Subscribe protocol deadlock**: Server-side `accept_socket_connection` now breaks the read loop after parsing a complete JSON object, preventing deadlock when the client waits for a response before sending more data.
+- **Subscribe examples socket path**: Fixed socket path in `extensions/examples/subscribe.py` and `subscribe.sh` from `/tmp/fsmon-<UID>.sock` to `/run/user/<UID>/fsmon/daemon.sock`.
+- **`--recursive` flag**: Added long option `--recursive` for `-r` flag in `fsmon add`.
+- **Help output duplication**: Removed duplicate content from `long_about` that was shown alongside clap-generated Usage/Arguments/Options.
+
+### Changed
+
+- **Simplified help descriptions**: `long_about` now only contains supplementary info, not repeating the short `about` description.
+- **Removed root after_help**: Quick-start examples removed from main `--help` (available in subcommand `-h` instead).
+- **Enabled clap color feature**: Added `color` feature to clap dependency for styled terminal output.
+
+### Documentation
+
+- Updated README.md and README.zh-CN.md with command alias tables.
+
 ## [0.4.11] - 2026-06-08
 
 ### Removed

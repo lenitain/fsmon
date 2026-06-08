@@ -28,5 +28,5 @@ cargo test --test cli add_global_with_path
 | Layer | Content | Location |
 |-------|---------|----------|
 | Unit tests | Module internals (monitor, events, filtering, fid_parser) | `src/**/*.rs` (`#[cfg(test)]`) |
-| CLI parse tests | AddArgs, QueryArgs, etc. | `src/bin/fsmon.rs` (`#[cfg(test)]`) |
+| CLI parse tests | AddArgs, QueryArgs, etc. | `src/bin/fsmon/main.rs` (`#[cfg(test)]`) |
 | Integration tests | End-to-end CLI, crash recovery, utilities | `tests/*.rs` |

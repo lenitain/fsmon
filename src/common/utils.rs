@@ -3,9 +3,9 @@ use std::path::Path;
 pub use sizefilter::{SizeFilter, SizeOp, format_size, parse_size, parse_size_filter};
 pub use timefilter::{TimeFilter, TimeOp, format_datetime, parse_time, parse_time_filter};
 
-use crate::common::proc_cache::{DefaultCache as ProcCache, ProcInfo};
+use crate::common::proc_cache::{DefaultStore as ProcStore, ProcessInfo};
 use chrono::{DateTime, Utc};
-use proc_tree::{CacheStore, read_proc_start_time_ns};
+use proc_tree::{ProcessStore, read_proc_start_time_ns};
 
 /// Extension trait for TimeFilter to provide matching and classification methods.
 pub trait TimeFilterExt {
@@ -79,11 +79,11 @@ pub fn parse_disk_min_free(s: &str) -> Result<DiskFreeThreshold, String> {
 pub fn get_process_info_by_pid(
     pid: u32,
     file_path: &Path,
-    proc_cache: Option<&ProcCache>,
-) -> ProcInfo {
-    // Check proc connector cache first (only source for short-lived processes)
-    if let Some(cache) = proc_cache
-        && let Some(info) = cache.get_info(pid)
+    proc_store: Option<&ProcStore>,
+) -> ProcessInfo {
+    // Check proc store first (only source for short-lived processes)
+    if let Some(store) = proc_store
+        && let Some(info) = store.get_process(pid)
     {
         // Verify the process hasn't been reincarnated with a reused PID.
         let cached_start = info.start_time_ns;
@@ -97,11 +97,11 @@ pub fn get_process_info_by_pid(
     // Fallback to reading /proc directly (for long-lived processes)
     // If the process just exited, /proc/{pid} might still exist briefly
     // as a zombie before the parent reaps it. Retry with short sleep.
-    if let Some((_, info)) = retry(|| proc_tree::proc::parse_proc_entry(pid)) {
+    if let Some(info) = retry(|| proc_tree::parse_proc_entry(pid)) {
         return info;
     }
     // Last resort: use file owner as user fallback
-    ProcInfo {
+    ProcessInfo {
         cmd: "unknown".to_string(),
         user: read_file_owner(file_path).unwrap_or_else(|| "unknown".to_string()),
         ppid: 0,
@@ -131,7 +131,7 @@ where
 fn read_file_owner(path: &Path) -> Option<String> {
     use std::os::unix::fs::MetadataExt;
     let metadata = std::fs::metadata(path).ok()?;
-    proc_tree::proc::uid_to_username(metadata.uid())
+    proc_tree::uid_to_username(metadata.uid())
 }
 
 /// Convert a monitored path to a deterministic, fixed-length log filename.

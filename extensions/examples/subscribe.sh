@@ -5,7 +5,7 @@
 # Pipe to jq for filtering.
 set -euo pipefail
 
-SOCKET="/tmp/fsmon-$(id -u).sock"
+SOCKET="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/fsmon/daemon.sock"
 [ -S "$SOCKET" ] || { echo "daemon not running? missing $SOCKET" >&2; exit 1; }
 
 # Method 1: if socat is available (recommended)

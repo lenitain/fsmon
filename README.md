@@ -191,7 +191,22 @@ sudo crontab -e
 
 ## Complete Commands
 
-### daemon
+All commands support short aliases for convenience:
+
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `daemon` | `d` | Start the fsmon daemon |
+| `add` | `a` | Add a path to the monitoring list |
+| `remove` | `r` | Remove paths from the monitoring list |
+| `monitored` | `m` | List monitored paths |
+| `query` | `q` | Query historical events |
+| `clean` | `cl` | Clean log files |
+| `changes` | `ch` | Show most recent event per path |
+| `init` | `i` | Create config file |
+| `cd` | — | Open subshell in directory |
+| `health` | `h` | Query daemon health status |
+
+### daemon (alias: `d`)
 
 Start the fsmon daemon — requires `sudo` for fanotify.
 
@@ -222,7 +237,7 @@ sudo fsmon daemon --watchdog-multiplier 3     # WatchdogSec = interval × multip
 
 Configure file output via `[logging].path` in config (enabled by default).
 
-### add
+### add (alias: `a`)
 
 Add a path (optionally with process tracking) to the monitoring list. No sudo needed.
 
@@ -246,7 +261,7 @@ fsmon add _global --path /home --size '>=1MB'  # Minimum file size filter
 - Multiple entries with different `<CMD>` values can be added (OR logic per entry).
 - `--path` is required. Use `_global` as CMD for global monitoring (all processes).
 
-### remove
+### remove (alias: `r`)
 
 Remove one or more paths from the monitoring list. No sudo needed.
 
@@ -257,7 +272,7 @@ fsmon remove nginx --path /home    # Remove /home from nginx group
 fsmon remove _global --path /home  # Remove /home from global group
 ```
 
-### monitored
+### monitored (alias: `m`)
 
 List all monitored paths with their filtering configuration in a human-readable format.
 
@@ -276,7 +291,7 @@ Process: _global (all processes)
   /tmp/fsmon_benchmark (recursive, types: ACCESS, MODIFY, CLOSE_WRITE... (14 total))
 ```
 
-### changes
+### changes (alias: `ch`)
 
 Show the most recent event per path — a deduplicated summary. Same filters as `query`,
 but only the latest event for each unique path is shown, sorted by time descending.
@@ -287,7 +302,7 @@ fsmon changes _global -t '>2026-05-01'    # Since a specific date
 fsmon changes _global --path /var/www     # Filter by path prefix
 ```
 
-### health
+### health (alias: `h`)
 
 Query daemon health status from the running daemon via Unix socket.
 
@@ -295,7 +310,7 @@ Query daemon health status from the running daemon via Unix socket.
 fsmon health
 ```
 
-### query
+### query (alias: `q`)
 
 Query historical events from log files. Output is JSONL — pipe to `jq` for filtering.
 
@@ -324,7 +339,7 @@ fsmon query _global | jq 'select(.event_type == "DELETE")'
 fsmon query _global | jq -s 'sort_by(.file_size)[] | {cmd, user, file_size, path}'
 ```
 
-### clean
+### clean (alias: `cl`)
 
 Clean log files for a specific cmd group. Defaults from `fsmon.toml`: `keep_days=30`, `size==>=1GB`.
 
@@ -352,7 +367,7 @@ find ~/.local/state/fsmon/ -name '*.jsonl' -mtime +30 -delete
 > **Note:** Native `fsmon clean` parses JSONL accurately (won't cut mid-line) and handles
 > both time and size constraints. Raw Unix tools are simpler but may produce partial lines.
 
-### init
+### init (alias: `i`)
 
 Create the config file at `~/.config/fsmon/fsmon.toml` with all settings commented
 (defaults apply). Does NOT create log or monitored directories — those are created
