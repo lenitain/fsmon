@@ -21,7 +21,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `health` → `h`
   - `cd` (no alias, already short)
 - Aliases are displayed in `--help` output for discoverability.
-- Updated documentation in both README.md and README.zh-CN.md with alias tables.
+- **Version flag**: Both `-v` and `-V` now work for `--version` (previously only `-V`).
+- **Zellij-style colors**: Help output uses yellow headers and green literals (matching zellij's style).
+
+### Fixed
+
+- **`--recursive` flag**: Added long option `--recursive` for `-r` flag in `fsmon add`.
+- **Help output duplication**: Removed duplicate content from `long_about` that was shown alongside clap-generated Usage/Arguments/Options.
+
+### Changed
+
+- **Simplified help descriptions**: `long_about` now only contains supplementary info, not repeating the short `about` description.
+- **Removed root after_help**: Quick-start examples removed from main `--help` (available in subcommand `-h` instead).
+- **Enabled clap color feature**: Added `color` feature to clap dependency for styled terminal output.
+
+### Documentation
+
+- Updated README.md and README.zh-CN.md with command alias tables.
 
 ## [0.4.11] - 2026-06-08
 
