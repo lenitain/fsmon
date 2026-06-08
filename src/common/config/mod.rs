@@ -382,7 +382,7 @@ impl Config {
         if !config_path.exists() {
             Self::create_default_config(&config_path)?;
         } else {
-            eprintln!("Exists config:        {}", config_path.display());
+            eprintln!("Exists config: {}", config_path.display());
         }
         Ok(())
     }
