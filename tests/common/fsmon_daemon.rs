@@ -62,9 +62,11 @@ impl FsmonDaemon {
     /// Send SIGTERM and wait for graceful shutdown.
     #[cfg(unix)]
     pub fn terminate(mut self) {
-        unsafe {
-            libc::kill(self.child.id() as i32, libc::SIGTERM);
-        }
+        nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(self.child.id() as i32),
+            nix::sys::signal::Signal::SIGTERM,
+        )
+        .ok();
         // Wait up to 5 seconds for graceful shutdown
         for _ in 0..50 {
             match self.child.try_wait() {

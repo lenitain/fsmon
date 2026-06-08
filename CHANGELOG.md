@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Eliminated all `unsafe` code**: Replaced `unsafe { libc::kill(...) }` in test harness with safe `nix::sys::signal::kill()`. The project now contains zero `unsafe` blocks.
+
 ### Changed
 
 - **Unified CLI naming convention**: All CLI flags now follow `[section] field → --section-field` pattern.
