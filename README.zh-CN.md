@@ -194,16 +194,15 @@ sudo crontab -e
 sudo fsmon daemon                             # 前台启动守护进程
 sudo fsmon daemon &                           # 后台启动守护进程
 sudo fsmon daemon --debug                     # 启用调试输出（事件匹配 + 缓存指标）
-sudo fsmon daemon --disk-min-free 10%         # 磁盘空间不足时告警
-sudo fsmon daemon --local-time                # 时间戳使用本地时区
-sudo fsmon daemon --buffer-size 65536         # Fanotify 读取缓冲区（默认 32768）
-sudo fsmon daemon --channel-capacity 1024     # 事件通道上限（默认无界）
-sudo fsmon daemon --subscribe-buf 8192        # Subscribe 广播缓冲（默认 4096）
+sudo fsmon daemon --logging-disk-free 10%     # 磁盘空间不足时告警
+sudo fsmon daemon --logging-local-time        # 时间戳使用本地时区
+sudo fsmon daemon --cache-buffer 65536        # Fanotify 读取缓冲区（默认 32768）
+sudo fsmon daemon --cache-channel 1024        # 事件通道上限（默认无界）
+sudo fsmon daemon --cache-subscribe 8192      # Subscribe 广播缓冲（默认 4096）
 sudo fsmon daemon --cache-dir-cap 200000      # 目录句柄缓存容量（默认 100000）
 sudo fsmon daemon --cache-dir-ttl 7200        # 目录句柄缓存 TTL（默认 3600 秒）
 sudo fsmon daemon --cache-file-size 20000     # 文件大小缓存容量（默认 10000）
 sudo fsmon daemon --cache-proc-ttl 1200       # 进程缓存 TTL（默认 600 秒）
-sudo fsmon daemon --cache-stats-interval 0    # 禁用缓存统计输出（默认 60 秒）
 sudo fsmon daemon --metrics-interval 30       # 每 30 秒向 stderr 打印状态报告
 sudo fsmon daemon --watchdog-interval 15      # 心跳间隔（秒），在主事件循环中执行
 sudo fsmon daemon --watchdog-multiplier 3     # 倍率（WatchdogSec = interval × multiplier）
@@ -392,7 +391,7 @@ dir_capacity = 100000
 dir_ttl_secs = 3600
 file_size_capacity = 10000
 proc_ttl_secs = 600
-stats_interval_secs = 60
+buffer_size = 32768             # Fanotify 读取缓冲区
 channel_capacity = 1024         # 事件通道上限（不设置 = 无界）
 subscribe_buf = 4096            # Subscribe 消费者的广播缓冲
 

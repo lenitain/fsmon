@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Unified CLI naming convention**: All CLI flags now follow `[section] field → --section-field` pattern.
+  - `--disk-min-free` → `--logging-disk-free`
+  - `--local-time` → `--logging-local-time`
+  - `--channel-capacity` → `--cache-channel`
+  - `--subscribe-buf` → `--cache-subscribe`
+  - `--buffer-size` → `--cache-buffer`
+- **Removed dead `--cache-stats-interval` / `stats_interval_secs`**: This parameter was defined but never used in the event loop. Use `--metrics-interval` for periodic status reports.
+- **Added missing config↔CLI parity**:
+  - Added `[daemon]` config section with `debug` and `metrics_interval` (previously CLI-only)
+  - Added `[cache] buffer_size` config option (previously CLI-only as `--buffer-size`)
 - **Socket path hardcoded to XDG_RUNTIME_DIR**: Removed `[socket]` config section and `SocketConfig` struct. Socket paths are now:
   - Command socket: `/run/user/<UID>/fsmon/daemon.sock`
   - Singleton lock: `/run/user/<UID>/fsmon/lock.sock`

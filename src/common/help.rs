@@ -42,11 +42,11 @@ restarting the daemon.
 Usage:
   sudo fsmon daemon &                     Start daemon in background
   sudo fsmon daemon --debug               Enable debug output
-  sudo fsmon daemon --disk-min-free 10%       Warn when disk < 10% free
-  sudo fsmon daemon --local-time              Use local timezone in timestamps
-  sudo fsmon daemon --buffer-size 65536       Fanotify read buffer
-  sudo fsmon daemon --channel-capacity 1024   Event channel cap (default: unbounded)
-  sudo fsmon daemon --subscribe-buf 8192      Subscribe broadcast buffer
+  sudo fsmon daemon --logging-disk-free 10%   Warn when disk < 10% free
+  sudo fsmon daemon --logging-local-time      Use local timezone in timestamps
+  sudo fsmon daemon --cache-buffer 65536      Fanotify read buffer
+  sudo fsmon daemon --cache-channel 1024      Event channel cap (default: unbounded)
+  sudo fsmon daemon --cache-subscribe 8192    Subscribe broadcast buffer
   sudo fsmon daemon --cache-dir-cap 200000    Override dir_cache capacity
   sudo fsmon daemon --watchdog-interval 15    watchdog heartbeat in main loop (secs)
   sudo fsmon daemon --watchdog-multiplier 3   WatchdogSec = interval × multiplier
