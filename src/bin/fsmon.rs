@@ -146,7 +146,6 @@ pub enum Commands {
     },
 
     /// Open a subshell in the monitored path or log directory
-    #[command(visible_alias = "c")]
     #[command(about = help::about(HelpTopic::Cd), long_about = help::long_about(HelpTopic::Cd))]
     Cd {
         /// cd to the monitored store directory
