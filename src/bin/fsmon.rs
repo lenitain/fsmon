@@ -18,7 +18,12 @@ const STYLES: styling::Styles = styling::Styles::styled()
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = help::about(HelpTopic::Root))]
 #[command(styles = STYLES)]
+#[command(disable_version_flag = true)]
 struct Cli {
+    /// Print version
+    #[arg(short = 'v', short_alias = 'V', long, action = clap::builder::ArgAction::Version)]
+    version: (),
+
     #[command(subcommand)]
     command: Commands,
 }
