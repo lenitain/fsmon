@@ -388,95 +388,103 @@ impl Config {
     }
 
     /// Return the default config as a TOML string with all values commented out.
+    ///
+    /// Format convention:
+    /// - `##` = descriptive comments (documentation, leave as-is)
+    /// - `#`  = commented-out config options (remove one `#` to enable)
     fn default_commented_toml() -> String {
-        r#"# ================================================================
-# fsmon configuration file
-# ================================================================
-#
-# All settings are optional. Commented values show defaults.
-# Uncomment to override. Changes take effect on next daemon start.
-# CLI flags override config file values.
+        r#"## ================================================================
+## fsmon configuration file
+## ================================================================
+##
+## All settings are optional. Commented values show defaults.
+## Uncomment to override. Changes take effect on next daemon start.
+## CLI flags override config file values.
+##
+## Legend:
+##   ##  = descriptive comment (documentation)
+##   #   = commented-out option (remove one # to enable)
 
 [monitored]
-# Monitored paths database file path.
-# Config-only (no CLI flag).
+## Monitored paths database file path.
+## Config-only (no CLI flag).
 path = "~/.local/share/fsmon/monitored.jsonl"
 
 [logging]
-# Log file output directory. Remove this section to disable file logging.
-# Config-only (no CLI flag).
+## Log file output directory. Remove this section to disable file logging.
+## Config-only (no CLI flag).
 path = "~/.local/state/fsmon"
-#
-# Auto-clean: keep entries for at most N days.
-# Config-only (clean command accepts -t/--time per invocation).
+
+## Auto-clean: keep entries for at most N days.
+## Config-only (clean command accepts -t/--time per invocation).
 # keep_days = 30
-#
-# Auto-clean: truncate log file when it exceeds this size.
-# Config-only (clean command accepts -s/--size per invocation).
+
+## Auto-clean: truncate log file when it exceeds this size.
+## Config-only (clean command accepts -s/--size per invocation).
 # size = ">=1GB"
-#
-# Warn when free disk space drops below this threshold.
-# Format: percentage ("10%") or absolute ("5GB").
-# Default: no check. CLI: --disk-min-free 10%
+
+## Warn when free disk space drops below this threshold.
+## Format: percentage ("10%") or absolute ("5GB").
+## Default: no check. CLI: --disk-min-free 10%
 # disk_min_free = "10%"
-#
-# Use local time instead of UTC in event timestamps.
-# Default: false (UTC). CLI: --local-time
+
+## Use local time instead of UTC in event timestamps.
+## Default: false (UTC). CLI: --local-time
 # local_time = false
 
-# ----------------------------------------------------------------
-# Cache settings. Uncomment to override defaults.
-# ----------------------------------------------------------------
+## ----------------------------------------------------------------
+## Cache settings. Uncomment to override defaults.
+## ----------------------------------------------------------------
 # [cache]
-#
-# Directory handle cache capacity.
-# Each entry is ~150-200 bytes. Lower on memory-constrained systems.
-# Default: 100000. CLI: --cache-dir-cap N
+
+## Directory handle cache capacity.
+## Each entry is ~150-200 bytes. Lower on memory-constrained systems.
+## Default: 100000. CLI: --cache-dir-cap N
 # dir_capacity = 100000
-#
-# Directory handle cache TTL in seconds.
-# Shorter = faster memory reclaim for volatile directories.
-# Default: 3600. CLI: --cache-dir-ttl SECS
+
+## Directory handle cache TTL in seconds.
+## Shorter = faster memory reclaim for volatile directories.
+## Default: 3600. CLI: --cache-dir-ttl SECS
 # dir_ttl_secs = 3600
-#
-# File size cache capacity.
-# Raise for high-file-volume workloads.
-# Default: 10000. CLI: --cache-file-size N
+
+## File size cache capacity.
+## Raise for high-file-volume workloads.
+## Default: 10000. CLI: --cache-file-size N
 # file_size_capacity = 10000
-#
-# Process cache TTL in seconds.
-# Applies to proc_cache and pid_tree.
-# Default: 600. CLI: --cache-proc-ttl SECS
+
+## Process cache TTL in seconds.
+## Applies to proc_cache and pid_tree.
+## Default: 600. CLI: --cache-proc-ttl SECS
 # proc_ttl_secs = 600
-#
-# Cache stats output interval in debug mode (seconds).
-# Set to 0 to disable. Default: 60. CLI: --cache-stats-interval SECS
+
+## Cache stats output interval in debug mode (seconds).
+## Set to 0 to disable. Default: 60. CLI: --cache-stats-interval SECS
 # stats_interval_secs = 60
-#
-# Event channel capacity between reader tasks and main loop.
-# Default: unbounded. CLI: --channel-capacity N
+
+## Event channel capacity between reader tasks and main loop.
+## Default: unbounded. CLI: --channel-capacity N
 # channel_capacity = 1024
-#
-# Subscribe event stream buffer capacity.
-# Events buffered for slow subscribers before dropping oldest.
-# Default: 4096. CLI: --subscribe-buf N
+
+## Subscribe event stream buffer capacity.
+## Events buffered for slow subscribers before dropping oldest.
+## Default: 4096. CLI: --subscribe-buf N
 # subscribe_buf = 4096
 
-# ----------------------------------------------------------------
-# systemd watchdog integration.
-# Sends periodic WATCHDOG=1 to prevent systemd from restarting.
-# ----------------------------------------------------------------
+## ----------------------------------------------------------------
+## systemd watchdog integration.
+## Sends periodic WATCHDOG=1 to prevent systemd from restarting.
+## ----------------------------------------------------------------
 # [watchdog]
-#
-# Heartbeat interval in seconds.
-# Must be > 0 to enable watchdog. Default: disabled.
-# CLI: --watchdog-interval SECS
+
+## Heartbeat interval in seconds.
+## Must be > 0 to enable watchdog. Default: disabled.
+## CLI: --watchdog-interval SECS
 # interval_secs = 15
-#
-# Timeout multiplier. WatchdogSec = interval_secs × multiplier.
-# MUST be > 1 (daemon refuses to start otherwise).
-# Recommended: 2-4. Higher = more tolerant of transient stalls.
-# Default: 2. CLI: --watchdog-multiplier N
+
+## Timeout multiplier. WatchdogSec = interval_secs × multiplier.
+## MUST be > 1 (daemon refuses to start otherwise).
+## Recommended: 2-4. Higher = more tolerant of transient stalls.
+## Default: 2. CLI: --watchdog-multiplier N
 # multiplier = 2
 "#
         .to_string()
