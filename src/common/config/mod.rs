@@ -130,7 +130,7 @@ impl Default for ResolvedCacheConfig {
             dir_ttl_secs: crate::common::fid_parser::DIR_CACHE_TTL_SECS,
             file_size_capacity: crate::common::fid_parser::FILE_SIZE_CACHE_CAP,
             proc_ttl_secs: crate::common::proc_cache::PROC_CACHE_TTL_SECS,
-            buffer_size: 4096 * 8, // 32KB — default from Monitor::new()
+            buffer_size: 4096 * 8,  // 32KB — default from Monitor::new()
             channel_capacity: None, // unbounded by default
             subscribe_buf: 4096,
         }
