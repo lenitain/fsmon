@@ -12,6 +12,7 @@ mod commands;
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = help::about(HelpTopic::Root))]
 #[command(after_help = help::after_help())]
+#[command(disable_help_subcommand = true)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -21,6 +22,7 @@ struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Run the fsmon daemon (requires sudo for fanotify)
+    #[command(visible_alias = "d")]
     #[command(about = help::about(HelpTopic::Daemon), long_about = help::long_about(HelpTopic::Daemon))]
     Daemon {
         /// Enable debug output (event matching, routing decisions)
@@ -96,10 +98,12 @@ pub enum Commands {
     },
 
     /// Add a path to the monitoring list
+    #[command(visible_alias = "a")]
     #[command(about = help::about(HelpTopic::Add), long_about = help::long_about(HelpTopic::Add))]
     Add(AddArgs),
 
     /// Remove one or more paths from the monitoring list
+    #[command(visible_alias = "r")]
     #[command(about = help::about(HelpTopic::Remove), long_about = help::long_about(HelpTopic::Remove))]
     Remove {
         /// Cmd group to remove (positional). Use '_global' for global monitoring.
@@ -111,24 +115,29 @@ pub enum Commands {
     },
 
     /// List all monitored paths with their configuration
+    #[command(visible_alias = "m")]
     #[command(about = help::about(HelpTopic::Monitored), long_about = help::long_about(HelpTopic::Monitored))]
     Monitored,
 
     /// Query historical file change events
+    #[command(visible_alias = "q")]
     #[command(about = help::about(HelpTopic::Query), long_about = help::long_about(HelpTopic::Query))]
     Query(QueryArgs),
 
     /// Clean historical log files
+    #[command(visible_alias = "cl")]
     #[command(about = help::about(HelpTopic::Clean), long_about = help::long_about(HelpTopic::Clean))]
     Clean(CleanArgs),
 
     /// Show most recent event per path (deduplicated changes)
+    #[command(visible_alias = "ch")]
     #[command(about = help::about(HelpTopic::Changes), long_about = help::long_about(HelpTopic::Changes))]
     Changes(ChangesArgs),
 
     /// Create the config file. Directories are created on first use by
     /// other commands (monitored: fsmon add; logs: fsmon daemon / fsmon cd).
     /// With --service, also create a systemd service file.
+    #[command(visible_alias = "i")]
     #[command(about = help::about(HelpTopic::Init), long_about = help::long_about(HelpTopic::Init))]
     Init {
         /// Also create a systemd service file at /etc/systemd/system/fsmon.service
@@ -137,6 +146,7 @@ pub enum Commands {
     },
 
     /// Open a subshell in the monitored path or log directory
+    #[command(visible_alias = "c")]
     #[command(about = help::about(HelpTopic::Cd), long_about = help::long_about(HelpTopic::Cd))]
     Cd {
         /// cd to the monitored store directory
@@ -158,6 +168,7 @@ pub enum Commands {
     },
 
     /// Query daemon health status from the running daemon
+    #[command(visible_alias = "h")]
     #[command(about = "Query daemon health status")]
     Health,
 
