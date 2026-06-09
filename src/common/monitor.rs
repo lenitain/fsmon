@@ -679,5 +679,5 @@ fn get_rss_mb() -> f64 {
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "monitor/tests.rs"]
 mod tests;

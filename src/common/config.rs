@@ -540,5 +540,5 @@ fn is_comment_only(s: &str) -> bool {
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "config/tests.rs"]
 mod tests;
