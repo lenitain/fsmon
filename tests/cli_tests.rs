@@ -1,7 +1,7 @@
 //! CLI argument parsing tests.
 //!
 //! These tests verify clap argument parsing for all CLI subcommands.
-//! Moved from src/bin/fsmon.rs to reduce binary file size.
+//! Moved from src/bin/fsmon/main.rs to reduce binary file size.
 
 use clap::Parser;
 use fsmon::common::{AddArgs, ChangesArgs, CleanArgs, QueryArgs};
@@ -187,7 +187,7 @@ fn test_query_time_with_path() {
 
 // ---- DaemonArgs CLI parsing (uses Cli + Commands from binary) ----
 // NOTE: These tests require Cli/Commands which stay in the binary crate.
-// They are kept in src/bin/fsmon_tests.rs via #[path] include.
+// They are kept in src/bin/fsmon/tests/cli_parsing_tests.rs via #[path] include.
 
 // ---- ChangesArgs CLI parsing ----
 

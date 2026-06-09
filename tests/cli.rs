@@ -3,7 +3,7 @@
 //! These tests invoke the `fsmon` binary directly and verify behavior
 //! by reading the monitored store and log files via the library API.
 //!
-//! Unlike the inline tests in `src/bin/fsmon.rs` (which test internal
+//! Unlike the inline tests in `src/bin/fsmon/main.rs` (which test internal
 //! command handler APIs), these tests exercise the full CLI → config →
 //! store pipeline.
 
