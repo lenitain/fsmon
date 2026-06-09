@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Event type validation**: `fsmon add` now rejects invalid event types (e.g. `INVALID_TYPE`) with an error instead of silently accepting them.
+- **Subscribe protocol deadlock**: Server-side `accept_socket_connection` now breaks the read loop after parsing a complete JSON object, preventing deadlock when the client waits for a response before sending more data.
+- **Subscribe examples socket path**: Fixed socket path in `extensions/examples/subscribe.py` and `subscribe.sh` from `/tmp/fsmon-<UID>.sock` to `/run/user/<UID>/fsmon/daemon.sock`.
 - **`--recursive` flag**: Added long option `--recursive` for `-r` flag in `fsmon add`.
 - **Help output duplication**: Removed duplicate content from `long_about` that was shown alongside clap-generated Usage/Arguments/Options.
 
