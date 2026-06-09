@@ -306,11 +306,7 @@ impl Monitor {
                 DIR_CACHE_CAP
             );
             if let Some(ref s) = self.proc.store {
-                debug_log!(
-                    self.debug,
-                    "  proc_store:       {} entries",
-                    s.len()
-                );
+                debug_log!(self.debug, "  proc_store:       {} entries", s.len());
             }
             debug_log!(
                 self.debug,

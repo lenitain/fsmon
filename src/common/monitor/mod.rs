@@ -260,9 +260,7 @@ impl Monitor {
                 pending_paths: Vec::new(),
                 temp_parent_marks: HashMap::new(),
             },
-            proc: ProcessState {
-                store: None,
-            },
+            proc: ProcessState { store: None },
             file_size_cache: LruCache::new(
                 NonZeroUsize::new(cache_config.file_size_capacity).unwrap(),
             ),

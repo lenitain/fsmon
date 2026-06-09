@@ -7,8 +7,7 @@
 use proc_connector::{NetlinkMessageIter, ProcConnector, ProcEvent as PcEvent};
 
 pub use proc_tree::{
-    DefaultStore, ProcEvent, ProcessInfo, ProcessLink, ProcessStore,
-    read_proc_start_time_ns,
+    DefaultStore, ProcEvent, ProcessInfo, ProcessLink, ProcessStore, read_proc_start_time_ns,
 };
 
 /// Time-to-live for process store entries (in seconds).
@@ -39,7 +38,11 @@ pub fn try_create_connector() -> Option<ProcConnector> {
 ///
 /// Returns RAII guards for exited processes. Each guard automatically removes
 /// the process from the store when dropped.
-pub fn handle_proc_events(store: &DefaultStore, data: &[u8], n: usize) -> Vec<proc_tree::ExitedProcessGuard<DefaultStore>> {
+pub fn handle_proc_events(
+    store: &DefaultStore,
+    data: &[u8],
+    n: usize,
+) -> Vec<proc_tree::ExitedProcessGuard<DefaultStore>> {
     let mut events: Vec<ProcEvent> = Vec::new();
     for msg in NetlinkMessageIter::new(data, n) {
         match msg {

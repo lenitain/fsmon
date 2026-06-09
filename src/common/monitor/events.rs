@@ -256,9 +256,10 @@ impl Monitor {
             .cmd
             .as_ref()
             .and_then(|_| {
-                self.proc.store.as_ref().map(|store| {
-                    proc_tree::build_chain_string(store, pid)
-                })
+                self.proc
+                    .store
+                    .as_ref()
+                    .map(|store| proc_tree::build_chain_string(store, pid))
             })
             .unwrap_or_default();
 
