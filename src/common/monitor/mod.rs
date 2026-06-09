@@ -603,6 +603,10 @@ impl Monitor {
                 break;
             }
             message.push_str(&line);
+            // If we have a complete JSON object, stop reading
+            if serde_json::from_str::<serde_json::Value>(message.trim()).is_ok() {
+                break;
+            }
         }
         Ok((writer, message.trim().to_string()))
     }
