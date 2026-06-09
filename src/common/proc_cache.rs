@@ -7,18 +7,12 @@
 use proc_connector::{NetlinkMessageIter, ProcConnector, ProcEvent as PcEvent};
 
 pub use proc_tree::{
-    CacheStore, DefaultCache, DefaultTree, PidNode, ProcEvent, ProcInfo, ProcessLink, TreeStore,
+    DefaultStore, ProcEvent, ProcessInfo, ProcessLink, ProcessStore,
     read_proc_start_time_ns,
 };
 
-/// Maximum number of entries in the process info cache.
-pub const PROC_CACHE_CAP: u64 = 65536;
-/// Time-to-live for process cache entries (in seconds).
-pub const PROC_CACHE_TTL_SECS: u64 = 600;
-/// Maximum number of entries in the PID tree cache.
-pub const PID_TREE_CAP: u64 = 65536;
-/// Time-to-live for PID tree cache entries (in seconds).
-pub const PID_TREE_TTL_SECS: u64 = 600;
+/// Time-to-live for process store entries (in seconds).
+pub const PROC_STORE_TTL_SECS: u64 = 600;
 
 /// Try to create a proc connector for receiving process events.
 ///
@@ -42,7 +36,7 @@ pub fn try_create_connector() -> Option<ProcConnector> {
 }
 
 /// Parse raw proc-connector bytes and delegate to proc_tree::handle_events.
-pub fn handle_proc_events(cache: &DefaultCache, tree: &DefaultTree, data: &[u8], n: usize) {
+pub fn handle_proc_events(store: &DefaultStore, data: &[u8], n: usize) {
     let mut events: Vec<ProcEvent> = Vec::new();
     for msg in NetlinkMessageIter::new(data, n) {
         match msg {
@@ -80,6 +74,6 @@ pub fn handle_proc_events(cache: &DefaultCache, tree: &DefaultTree, data: &[u8],
         }
     }
     if !events.is_empty() {
-        proc_tree::handle_events(tree, cache, &events);
+        proc_tree::handle_events(store, &events);
     }
 }

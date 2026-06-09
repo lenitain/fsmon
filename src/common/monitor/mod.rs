@@ -18,7 +18,7 @@ use crate::common::fid_parser::FsGroup;
 use crate::common::filters::{self, PathOptions};
 use crate::common::metrics::MetricsRegistry;
 use crate::common::monitored::PathEntry;
-use crate::common::proc_cache::{self, DefaultCache as ProcCache, DefaultTree as PidTree};
+use crate::common::proc_cache::{self, DefaultStore as ProcessStore};
 use crate::common::watchdog::Watchdog;
 use serde_json;
 use slotmap::SlotMap;
@@ -123,10 +123,8 @@ pub(crate) struct InotifyState {
 
 /// Process tree state: proc connector cache and PID tree.
 pub(crate) struct ProcessState {
-    /// Process info cache (PID → cmd/user/ppid/tgid).
-    pub cache: Option<ProcCache>,
-    /// PID tree for ancestry chain queries.
-    pub tree: Option<PidTree>,
+    /// Process store (unified tree and cache).
+    pub store: Option<ProcessStore>,
 }
 
 // ---- Monitor ----
@@ -263,8 +261,7 @@ impl Monitor {
                 temp_parent_marks: HashMap::new(),
             },
             proc: ProcessState {
-                cache: None,
-                tree: None,
+                store: None,
             },
             file_size_cache: LruCache::new(
                 NonZeroUsize::new(cache_config.file_size_capacity).unwrap(),
@@ -356,9 +353,8 @@ impl Monitor {
         });
         let mut proc_buf = vec![0u8; 65536];
 
-        // Clone caches for event loop use
-        let proc_cache = self.proc.cache.clone().unwrap();
-        let pid_tree = self.proc.tree.clone().unwrap();
+        // Clone store for event loop use
+        let proc_store = self.proc.store.clone().unwrap();
 
         // Move the reader death receiver out of self so tokio::select! can use it.
         let mut reader_death_rx = std::mem::replace(
@@ -397,19 +393,19 @@ impl Monitor {
         loop {
             tokio::select! {
                 Some(events) = event_rx.recv() => {
-                    self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_cache, &pid_tree);
+                    self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store);
                     let mut pending = self.process_event_batch(&events);
-                    self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_cache, &pid_tree);
+                    self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store);
                     self.patch_pending_events(&mut pending);
                     self.send_pending_events(&pending);
                     self.check_pending();
                 }
                 _ = tokio::signal::ctrl_c() => {
-                    self.drain_remaining_events(&mut event_rx, &proc_afd, &mut proc_buf, &proc_cache, &pid_tree);
+                    self.drain_remaining_events(&mut event_rx, &proc_afd, &mut proc_buf, &proc_store);
                     break;
                 }
                 _ = sigterm.recv() => {
-                    self.drain_remaining_events(&mut event_rx, &proc_afd, &mut proc_buf, &proc_cache, &pid_tree);
+                    self.drain_remaining_events(&mut event_rx, &proc_afd, &mut proc_buf, &proc_store);
                     break;
                 }
                 _ = sighup.recv() => {
@@ -424,14 +420,13 @@ impl Monitor {
                         None => std::future::pending().await,
                     }
                 } => {
-                    let report = self.collect_metrics(&dir_cache, &proc_cache, &pid_tree);
+                    let report = self.collect_metrics(&dir_cache, &proc_store);
                     eprintln!(
-                        "[metrics] uptime={}s rss={:.1}MB caches(d/p/t/f)={}/{}/{}/{} readers={}/{}/{} subs={} paths={} pending={} disk_buf={}",
+                        "[metrics] uptime={}s rss={:.1}MB caches(d/p/f)={}/{}/{} readers={}/{}/{} subs={} paths={} pending={} disk_buf={}",
                         report.uptime_secs,
                         report.rss_mb,
                         report.dir_cache_entries,
-                        report.proc_cache_entries,
-                        report.pid_tree_entries,
+                        report.proc_store_entries,
                         report.file_size_cache_entries,
                         report.reader_groups_total,
                         report.reader_groups_alive,
@@ -466,7 +461,7 @@ impl Monitor {
                     }
                 } => {
                     if let Ok(mut guard) = proc_readable {
-                        self.drain_proc_conn(guard.get_inner(), &mut proc_buf, &proc_cache, &pid_tree);
+                        self.drain_proc_conn(guard.get_inner(), &mut proc_buf, &proc_store);
                         guard.clear_ready();
                     }
                 }
@@ -505,8 +500,7 @@ impl Monitor {
     pub(crate) fn collect_metrics(
         &self,
         dir_cache: &moka::sync::Cache<fanotify_fid::types::HandleKey, std::path::PathBuf>,
-        proc_cache: &ProcCache,
-        pid_tree: &PidTree,
+        proc_store: &ProcessStore,
     ) -> MetricsReport {
         let reader_groups_alive = self.reader_states.values().filter(|s| !s.gave_up).count() as u64;
         let reader_groups_gave_up =
@@ -516,8 +510,7 @@ impl Monitor {
             uptime_secs: self.started_at.elapsed().as_secs(),
             rss_mb: get_rss_mb(),
             dir_cache_entries: dir_cache.entry_count(),
-            proc_cache_entries: proc_cache.len() as u64,
-            pid_tree_entries: pid_tree.len() as u64,
+            proc_store_entries: proc_store.len() as u64,
             file_size_cache_entries: self.file_size_cache.len() as u64,
             reader_groups_total: self.fanotify.groups.len() as u64,
             reader_groups_alive,
@@ -543,13 +536,12 @@ impl Monitor {
         &self,
         conn: &proc_connector::ProcConnector,
         proc_buf: &mut [u8],
-        proc_cache: &ProcCache,
-        pid_tree: &PidTree,
+        proc_store: &ProcessStore,
     ) {
         loop {
             match conn.recv_raw(proc_buf) {
                 Ok(n) => {
-                    proc_cache::handle_proc_events(proc_cache, pid_tree, proc_buf, n);
+                    proc_cache::handle_proc_events(proc_store, proc_buf, n);
                 }
                 Err(proc_connector::Error::WouldBlock) => break,
                 Err(proc_connector::Error::Interrupted) => continue,
@@ -566,11 +558,10 @@ impl Monitor {
         &self,
         proc_afd: &Option<AsyncFd<proc_connector::ProcConnector>>,
         proc_buf: &mut [u8],
-        proc_cache: &ProcCache,
-        pid_tree: &PidTree,
+        proc_store: &ProcessStore,
     ) {
         if let Some(afd) = proc_afd.as_ref() {
-            self.drain_proc_conn(afd.get_ref(), proc_buf, proc_cache, pid_tree);
+            self.drain_proc_conn(afd.get_ref(), proc_buf, proc_store);
         }
     }
 
@@ -580,11 +571,10 @@ impl Monitor {
         event_rx: &mut EventReceiver,
         proc_afd: &Option<AsyncFd<proc_connector::ProcConnector>>,
         proc_buf: &mut [u8],
-        proc_cache: &ProcCache,
-        pid_tree: &PidTree,
+        proc_store: &ProcessStore,
     ) {
         while let Ok(events) = event_rx.try_recv() {
-            self.drain_proc_events(proc_afd, proc_buf, proc_cache, pid_tree);
+            self.drain_proc_events(proc_afd, proc_buf, proc_store);
             let mut pending = self.process_event_batch(&events);
             self.patch_pending_events(&mut pending);
             self.send_pending_events(&pending);
@@ -657,8 +647,7 @@ pub(crate) struct MetricsReport {
     pub uptime_secs: u64,
     pub rss_mb: f64,
     pub dir_cache_entries: u64,
-    pub proc_cache_entries: u64,
-    pub pid_tree_entries: u64,
+    pub proc_store_entries: u64,
     pub file_size_cache_entries: u64,
     pub reader_groups_total: u64,
     pub reader_groups_alive: u64,

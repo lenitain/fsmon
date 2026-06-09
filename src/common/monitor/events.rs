@@ -12,7 +12,7 @@ use crate::common::filters::PathOptions;
 use crate::common::monitored::PathEntry;
 use crate::common::utils::{format_size, get_process_info_by_pid};
 use crate::common::{EventType, FileEvent};
-use proc_tree::{CacheStore, TreeStore};
+use proc_tree::ProcessStore;
 
 use super::Monitor;
 
@@ -140,9 +140,9 @@ impl Monitor {
             Some(cmd_name) => {
                 let matched = self
                     .proc
-                    .tree
+                    .store
                     .as_ref()
-                    .map(|tree| proc_tree::is_descendant(tree, event_pid, cmd_name))
+                    .map(|store| proc_tree::is_descendant(store, event_pid, cmd_name))
                     .unwrap_or(false);
                 debug_log!(
                     self.debug,
@@ -208,9 +208,9 @@ impl Monitor {
         for pe in pending {
             let ev = &mut pe.event;
             if ev.cmd == "unknown" || ev.user == "unknown" || ev.ppid == 0 || ev.tgid == 0 {
-                // Try proc_cache (now populated by the second drain)
-                if let Some(ref cache) = self.proc.cache
-                    && let Some(info) = cache.get_info(pe.pid)
+                // Try proc store (now populated by the second drain)
+                if let Some(ref store) = self.proc.store
+                    && let Some(info) = store.get_process(pe.pid)
                 {
                     if ev.cmd == "unknown" {
                         ev.cmd = info.cmd.clone();
@@ -225,17 +225,6 @@ impl Monitor {
                         ev.tgid = info.tgid;
                     }
                 }
-                // Also try PidTree for cmd/ppid
-                if let Some(ref tree) = self.proc.tree
-                    && let Some(node) = tree.get_node(pe.pid)
-                {
-                    if ev.cmd == "unknown" && !node.cmd.is_empty() {
-                        ev.cmd = node.cmd.clone();
-                    }
-                    if ev.ppid == 0 {
-                        ev.ppid = node.ppid;
-                    }
-                }
             }
         }
     }
@@ -248,7 +237,7 @@ impl Monitor {
         opts: &PathOptions,
     ) -> FileEvent {
         let pid = raw.pid.unsigned_abs();
-        let info = get_process_info_by_pid(pid, &raw.path, self.proc.cache.as_ref());
+        let info = get_process_info_by_pid(pid, &raw.path, self.proc.store.as_ref());
 
         let file_size = match event_type {
             EventType::Create | EventType::Modify | EventType::CloseWrite => {
@@ -267,11 +256,8 @@ impl Monitor {
             .cmd
             .as_ref()
             .and_then(|_| {
-                self.proc.tree.as_ref().and_then(|tree| {
-                    self.proc
-                        .cache
-                        .as_ref()
-                        .map(|cache| proc_tree::build_chain_string(tree, cache, pid))
+                self.proc.store.as_ref().map(|store| {
+                    proc_tree::build_chain_string(store, pid)
                 })
             })
             .unwrap_or_default();

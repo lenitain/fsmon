@@ -17,7 +17,6 @@ use crate::common::fid_parser::{
 use crate::common::filters::PathOptions;
 use crate::common::monitored::PathEntry;
 use crate::common::proc_cache;
-use crate::common::proc_cache::{PID_TREE_CAP, PROC_CACHE_CAP};
 use crate::common::utils::format_size;
 use proc_connector::ProcConnector;
 
@@ -47,15 +46,12 @@ impl Monitor {
         Ok(())
     }
 
-    /// Initialize process cache and pid tree. Returns proc connector for event loop.
+    /// Initialize process store. Returns proc connector for event loop.
     pub(crate) fn init_process_cache(&mut self) -> Option<ProcConnector> {
         let proc_conn = proc_cache::try_create_connector();
-        let proc_cache =
-            proc_cache::DefaultCache::new(PROC_CACHE_CAP, self.cache_config.proc_ttl_secs);
-        self.proc.cache = Some(proc_cache.clone());
-        let pid_tree = proc_cache::DefaultTree::new(PID_TREE_CAP, self.cache_config.proc_ttl_secs);
-        proc_tree::snapshot(&pid_tree, &proc_cache);
-        self.proc.tree = Some(pid_tree.clone());
+        let store = proc_cache::DefaultStore::new(self.cache_config.proc_ttl_secs);
+        proc_tree::snapshot(&store);
+        self.proc.store = Some(store.clone());
         proc_conn
     }
 
@@ -309,20 +305,11 @@ impl Monitor {
                 self.fanotify.dir_cache.entry_count(),
                 DIR_CACHE_CAP
             );
-            if let Some(ref c) = self.proc.cache {
+            if let Some(ref s) = self.proc.store {
                 debug_log!(
                     self.debug,
-                    "  proc_cache:       {}/{} entries",
-                    c.len(),
-                    PROC_CACHE_CAP
-                );
-            }
-            if let Some(ref t) = self.proc.tree {
-                debug_log!(
-                    self.debug,
-                    "  pid_tree:         {}/{} entries",
-                    t.len(),
-                    PID_TREE_CAP
+                    "  proc_store:       {} entries",
+                    s.len()
                 );
             }
             debug_log!(
