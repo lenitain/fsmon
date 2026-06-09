@@ -391,15 +391,12 @@ impl Monitor {
         loop {
             tokio::select! {
                 Some(events) = event_rx.recv() => {
-                    // Collect all guards for the entire batch
-                    let mut all_guards = Vec::new();
-                    all_guards.extend(self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store));
+                    // Drain proc events before and after processing file events
+                    let _exited1 = self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store);
                     let mut pending = self.process_event_batch(&events);
-                    all_guards.extend(self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store));
+                    let _exited2 = self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store);
                     self.patch_pending_events(&mut pending);
                     self.send_pending_events(&pending);
-                    // Drop all guards after batch processing completes
-                    drop(all_guards);
                     self.check_pending();
                 }
                 _ = tokio::signal::ctrl_c() => {
@@ -463,8 +460,7 @@ impl Monitor {
                     }
                 } => {
                     if let Ok(mut guard) = proc_readable {
-                        let _guards = self.drain_proc_conn(guard.get_inner(), &mut proc_buf, &proc_store);
-                        // Guards will be dropped when this block ends
+                        let _exited = self.drain_proc_conn(guard.get_inner(), &mut proc_buf, &proc_store);
                         guard.clear_ready();
                     }
                 }
@@ -540,12 +536,12 @@ impl Monitor {
         conn: &proc_connector::ProcConnector,
         proc_buf: &mut [u8],
         proc_store: &ProcessStore,
-    ) -> Vec<proc_tree::ProcessExitGuard<ProcessStore>> {
-        let mut guards = Vec::new();
+    ) -> Vec<u32> {
+        let mut exited = Vec::new();
         loop {
             match conn.recv_raw(proc_buf) {
                 Ok(n) => {
-                    guards.extend(proc_cache::handle_proc_events(proc_store, proc_buf, n));
+                    exited.extend(proc_cache::handle_proc_events(proc_store, proc_buf, n));
                 }
                 Err(proc_connector::Error::WouldBlock) => break,
                 Err(proc_connector::Error::Interrupted) => continue,
@@ -555,7 +551,7 @@ impl Monitor {
                 }
             }
         }
-        guards
+        exited
     }
 
     /// Convenience wrapper: drain from an optional AsyncFd.
@@ -564,7 +560,7 @@ impl Monitor {
         proc_afd: &Option<AsyncFd<proc_connector::ProcConnector>>,
         proc_buf: &mut [u8],
         proc_store: &ProcessStore,
-    ) -> Vec<proc_tree::ProcessExitGuard<ProcessStore>> {
+    ) -> Vec<u32> {
         if let Some(afd) = proc_afd.as_ref() {
             self.drain_proc_conn(afd.get_ref(), proc_buf, proc_store)
         } else {
@@ -581,14 +577,11 @@ impl Monitor {
         proc_store: &ProcessStore,
     ) {
         while let Ok(events) = event_rx.try_recv() {
-            // Collect all guards for the entire batch
-            let mut all_guards = Vec::new();
-            all_guards.extend(self.drain_proc_events(proc_afd, proc_buf, proc_store));
+            // Drain proc events
+            let _exited = self.drain_proc_events(proc_afd, proc_buf, proc_store);
             let mut pending = self.process_event_batch(&events);
             self.patch_pending_events(&mut pending);
             self.send_pending_events(&pending);
-            // Drop all guards after batch processing completes
-            drop(all_guards);
         }
     }
 
