@@ -42,7 +42,7 @@ pub fn handle_proc_events(
     store: &DefaultStore,
     data: &[u8],
     n: usize,
-) -> Vec<proc_tree::ExitedProcessGuard<DefaultStore>> {
+) -> Vec<proc_tree::ProcessExitGuard<DefaultStore>> {
     let mut events: Vec<ProcEvent> = Vec::new();
     for msg in NetlinkMessageIter::new(data, n) {
         match msg {
