@@ -19,6 +19,7 @@ use crate::common::filters::{self, PathOptions};
 use crate::common::metrics::MetricsRegistry;
 use crate::common::monitored::PathEntry;
 use crate::common::proc_cache::{self, DefaultStore as ProcessStore};
+use proc_tree::ProcessStore as ProcessStoreTrait;
 use crate::common::watchdog::Watchdog;
 use serde_json;
 use slotmap::SlotMap;
@@ -393,11 +394,15 @@ impl Monitor {
         loop {
             tokio::select! {
                 Some(events) = event_rx.recv() => {
-                    self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store);
+                    let exited = self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store);
                     let mut pending = self.process_event_batch(&events);
-                    self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store);
+                    let exited2 = self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store);
                     self.patch_pending_events(&mut pending);
                     self.send_pending_events(&pending);
+                    // Remove exited processes after sending events
+                    for pid in exited.into_iter().chain(exited2) {
+                        proc_store.remove_process(pid);
+                    }
                     self.check_pending();
                 }
                 _ = tokio::signal::ctrl_c() => {
@@ -461,7 +466,11 @@ impl Monitor {
                     }
                 } => {
                     if let Ok(mut guard) = proc_readable {
-                        self.drain_proc_conn(guard.get_inner(), &mut proc_buf, &proc_store);
+                        let exited = self.drain_proc_conn(guard.get_inner(), &mut proc_buf, &proc_store);
+                        // Remove exited processes
+                        for pid in exited {
+                            proc_store.remove_process(pid);
+                        }
                         guard.clear_ready();
                     }
                 }
@@ -537,11 +546,12 @@ impl Monitor {
         conn: &proc_connector::ProcConnector,
         proc_buf: &mut [u8],
         proc_store: &ProcessStore,
-    ) {
+    ) -> Vec<u32> {
+        let mut exited = Vec::new();
         loop {
             match conn.recv_raw(proc_buf) {
                 Ok(n) => {
-                    proc_cache::handle_proc_events(proc_store, proc_buf, n);
+                    exited.extend(proc_cache::handle_proc_events(proc_store, proc_buf, n));
                 }
                 Err(proc_connector::Error::WouldBlock) => break,
                 Err(proc_connector::Error::Interrupted) => continue,
@@ -551,6 +561,7 @@ impl Monitor {
                 }
             }
         }
+        exited
     }
 
     /// Convenience wrapper: drain from an optional AsyncFd.
@@ -559,9 +570,11 @@ impl Monitor {
         proc_afd: &Option<AsyncFd<proc_connector::ProcConnector>>,
         proc_buf: &mut [u8],
         proc_store: &ProcessStore,
-    ) {
+    ) -> Vec<u32> {
         if let Some(afd) = proc_afd.as_ref() {
-            self.drain_proc_conn(afd.get_ref(), proc_buf, proc_store);
+            self.drain_proc_conn(afd.get_ref(), proc_buf, proc_store)
+        } else {
+            Vec::new()
         }
     }
 
@@ -574,10 +587,14 @@ impl Monitor {
         proc_store: &ProcessStore,
     ) {
         while let Ok(events) = event_rx.try_recv() {
-            self.drain_proc_events(proc_afd, proc_buf, proc_store);
+            let exited = self.drain_proc_events(proc_afd, proc_buf, proc_store);
             let mut pending = self.process_event_batch(&events);
             self.patch_pending_events(&mut pending);
             self.send_pending_events(&pending);
+            // Remove exited processes after sending events
+            for pid in exited {
+                proc_store.remove_process(pid);
+            }
         }
     }
 

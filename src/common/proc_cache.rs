@@ -36,7 +36,12 @@ pub fn try_create_connector() -> Option<ProcConnector> {
 }
 
 /// Parse raw proc-connector bytes and delegate to proc_tree::handle_events.
-pub fn handle_proc_events(store: &DefaultStore, data: &[u8], n: usize) {
+///
+/// Returns a list of PIDs from Exit events. These processes have been
+/// marked for removal (children orphaned to init) but not yet removed.
+/// The caller should call `store.remove_process(pid)` after processing
+/// the events to complete the removal.
+pub fn handle_proc_events(store: &DefaultStore, data: &[u8], n: usize) -> Vec<u32> {
     let mut events: Vec<ProcEvent> = Vec::new();
     for msg in NetlinkMessageIter::new(data, n) {
         match msg {
@@ -74,6 +79,8 @@ pub fn handle_proc_events(store: &DefaultStore, data: &[u8], n: usize) {
         }
     }
     if !events.is_empty() {
-        proc_tree::handle_events(store, &events);
+        proc_tree::handle_events(store, &events)
+    } else {
+        Vec::new()
     }
 }
