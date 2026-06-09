@@ -126,6 +126,11 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
                 .collect(),
         )
     } else {
+        // Validate each event type
+        for t in &args.types {
+            let _ = t.parse::<fsmon::common::EventType>()
+                .map_err(|e| anyhow::anyhow!(e))?;
+        }
         Some(args.types.clone())
     };
     let size_val = args.size.clone();
