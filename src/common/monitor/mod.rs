@@ -536,7 +536,7 @@ impl Monitor {
         conn: &proc_connector::ProcConnector,
         proc_buf: &mut [u8],
         proc_store: &ProcessStore,
-    ) -> Vec<u32> {
+    ) -> Vec<proc_cache::ExitedProcess> {
         let mut exited = Vec::new();
         loop {
             match conn.recv_raw(proc_buf) {
@@ -560,7 +560,7 @@ impl Monitor {
         proc_afd: &Option<AsyncFd<proc_connector::ProcConnector>>,
         proc_buf: &mut [u8],
         proc_store: &ProcessStore,
-    ) -> Vec<u32> {
+    ) -> Vec<proc_cache::ExitedProcess> {
         if let Some(afd) = proc_afd.as_ref() {
             self.drain_proc_conn(afd.get_ref(), proc_buf, proc_store)
         } else {
