@@ -128,7 +128,8 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     } else {
         // Validate each event type
         for t in &args.types {
-            let _ = t.parse::<fsmon::common::EventType>()
+            let _ = t
+                .parse::<fsmon::common::EventType>()
                 .map_err(|e| anyhow::anyhow!(e))?;
         }
         Some(args.types.clone())
