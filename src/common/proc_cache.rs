@@ -38,11 +38,7 @@ pub fn try_create_connector() -> Option<ProcConnector> {
 ///
 /// Returns RAII guards for exited processes. Each guard automatically removes
 /// Returns exited PIDs. Process info stays in store — caller decides when to remove.
-pub fn handle_proc_events(
-    store: &DefaultStore,
-    data: &[u8],
-    n: usize,
-) -> Vec<u32> {
+pub fn handle_proc_events(store: &DefaultStore, data: &[u8], n: usize) -> Vec<u32> {
     let mut events: Vec<ProcEvent> = Vec::new();
     for msg in NetlinkMessageIter::new(data, n) {
         match msg {
