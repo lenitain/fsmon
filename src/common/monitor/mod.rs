@@ -391,14 +391,15 @@ impl Monitor {
         loop {
             tokio::select! {
                 Some(events) = event_rx.recv() => {
-                    let _guards = self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store);
+                    // Collect all guards for the entire batch
+                    let mut all_guards = Vec::new();
+                    all_guards.extend(self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store));
                     let mut pending = self.process_event_batch(&events);
-                    let _guards2 = self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store);
+                    all_guards.extend(self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store));
                     self.patch_pending_events(&mut pending);
                     self.send_pending_events(&pending);
-                    // Guards automatically remove processes when dropped
-                    drop(_guards);
-                    drop(_guards2);
+                    // Drop all guards after batch processing completes
+                    drop(all_guards);
                     self.check_pending();
                 }
                 _ = tokio::signal::ctrl_c() => {
@@ -463,8 +464,7 @@ impl Monitor {
                 } => {
                     if let Ok(mut guard) = proc_readable {
                         let _guards = self.drain_proc_conn(guard.get_inner(), &mut proc_buf, &proc_store);
-                        // Guards automatically remove processes when dropped
-                        drop(_guards);
+                        // Guards will be dropped when this block ends
                         guard.clear_ready();
                     }
                 }
@@ -581,12 +581,14 @@ impl Monitor {
         proc_store: &ProcessStore,
     ) {
         while let Ok(events) = event_rx.try_recv() {
-            let _guards = self.drain_proc_events(proc_afd, proc_buf, proc_store);
+            // Collect all guards for the entire batch
+            let mut all_guards = Vec::new();
+            all_guards.extend(self.drain_proc_events(proc_afd, proc_buf, proc_store));
             let mut pending = self.process_event_batch(&events);
             self.patch_pending_events(&mut pending);
             self.send_pending_events(&pending);
-            // Guards automatically remove processes when dropped
-            drop(_guards);
+            // Drop all guards after batch processing completes
+            drop(all_guards);
         }
     }
 
