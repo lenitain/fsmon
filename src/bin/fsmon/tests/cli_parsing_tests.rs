@@ -73,7 +73,9 @@ fn test_remove_empty_ok() {
 fn test_cd_logging() {
     let cli = Cli::try_parse_from(["fsmon", "cd", "-l"]).unwrap();
     match cli.command {
-        Commands::Cd { monitored, logging } => {
+        Commands::Cd {
+            monitored, logging, ..
+        } => {
             assert!(!monitored);
             assert!(logging);
         }
@@ -85,7 +87,9 @@ fn test_cd_logging() {
 fn test_cd_monitored() {
     let cli = Cli::try_parse_from(["fsmon", "cd", "-m"]).unwrap();
     match cli.command {
-        Commands::Cd { monitored, logging } => {
+        Commands::Cd {
+            monitored, logging, ..
+        } => {
             assert!(monitored);
             assert!(!logging);
         }

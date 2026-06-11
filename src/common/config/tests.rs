@@ -435,4 +435,3 @@ fn test_user_path_uses_xdg_config_home() {
         },
     );
 }
-

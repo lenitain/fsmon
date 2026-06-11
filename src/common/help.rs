@@ -101,7 +101,6 @@ CLI args override config. Daemon does not auto-clean; use cron/systemd timer."
             r"Same format as 'query', but with duplicate paths collapsed:
 only the latest event for each unique path is shown, sorted by time descending."
         }
-
     }
 }
 
