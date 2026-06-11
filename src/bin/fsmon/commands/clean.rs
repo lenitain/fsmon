@@ -37,7 +37,19 @@ pub async fn cmd_clean(args: CleanArgs) -> Result<()> {
         .clone()
         .or(cfg.logging.size.clone())
         .or_else(|| Some(DEFAULT_MAX_SIZE.to_string()))
-        .map(|s| parse_size_filter(&s))
+        .map(|s| {
+            // Auto-prepend '>=' if the size string has no operator.
+            // Users naturally write `size = "100MB"` in config files;
+            // the semantic is "max size", equivalent to '>='.
+            let s = s.trim();
+            if s.starts_with(">=") || s.starts_with("<=") || s.starts_with('>')
+                || s.starts_with('<') || s.starts_with('=')
+            {
+                parse_size_filter(s)
+            } else {
+                parse_size_filter(&format!(">={s}"))
+            }
+        })
         .transpose()?;
 
     clean_logs(

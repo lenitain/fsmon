@@ -154,6 +154,11 @@ journalctl -u fsmon -f          # Logs
 | Infrastructure config | `~/.config/fsmon/fsmon.toml` | TOML (created by `fsmon init`, all-commented — defaults apply) |
 | Monitored paths database | `~/.local/share/fsmon/monitored.jsonl` | JSONL (grouped by cmd, paths as map keys) |
 | Event logs | `~/.local/state/fsmon/*_log.jsonl` | JSONL (one event per line) |
+
+> **Log file naming:** Filenames are derived from the monitored cmd as `{cmd}_log.jsonl`.
+> When the cmd contains a full path (e.g. `bun /home/user/.bun/bin/pi`), path separators `/`
+> are replaced with `_`, producing `bun _home_user_.bun_bin_pi_log.jsonl`. This is because
+> `/` is not allowed in Linux filenames. Use `*_log.jsonl` glob to match all log files.
 | Unix socket | `/run/user/<UID>/fsmon/daemon.sock` | JSON over stream |
 
 The store path and log directory are configurable in `~/.config/fsmon/fsmon.toml`
@@ -379,11 +384,12 @@ fsmon init
 
 ### cd
 
-Open a subshell in the monitored store or log directory.
+Open a subshell in the monitored store, log, or config directory.
 
 ```
 fsmon cd -l    # Open subshell in log directory (~/.local/state/fsmon)
 fsmon cd -m    # Open subshell in monitored store directory (~/.local/share/fsmon)
+fsmon cd -c    # Open subshell in config directory (~/.config/fsmon)
 ```
 
 Type `exit` to return to the original directory.

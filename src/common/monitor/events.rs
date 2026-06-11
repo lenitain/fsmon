@@ -177,11 +177,12 @@ impl Monitor {
                 path.display()
             );
         }
+        let path_buf = path.to_path_buf();
         for opts in all_opts {
             self.inotify_state.pending_paths.push((
-                path.to_path_buf(),
+                path_buf.clone(),
                 PathEntry {
-                    path: path.to_path_buf(),
+                    path: path_buf.clone(),
                     recursive: Some(opts.recursive),
                     types: opts
                         .event_types

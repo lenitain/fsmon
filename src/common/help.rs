@@ -57,8 +57,18 @@ With --service, also installs a systemd service:
   sudo fsmon init --service"
         }
         HelpTopic::Cd => {
-            r"Spawns a new shell (using $SHELL, fallback /bin/sh).
-Type 'exit' to return to the original directory."
+            r"Spawns a new shell (using $SHELL, fallback /bin/sh) in the target directory.
+Type 'exit' to return to the original directory.
+
+Options:
+  -m, --monitored    cd to the monitored store directory
+  -l, --logging      cd to the log directory
+  -c, --config       cd to the config directory (~/.config/fsmon/)
+
+Examples:
+  fsmon cd -l                       Open subshell in log directory
+  fsmon cd -m                       Open subshell in monitored store directory
+  fsmon cd -c                       Open subshell in config directory"
         }
         HelpTopic::Add => {
             r"The entry is added immediately if the daemon is running, and persisted
@@ -103,6 +113,7 @@ Setup (no sudo needed):
   sudo fsmon init --service         Also install systemd service (auto-start on crash)
   fsmon cd -l                       Open subshell in log directory
   fsmon cd -m                       Open subshell in monitored store directory
+  fsmon cd -c                       Open subshell in config directory
 
 Daemon (requires sudo):
   sudo fsmon daemon &               Start daemon in background

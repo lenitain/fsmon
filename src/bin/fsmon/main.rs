@@ -155,25 +155,33 @@ pub enum Commands {
         service: bool,
     },
 
-    /// Open a subshell in the monitored path or log directory
+    /// Open a subshell in the monitored path, log, or config directory
     #[command(about = help::about(HelpTopic::Cd), long_about = help::long_about(HelpTopic::Cd))]
     Cd {
         /// cd to the monitored store directory
         #[arg(
             short = 'm',
             long,
-            conflicts_with = "logging",
-            required_unless_present = "logging"
+            conflicts_with_all = ["logging", "config"],
+            required_unless_present_any = ["logging", "config"]
         )]
         monitored: bool,
         /// cd to the log directory (same as old `fsmon cd`)
         #[arg(
             short = 'l',
             long,
-            conflicts_with = "monitored",
-            required_unless_present = "monitored"
+            conflicts_with_all = ["monitored", "config"],
+            required_unless_present_any = ["monitored", "config"]
         )]
         logging: bool,
+        /// cd to the config directory (~/.config/fsmon/)
+        #[arg(
+            short = 'c',
+            long,
+            conflicts_with_all = ["monitored", "logging"],
+            required_unless_present_any = ["monitored", "logging"]
+        )]
+        config: bool,
     },
 
     /// Query daemon health status from the running daemon

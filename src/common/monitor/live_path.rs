@@ -153,7 +153,7 @@ impl Monitor {
                     e
                 );
             } else if opts.recursive && canonical.is_dir() {
-                mark_recursive(fan_fd, path_mask, &canonical);
+                let _ = mark_recursive(fan_fd, path_mask, &canonical);
             }
             self.fanotify.groups[key].ref_count += 1;
             eprintln!(
@@ -235,7 +235,7 @@ impl Monitor {
                     new_fd.as_raw_fd()
                 );
                 if recursive && canonical.is_dir() {
-                    mark_recursive(new_fd, path_mask, canonical);
+                    let _ = mark_recursive(new_fd, path_mask, canonical);
                 }
                 Some(())
             }

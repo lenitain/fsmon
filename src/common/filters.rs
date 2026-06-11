@@ -124,7 +124,6 @@ pub fn matching_path<'a>(
 pub fn is_path_in_scope(
     paths: &[PathBuf],
     entries: &[(PathBuf, PathOptions)],
-    _canonical_paths: &[PathBuf],
     path: &Path,
 ) -> bool {
     for watched in paths {
@@ -304,30 +303,6 @@ mod tests {
 
     // ---- matching_path ----
 
-    #[allow(dead_code)]
-    fn make_entries() -> Vec<(PathBuf, PathOptions)> {
-        vec![
-            (
-                PathBuf::from("/home/user/project"),
-                PathOptions {
-                    size_filter: None,
-                    event_types: None,
-                    recursive: true,
-                    cmd: None,
-                },
-            ),
-            (
-                PathBuf::from("/var/log"),
-                PathOptions {
-                    size_filter: None,
-                    event_types: None,
-                    recursive: false,
-                    cmd: None,
-                },
-            ),
-        ]
-    }
-
     #[test]
     fn test_matching_path_direct_match() {
         let paths = vec![
@@ -392,37 +367,15 @@ mod tests {
                 cmd: None,
             },
         )];
-        let canonical = paths.clone();
+        assert!(is_path_in_scope(&paths, &entries, Path::new("/tmp")));
+        assert!(is_path_in_scope(&paths, &entries, Path::new("/tmp/sub")));
         assert!(is_path_in_scope(
             &paths,
             &entries,
-            &canonical,
-            Path::new("/tmp")
-        ));
-        assert!(is_path_in_scope(
-            &paths,
-            &entries,
-            &canonical,
-            Path::new("/tmp/sub")
-        ));
-        assert!(is_path_in_scope(
-            &paths,
-            &entries,
-            &canonical,
             Path::new("/tmp/sub/deep/file.txt")
         ));
-        assert!(!is_path_in_scope(
-            &paths,
-            &entries,
-            &canonical,
-            Path::new("/var/log")
-        ));
-        assert!(!is_path_in_scope(
-            &paths,
-            &entries,
-            &canonical,
-            Path::new("/tmpfile")
-        ));
+        assert!(!is_path_in_scope(&paths, &entries, Path::new("/var/log")));
+        assert!(!is_path_in_scope(&paths, &entries, Path::new("/tmpfile")));
     }
 
     #[test]
@@ -437,31 +390,18 @@ mod tests {
                 cmd: None,
             },
         )];
-        let canonical = paths.clone();
+        assert!(is_path_in_scope(&paths, &entries, Path::new("/tmp")));
         assert!(is_path_in_scope(
             &paths,
             &entries,
-            &canonical,
-            Path::new("/tmp")
-        ));
-        assert!(is_path_in_scope(
-            &paths,
-            &entries,
-            &canonical,
             Path::new("/tmp/file.txt")
         ));
         assert!(!is_path_in_scope(
             &paths,
             &entries,
-            &canonical,
             Path::new("/tmp/sub/file.txt")
         ));
-        assert!(!is_path_in_scope(
-            &paths,
-            &entries,
-            &canonical,
-            Path::new("/var/log")
-        ));
+        assert!(!is_path_in_scope(&paths, &entries, Path::new("/var/log")));
     }
 
     #[test]
@@ -487,23 +427,15 @@ mod tests {
                 },
             ),
         ];
-        let canonical = paths.clone();
+        assert!(is_path_in_scope(&paths, &entries, Path::new("/tmp/file")));
         assert!(is_path_in_scope(
             &paths,
             &entries,
-            &canonical,
-            Path::new("/tmp/file")
-        ));
-        assert!(is_path_in_scope(
-            &paths,
-            &entries,
-            &canonical,
             Path::new("/var/log/syslog")
         ));
         assert!(!is_path_in_scope(
             &paths,
             &entries,
-            &canonical,
             Path::new("/etc/passwd")
         ));
     }

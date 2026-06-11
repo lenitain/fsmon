@@ -324,13 +324,18 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Return the config file path: `$XDG_CONFIG_HOME/fsmon/fsmon.toml`
+    /// Return the user config file path: `$XDG_CONFIG_HOME/fsmon/fsmon.toml`
     /// Falls back to `~/.config/fsmon/fsmon.toml`.
-    pub fn path() -> PathBuf {
+    pub fn user_path() -> PathBuf {
         let home = guess_home();
         let xdg_config =
             std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{}/.config", home));
         PathBuf::from(xdg_config).join("fsmon").join("fsmon.toml")
+    }
+
+    /// Alias for backward compatibility.
+    pub fn path() -> PathBuf {
+        Self::user_path()
     }
 
     /// Load config from file. Returns default Config if file doesn't exist.

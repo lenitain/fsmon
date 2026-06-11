@@ -143,4 +143,9 @@ fn cmd_to_log_name_format() {
     assert_eq!(cmd_to_log_name("_global"), "_global_log.jsonl");
     assert_eq!(cmd_to_log_name("myapp"), "myapp_log.jsonl");
     assert_eq!(cmd_to_log_name("nginx"), "nginx_log.jsonl");
+    // Full cmdline with path separators should be sanitized
+    assert_eq!(
+        cmd_to_log_name("bun /home/user/.bun/bin/pi"),
+        "bun _home_user_.bun_bin_pi_log.jsonl"
+    );
 }

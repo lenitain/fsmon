@@ -131,14 +131,18 @@ where
 fn read_file_owner(path: &Path) -> Option<String> {
     use std::os::unix::fs::MetadataExt;
     let metadata = std::fs::metadata(path).ok()?;
-    proc_tree::uid_to_username(metadata.uid())
+    proc_tree::uid_to_username(metadata.uid()).map(|s| s.to_string())
 }
 
 /// Convert a monitored path to a deterministic, fixed-length log filename.
 /// Resolve log filename from cmd name.
 /// `"_global"` → `"_global_log.jsonl"`, `"openclaw"` → `"openclaw_log.jsonl"`.
 pub fn cmd_to_log_name(cmd: &str) -> String {
-    format!("{}_log.jsonl", cmd)
+    // Replace path separators and other filesystem-unsafe characters with underscores.
+    // This is necessary because cmd may be a full cmdline like
+    // "bun /home/user/.bun/bin/pi" which contains '/'.
+    let safe = cmd.replace('/', "_");
+    format!("{}_log.jsonl", safe)
 }
 
 #[cfg(test)]
