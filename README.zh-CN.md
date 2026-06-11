@@ -153,6 +153,11 @@ journalctl -u fsmon -f          # 日志
 | 基础设施配置 | `~/.config/fsmon/fsmon.toml` | TOML（由 `fsmon init` 创建，全部注释 — 不修改则使用默认值） |
 | 监控路径数据库 | `~/.local/share/fsmon/monitored.jsonl` | JSONL（按 cmd 分组，路径为 map 键） |
 | 事件日志 | `~/.local/state/fsmon/*_log.jsonl` | JSONL（每行一个事件） |
+
+> **日志文件命名规则：** 文件名基于监控的进程 cmd 生成，规则为 `{cmd}_log.jsonl`。
+> 当 cmd 包含完整路径（如 `bun /home/user/.bun/bin/pi`）时，路径分隔符 `/` 会被替换为 `_`，
+> 生成 `bun _home_user_.bun_bin_pi_log.jsonl`。这是因为在 Linux 文件系统中 `/` 不能出现在文件名里。
+> 通配符匹配：`*_log.jsonl` 可匹配所有日志文件。
 | Unix 套接字 | `/run/user/<UID>/fsmon/daemon.sock` | JSON over stream |
 
 存储路径和日志目录均可通过 `~/.config/fsmon/fsmon.toml` 配置（参见 `[monitored].path` 和 `[logging].path`）。
