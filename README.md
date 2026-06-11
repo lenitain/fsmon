@@ -384,11 +384,12 @@ fsmon init
 
 ### cd
 
-Open a subshell in the monitored store or log directory.
+Open a subshell in the monitored store, log, or config directory.
 
 ```
 fsmon cd -l    # Open subshell in log directory (~/.local/state/fsmon)
 fsmon cd -m    # Open subshell in monitored store directory (~/.local/share/fsmon)
+fsmon cd -c    # Open subshell in config directory (~/.config/fsmon)
 ```
 
 Type `exit` to return to the original directory.

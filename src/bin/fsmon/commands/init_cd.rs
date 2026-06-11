@@ -126,12 +126,22 @@ fn install_service() -> Result<()> {
     Ok(())
 }
 
-/// Open a subshell in the monitored path or log directory.
-pub fn cmd_cd(monitored: bool) -> Result<()> {
+/// Open a subshell in the monitored path, log directory,
+/// or config directory.
+pub fn cmd_cd(monitored: bool, config: bool) -> Result<()> {
     let mut cfg = fsmon::common::config::Config::load()?;
     cfg.resolve_paths()?;
 
-    let dir = if monitored {
+    let dir = if config {
+        // cd to the config directory (~/.config/fsmon/)
+        fsmon::common::config::Config::user_path()
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| {
+                let home = fsmon::common::config::guess_home();
+                PathBuf::from(format!("{}/.config/fsmon", home))
+            })
+    } else if monitored {
         // cd to the monitored store directory (where monitored.jsonl lives).
         // Mirror of -l which cds to the log directory.
         let store_file = cfg.monitored.path.clone();
@@ -142,8 +152,6 @@ pub fn cmd_cd(monitored: bool) -> Result<()> {
             .unwrap_or_else(|| store_file.clone())
     } else {
         // -l: cd to log directory (identical to old `fsmon cd`)
-        let mut cfg = fsmon::common::config::Config::load()?;
-        cfg.resolve_paths()?;
         cfg.logging.path.unwrap_or_else(|| {
             let home = fsmon::common::config::guess_home();
             PathBuf::from(format!("{}/.local/state/fsmon", home))
@@ -159,7 +167,11 @@ pub fn cmd_cd(monitored: bool) -> Result<()> {
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
 
-    let label = if monitored { "monitored path" } else { "log" };
+    let label = match (config, monitored) {
+        (true, _) => "config",
+        (_, true) => "monitored path",
+        _ => "log",
+    };
     eprintln!(
         "Entering fsmon {} directory (type 'exit' to return)...",
         label

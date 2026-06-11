@@ -69,7 +69,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
         Changes(args) => cmd_changes(args).await_(),
         Clean(args) => cmd_clean(args).await_(),
         Init { service } => cmd_init(service),
-        Cd { monitored, .. } => cmd_cd(monitored),
+        Cd { monitored, config, .. } => cmd_cd(monitored, config),
         Health => cmd_health(),
         ListMonitoredPaths => cmd_list_monitored_paths(),
     }

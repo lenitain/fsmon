@@ -377,11 +377,12 @@ fsmon init
 
 ### cd
 
-在监控存储或日志目录中打开子 shell。
+在监控存储、日志或配置目录中打开子 shell。
 
 ```
 fsmon cd -l    # 在日志目录中打开子 shell (~/.local/state/fsmon)
 fsmon cd -m    # 在监控存储目录中打开子 shell (~/.local/share/fsmon)
+fsmon cd -c    # 在配置目录中打开子 shell (~/.config/fsmon)
 ```
 
 输入 `exit` 返回原始目录。

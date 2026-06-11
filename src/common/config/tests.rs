@@ -403,3 +403,36 @@ proc_ttl_secs = 300
     assert_eq!(cache.file_size_capacity, Some(5000));
     assert_eq!(cache.proc_ttl_secs, Some(300));
 }
+
+#[test]
+fn test_user_path_equals_path() {
+    assert_eq!(Config::user_path(), Config::path());
+}
+
+#[test]
+fn test_user_path_uses_xdg_config_home() {
+    let _lock = ENV_LOCK.lock().unwrap();
+
+    temp_env::with_vars(
+        [
+            ("XDG_CONFIG_HOME", Some("/custom/xdg/config")),
+            ("HOME", Some("/home/test")),
+        ],
+        || {
+            let path = Config::user_path();
+            assert!(
+                path.to_string_lossy()
+                    .contains("/custom/xdg/config/fsmon/fsmon.toml")
+            );
+
+            temp_env::with_var_unset("XDG_CONFIG_HOME", || {
+                let path = Config::user_path();
+                assert!(
+                    path.to_string_lossy()
+                        .contains("/home/test/.config/fsmon/fsmon.toml")
+                );
+            });
+        },
+    );
+}
+
