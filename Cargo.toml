@@ -12,6 +12,7 @@ authors = ["lenitain <xt.zhu@qq.com>"]
 
 include = [
     "Cargo.toml",
+    "Cargo.lock",
     "LICENSE",
     "README.md",
     "README.zh-CN.md",
