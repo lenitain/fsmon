@@ -139,7 +139,7 @@ impl Monitor {
                     );
                     let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
                     if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
-                        mark_recursive(fan_fd, path_mask, canonical);
+                        let _ = mark_recursive(fan_fd, path_mask, canonical);
                     }
                 }
                 self.fanotify.groups[key].ref_count += 1;

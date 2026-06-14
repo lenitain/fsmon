@@ -376,19 +376,28 @@ pub fn mark_directory(fan_fd: &OwnedFd, mask: u64, path: &Path) -> Result<()> {
 
 /// Recursively traverse and mark all subdirectories (ignore errors, e.g., permission denied).
 /// Strips FAN_FS_ERROR (only works with FS marks).
-pub fn mark_recursive(fan_fd: &OwnedFd, mask: u64, dir: &Path) {
-    let safe_mask = mask & !FAN_FS_ERROR;
+///
+/// Returns a list of **newly discovered** subdirectories (excluding `dir` itself)
+/// so the caller can generate synthetic CREATE events for them.
+pub fn mark_recursive(fan_fd: &OwnedFd, mask: u64, dir: &Path) -> Vec<PathBuf> {
+    mark_recursive_inner(fan_fd, mask & !FAN_FS_ERROR, dir)
+}
+
+fn mark_recursive_inner(fan_fd: &OwnedFd, safe_mask: u64, dir: &Path) -> Vec<PathBuf> {
+    let mut discovered = Vec::new();
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return,
+        Err(_) => return discovered,
     };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
             let _ = fanotify_mark(fan_fd, FAN_MARK_ADD, safe_mask, AT_FDCWD, path.as_path());
-            mark_recursive(fan_fd, safe_mask, &path);
+            discovered.push(path.clone());
+            discovered.extend(mark_recursive_inner(fan_fd, safe_mask, &path));
         }
     }
+    discovered
 }
 
 #[cfg(test)]

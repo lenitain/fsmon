@@ -12,10 +12,14 @@ impl Monitor {
     /// 1. Parent directories of pending paths (retry when created)
     /// 2. Recursively-monitored directory roots for new subdir creation and self-deletion.
     /// 3. Non-recursive monitored directories for self-deletion.
+    ///
+    /// This function is **incremental**: it only adds watches that don't already
+    /// exist in `self.inotify_state.watches`.  Previously it cleared the vector
+    /// on every call, which dropped watches added by `on_new_subdirectory` during
+    /// inotify event processing — causing events from those watches to be silently
+    /// ignored (the WatchDescriptor lookup in `handle_inotify_events` would fail).
     pub(crate) fn setup_inotify_watches(&mut self) {
         use inotify::WatchMask;
-
-        self.inotify_state.watches.clear();
 
         let ino = match self.inotify_state.inotify.as_ref() {
             Some(ino) => ino,
@@ -26,12 +30,14 @@ impl Monitor {
         let dir_self_mask = WatchMask::DELETE_SELF | WatchMask::MOVE_SELF;
         let dir_root_mask = mask | dir_self_mask;
 
-        // 1. Watch parent dirs of pending paths
+        // 1. Watch parent dirs of pending paths (skip if already tracked)
         for (path, _) in &self.inotify_state.pending_paths {
-            if let Some(parent) = Self::nearest_existing_ancestor(path)
-                && let Ok(wd) = ino.watches().add(&parent, mask)
-            {
-                self.inotify_state.watches.push((parent, wd));
+            if let Some(parent) = Self::nearest_existing_ancestor(path) {
+                if !self.inotify_state.watches.iter().any(|(p, _)| *p == parent)
+                    && let Ok(wd) = ino.watches().add(&parent, mask)
+                {
+                    self.inotify_state.watches.push((parent, wd));
+                }
             }
         }
 
@@ -194,16 +200,19 @@ impl Monitor {
     }
 
     /// Add fanotify mark + cache + inotify watch for a newly detected subdirectory.
-    pub(crate) fn on_new_subdirectory(&mut self, path: &Path) {
+    /// Add fanotify mark + cache + inotify watch for a newly detected subdirectory.
+    /// Returns a list of subdirectories that were discovered during recursive marking
+    /// (i.e., directories that already existed but were not yet monitored).
+    pub(crate) fn on_new_subdirectory(&mut self, path: &Path) -> Vec<PathBuf> {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         if !canonical.is_dir() {
-            return;
+            return Vec::new();
         }
         let dev_id = match std::fs::metadata(&canonical)
             .map(|m| std::os::linux::fs::MetadataExt::st_dev(&m))
         {
             Ok(d) => d,
-            Err(_) => return,
+            Err(_) => return Vec::new(),
         };
         let Some((gi, _)) = self
             .fanotify
@@ -211,7 +220,7 @@ impl Monitor {
             .iter()
             .find(|(_, g)| g.dev_id == dev_id)
         else {
-            return;
+            return Vec::new();
         };
         let path_mask = self
             .monitored_entries
@@ -228,13 +237,13 @@ impl Monitor {
 
         let fan_fd = &self.fanotify.groups[gi].fan_fd;
         if mark_directory(fan_fd, path_mask, &canonical).is_err() {
-            return;
+            return Vec::new();
         }
 
         if let Some(ref cache) = self.fanotify.shared_dir_cache {
             dir_cache::cache_dir_handle(cache, &canonical);
         }
-        mark_recursive(fan_fd, path_mask, &canonical);
+        let discovered = mark_recursive(fan_fd, path_mask, &canonical);
         if let Some(ref cache) = self.fanotify.shared_dir_cache {
             dir_cache::cache_recursive(cache, &canonical);
         }
@@ -249,6 +258,8 @@ impl Monitor {
                 watches,
             );
         }
+
+        discovered
     }
 
     /// Retry monitoring for paths that didn't exist at add time.

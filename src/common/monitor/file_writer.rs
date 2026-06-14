@@ -131,17 +131,18 @@ impl FileLogWriter {
 
         // Serialize before borrowing self.handles
         let line = self.jsonl_string(event);
-        let is_new = !log_path.exists();
+
+        // If the file was deleted externally (e.g. by user or log rotation),
+        // the cached BufWriter holds a stale fd pointing to a deleted inode.
+        // Writes would silently succeed but data would be lost.  Detect this
+        // by checking whether the file still exists on disk; if not, drop the
+        // stale handle so get_or_open creates a fresh file.
+        if self.handles.contains_key(&log_path) && !log_path.exists() {
+            self.handles.remove(&log_path);
+        }
 
         match self.get_or_open(&log_path) {
             Ok(writer) => {
-                if is_new && let Err(e) = crate::common::fid_parser::chown_to_user(&log_path) {
-                    eprintln!(
-                        "[WARNING] Could not chown log file '{}': {}",
-                        log_path.display(),
-                        e
-                    );
-                }
                 writeln!(writer, "{}", line)?;
                 self.dirty_logs.insert(log_path);
                 self.disk_healthy = true;
@@ -248,8 +249,11 @@ impl FileLogWriter {
 }
 
 /// Open a log file with create+append, retrying once on ENOENT.
+/// Chowns the file to the original user immediately after creation using fchown
+/// (fd-based) to avoid TOCTOU race: the fd is always valid even if the path is
+/// deleted between open() and chown().
 fn open_log_file(log_path: &PathBuf, log_dir: &PathBuf) -> std::io::Result<File> {
-    OpenOptions::new()
+    let file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(log_path)
@@ -261,5 +265,34 @@ fn open_log_file(log_path: &PathBuf, log_dir: &PathBuf) -> std::io::Result<File>
             } else {
                 Err(e)
             }
-        })
+        })?;
+    // Chown via fchown (fd-based) — no TOCTOU race.
+    // The path-based chown_to_user would fail with ENOENT if the file is
+    // deleted between open() and chown(); fchown operates on the fd directly
+    // and always succeeds as long as the fd is open.
+    fchown_to_user(&file);
+    Ok(file)
+}
+
+/// fchown a file descriptor to the original user (SUDO_UID/SUDO_GID).
+/// Best-effort: errors are logged but not propagated — the file is still usable.
+fn fchown_to_user(file: &File) {
+    let (uid, gid) = crate::common::config::resolve_uid_gid();
+    use std::os::fd::AsRawFd;
+    let ret = unsafe { libc::fchown(file.as_raw_fd(), uid, gid) };
+    if ret != 0 {
+        let err = std::io::Error::last_os_error();
+        // EPERM / EOPNOTSUPP / ENOSYS are expected on vfat/exfat/NFS — skip warning.
+        let errno = err.raw_os_error().unwrap_or(0);
+        if errno != libc::EPERM
+            && errno != libc::EOPNOTSUPP
+            && errno != libc::ENOSYS
+        {
+            eprintln!(
+                "[WARNING] fchown failed for log file (fd {}): {}",
+                file.as_raw_fd(),
+                err
+            );
+        }
+    }
 }
