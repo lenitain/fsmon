@@ -9,7 +9,10 @@ use fanotify_fid::consts::{
 use fanotify_fid::prelude::*;
 
 use crate::common::dir_cache;
-use crate::common::fid_parser::{FsGroup, mark_directory, mark_recursive, path_mask_from_options};
+use crate::common::fid_parser::{
+    FsGroup, mark_directory, mark_directory_at, mark_recursive_with_depth, open_dir_safe,
+    path_mask_from_options,
+};
 use crate::common::filters::{self, PathOptions};
 use crate::common::monitored::PathEntry;
 
@@ -26,7 +29,7 @@ impl Monitor {
                 .as_deref()
                 .unwrap_or(crate::common::monitored::CMD_GLOBAL)
         );
-        let path = filters::resolve_recursion_check(&entry.path);
+        let (_original, path) = filters::resolve_recursion_check(&entry.path);
 
         let is_new_path = !self.paths.contains(&path);
         if !is_new_path {
@@ -145,15 +148,32 @@ impl Monitor {
 
         let group_key = if let Some(key) = existing_key {
             let fan_fd = &self.fanotify.groups[key].fan_fd;
-            if let Err(e) = mark_directory(fan_fd, path_mask, &canonical) {
-                eprintln!(
-                    "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
-                    canonical.display(),
-                    fan_fd.as_raw_fd(),
-                    e
-                );
-            } else if opts.recursive && canonical.is_dir() {
-                let _ = mark_recursive(fan_fd, path_mask, &canonical);
+            // Use fd-level operations to avoid TOCTOU (F-017)
+            match open_dir_safe(&canonical) {
+                Ok(dir_fd) => {
+                    if let Err(e) = mark_directory_at(fan_fd, &dir_fd, path_mask) {
+                        eprintln!(
+                            "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
+                            canonical.display(),
+                            fan_fd.as_raw_fd(),
+                            e
+                        );
+                    } else if opts.recursive && canonical.is_dir() {
+                        let _ = mark_recursive_with_depth(
+                            fan_fd,
+                            path_mask,
+                            &canonical,
+                            opts.max_depth,
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[WARNING] Cannot open {} for marking: {:#}",
+                        canonical.display(),
+                        e
+                    );
+                }
             }
             self.fanotify.groups[key].ref_count += 1;
             eprintln!(
@@ -180,7 +200,13 @@ impl Monitor {
             })?;
 
             if self
-                .add_mark_upward(&new_fd, path_mask, &canonical, opts.recursive)
+                .add_mark_upward(
+                    &new_fd,
+                    path_mask,
+                    &canonical,
+                    opts.recursive,
+                    opts.max_depth,
+                )
                 .is_none()
             {
                 bail!("Failed to mark {}: inode mark failed", canonical.display());
@@ -226,8 +252,21 @@ impl Monitor {
         path_mask: u64,
         canonical: &std::path::Path,
         recursive: bool,
+        max_depth: Option<u32>,
     ) -> Option<()> {
-        match mark_directory(new_fd, path_mask, canonical) {
+        // Use fd-level operations to avoid TOCTOU (F-017)
+        let dir_fd = match open_dir_safe(canonical) {
+            Ok(fd) => fd,
+            Err(e) => {
+                eprintln!(
+                    "[WARNING] Cannot open {} for marking: {:#}",
+                    canonical.display(),
+                    e
+                );
+                return None;
+            }
+        };
+        match mark_directory_at(new_fd, &dir_fd, path_mask) {
             Ok(()) => {
                 eprintln!(
                     "[INFO] Monitoring {} (inode mark) on fd {}",
@@ -235,7 +274,7 @@ impl Monitor {
                     new_fd.as_raw_fd()
                 );
                 if recursive && canonical.is_dir() {
-                    let _ = mark_recursive(new_fd, path_mask, canonical);
+                    let _ = mark_recursive_with_depth(new_fd, path_mask, canonical, max_depth);
                 }
                 Some(())
             }

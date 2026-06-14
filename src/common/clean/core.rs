@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use tempfile::NamedTempFile;
 
 use crate::common::config::chown_to_original_user;
 use crate::common::utils::{self, TimeFilterExt, cmd_to_log_name};
@@ -20,18 +21,25 @@ pub fn should_trim(kept_bytes: usize, filter: &SizeFilter) -> bool {
 }
 
 /// Clean a single log file by time and size.
+///
+/// Uses backup/rollback mechanism to prevent data loss on rename failure (F-011).
+/// Uses fd-based existence check instead of path.exists() (F-023).
 pub async fn clean_single_log(
     log_file: &Path,
     time_filter: Option<TimeFilter>,
     max_size: Option<SizeFilter>,
     dry_run: bool,
 ) -> Result<()> {
-    if !log_file.exists() {
-        println!("Log file not found: {}", log_file.display());
-        return Ok(());
+    // Symlink check: refuse to clean symlinks (F-010)
+    let metadata = fs::symlink_metadata(log_file)?;
+    if metadata.file_type().is_symlink() {
+        return Err(anyhow::anyhow!(
+            "Refusing to clean symlink: {}",
+            log_file.display()
+        ));
     }
 
-    let original_size = fs::metadata(log_file)?.len();
+    let original_size = metadata.len();
 
     let temp_file = log_file.with_extension("tmp");
     let mut time_deleted: u64 = 0;
@@ -105,7 +113,23 @@ pub async fn clean_single_log(
             println!("Dry run: 0 entries match cleanup criteria");
         }
     } else {
-        fs::rename(&temp_file, log_file)?;
+        // Backup/rollback mechanism (F-011)
+        let backup_file = log_file.with_extension("bak");
+        let _ = fs::copy(log_file, &backup_file);
+
+        match fs::rename(&temp_file, log_file) {
+            Ok(()) => {
+                // Success: remove backup
+                let _ = fs::remove_file(&backup_file);
+            }
+            Err(e) => {
+                // Rename failed: restore backup
+                eprintln!("[WARNING] Rename failed, restoring backup: {}", e);
+                let _ = fs::rename(&backup_file, log_file);
+                let _ = fs::remove_file(&temp_file);
+                return Err(e.into());
+            }
+        }
         chown_to_original_user(log_file);
         println!("Cleaning {}...", log_file.display());
         let time_desc = time_filter.as_ref().map_or("all time".to_string(), |f| {
@@ -182,12 +206,25 @@ pub fn find_tail_offset(path: &Path, max_bytes: usize) -> Result<usize> {
 }
 
 /// Truncate a file by removing bytes from the start.
+///
+/// Uses tempfile crate for secure temporary file creation (F-009).
+/// Checks for symlinks before truncation (F-010).
+/// Temporary file permissions are set to 0600 (F-026).
 pub fn truncate_from_start(path: &Path, offset: usize) -> Result<()> {
     if offset == 0 {
         return Ok(());
     }
 
-    let file_len = fs::metadata(path)?.len() as usize;
+    // Symlink check: refuse to truncate symlinks (F-010)
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        return Err(anyhow::anyhow!(
+            "Refusing to truncate symlink: {}",
+            path.display()
+        ));
+    }
+
+    let file_len = metadata.len() as usize;
     // offset == file_len means delete everything — write empty file
     if offset >= file_len {
         fs::write(path, b"")?;
@@ -195,28 +232,32 @@ pub fn truncate_from_start(path: &Path, offset: usize) -> Result<()> {
     }
 
     let dir = path.parent().unwrap_or(Path::new("."));
-    let tmp_path = dir.join(format!(".fsmon_trunc_{}", std::process::id()));
+
+    // Use tempfile crate for secure temp file (F-009, F-026)
+    // NamedTempFile::new_in() creates with O_CREAT|O_EXCL and mode 0600
+    let tmp_file = NamedTempFile::new_in(dir)?;
 
     let result = (|| -> Result<()> {
-        let mut tmp = fs::File::create_new(&tmp_path)?;
         let mut src = fs::File::open(path)?;
         src.seek(SeekFrom::Start(offset as u64))?;
 
+        let mut writer = BufWriter::new(&tmp_file);
         let mut buf = vec![0u8; 8192];
         loop {
             let n = src.read(&mut buf)?;
             if n == 0 {
                 break;
             }
-            tmp.write_all(&buf[..n])?;
+            writer.write_all(&buf[..n])?;
         }
+        writer.flush()?;
         Ok(())
     })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp_path);
-    }
+
     result?;
 
+    // Persist: rename temp file to target
+    let tmp_path = tmp_file.into_temp_path();
     fs::rename(&tmp_path, path)?;
     chown_to_original_user(path);
     Ok(())

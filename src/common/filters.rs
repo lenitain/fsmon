@@ -15,14 +15,18 @@ pub struct PathOptions {
     pub event_types: Option<Vec<EventType>>,
     pub recursive: bool,
     pub cmd: Option<String>,
+    /// Maximum recursion depth (0 = only root dir, None = unlimited).
+    pub max_depth: Option<u32>,
 }
 
 /// Resolve a path for recursion check: expand tilde, then canonicalize if the path exists
-/// (follows symlinks). Falls back to tilde-expanded path if can't canonicalize.
-pub fn resolve_recursion_check(path: &Path) -> PathBuf {
+/// (follows symlinks). Returns (original_expanded, resolved_path).
+/// If the path is a symlink, resolved_path will be the target.
+pub fn resolve_recursion_check(path: &Path) -> (PathBuf, PathBuf) {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
     let expanded = crate::common::config::expand_tilde(path, &home);
-    expanded.canonicalize().unwrap_or(expanded)
+    let resolved = expanded.canonicalize().unwrap_or_else(|_| expanded.clone());
+    (expanded, resolved)
 }
 
 /// Find the PathOptions matching a given event path.
@@ -186,6 +190,7 @@ mod tests {
             event_types: Some(vec![EventType::Create, EventType::Delete]),
             recursive: false,
             cmd: None,
+            max_depth: None,
         };
         assert!(should_output(
             Some(&opts),
@@ -211,6 +216,7 @@ mod tests {
             event_types: None,
             recursive: false,
             cmd: None,
+            max_depth: None,
         };
         assert!(should_output(
             Some(&opts),
@@ -236,6 +242,7 @@ mod tests {
             event_types: None,
             recursive: false,
             cmd: None,
+            max_depth: None,
         };
         assert!(should_output(
             Some(&opts),
@@ -261,6 +268,7 @@ mod tests {
             event_types: None,
             recursive: false,
             cmd: None,
+            max_depth: None,
         };
         assert!(should_output(
             Some(&opts),
@@ -286,6 +294,7 @@ mod tests {
             event_types: Some(vec![EventType::Create]),
             recursive: false,
             cmd: None,
+            max_depth: None,
         };
         assert!(should_output(
             Some(&opts),
@@ -365,6 +374,7 @@ mod tests {
                 event_types: None,
                 recursive: true,
                 cmd: None,
+                max_depth: None,
             },
         )];
         assert!(is_path_in_scope(&paths, &entries, Path::new("/tmp")));
@@ -388,6 +398,7 @@ mod tests {
                 event_types: None,
                 recursive: false,
                 cmd: None,
+                max_depth: None,
             },
         )];
         assert!(is_path_in_scope(&paths, &entries, Path::new("/tmp")));
@@ -415,6 +426,7 @@ mod tests {
                     event_types: None,
                     recursive: true,
                     cmd: None,
+                    max_depth: None,
                 },
             ),
             (
@@ -424,6 +436,7 @@ mod tests {
                     event_types: None,
                     recursive: true,
                     cmd: None,
+                    max_depth: None,
                 },
             ),
         ];
@@ -452,6 +465,7 @@ mod tests {
                 event_types: None,
                 recursive: true,
                 cmd: None,
+                max_depth: None,
             },
         )];
         let canonical = paths.clone();
@@ -474,6 +488,7 @@ mod tests {
                 event_types: None,
                 recursive: false,
                 cmd: None,
+                max_depth: None,
             },
         )];
         let canonical = paths.clone();
@@ -492,6 +507,7 @@ mod tests {
                 event_types: None,
                 recursive: false,
                 cmd: None,
+                max_depth: None,
             },
         )];
         let canonical = paths.clone();
@@ -514,6 +530,7 @@ mod tests {
                 event_types: None,
                 recursive: true,
                 cmd: None,
+                max_depth: None,
             },
         )];
         let canonical = vec![PathBuf::from("/real/path")];
@@ -535,20 +552,22 @@ mod tests {
 
     #[test]
     fn test_resolve_recursion_check_existing_path() {
-        let result = resolve_recursion_check(Path::new("/tmp"));
-        assert!(result.starts_with("/tmp"));
+        let (orig, resolved) = resolve_recursion_check(Path::new("/tmp"));
+        assert!(orig.starts_with("/tmp"));
+        assert!(resolved.starts_with("/tmp"));
     }
 
     #[test]
     fn test_resolve_recursion_check_nonexistent_path() {
         let path = Path::new("/nonexistent_fsmon_test_dir_xyz123");
-        let result = resolve_recursion_check(path);
-        assert_eq!(result, path);
+        let (orig, resolved) = resolve_recursion_check(path);
+        assert_eq!(orig, path);
+        assert_eq!(resolved, path);
     }
 
     #[test]
     fn test_resolve_recursion_check_with_tilde() {
-        let result = resolve_recursion_check(Path::new("~/some_random_dir_xyz789"));
-        assert!(!result.as_os_str().is_empty());
+        let (orig, _resolved) = resolve_recursion_check(Path::new("~/some_random_dir_xyz789"));
+        assert!(!orig.as_os_str().is_empty());
     }
 }

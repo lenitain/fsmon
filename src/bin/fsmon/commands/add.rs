@@ -5,6 +5,7 @@ use fsmon::common::socket::{self, SocketCmd, SocketError, SocketResponse};
 use std::path::PathBuf;
 
 use crate::AddArgs;
+use fsmon::common::security;
 
 /// Add a path to the monitoring list.
 pub fn cmd_add(args: AddArgs) -> Result<()> {
@@ -43,7 +44,18 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             bail!("Invalid path: contains null byte");
         }
 
+        // Validate path against security blacklist BEFORE resolving (F-014/019)
+        // This prevents /proc/self from being resolved to /proc/<PID> before check
+        if let Err(e) = security::check_path_allowed(raw_path, &[]) {
+            bail!("{}", e);
+        }
+
         let resolved = super::resolve_path_arg(raw_path);
+
+        // Also check resolved path (handles symlinks to blocked paths)
+        if let Err(e) = security::check_path_allowed(&resolved, &[]) {
+            bail!("{}", e);
+        }
         let exists = resolved.exists();
         if !exists {
             eprintln!("[Note] path does not exist yet — will start monitoring when created.");
@@ -140,6 +152,21 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     } else {
         Some(false)
     };
+    // Detect symlink target for display (F-027)
+    let resolved_path = path.clone().unwrap_or_default();
+    let symlink_target = {
+        let meta = std::fs::symlink_metadata(&resolved_path).ok();
+        if meta
+            .as_ref()
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            std::fs::canonicalize(&resolved_path).ok()
+        } else {
+            None
+        }
+    };
+
     let entry = PathEntry {
         path: path
             .clone()
@@ -148,6 +175,8 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         recursive,
         types: types.clone(),
         size: size_val.clone(),
+        max_depth: args.max_depth,
+        symlink_target,
     };
 
     store.add_entry(entry.clone());
@@ -163,16 +192,25 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             types,
             size: size_val,
             track_cmd: process_name,
+            max_depth: args.max_depth,
         },
     );
 
     match result {
         Ok(SocketResponse::Ok) => {
-            println!("Entry added: {}", entry.path.display());
+            print!("Entry added: {}", entry.path.display());
+            if let Some(ref target) = entry.symlink_target {
+                print!(" (linked to {})", target.display());
+            }
+            println!();
         }
         Ok(resp) => {
             // Unexpected response type
-            println!("Entry added: {}", entry.path.display());
+            print!("Entry added: {}", entry.path.display());
+            if let Some(ref target) = entry.symlink_target {
+                print!(" (linked to {})", target.display());
+            }
+            println!();
             eprintln!("Unexpected response from daemon: {:?}", resp);
         }
         Err(SocketError::Permanent(msg)) => {
@@ -182,7 +220,11 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             eprintln!("Error: {}", msg);
         }
         Err(SocketError::Transient(_)) => {
-            println!("Entry added: {}", entry.path.display());
+            print!("Entry added: {}", entry.path.display());
+            if let Some(ref target) = entry.symlink_target {
+                print!(" (linked to {})", target.display());
+            }
+            println!();
         }
     }
     Ok(())

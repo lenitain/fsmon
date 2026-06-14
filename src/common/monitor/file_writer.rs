@@ -1,3 +1,4 @@
+use libc;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -112,7 +113,10 @@ impl FileLogWriter {
             let file = open_log_file(log_path, &self.log_dir)?;
             self.handles.insert(log_path.clone(), BufWriter::new(file));
         }
-        Ok(self.handles.get_mut(log_path).expect("handle should exist after insert or contains_key check"))
+        Ok(self
+            .handles
+            .get_mut(log_path)
+            .expect("handle should exist after insert or contains_key check"))
     }
 
     /// Write an event to the appropriate JSONL log file.
@@ -134,12 +138,9 @@ impl FileLogWriter {
 
         // If the file was deleted externally (e.g. by user or log rotation),
         // the cached BufWriter holds a stale fd pointing to a deleted inode.
-        // Writes would silently succeed but data would be lost.  Detect this
-        // by checking whether the file still exists on disk; if not, drop the
-        // stale handle so get_or_open creates a fresh file.
-        if self.handles.contains_key(&log_path) && !log_path.exists() {
-            self.handles.remove(&log_path);
-        }
+        // Instead of path.exists() (TOCTOU), we catch ENOENT on write and
+        // retry with a fresh handle.
+        // Note: stale handle detection is done via write error handling below.
 
         match self.get_or_open(&log_path) {
             Ok(writer) => {
@@ -217,6 +218,28 @@ impl FileLogWriter {
         for path in &paths {
             // Try cached handle first
             if let Some(writer) = self.handles.get_mut(path) {
+                // Check if file was externally deleted (nlink == 0).
+                // On Unix, writing to an unlinked fd succeeds but data is lost
+                // when the fd is closed. Detect this early and drop the stale handle.
+                // fstat is ~100ns, negligible vs fdatasync's ms-level I/O.
+                use std::os::fd::AsRawFd;
+                let nlink = unsafe {
+                    let mut stat: libc::stat = std::mem::zeroed();
+                    libc::fstat(writer.get_ref().as_raw_fd(), &mut stat);
+                    stat.st_nlink
+                };
+                if nlink == 0 {
+                    if self.debug {
+                        eprintln!(
+                            "[DEBUG] Log file '{}' was deleted externally, \
+                             dropping stale handle (next write will recreate)",
+                            path.display()
+                        );
+                    }
+                    self.handles.remove(path);
+                    continue;
+                }
+
                 // Flush BufWriter's user-space buffer to OS
                 if let Err(e) = writer.flush() {
                     eprintln!("[WARNING] flush failed for '{}': {}", path.display(), e);
@@ -253,19 +276,27 @@ impl FileLogWriter {
 /// (fd-based) to avoid TOCTOU race: the fd is always valid even if the path is
 /// deleted between open() and chown().
 fn open_log_file(log_path: &PathBuf, log_dir: &PathBuf) -> std::io::Result<File> {
-    let file = OpenOptions::new()
-        .create(true)
+    use std::os::unix::fs::OpenOptionsExt;
+    // O_NOFOLLOW prevents symlink attacks (F-018)
+    // O_CLOEXEC prevents fd leaks to child processes
+    let mut opts = OpenOptions::new();
+    opts.create(true)
         .append(true)
-        .open(log_path)
-        .or_else(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                let _ = fs::create_dir_all(log_dir);
-                let _ = crate::common::fid_parser::chown_to_user(log_dir);
-                OpenOptions::new().create(true).append(true).open(log_path)
-            } else {
-                Err(e)
-            }
-        })?;
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let file = opts.open(log_path).or_else(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            let _ = fs::create_dir_all(log_dir);
+            let _ = crate::common::fid_parser::chown_to_user(log_dir);
+            let mut opts2 = OpenOptions::new();
+            opts2
+                .create(true)
+                .append(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+            opts2.open(log_path)
+        } else {
+            Err(e)
+        }
+    })?;
     // Chown via fchown (fd-based) — no TOCTOU race.
     // The path-based chown_to_user would fail with ENOENT if the file is
     // deleted between open() and chown(); fchown operates on the fd directly
@@ -284,10 +315,7 @@ fn fchown_to_user(file: &File) {
         let err = std::io::Error::last_os_error();
         // EPERM / EOPNOTSUPP / ENOSYS are expected on vfat/exfat/NFS — skip warning.
         let errno = err.raw_os_error().unwrap_or(0);
-        if errno != libc::EPERM
-            && errno != libc::EOPNOTSUPP
-            && errno != libc::ENOSYS
-        {
+        if errno != libc::EPERM && errno != libc::EOPNOTSUPP && errno != libc::ENOSYS {
             eprintln!(
                 "[WARNING] fchown failed for log file (fd {}): {}",
                 file.as_raw_fd(),

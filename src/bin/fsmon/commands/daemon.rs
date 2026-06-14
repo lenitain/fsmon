@@ -67,6 +67,7 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
     }
     if let Some(parent) = socket_path.parent() {
         fs::create_dir_all(parent)?;
+        fsmon::common::ensure_daemon_dir_permissions(parent)?;
     }
 
     let socket_listener = tokio::net::UnixListener::bind(&socket_path)

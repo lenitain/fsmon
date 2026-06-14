@@ -12,7 +12,8 @@ use std::path::PathBuf;
 use super::{EventReceiver, EventSender, FileLogWriter, Monitor};
 use crate::common::dir_cache;
 use crate::common::fid_parser::{
-    DIR_CACHE_CAP, FsGroup, chown_to_user, mark_directory, mark_recursive,
+    DIR_CACHE_CAP, FsGroup, chown_to_user, mark_directory_at, mark_recursive_with_depth,
+    open_dir_safe,
 };
 use crate::common::filters::PathOptions;
 use crate::common::monitored::PathEntry;
@@ -98,6 +99,8 @@ impl Monitor {
                                 .size_filter
                                 .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
                             cmd: opts.cmd,
+                            max_depth: opts.max_depth,
+                            symlink_target: None,
                         },
                     ));
                 }
@@ -124,7 +127,18 @@ impl Monitor {
             if let Some(&key) = fs_group_devs.get(&dev_id) {
                 // Same filesystem — just add inode mark
                 let fan_fd = &self.fanotify.groups[key].fan_fd;
-                if let Err(e) = mark_directory(fan_fd, path_mask, canonical) {
+                let dir_fd = match open_dir_safe(canonical) {
+                    Ok(fd) => fd,
+                    Err(e) => {
+                        eprintln!(
+                            "[WARNING] Cannot open {} for marking: {:#}",
+                            canonical.display(),
+                            e
+                        );
+                        continue;
+                    }
+                };
+                if let Err(e) = mark_directory_at(fan_fd, &dir_fd, path_mask) {
                     eprintln!(
                         "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
                         canonical.display(),
@@ -139,7 +153,8 @@ impl Monitor {
                     );
                     let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
                     if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
-                        let _ = mark_recursive(fan_fd, path_mask, canonical);
+                        let max_depth = opts.and_then(|o| o.max_depth);
+                        let _ = mark_recursive_with_depth(fan_fd, path_mask, canonical, max_depth);
                     }
                 }
                 self.fanotify.groups[key].ref_count += 1;
@@ -168,8 +183,9 @@ impl Monitor {
 
             let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
             let recursive = opts.is_some_and(|o| o.recursive) && canonical.is_dir();
+            let max_depth = opts.and_then(|o| o.max_depth);
             if self
-                .add_mark_upward(&new_fd, path_mask, canonical, recursive)
+                .add_mark_upward(&new_fd, path_mask, canonical, recursive, max_depth)
                 .is_none()
             {
                 drop(new_fd);

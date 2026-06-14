@@ -60,6 +60,13 @@ impl Monitor {
                 continue;
             }
 
+            // Also filter events from fsmon's log directory to prevent
+            // feedback loops when cmd=global is used.
+            if raw.path.starts_with("/var/log/fsmon") {
+                debug_log!(self.debug, "skip fsmon log event: {}", raw.path.display());
+                continue;
+            }
+
             // Match event against ALL cmd groups for this path.
             // Computed BEFORE canonical-root cleanup — DELETE_SELF must be
             // recorded before the path is removed from monitored_entries.
@@ -192,6 +199,8 @@ impl Monitor {
                         .size_filter
                         .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
                     cmd: opts.cmd,
+                    max_depth: opts.max_depth,
+                    symlink_target: None,
                 },
             ));
         }

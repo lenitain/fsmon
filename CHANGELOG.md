@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.15] - 2026-06-23
+
+### Security
+
+- **Environment variable injection hardened**: When running as root (via sudo), fsmon now
+  verifies that `SUDO_USER` matches the username for `SUDO_UID` before trusting these
+  environment variables. Previously, an attacker could set `SUDO_UID=9999` to impersonate
+  a different user. Now mismatched variables are ignored and fsmon falls back to the
+  HOME directory owner.
+- **Symlink attack prevention**: Added symlink checks throughout the codebase:
+  - Log file cleaning refuses to process symlinks (prevents replacing symlink targets)
+  - Directory monitoring skips symlinks in recursive traversal
+  - `fsmon add` displays symlink targets for transparency
+- **Path blacklist enforcement**: `fsmon add` now checks paths against the security
+  blacklist *before* resolution, preventing `/proc/self` from being resolved to
+  `/proc/<PID>` and bypassing the check.
+- **TOCTOU race conditions eliminated**: Replaced path-based operations with fd-based
+  operations for:
+  - Directory marking (`open_dir_safe` + `mark_directory_at`)
+  - File writing (`O_NOFOLLOW` flag)
+  - File existence checks (removed `path.exists()` calls)
+- **Secure temporary files**: Uses the `tempfile` crate for log rotation, creating files
+  with restrictive 0600 permissions by default.
+- **Subscribe path validation**: Added security checks for paths received via the
+  subscribe socket protocol.
+
+### Added
+
+- **`--max-depth` option**: Limit recursion depth when monitoring directories recursively.
+  Useful for preventing resource exhaustion on deep directory trees.
+  ```
+  fsmon add _global --path /tmp/test -r --max-depth 3
+  fsmon add _global --path /tmp/test -r --max-depth 0  # root directory only
+  ```
+
+### Fixed
+
+- **Daemon directory permissions**: Runtime directories (e.g. `/run/user/<UID>/fsmon/`)
+  are now created with 0700 permissions and proper ownership, preventing unauthorized
+  access to daemon sockets and lock files.
+- **Externally deleted log files**: When a log file is deleted while the daemon is running
+  (e.g. by logrotate or manual cleanup), the daemon now detects this via `fstat` and
+  automatically recreates the file on the next write. Previously, events were silently
+  lost.
+- **Deep directory recursion**: Replaced recursive directory traversal with iterative
+  BFS (breadth-first search) to prevent stack overflow on deeply nested directory trees.
+
 ## [0.4.14] - 2026-06-14
 
 ### Fixed

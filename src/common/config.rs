@@ -211,33 +211,73 @@ pub struct CliCacheOverride {
 /// - `$HOME` owner (systemd / any root context with HOME set) — one `stat` call
 /// - Current process UID/GID (normal user, no root) — no syscall
 pub fn resolve_uid_gid() -> (u32, u32) {
-    // 1. SUDO_UID — sudo
+    // 1. SUDO_UID — sudo (verify via getpwuid to prevent env var forgery)
+    //    Also verify SUDO_USER exists and matches the UID to prevent injection.
     if let Ok(uid_str) = std::env::var("SUDO_UID")
         && let Ok(uid) = uid_str.parse::<u32>()
+        && let Some(user) = users::get_user_by_uid(uid)
     {
-        let gid = std::env::var("SUDO_GID")
-            .ok()
-            .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(0);
-        return (uid, gid);
+        // Verify SUDO_USER matches the UID (prevents forged SUDO_UID)
+        if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+            let user_name = user.name().to_string_lossy();
+            if sudo_user == user_name.as_ref() {
+                let gid = std::env::var("SUDO_GID")
+                    .ok()
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(user.primary_group_id());
+                return (uid, gid);
+            }
+            // SUDO_USER doesn't match UID — try loginuid as fallback
+            // This handles the case where SUDO_UID is forged but loginuid is real
+            if let Some(login_uid) = get_loginuid()
+                && let Some(login_user) = users::get_user_by_uid(login_uid)
+            {
+                return (login_uid, login_user.primary_group_id());
+            }
+        } else {
+            // No SUDO_USER but SUDO_UID exists — still use it (some sudo configs)
+            let gid = std::env::var("SUDO_GID")
+                .ok()
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(user.primary_group_id());
+            return (uid, gid);
+        }
     }
 
     // 2. Running as root → use $HOME directory owner
     //    (works for systemd, sudo without SUDO_UID, or any root-launched context
     //     where HOME is set to the target user's directory)
+    //    But skip if HOME is /root (sudo sets this by default)
     if nix::unistd::geteuid().is_root()
         && let Ok(home) = std::env::var("HOME")
+        && home != "/root"
         && let Ok(meta) = std::fs::metadata(&home)
     {
         use std::os::linux::fs::MetadataExt;
         return (meta.st_uid(), meta.st_gid());
     }
 
-    // 3. Running as normal user
+    // 3. Try loginuid (set by PAM, reliable even with sudo)
+    if let Some(login_uid) = get_loginuid()
+        && let Some(user) = users::get_user_by_uid(login_uid)
+    {
+        return (login_uid, user.primary_group_id());
+    }
+
+    // 4. Running as normal user
     (
         nix::unistd::geteuid().as_raw(),
         nix::unistd::getegid().as_raw(),
     )
+}
+
+/// Read loginuid from /proc/self/loginuid (set by PAM at login).
+/// This is the most reliable way to get the real user, even through sudo.
+fn get_loginuid() -> Option<u32> {
+    std::fs::read_to_string("/proc/self/loginuid")
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .filter(|&uid| uid != u32::MAX) // 4294967295 means unset
 }
 
 /// Chown a path to the original user (daemon runs as root, files should go to the user).
@@ -273,6 +313,8 @@ pub fn resolve_home(uid: u32) -> Result<PathBuf> {
 /// For tests, use HOME env.
 pub fn guess_home() -> String {
     // 1. SUDO_UID — daemon running via sudo
+    //    Verify the UID actually exists in passwd database to prevent
+    //    env var forgery attacks (F-004/005).
     let uid_str = match std::env::var("SUDO_UID") {
         Ok(s) => s,
         Err(_) => return std::env::var("HOME").unwrap_or_else(|_| "/root".into()),
@@ -286,9 +328,33 @@ pub fn guess_home() -> String {
     if nix::unistd::geteuid().as_raw() != 0 {
         return std::env::var("HOME").unwrap_or_else(|_| "/root".into());
     }
-    match resolve_home(uid) {
-        Ok(p) => p.to_string_lossy().into_owned(),
-        Err(_) => std::env::var("HOME").unwrap_or_else(|_| "/root".into()),
+    // Verify the UID exists before trusting it
+    if let Some(user) = users::get_user_by_uid(uid) {
+        // Verify SUDO_USER matches the UID (prevents forged SUDO_UID)
+        if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+            let user_name = user.name().to_string_lossy();
+            if sudo_user != user_name.as_ref() {
+                // SUDO_USER doesn't match UID — try loginuid
+                if let Some(login_uid) = get_loginuid()
+                    && let Ok(p) = resolve_home(login_uid)
+                {
+                    return p.to_string_lossy().into_owned();
+                }
+                return std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+            }
+        }
+        match resolve_home(uid) {
+            Ok(p) => p.to_string_lossy().into_owned(),
+            Err(_) => std::env::var("HOME").unwrap_or_else(|_| "/root".into()),
+        }
+    } else {
+        // UID doesn't exist — try loginuid
+        if let Some(login_uid) = get_loginuid()
+            && let Ok(p) = resolve_home(login_uid)
+        {
+            return p.to_string_lossy().into_owned();
+        }
+        std::env::var("HOME").unwrap_or_else(|_| "/root".into())
     }
 }
 
@@ -328,8 +394,12 @@ impl Config {
     /// Falls back to `~/.config/fsmon/fsmon.toml`.
     pub fn user_path() -> PathBuf {
         let home = guess_home();
-        let xdg_config =
-            std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{}/.config", home));
+        // Root ignores XDG_CONFIG_HOME to prevent env var injection (F-006)
+        let xdg_config = if nix::unistd::geteuid().is_root() {
+            format!("{}/.config", home)
+        } else {
+            std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{}/.config", home))
+        };
         PathBuf::from(xdg_config).join("fsmon").join("fsmon.toml")
     }
 

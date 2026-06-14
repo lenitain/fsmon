@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::common::dir_cache;
-use crate::common::fid_parser::{mark_directory, mark_recursive, path_mask_from_options};
+use crate::common::fid_parser::{
+    mark_directory_at, mark_recursive_with_depth, open_dir_safe, path_mask_from_options,
+};
 use crate::common::filters::PathOptions;
 use crate::common::monitored::PathEntry;
 
@@ -152,21 +154,31 @@ impl Monitor {
                 );
             }
             for opts in all_opts {
-                self.inotify_state.pending_paths.push((
-                    path.clone(),
-                    PathEntry {
-                        path: path.clone(),
-                        recursive: Some(opts.recursive),
-                        types: opts
-                            .event_types
-                            .as_ref()
-                            .map(|v| v.iter().map(|t| t.to_string()).collect()),
-                        size: opts.size_filter.map(|f| {
-                            format!("{}{}", f.op, crate::common::utils::format_size(f.bytes))
-                        }),
-                        cmd: opts.cmd,
-                    },
-                ));
+                // Dedup check: skip if already pending (F-030)
+                let already_pending = self
+                    .inotify_state
+                    .pending_paths
+                    .iter()
+                    .any(|(p, e)| p == path && e.cmd == opts.cmd);
+                if !already_pending {
+                    self.inotify_state.pending_paths.push((
+                        path.clone(),
+                        PathEntry {
+                            path: path.clone(),
+                            recursive: Some(opts.recursive),
+                            types: opts
+                                .event_types
+                                .as_ref()
+                                .map(|v| v.iter().map(|t| t.to_string()).collect()),
+                            size: opts.size_filter.map(|f| {
+                                format!("{}{}", f.op, crate::common::utils::format_size(f.bytes))
+                            }),
+                            cmd: opts.cmd,
+                            max_depth: opts.max_depth,
+                            symlink_target: None,
+                        },
+                    ));
+                }
             }
             self.add_temp_parent_mark(path);
         }
@@ -226,6 +238,13 @@ impl Monitor {
             .iter()
             .map(|(_, o)| path_mask_from_options(o))
             .fold(0, |a, b| a | b);
+        // Get the minimum max_depth from all monitored entries (most restrictive).
+        // None means unlimited, so we only set a limit if ALL entries have a limit.
+        let max_depth = self
+            .monitored_entries
+            .iter()
+            .filter_map(|(_, o)| o.max_depth)
+            .min();
 
         debug_log!(
             self.debug,
@@ -235,14 +254,18 @@ impl Monitor {
         );
 
         let fan_fd = &self.fanotify.groups[gi].fan_fd;
-        if mark_directory(fan_fd, path_mask, &canonical).is_err() {
+        let dir_fd = match open_dir_safe(&canonical) {
+            Ok(fd) => fd,
+            Err(_) => return Vec::new(),
+        };
+        if mark_directory_at(fan_fd, &dir_fd, path_mask).is_err() {
             return Vec::new();
         }
 
         if let Some(ref cache) = self.fanotify.shared_dir_cache {
             dir_cache::cache_dir_handle(cache, &canonical);
         }
-        let discovered = mark_recursive(fan_fd, path_mask, &canonical);
+        let discovered = mark_recursive_with_depth(fan_fd, path_mask, &canonical, max_depth);
         if let Some(ref cache) = self.fanotify.shared_dir_cache {
             dir_cache::cache_recursive(cache, &canonical);
         }

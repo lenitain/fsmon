@@ -10,6 +10,7 @@ pub mod monitor;
 pub mod monitored;
 pub mod proc_cache;
 pub mod query;
+pub mod security;
 pub mod socket;
 pub mod utils;
 pub mod watchdog;
@@ -44,6 +45,7 @@ impl DaemonLock {
         // Ensure parent directory exists (e.g. /run/user/1000)
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
+            crate::common::ensure_daemon_dir_permissions(parent)?;
         }
 
         // Try to bind — success means no other instance
@@ -82,6 +84,14 @@ impl Drop for DaemonLock {
         // Clean up socket file on exit
         let _ = fs::remove_file(&self.path);
     }
+}
+
+/// 确保 daemon 目录权限正确（0700）
+pub fn ensure_daemon_dir_permissions(dir: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+    crate::common::config::chown_to_original_user(dir);
+    Ok(())
 }
 
 use std::str::FromStr;

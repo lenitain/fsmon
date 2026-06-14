@@ -47,6 +47,9 @@ pub struct PathParams {
     /// Size filter with comparison operator (e.g. >1MB, >=500KB, <100MB).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
+    /// Maximum recursion depth (0 = only root dir, None = unlimited).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_depth: Option<u32>,
 }
 
 /// A single monitored path entry (flat form) — used for internal transport
@@ -65,6 +68,13 @@ pub struct PathEntry {
     pub types: Option<Vec<String>>,
     /// Size filter with comparison operator (e.g. >1MB, >=500KB, <100MB).
     pub size: Option<String>,
+    /// Maximum recursion depth (0 = only root dir, None = unlimited).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_depth: Option<u32>,
+    /// If the path is a symlink, this contains the resolved target (F-027).
+    /// Used for display purposes only — monitoring uses the resolved path.
+    #[serde(skip)]
+    pub symlink_target: Option<PathBuf>,
 }
 
 impl PathParams {}
@@ -81,8 +91,11 @@ impl TryFrom<&PathEntry> for crate::common::filters::PathOptions {
                 // Users naturally write `--size 100MB` or `size = "100MB"`;
                 // the semantic is "max size", equivalent to '>='.
                 let s = s.trim();
-                if s.starts_with(">=") || s.starts_with("<=") || s.starts_with('>')
-                    || s.starts_with('<') || s.starts_with('=')
+                if s.starts_with(">=")
+                    || s.starts_with("<=")
+                    || s.starts_with('>')
+                    || s.starts_with('<')
+                    || s.starts_with('=')
                 {
                     crate::common::utils::parse_size_filter(s)
                 } else {
@@ -112,6 +125,7 @@ impl TryFrom<&PathEntry> for crate::common::filters::PathOptions {
             event_types,
             recursive: entry.recursive.unwrap_or(false),
             cmd,
+            max_depth: entry.max_depth,
         })
     }
 }
@@ -122,6 +136,7 @@ impl From<&PathEntry> for PathParams {
             recursive: e.recursive,
             types: e.types.clone(),
             size: e.size.clone(),
+            max_depth: e.max_depth,
         }
     }
 }
@@ -175,16 +190,30 @@ impl Monitored {
         let mut entries = Vec::new();
         for group in &self.groups {
             for (path, params) in &group.paths {
+                // Detect symlinks for display (F-027)
+                let symlink_target = Self::detect_symlink_target(path);
                 entries.push(PathEntry {
                     cmd: Some(group.cmd.clone()),
                     path: path.clone(),
                     recursive: params.recursive,
                     types: params.types.clone(),
                     size: params.size.clone(),
+                    max_depth: params.max_depth,
+                    symlink_target,
                 });
             }
         }
         entries
+    }
+
+    /// Detect if a path is a symlink and return its target (F-027).
+    fn detect_symlink_target(path: &Path) -> Option<PathBuf> {
+        let metadata = std::fs::symlink_metadata(path).ok()?;
+        if metadata.file_type().is_symlink() {
+            std::fs::canonicalize(path).ok()
+        } else {
+            None
+        }
     }
 
     /// Save Monitored to file (JSONL format). Creates parent directories if needed.
@@ -249,12 +278,15 @@ impl Monitored {
                 continue;
             }
             if let Some(params) = group.paths.get(path) {
+                let symlink_target = Self::detect_symlink_target(path);
                 return Some(PathEntry {
                     cmd: Some(group.cmd.clone()),
                     path: path.to_path_buf(),
                     recursive: params.recursive,
                     types: params.types.clone(),
                     size: params.size.clone(),
+                    max_depth: params.max_depth,
+                    symlink_target,
                 });
             }
         }
@@ -313,6 +345,8 @@ mod tests {
             types: None,
             size: None,
             cmd: cmd.map(|s| s.to_string()),
+            max_depth: None,
+            symlink_target: None,
         }
     }
 
@@ -408,6 +442,8 @@ mod tests {
             types: Some(vec!["CREATE".into(), "DELETE".into()]),
             size: Some("1KB".into()),
             cmd: None,
+            max_depth: None,
+            symlink_target: None,
         });
 
         store.save(&path).unwrap();
@@ -501,6 +537,7 @@ mod tests {
                                 recursive: Some(true),
                                 types: None,
                                 size: None,
+                                max_depth: None,
                             },
                         );
                         m
@@ -525,6 +562,7 @@ mod tests {
                             recursive: None,
                             types: None,
                             size: None,
+                            max_depth: None,
                         },
                     );
                     m

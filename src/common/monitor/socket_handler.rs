@@ -10,6 +10,7 @@ use crate::common::{EventType, FileEvent};
 use serde_json;
 
 use super::Monitor;
+use crate::common::security;
 
 impl Monitor {
     /// Build a health snapshot for the `health` socket command.
@@ -119,7 +120,13 @@ impl Monitor {
                 types,
                 size,
                 track_cmd,
+                max_depth,
             } => {
+                // Validate path against security blacklist (F-015)
+                if let Err(e) = security::check_path_allowed(&path, &[]) {
+                    return Err(SocketError::Permanent(e));
+                }
+
                 let track_cmd = track_cmd.as_deref().and_then(|c| {
                     if c == crate::common::monitored::CMD_GLOBAL {
                         None
@@ -142,6 +149,8 @@ impl Monitor {
                     types: types.clone(),
                     size: size.clone(),
                     cmd: track_cmd.clone(),
+                    max_depth,
+                    symlink_target: None,
                 };
                 match self.add_path(&entry) {
                     Ok(()) => Ok(SocketResponse::Ok),
@@ -190,6 +199,8 @@ impl Monitor {
                                 .size_filter
                                 .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
                             cmd,
+                            max_depth: opts.max_depth,
+                            symlink_target: None,
                         }
                     })
                     .collect();
@@ -283,6 +294,14 @@ pub(crate) async fn subscriber_task(
     loop {
         match rx.recv().await {
             Ok((event, _cmd_name)) => {
+                // Filter fsmon's own events in global mode to prevent
+                // self-triggering feedback loops.
+                if track_cmd.as_deref() == Some(crate::common::monitored::CMD_GLOBAL)
+                    && (event.cmd == "fsmon" || event.path.starts_with("/var/log/fsmon"))
+                {
+                    continue;
+                }
+
                 // Optional filter by cmd group.
                 // Global events have empty chains (no process tracking).
                 if let Some(ref wanted) = track_cmd {

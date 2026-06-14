@@ -11,6 +11,7 @@ use fanotify_fid::prelude::*;
 use fanotify_fid::types::{FidEvent, HandleKey};
 use libc;
 use moka::sync::Cache;
+use std::collections::VecDeque;
 use std::ffi::CString;
 use std::fs;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
@@ -107,11 +108,15 @@ pub(crate) fn strip_deleted_suffix(path: &Path) -> PathBuf {
         return PathBuf::new();
     }
     let clean = path.to_string_lossy();
-    // Replace ALL occurrences, not just the trailing one.
-    // The kernel convention uses " (deleted)" exclusively for disconnected
-    // dentries, so a real file-system name never contains this pattern.
-    let cleaned = clean.replace(" (deleted)", "");
-    PathBuf::from(cleaned)
+    // Only strip " (deleted)" from the END of the path (not globally).
+    // This prevents误删 paths that legitimately contain " (deleted)" in
+    // the middle (e.g. "/home/user/dir (deleted)/file.txt" where the
+    // directory name itself contains the string).
+    if let Some(stripped) = clean.strip_suffix(" (deleted)") {
+        PathBuf::from(stripped)
+    } else {
+        path.to_path_buf()
+    }
 }
 
 /// Read and parse FID events, using a moka cache for path recovery.
@@ -367,34 +372,114 @@ pub fn chown_to_user(path: &Path) -> std::io::Result<bool> {
 
 // ---- Directory marking (used by inode mark fallback mode) ----
 
+/// Open a directory safely with TOCTOU-resistant flags (F-017).
+///
+/// Uses `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC` to:
+/// - Ensure the target is a directory (`O_DIRECTORY`)
+/// - Refuse to follow symlinks (`O_NOFOLLOW`)
+/// - Prevent fd leakage to child processes (`O_CLOEXEC`)
+pub fn open_dir_safe(path: &Path) -> Result<OwnedFd> {
+    nix::fcntl::open(
+        path,
+        nix::fcntl::OFlag::O_DIRECTORY
+            | nix::fcntl::OFlag::O_NOFOLLOW
+            | nix::fcntl::OFlag::O_CLOEXEC,
+        nix::sys::stat::Mode::empty(),
+    )
+    .with_context(|| format!("open_dir_safe failed: {}", path.display()))
+}
+
+/// Mark a single directory using fd-level operations (F-017).
+///
+/// Opens the directory with `O_NOFOLLOW` to prevent TOCTOU symlink races,
+/// then marks relative to the directory fd using `Path::new(".")`.
+/// Strips FAN_FS_ERROR (only works with FS marks).
+pub fn mark_directory_at(fan_fd: &OwnedFd, dir_fd: &OwnedFd, mask: u64) -> Result<()> {
+    let safe_mask = mask & !FAN_FS_ERROR;
+    fanotify_mark(
+        fan_fd,
+        FAN_MARK_ADD,
+        safe_mask,
+        dir_fd.as_raw_fd(),
+        Path::new("."),
+    )
+    .context("fanotify_mark (fd-level) failed")
+}
+
 /// Mark a single directory. Strips FAN_FS_ERROR (only works with FS marks).
+///
+/// For new code, prefer `mark_directory_at()` + `open_dir_safe()` which
+/// avoids TOCTOU races (F-017).
 pub fn mark_directory(fan_fd: &OwnedFd, mask: u64, path: &Path) -> Result<()> {
     let safe_mask = mask & !FAN_FS_ERROR;
     fanotify_mark(fan_fd, FAN_MARK_ADD, safe_mask, AT_FDCWD, path)
         .with_context(|| format!("fanotify_mark failed: {}", path.display()))
 }
 
-/// Recursively traverse and mark all subdirectories (ignore errors, e.g., permission denied).
-/// Strips FAN_FS_ERROR (only works with FS marks).
+/// Recursively traverse and mark all subdirectories using iterative BFS (F-021).
+///
+/// Uses fd-level operations (`open_dir_safe` + `mark_directory_at`) to avoid
+/// TOCTOU races (F-017). Skips symlinks (F-008). Supports optional depth limit.
 ///
 /// Returns a list of **newly discovered** subdirectories (excluding `dir` itself)
 /// so the caller can generate synthetic CREATE events for them.
 pub fn mark_recursive(fan_fd: &OwnedFd, mask: u64, dir: &Path) -> Vec<PathBuf> {
-    mark_recursive_inner(fan_fd, mask & !FAN_FS_ERROR, dir)
+    mark_recursive_with_depth(fan_fd, mask & !FAN_FS_ERROR, dir, None)
 }
 
-fn mark_recursive_inner(fan_fd: &OwnedFd, safe_mask: u64, dir: &Path) -> Vec<PathBuf> {
+/// Like `mark_recursive`, but with a configurable depth limit.
+///
+/// `max_depth = None` means unlimited depth (backward compatible).
+/// `max_depth = Some(0)` means only mark the root directory itself.
+pub fn mark_recursive_with_depth(
+    fan_fd: &OwnedFd,
+    mask: u64,
+    dir: &Path,
+    max_depth: Option<u32>,
+) -> Vec<PathBuf> {
+    let safe_mask = mask & !FAN_FS_ERROR;
     let mut discovered = Vec::new();
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return discovered,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            let _ = fanotify_mark(fan_fd, FAN_MARK_ADD, safe_mask, AT_FDCWD, path.as_path());
-            discovered.push(path.clone());
-            discovered.extend(mark_recursive_inner(fan_fd, safe_mask, &path));
+    // BFS queue: (path, depth)
+    let mut queue: VecDeque<(PathBuf, u32)> = VecDeque::new();
+    queue.push_back((dir.to_path_buf(), 0));
+
+    while let Some((current, depth)) = queue.pop_front() {
+        // Check depth limit
+        if let Some(max) = max_depth
+            && depth > max
+        {
+            continue;
+        }
+
+        // Open directory with fd-level safety (F-017)
+        let dir_fd = match open_dir_safe(&current) {
+            Ok(fd) => fd,
+            Err(_) => continue,
+        };
+
+        // Mark this directory using fd-level operation
+        if depth > 0 {
+            // depth=0 is the root dir (already marked by caller)
+            let _ = mark_directory_at(fan_fd, &dir_fd, safe_mask);
+            discovered.push(current.clone());
+        }
+
+        // Read directory entries
+        let entries = match fs::read_dir(&current) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // Skip symlinks to prevent following links to unexpected locations (F-008)
+            if let Ok(metadata) = entry.metadata() {
+                if metadata.file_type().is_symlink() {
+                    continue;
+                }
+                if metadata.file_type().is_dir() {
+                    queue.push_back((path, depth + 1));
+                }
+            }
         }
     }
     discovered
@@ -511,6 +596,7 @@ mod tests {
             event_types,
             recursive: false,
             cmd: None,
+            max_depth: None,
         }
     }
 
@@ -613,9 +699,9 @@ mod tests {
 
     #[test]
     fn test_strip_deleted_suffix_mid_component() {
-        // " (deleted)" anywhere in the path is stripped.
+        // " (deleted)" in the middle is NOT stripped (only end is stripped).
         let p = PathBuf::from("/home (deleted)/user/dir");
-        assert_eq!(strip_deleted_suffix(&p), PathBuf::from("/home/user/dir"));
+        assert_eq!(strip_deleted_suffix(&p), p);
     }
 
     #[test]
@@ -624,10 +710,10 @@ mod tests {
         let parent = PathBuf::from("/home/user/dir (deleted)");
         let dirty = parent.join("file.txt");
         assert_eq!(dirty, PathBuf::from("/home/user/dir (deleted)/file.txt"));
-        // Now strip_deleted_suffix handles embedded occurrences too.
+        // Only trailing " (deleted)" is stripped, not embedded ones.
         assert_eq!(
             strip_deleted_suffix(&dirty),
-            PathBuf::from("/home/user/dir/file.txt")
+            dirty // no change because " (deleted)" is in the middle
         );
     }
 }
