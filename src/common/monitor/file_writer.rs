@@ -112,7 +112,10 @@ impl FileLogWriter {
             let file = open_log_file(log_path, &self.log_dir)?;
             self.handles.insert(log_path.clone(), BufWriter::new(file));
         }
-        Ok(self.handles.get_mut(log_path).expect("handle should exist after insert or contains_key check"))
+        Ok(self
+            .handles
+            .get_mut(log_path)
+            .expect("handle should exist after insert or contains_key check"))
     }
 
     /// Write an event to the appropriate JSONL log file.
@@ -284,10 +287,7 @@ fn fchown_to_user(file: &File) {
         let err = std::io::Error::last_os_error();
         // EPERM / EOPNOTSUPP / ENOSYS are expected on vfat/exfat/NFS — skip warning.
         let errno = err.raw_os_error().unwrap_or(0);
-        if errno != libc::EPERM
-            && errno != libc::EOPNOTSUPP
-            && errno != libc::ENOSYS
-        {
+        if errno != libc::EPERM && errno != libc::EOPNOTSUPP && errno != libc::ENOSYS {
             eprintln!(
                 "[WARNING] fchown failed for log file (fd {}): {}",
                 file.as_raw_fd(),

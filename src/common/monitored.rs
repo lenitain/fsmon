@@ -81,8 +81,11 @@ impl TryFrom<&PathEntry> for crate::common::filters::PathOptions {
                 // Users naturally write `--size 100MB` or `size = "100MB"`;
                 // the semantic is "max size", equivalent to '>='.
                 let s = s.trim();
-                if s.starts_with(">=") || s.starts_with("<=") || s.starts_with('>')
-                    || s.starts_with('<') || s.starts_with('=')
+                if s.starts_with(">=")
+                    || s.starts_with("<=")
+                    || s.starts_with('>')
+                    || s.starts_with('<')
+                    || s.starts_with('=')
                 {
                     crate::common::utils::parse_size_filter(s)
                 } else {

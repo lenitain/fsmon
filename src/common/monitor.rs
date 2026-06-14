@@ -352,7 +352,11 @@ impl Monitor {
         let mut proc_buf = vec![0u8; 65536];
 
         // Clone store for event loop use
-        let proc_store = self.proc.store.clone().expect("process store not initialized");
+        let proc_store = self
+            .proc
+            .store
+            .clone()
+            .expect("process store not initialized");
 
         // Move the reader death receiver out of self so tokio::select! can use it.
         let mut reader_death_rx = std::mem::replace(

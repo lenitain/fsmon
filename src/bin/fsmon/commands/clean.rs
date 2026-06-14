@@ -42,8 +42,11 @@ pub async fn cmd_clean(args: CleanArgs) -> Result<()> {
             // Users naturally write `size = "100MB"` in config files;
             // the semantic is "max size", equivalent to '>='.
             let s = s.trim();
-            if s.starts_with(">=") || s.starts_with("<=") || s.starts_with('>')
-                || s.starts_with('<') || s.starts_with('=')
+            if s.starts_with(">=")
+                || s.starts_with("<=")
+                || s.starts_with('>')
+                || s.starts_with('<')
+                || s.starts_with('=')
             {
                 parse_size_filter(s)
             } else {
