@@ -76,7 +76,19 @@ impl TryFrom<&PathEntry> for crate::common::filters::PathOptions {
         let size_filter = entry
             .size
             .as_ref()
-            .map(|s| crate::common::utils::parse_size_filter(s))
+            .map(|s| {
+                // Auto-prepend '>=' if the size string has no operator.
+                // Users naturally write `--size 100MB` or `size = "100MB"`;
+                // the semantic is "max size", equivalent to '>='.
+                let s = s.trim();
+                if s.starts_with(">=") || s.starts_with("<=") || s.starts_with('>')
+                    || s.starts_with('<') || s.starts_with('=')
+                {
+                    crate::common::utils::parse_size_filter(s)
+                } else {
+                    crate::common::utils::parse_size_filter(&format!(">={s}"))
+                }
+            })
             .transpose()?;
         let event_types = entry
             .types
