@@ -32,12 +32,11 @@ impl Monitor {
 
         // 1. Watch parent dirs of pending paths (skip if already tracked)
         for (path, _) in &self.inotify_state.pending_paths {
-            if let Some(parent) = Self::nearest_existing_ancestor(path) {
-                if !self.inotify_state.watches.iter().any(|(p, _)| *p == parent)
-                    && let Ok(wd) = ino.watches().add(&parent, mask)
-                {
-                    self.inotify_state.watches.push((parent, wd));
-                }
+            if let Some(parent) = Self::nearest_existing_ancestor(path)
+                && !self.inotify_state.watches.iter().any(|(p, _)| *p == parent)
+                && let Ok(wd) = ino.watches().add(&parent, mask)
+            {
+                self.inotify_state.watches.push((parent, wd));
             }
         }
 
