@@ -42,12 +42,7 @@ impl Monitor {
 
     #[cfg(test)]
     pub(crate) fn is_path_in_scope(&self, path: &Path) -> bool {
-        filters::is_path_in_scope(
-            &self.paths,
-            &self.monitored_entries,
-            &self.canonical_paths,
-            path,
-        )
+        filters::is_path_in_scope(&self.paths, &self.monitored_entries, path)
     }
 
     /// Check if event path is within scope of a specific PathOptions.

@@ -392,9 +392,9 @@ impl Monitor {
             tokio::select! {
                 Some(events) = event_rx.recv() => {
                     // Drain proc events before and after processing file events
-                    let _exited1 = self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store);
+                    self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store);
                     let mut pending = self.process_event_batch(&events);
-                    let _exited2 = self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store);
+                    self.drain_proc_events(&proc_afd, &mut proc_buf, &proc_store);
                     self.patch_pending_events(&mut pending);
                     self.send_pending_events(&pending);
                     self.check_pending();
@@ -460,7 +460,7 @@ impl Monitor {
                     }
                 } => {
                     if let Ok(mut guard) = proc_readable {
-                        let _exited = self.drain_proc_conn(guard.get_inner(), &mut proc_buf, &proc_store);
+                        self.drain_proc_conn(guard.get_inner(), &mut proc_buf, &proc_store);
                         guard.clear_ready();
                     }
                 }
@@ -578,7 +578,7 @@ impl Monitor {
     ) {
         while let Ok(events) = event_rx.try_recv() {
             // Drain proc events
-            let _exited = self.drain_proc_events(proc_afd, proc_buf, proc_store);
+            self.drain_proc_events(proc_afd, proc_buf, proc_store);
             let mut pending = self.process_event_batch(&events);
             self.patch_pending_events(&mut pending);
             self.send_pending_events(&pending);
@@ -650,7 +650,6 @@ impl Monitor {
 
 /// Snapshot of daemon runtime metrics for periodic reporting.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(crate) struct MetricsReport {
     pub uptime_secs: u64,
     pub rss_mb: f64,
@@ -670,10 +669,7 @@ pub(crate) struct MetricsReport {
 fn get_rss_mb() -> f64 {
     std::fs::read_to_string("/proc/self/statm")
         .ok()
-        .and_then(|s| {
-            let parts: Vec<&str> = s.split_whitespace().collect();
-            parts.get(1).and_then(|p| p.parse::<u64>().ok())
-        })
+        .and_then(|s| s.split_whitespace().nth(1)?.parse::<u64>().ok())
         .map(|pages| (pages * 4096) as f64 / (1024.0 * 1024.0))
         .unwrap_or(0.0)
 }
