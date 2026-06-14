@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.14] - 2026-06-14
+
+### Fixed
+
+- **Log file chown ENOENT race**: Replaced path-based `chown` with fd-based `fchown` in
+  `open_log_file`. Previously, if a log file was deleted between `open()` and `chown()`,
+  the daemon would fail with ENOENT and the file would remain owned by root. Now `fchown`
+  operates on the file descriptor directly, eliminating the TOCTOU race.
+- **Deep directory pending paths**: `setup_inotify_watches` now uses incremental mode
+  instead of clearing the watches vector on every call. Previously, watches added by
+  `on_new_subdirectory` during inotify event processing were lost, causing events from
+  those watches to be silently ignored.
+- **Size filter without operator**: `fsmon clean --size 100MB` and `size = "100MB"` in
+  config files now work automatically (treated as `>=100MB`). Previously, omitting the
+  operator caused "size filter must start with an operator" error.
+
 ## [0.4.13] - 2026-06-09
 
 ### Added
