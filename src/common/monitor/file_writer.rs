@@ -112,7 +112,7 @@ impl FileLogWriter {
             let file = open_log_file(log_path, &self.log_dir)?;
             self.handles.insert(log_path.clone(), BufWriter::new(file));
         }
-        Ok(self.handles.get_mut(log_path).unwrap())
+        Ok(self.handles.get_mut(log_path).expect("handle should exist after insert or contains_key check"))
     }
 
     /// Write an event to the appropriate JSONL log file.
