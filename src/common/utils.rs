@@ -131,7 +131,7 @@ where
 fn read_file_owner(path: &Path) -> Option<String> {
     use std::os::unix::fs::MetadataExt;
     let metadata = std::fs::metadata(path).ok()?;
-    proc_tree::uid_to_username(metadata.uid())
+    proc_tree::uid_to_username(metadata.uid()).map(|s| s.to_string())
 }
 
 /// Convert a monitored path to a deterministic, fixed-length log filename.
