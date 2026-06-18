@@ -63,7 +63,3 @@ git clone https://github.com/lenitain/fsmon.git
 cd fsmon
 cargo build --release
 ```
-
-## License
-
-[MIT License](./LICENSE)
