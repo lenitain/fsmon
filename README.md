@@ -12,14 +12,6 @@ Real-time Linux filesystem change monitoring with process attribution.
 
 **fsmon** is a real-time Linux filesystem change monitor powered by fanotify. It watches files and directories, captures every event (create, modify, delete, move, attribute change, etc.), and attributes each change back to the process that caused it — including the PID, command name, user, parent PID, thread group ID, and optional full process ancestry chain.
 
-## Features
-
-- **Process attribution**: Track which process (and its descendants) made each change.
-- **Real-time monitoring**: Capture 14 fanotify event types (default: 8 core events).
-- **Recursive monitoring**: Watch entire directory trees.
-- **Complete deletion capture**: Capture every file deleted during `rm -rf`.
-- **Capture-time filtering**: Filter by event type and file size.
-
 ## Usage
 
 ```
