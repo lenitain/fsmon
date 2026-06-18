@@ -12,6 +12,10 @@ Real-time Linux filesystem change monitoring with process attribution.
 
 **fsmon** is a real-time Linux filesystem change monitor powered by fanotify. It watches files and directories, captures every event (create, modify, delete, move, attribute change, etc.), and attributes each change back to the process that caused it — including the PID, command name, user, parent PID, thread group ID, and optional full process ancestry chain.
 
+### Why fsmon?
+
+Unlike standard file monitoring tools that only report which file changed, **fsmon** adds **process attribution** — it identifies which process caused each change. This makes it easier to debug unexpected file modifications in multi-process environments. For system administrators and developers who need to track down the source of filesystem changes, fsmon provides deeper insights that traditional tools cannot offer.
+
 ## Usage
 
 ```
@@ -59,12 +63,6 @@ git clone https://github.com/lenitain/fsmon.git
 cd fsmon
 cargo build --release
 ```
-
-## Comparison with inotifywait
-
-[inotifywait](https://man7.org/linux/man-pages/man1/inotifywait.1.html) is a standard Linux tool for file system monitoring. However, it only reports which file changed, not which process caused the change. **fsmon** adds process attribution, making it easier to debug unexpected file modifications in multi-process environments.
-
-While inotifywait is simpler and more widely available, fsmon provides deeper insights for system administrators and developers who need to track down the source of filesystem changes.
 
 ## License
 
