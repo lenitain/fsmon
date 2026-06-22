@@ -218,6 +218,28 @@ impl FileLogWriter {
         for path in &paths {
             // Try cached handle first
             if let Some(writer) = self.handles.get_mut(path) {
+                // Check if file was externally deleted (nlink == 0).
+                // On Unix, writing to an unlinked fd succeeds but data is lost
+                // when the fd is closed. Detect this early and drop the stale handle.
+                // fstat is ~100ns, negligible vs fdatasync's ms-level I/O.
+                use std::os::fd::AsRawFd;
+                let nlink = unsafe {
+                    let mut stat: libc::stat = std::mem::zeroed();
+                    libc::fstat(writer.get_ref().as_raw_fd(), &mut stat);
+                    stat.st_nlink
+                };
+                if nlink == 0 {
+                    if self.debug {
+                        eprintln!(
+                            "[DEBUG] Log file '{}' was deleted externally, \
+                             dropping stale handle (next write will recreate)",
+                            path.display()
+                        );
+                    }
+                    self.handles.remove(path);
+                    continue;
+                }
+
                 // Flush BufWriter's user-space buffer to OS
                 if let Err(e) = writer.flush() {
                     eprintln!("[WARNING] flush failed for '{}': {}", path.display(), e);
