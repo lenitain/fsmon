@@ -374,7 +374,7 @@ mod tests {
                 event_types: None,
                 recursive: true,
                 cmd: None,
-            max_depth: None,
+                max_depth: None,
             },
         )];
         assert!(is_path_in_scope(&paths, &entries, Path::new("/tmp")));
@@ -398,7 +398,7 @@ mod tests {
                 event_types: None,
                 recursive: false,
                 cmd: None,
-            max_depth: None,
+                max_depth: None,
             },
         )];
         assert!(is_path_in_scope(&paths, &entries, Path::new("/tmp")));
@@ -426,7 +426,7 @@ mod tests {
                     event_types: None,
                     recursive: true,
                     cmd: None,
-            max_depth: None,
+                    max_depth: None,
                 },
             ),
             (
@@ -436,7 +436,7 @@ mod tests {
                     event_types: None,
                     recursive: true,
                     cmd: None,
-            max_depth: None,
+                    max_depth: None,
                 },
             ),
         ];
@@ -465,7 +465,7 @@ mod tests {
                 event_types: None,
                 recursive: true,
                 cmd: None,
-            max_depth: None,
+                max_depth: None,
             },
         )];
         let canonical = paths.clone();
@@ -488,7 +488,7 @@ mod tests {
                 event_types: None,
                 recursive: false,
                 cmd: None,
-            max_depth: None,
+                max_depth: None,
             },
         )];
         let canonical = paths.clone();
@@ -507,7 +507,7 @@ mod tests {
                 event_types: None,
                 recursive: false,
                 cmd: None,
-            max_depth: None,
+                max_depth: None,
             },
         )];
         let canonical = paths.clone();
@@ -530,7 +530,7 @@ mod tests {
                 event_types: None,
                 recursive: true,
                 cmd: None,
-            max_depth: None,
+                max_depth: None,
             },
         )];
         let canonical = vec![PathBuf::from("/real/path")];

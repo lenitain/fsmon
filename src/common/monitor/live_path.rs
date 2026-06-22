@@ -159,7 +159,12 @@ impl Monitor {
                             e
                         );
                     } else if opts.recursive && canonical.is_dir() {
-                        let _ = mark_recursive_with_depth(fan_fd, path_mask, &canonical, opts.max_depth);
+                        let _ = mark_recursive_with_depth(
+                            fan_fd,
+                            path_mask,
+                            &canonical,
+                            opts.max_depth,
+                        );
                     }
                 }
                 Err(e) => {
@@ -195,7 +200,13 @@ impl Monitor {
             })?;
 
             if self
-                .add_mark_upward(&new_fd, path_mask, &canonical, opts.recursive, opts.max_depth)
+                .add_mark_upward(
+                    &new_fd,
+                    path_mask,
+                    &canonical,
+                    opts.recursive,
+                    opts.max_depth,
+                )
                 .is_none()
             {
                 bail!("Failed to mark {}: inode mark failed", canonical.display());

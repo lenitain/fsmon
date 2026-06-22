@@ -212,15 +212,30 @@ pub struct CliCacheOverride {
 /// - Current process UID/GID (normal user, no root) — no syscall
 pub fn resolve_uid_gid() -> (u32, u32) {
     // 1. SUDO_UID — sudo (verify via getpwuid to prevent env var forgery)
+    //    Also verify SUDO_USER exists and matches the UID to prevent injection.
     if let Ok(uid_str) = std::env::var("SUDO_UID")
         && let Ok(uid) = uid_str.parse::<u32>()
-        && users::get_user_by_uid(uid).is_some()
+        && let Some(user) = users::get_user_by_uid(uid)
     {
-        let gid = std::env::var("SUDO_GID")
-            .ok()
-            .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(0);
-        return (uid, gid);
+        // Verify SUDO_USER matches the UID (prevents forged SUDO_UID)
+        if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+            let user_name = user.name().to_string_lossy();
+            if sudo_user == user_name.as_ref() {
+                let gid = std::env::var("SUDO_GID")
+                    .ok()
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(user.primary_group_id());
+                return (uid, gid);
+            }
+            // SUDO_USER doesn't match UID — ignore forged env vars
+        } else {
+            // No SUDO_USER but SUDO_UID exists — still use it (some sudo configs)
+            let gid = std::env::var("SUDO_GID")
+                .ok()
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(user.primary_group_id());
+            return (uid, gid);
+        }
     }
 
     // 2. Running as root → use $HOME directory owner
