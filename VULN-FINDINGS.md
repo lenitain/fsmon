@@ -281,16 +281,29 @@
 
 ### [F-017] canonicalize() 与后续操作之间的 TOCTOU 竞态 (MEDIUM, confidence: 0.70)
 
-**文件**: src/common/monitor/live_path.rs:112  
+**文件**: 
+- src/common/monitor/live_path.rs:112
+- src/common/monitor/temp_marks.rs:23
+- src/common/monitor/temp_marks.rs:140
+- src/common/monitor/dir_watcher.rs:206
+
 **类别**: TOCTOU 竞态
 
-**描述**: 先 canonicalize() 获取规范路径，再用该路径调用 mark_directory()
+**描述**: 多处代码先 canonicalize() 获取规范路径，再用该路径调用 mark_directory()、metadata() 或 fanotify_mark()。攻击者可在 canonicalize 和后续操作之间替换符号链接目标，导致操作作用于非预期路径。
 
-**攻击场景**: 在时间窗口内删除目录并创建 symlink，fanotify_mark 跟随到非预期位置
+**攻击场景**: 
+1. 监控路径 `/tmp/link`（指向 `/safe`）
+2. canonicalize() 解析为 `/safe`
+3. 攻击者将 `/tmp/link` 改为指向 `/etc`
+4. 后续 mark_directory() 作用于 `/safe`（已解析），但实际监控可能被绕过或指向错误位置
 
-**修复建议**: 使用 open(O_DIRECTORY|O_NOFOLLOW) 获取 fd 后通过 fd 操作
+**修复建议**: 
+- 使用 open(O_DIRECTORY|O_NOFOLLOW) 获取文件描述符，后续通过 fd 操作
+- 或使用 `std::fs::OpenOptions` 的 `custom_flags(libc::O_NOFOLLOW)` 打开目录
+- 对于已存在的路径，立即获取 fd 并基于 fd 进行 metadata 和 mark 操作
 
 ---
+
 
 ### [F-021] 递归目录遍历无深度限制 (MEDIUM, confidence: 0.70)
 
