@@ -209,20 +209,24 @@ sleep 2
 # 2. 添加监控路径（使用 _global 组捕获所有进程事件）
 fsmon add _global --path /tmp/fsmon_test -r
 
-# 3. 创建测试文件
+# 3. 确保测试文件不存在（CREATE 事件仅在文件不存在时产生）
+rm -f /tmp/fsmon_test/test_file.txt
+
+# 4. 创建测试文件
 touch /tmp/fsmon_test/test_file.txt
 sleep 1
 
-# 4. 检查日志
+# 5. 检查日志
 cat ~/.local/state/fsmon/_global_log.jsonl | tail -5
 
-# 5. 清理
+# 6. 清理
 sudo kill $DAEMON_PID
 ```
 
 **预期结果：**
-- 步骤 4：日志中应包含 CREATE 事件，路径为 `/tmp/fsmon_test/test_file.txt`，cmd 为实际进程名（如 `touch`）
+- 步骤 5：日志中应包含 CREATE 事件，路径为 `/tmp/fsmon_test/test_file.txt`，cmd 为实际进程名（如 `touch`）
 - **注意：** 使用 `test_app` 等命名 cmd 组时，只有 cmd 匹配的进程事件才会路由到对应日志文件。测试事件捕获功能建议使用 `_global` 组
+- **重要：** 如果文件已存在，`touch` 只会更新时间戳（产生 ATTRIB 事件），不会产生 CREATE 事件。测试前必须先删除文件
 
 ### 2.4 文件修改事件捕获
 
@@ -320,23 +324,27 @@ sleep 2
 # 2. 添加监控路径，仅监控 CREATE 和 CLOSE_WRITE
 fsmon add _global --path /tmp/fsmon_test -r --types CREATE --types CLOSE_WRITE
 
-# 3. 创建文件（应捕获）
+# 3. 确保测试文件不存在（CREATE 事件仅在文件不存在时产生）
+rm -f /tmp/fsmon_test/create_test.txt
+
+# 4. 创建文件（应捕获 CREATE 和 CLOSE_WRITE）
 touch /tmp/fsmon_test/create_test.txt
 sleep 1
 
-# 4. 删除文件（不应捕获）
+# 5. 删除文件（不应捕获 DELETE）
 rm /tmp/fsmon_test/create_test.txt
 sleep 1
 
-# 5. 检查日志
+# 6. 检查日志
 cat ~/.local/state/fsmon/_global_log.jsonl | jq '.event_type'
 
-# 6. 清理
+# 7. 清理
 sudo kill $DAEMON_PID
 ```
 
 **预期结果：**
-- 步骤 5：日志中应包含 CREATE 事件，不应包含 DELETE 事件
+- 步骤 6：日志中应包含 CREATE 和 CLOSE_WRITE 事件，不应包含 DELETE 和 ATTRIB 事件
+- **重要：** 如果文件已存在，`touch` 只会更新时间戳（产生 ATTRIB 事件），不会产生 CREATE 事件。测试前必须先删除文件
 
 ### 2.8 事件类型过滤（--types all）
 
@@ -1785,17 +1793,18 @@ sudo kill $DAEMON_PID
 mkdir -p /tmp/fsmon_readonly
 chmod 444 /tmp/fsmon_readonly
 
-# 2. 尝试添加监控路径（应失败）
+# 2. 尝试添加监控路径
 fsmon add test_app --path /tmp/fsmon_readonly -r
 
-# 3. 检查错误信息
+# 3. 检查结果
 # 4. 清理
 chmod 755 /tmp/fsmon_readonly
 rm -rf /tmp/fsmon_readonly
 ```
 
 **预期结果：**
-- 步骤 2：应返回权限错误
+- 步骤 2：`fsmon add` 会成功添加（只将路径加入监控列表，不检查目录权限）
+- **说明：** `fsmon add` 只是将路径记录到监控数据库，不检查目录权限。fanotify 监控只需要对目录有读权限，只读目录仍可被监控。实际的权限检查在守护进程启动时由内核完成
 
 ### 17.2 路径不存在处理
 
