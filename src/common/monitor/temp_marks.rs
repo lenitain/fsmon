@@ -3,7 +3,9 @@ use std::path::Path;
 
 use fanotify_fid::prelude::*;
 
-use crate::common::fid_parser::{FsGroup, mark_directory_at, open_dir_safe, path_mask_from_options};
+use crate::common::fid_parser::{
+    FsGroup, mark_directory_at, open_dir_safe, path_mask_from_options,
+};
 use crate::common::filters::PathOptions;
 
 use super::Monitor;

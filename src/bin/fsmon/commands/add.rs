@@ -4,8 +4,8 @@ use fsmon::common::monitored::{CMD_GLOBAL, Monitored, PathEntry};
 use fsmon::common::socket::{self, SocketCmd, SocketError, SocketResponse};
 use std::path::PathBuf;
 
-use fsmon::common::security;
 use crate::AddArgs;
+use fsmon::common::security;
 
 /// Add a path to the monitoring list.
 pub fn cmd_add(args: AddArgs) -> Result<()> {
@@ -150,7 +150,11 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     let resolved_path = path.clone().unwrap_or_default();
     let symlink_target = {
         let meta = std::fs::symlink_metadata(&resolved_path).ok();
-        if meta.as_ref().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+        if meta
+            .as_ref()
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
             std::fs::canonicalize(&resolved_path).ok()
         } else {
             None

@@ -381,7 +381,9 @@ pub fn chown_to_user(path: &Path) -> std::io::Result<bool> {
 pub fn open_dir_safe(path: &Path) -> Result<OwnedFd> {
     nix::fcntl::open(
         path,
-        nix::fcntl::OFlag::O_DIRECTORY | nix::fcntl::OFlag::O_NOFOLLOW | nix::fcntl::OFlag::O_CLOEXEC,
+        nix::fcntl::OFlag::O_DIRECTORY
+            | nix::fcntl::OFlag::O_NOFOLLOW
+            | nix::fcntl::OFlag::O_CLOEXEC,
         nix::sys::stat::Mode::empty(),
     )
     .with_context(|| format!("open_dir_safe failed: {}", path.display()))
@@ -394,8 +396,14 @@ pub fn open_dir_safe(path: &Path) -> Result<OwnedFd> {
 /// Strips FAN_FS_ERROR (only works with FS marks).
 pub fn mark_directory_at(fan_fd: &OwnedFd, dir_fd: &OwnedFd, mask: u64) -> Result<()> {
     let safe_mask = mask & !FAN_FS_ERROR;
-    fanotify_mark(fan_fd, FAN_MARK_ADD, safe_mask, dir_fd.as_raw_fd(), Path::new("."))
-        .context("fanotify_mark (fd-level) failed")
+    fanotify_mark(
+        fan_fd,
+        FAN_MARK_ADD,
+        safe_mask,
+        dir_fd.as_raw_fd(),
+        Path::new("."),
+    )
+    .context("fanotify_mark (fd-level) failed")
 }
 
 /// Mark a single directory. Strips FAN_FS_ERROR (only works with FS marks).
@@ -704,7 +712,7 @@ mod tests {
         // Only trailing " (deleted)" is stripped, not embedded ones.
         assert_eq!(
             strip_deleted_suffix(&dirty),
-            dirty  // no change because " (deleted)" is in the middle
+            dirty // no change because " (deleted)" is in the middle
         );
     }
 }

@@ -42,7 +42,9 @@ impl Monitor {
         // O_CLOEXEC prevents fd leaks to child processes
         nix::fcntl::open(
             path,
-            nix::fcntl::OFlag::O_DIRECTORY | nix::fcntl::OFlag::O_PATH | nix::fcntl::OFlag::O_CLOEXEC,
+            nix::fcntl::OFlag::O_DIRECTORY
+                | nix::fcntl::OFlag::O_PATH
+                | nix::fcntl::OFlag::O_CLOEXEC,
             nix::sys::stat::Mode::empty(),
         )
         .map_err(std::io::Error::other)

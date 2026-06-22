@@ -6,9 +6,7 @@
 use std::path::Path;
 
 /// Default blocked paths (hardcoded, cannot be removed via config).
-const DEFAULT_BLOCKED: &[(&str, &str)] = &[
-    ("/proc/self", "fsmon process (self-monitoring)"),
-];
+const DEFAULT_BLOCKED: &[(&str, &str)] = &[("/proc/self", "fsmon process (self-monitoring)")];
 
 /// Check if a path is allowed for monitoring.
 ///
@@ -20,11 +18,7 @@ pub fn check_path_allowed(path: &Path, user_blocked: &[String]) -> Result<(), St
     // Default blacklist
     for (blocked, reason) in DEFAULT_BLOCKED {
         if path_str.starts_with(blocked) {
-            return Err(format!(
-                "Path '{}' is blocked: {}",
-                path.display(),
-                reason
-            ));
+            return Err(format!("Path '{}' is blocked: {}", path.display(), reason));
         }
     }
 
@@ -44,7 +38,6 @@ pub fn check_path_allowed(path: &Path, user_blocked: &[String]) -> Result<(), St
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     #[test]
     fn test_allowed_path() {

@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::common::dir_cache;
-use crate::common::fid_parser::{mark_directory_at, mark_recursive, open_dir_safe, path_mask_from_options};
+use crate::common::fid_parser::{
+    mark_directory_at, mark_recursive, open_dir_safe, path_mask_from_options,
+};
 use crate::common::filters::PathOptions;
 use crate::common::monitored::PathEntry;
 
@@ -153,9 +155,11 @@ impl Monitor {
             }
             for opts in all_opts {
                 // Dedup check: skip if already pending (F-030)
-                let already_pending = self.inotify_state.pending_paths.iter().any(|(p, e)| {
-                    p == path && e.cmd == opts.cmd
-                });
+                let already_pending = self
+                    .inotify_state
+                    .pending_paths
+                    .iter()
+                    .any(|(p, e)| p == path && e.cmd == opts.cmd);
                 if !already_pending {
                     self.inotify_state.pending_paths.push((
                         path.clone(),

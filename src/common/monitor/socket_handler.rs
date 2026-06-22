@@ -9,8 +9,8 @@ use crate::common::utils::format_size;
 use crate::common::{EventType, FileEvent};
 use serde_json;
 
-use crate::common::security;
 use super::Monitor;
+use crate::common::security;
 
 impl Monitor {
     /// Build a health snapshot for the `health` socket command.

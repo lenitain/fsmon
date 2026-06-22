@@ -9,7 +9,10 @@ use fanotify_fid::consts::{
 use fanotify_fid::prelude::*;
 
 use crate::common::dir_cache;
-use crate::common::fid_parser::{FsGroup, mark_directory, mark_directory_at, mark_recursive, open_dir_safe, path_mask_from_options};
+use crate::common::fid_parser::{
+    FsGroup, mark_directory, mark_directory_at, mark_recursive, open_dir_safe,
+    path_mask_from_options,
+};
 use crate::common::filters::{self, PathOptions};
 use crate::common::monitored::PathEntry;
 

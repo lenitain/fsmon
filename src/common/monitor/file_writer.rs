@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet, VecDeque};
 use libc;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
@@ -261,21 +261,20 @@ fn open_log_file(log_path: &PathBuf, log_dir: &PathBuf) -> std::io::Result<File>
     opts.create(true)
         .append(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-    let file = opts
-        .open(log_path)
-        .or_else(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                let _ = fs::create_dir_all(log_dir);
-                let _ = crate::common::fid_parser::chown_to_user(log_dir);
-                let mut opts2 = OpenOptions::new();
-                opts2.create(true)
-                    .append(true)
-                    .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-                opts2.open(log_path)
-            } else {
-                Err(e)
-            }
-        })?;
+    let file = opts.open(log_path).or_else(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            let _ = fs::create_dir_all(log_dir);
+            let _ = crate::common::fid_parser::chown_to_user(log_dir);
+            let mut opts2 = OpenOptions::new();
+            opts2
+                .create(true)
+                .append(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+            opts2.open(log_path)
+        } else {
+            Err(e)
+        }
+    })?;
     // Chown via fchown (fd-based) — no TOCTOU race.
     // The path-based chown_to_user would fail with ENOENT if the file is
     // deleted between open() and chown(); fchown operates on the fd directly
