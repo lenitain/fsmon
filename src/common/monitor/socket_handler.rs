@@ -120,6 +120,7 @@ impl Monitor {
                 types,
                 size,
                 track_cmd,
+                max_depth,
             } => {
                 // Validate path against security blacklist (F-015)
                 if let Err(e) = security::check_path_allowed(&path, &[]) {
@@ -148,6 +149,7 @@ impl Monitor {
                     types: types.clone(),
                     size: size.clone(),
                     cmd: track_cmd.clone(),
+                    max_depth,
                     symlink_target: None,
                 };
                 match self.add_path(&entry) {
@@ -197,6 +199,7 @@ impl Monitor {
                                 .size_filter
                                 .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
                             cmd,
+                            max_depth: opts.max_depth,
                             symlink_target: None,
                         }
                     })

@@ -15,6 +15,8 @@ pub struct PathOptions {
     pub event_types: Option<Vec<EventType>>,
     pub recursive: bool,
     pub cmd: Option<String>,
+    /// Maximum recursion depth (0 = only root dir, None = unlimited).
+    pub max_depth: Option<u32>,
 }
 
 /// Resolve a path for recursion check: expand tilde, then canonicalize if the path exists
@@ -188,6 +190,7 @@ mod tests {
             event_types: Some(vec![EventType::Create, EventType::Delete]),
             recursive: false,
             cmd: None,
+            max_depth: None,
         };
         assert!(should_output(
             Some(&opts),
@@ -213,6 +216,7 @@ mod tests {
             event_types: None,
             recursive: false,
             cmd: None,
+            max_depth: None,
         };
         assert!(should_output(
             Some(&opts),
@@ -238,6 +242,7 @@ mod tests {
             event_types: None,
             recursive: false,
             cmd: None,
+            max_depth: None,
         };
         assert!(should_output(
             Some(&opts),
@@ -263,6 +268,7 @@ mod tests {
             event_types: None,
             recursive: false,
             cmd: None,
+            max_depth: None,
         };
         assert!(should_output(
             Some(&opts),
@@ -288,6 +294,7 @@ mod tests {
             event_types: Some(vec![EventType::Create]),
             recursive: false,
             cmd: None,
+            max_depth: None,
         };
         assert!(should_output(
             Some(&opts),
@@ -367,6 +374,7 @@ mod tests {
                 event_types: None,
                 recursive: true,
                 cmd: None,
+            max_depth: None,
             },
         )];
         assert!(is_path_in_scope(&paths, &entries, Path::new("/tmp")));
@@ -390,6 +398,7 @@ mod tests {
                 event_types: None,
                 recursive: false,
                 cmd: None,
+            max_depth: None,
             },
         )];
         assert!(is_path_in_scope(&paths, &entries, Path::new("/tmp")));
@@ -417,6 +426,7 @@ mod tests {
                     event_types: None,
                     recursive: true,
                     cmd: None,
+            max_depth: None,
                 },
             ),
             (
@@ -426,6 +436,7 @@ mod tests {
                     event_types: None,
                     recursive: true,
                     cmd: None,
+            max_depth: None,
                 },
             ),
         ];
@@ -454,6 +465,7 @@ mod tests {
                 event_types: None,
                 recursive: true,
                 cmd: None,
+            max_depth: None,
             },
         )];
         let canonical = paths.clone();
@@ -476,6 +488,7 @@ mod tests {
                 event_types: None,
                 recursive: false,
                 cmd: None,
+            max_depth: None,
             },
         )];
         let canonical = paths.clone();
@@ -494,6 +507,7 @@ mod tests {
                 event_types: None,
                 recursive: false,
                 cmd: None,
+            max_depth: None,
             },
         )];
         let canonical = paths.clone();
@@ -516,6 +530,7 @@ mod tests {
                 event_types: None,
                 recursive: true,
                 cmd: None,
+            max_depth: None,
             },
         )];
         let canonical = vec![PathBuf::from("/real/path")];

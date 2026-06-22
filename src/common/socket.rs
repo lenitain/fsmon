@@ -45,6 +45,8 @@ pub enum SocketCmd {
         size: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         track_cmd: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        max_depth: Option<u32>,
     },
     /// Remove a path from monitoring.
     Remove {
@@ -250,6 +252,7 @@ mod tests {
             types: Some(vec!["MODIFY".into()]),
             size: Some(">=1MB".into()),
             track_cmd: Some("openclaw".into()),
+            max_depth: None,
         };
         let json_str = serde_json::to_string(&cmd).unwrap();
         let parsed: SocketCmd = serde_json::from_str(&json_str).unwrap();
@@ -260,6 +263,7 @@ mod tests {
                 types,
                 size,
                 track_cmd,
+                max_depth: _,
             } => {
                 assert_eq!(path, PathBuf::from("/tmp/test"));
                 assert_eq!(recursive, Some(true));

@@ -169,6 +169,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         recursive,
         types: types.clone(),
         size: size_val.clone(),
+        max_depth: args.max_depth,
         symlink_target,
     };
 
@@ -185,6 +186,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             types,
             size: size_val,
             track_cmd: process_name,
+            max_depth: args.max_depth,
         },
     );
 

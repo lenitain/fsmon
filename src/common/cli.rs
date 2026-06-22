@@ -23,6 +23,10 @@ pub struct AddArgs {
     /// Size filter with operator (required: >=, >, <=, <, =). e.g. >1MB, >=500KB, <100MB, =0
     #[arg(short, long, value_name = "SIZE")]
     pub size: Option<String>,
+
+    /// Maximum recursion depth (0 = only root dir, default = unlimited).
+    #[arg(long, value_name = "N")]
+    pub max_depth: Option<u32>,
 }
 
 #[derive(Parser, Clone)]

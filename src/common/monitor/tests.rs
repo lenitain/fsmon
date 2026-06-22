@@ -83,6 +83,7 @@ fn options(
         event_types,
         recursive,
         cmd: None,
+        max_depth: None,
     }
 }
 
@@ -216,6 +217,7 @@ fn test_reject_cmd_fsmon_at_startup() {
         event_types: None,
         recursive: true,
         cmd: Some("fsmon".to_string()),
+        max_depth: None,
     };
     let result = Monitor::new(MonitorConfig {
         paths_and_options: vec![(PathBuf::from("/tmp"), opts)],
@@ -271,6 +273,7 @@ fn test_add_path_and_remove_path() {
         recursive: Some(true),
         types: None,
         size: None,
+        max_depth: None,
         symlink_target: None,
     };
 
@@ -304,6 +307,7 @@ fn test_delete_self_canonical_root_is_recorded() {
                 event_types: None,
                 recursive: true,
                 cmd: None,
+                max_depth: None,
             },
         )],
         ..MonitorConfig::default_for_test()

@@ -596,6 +596,7 @@ mod tests {
             event_types,
             recursive: false,
             cmd: None,
+            max_depth: None,
         }
     }
 
