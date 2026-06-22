@@ -445,10 +445,8 @@ pub fn mark_recursive_with_depth(
 
     while let Some((current, depth)) = queue.pop_front() {
         // Check depth limit
-        if let Some(max) = max_depth {
-            if depth > max {
-                continue;
-            }
+        if let Some(max) = max_depth && depth > max {
+            continue;
         }
 
         // Open directory with fd-level safety (F-017)

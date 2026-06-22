@@ -293,10 +293,8 @@ pub(crate) async fn subscriber_task(
             Ok((event, _cmd_name)) => {
                 // Filter fsmon's own events in global mode to prevent
                 // self-triggering feedback loops.
-                if track_cmd.as_deref() == Some(crate::common::monitored::CMD_GLOBAL) {
-                    if event.cmd == "fsmon" || event.path.starts_with("/var/log/fsmon") {
-                        continue;
-                    }
+                if track_cmd.as_deref() == Some(crate::common::monitored::CMD_GLOBAL) && (event.cmd == "fsmon" || event.path.starts_with("/var/log/fsmon")) {
+                    continue;
                 }
 
                 // Optional filter by cmd group.

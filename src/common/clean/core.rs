@@ -253,10 +253,7 @@ pub fn truncate_from_start(path: &Path, offset: usize) -> Result<()> {
         Ok(())
     })();
 
-    if result.is_err() {
-        // tmp_file drops here, auto-deleted
-        return result;
-    }
+    result?;
 
     // Persist: rename temp file to target
     let tmp_path = tmp_file.into_temp_path();
