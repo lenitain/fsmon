@@ -45,6 +45,9 @@ impl DaemonLock {
         // Ensure parent directory exists (e.g. /run/user/1000)
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+            crate::common::config::chown_to_original_user(parent);
         }
 
         // Try to bind — success means no other instance
