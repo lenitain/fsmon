@@ -445,7 +445,9 @@ pub fn mark_recursive_with_depth(
 
     while let Some((current, depth)) = queue.pop_front() {
         // Check depth limit
-        if let Some(max) = max_depth && depth > max {
+        if let Some(max) = max_depth
+            && depth > max
+        {
             continue;
         }
 
