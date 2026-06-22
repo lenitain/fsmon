@@ -1962,6 +1962,588 @@ sudo kill $DAEMON_PID
 **预期结果：**
 - 步骤 4：应正确记录带特殊字符的文件路径
 
+### 18.5 安全测试
+
+本节针对 SECURITY-FIX-PLAN.md 中确认修复的 19 项安全问题编写测试用例。
+
+#### 18.5.1 环境变量注入防护（F-004/005/006）
+
+**测试目的**：验证 root 运行时忽略被篡改的环境变量，使用 `getpwuid()` 查询真实用户信息。
+
+**测试步骤：**
+```bash
+# 1. 模拟环境变量篡改场景
+sudo SUDO_USER=evil_user SUDO_UID=9999 SUDO_GID=9999 fsmon daemon --debug 2>/tmp/fsmon_env_test.log &
+DAEMON_PID=$!
+sleep 2
+
+# 2. 检查守护进程启动日志，确认使用了 getpwuid 查询
+head -20 /tmp/fsmon_env_test.log
+
+# 3. 添加监控路径，验证路径解析是否基于真实 UID
+fsmon add test_app --path /tmp/fsmon_test -r
+fsmon monitored
+
+# 4. 清理
+sudo kill $DAEMON_PID
+```
+
+**预期结果：**
+- 步骤 2：守护进程应正常启动，不应使用伪造的 `evil_user` 作为用户身份
+- 步骤 3：监控路径应基于真实 UID 对应的主目录，而非环境变量指定的路径
+
+---
+
+#### 18.5.2 XDG_CONFIG_HOME 注入防护（F-006）
+
+**测试目的**：验证 root 运行时忽略 `XDG_CONFIG_HOME` 环境变量，防止加载恶意配置文件。
+
+**测试步骤：**
+```bash
+# 1. 创建恶意配置目录
+mkdir -p /tmp/evil_config/fsmon
+cat > /tmp/evil_config/fsmon/fsmon.toml << 'EOF'
+[monitored]
+path = "/tmp/evil_monitored.jsonl"
+
+[logging]
+path = "/tmp/evil_logs"
+EOF
+
+# 2. 使用伪造的 XDG_CONFIG_HOME 启动守护进程
+sudo XDG_CONFIG_HOME=/tmp/evil_config fsmon daemon --debug 2>/tmp/fsmon_xdg_test.log &
+DAEMON_PID=$!
+sleep 2
+
+# 3. 检查守护进程是否使用了真实用户的配置
+head -20 /tmp/fsmon_xdg_test.log | grep -i "config"
+
+# 4. 清理
+sudo kill $DAEMON_PID
+rm -rf /tmp/evil_config
+```
+
+**预期结果：**
+- 步骤 3：守护进程应加载真实用户的配置文件（如 `/home/<real_user>/.config/fsmon/fsmon.toml`），而非 `/tmp/evil_config/fsmon/fsmon.toml`
+
+---
+
+#### 18.5.3 Symlink 检测与显示（F-007/F-027）
+
+**测试目的**：验证添加 symlink 路径时正确检测并显示 "linked to" 信息。
+
+**测试步骤：**
+```bash
+# 1. 创建 symlink
+mkdir -p /tmp/fsmon_real_dir
+ln -sf /tmp/fsmon_real_dir /tmp/fsmon_symlink
+
+# 2. 启动守护进程
+sudo fsmon daemon --debug &
+DAEMON_PID=$!
+sleep 2
+
+# 3. 添加 symlink 路径
+fsmon add test_app --path /tmp/fsmon_symlink -r
+
+# 4. 检查监控列表中的 symlink 信息
+fsmon monitored
+
+# 5. 清理
+sudo kill $DAEMON_PID
+rm -f /tmp/fsmon_symlink
+rm -rf /tmp/fsmon_real_dir
+```
+
+**预期结果：**
+- 步骤 3：应输出提示信息，包含 "linked to /tmp/fsmon_real_dir"
+- 步骤 4：监控列表应显示 symlink 指向的实际路径
+
+---
+
+#### 18.5.4 递归遍历跳过 Symlink（F-008）
+
+**测试目的**：验证递归遍历目录时跳过子目录中的符号链接。
+
+**测试步骤：**
+```bash
+# 1. 创建目录结构，子目录中包含 symlink
+mkdir -p /tmp/fsmon_test/subdir
+ln -sf /etc /tmp/fsmon_test/subdir/symlink_to_etc
+
+# 2. 启动守护进程
+sudo fsmon daemon --debug 2>/tmp/fsmon_symlink_rec.log &
+DAEMON_PID=$!
+sleep 2
+
+# 3. 添加递归监控路径
+fsmon add test_app --path /tmp/fsmon_test -r
+
+# 4. 在 symlink 指向的目录中创建文件（不应被监控）
+touch /tmp/fsmon_test/subdir/symlink_to_etc/test_file.txt 2>/dev/null
+sleep 1
+
+# 5. 在普通子目录中创建文件（应被监控）
+mkdir -p /tmp/fsmon_test/subdir/normal_dir
+touch /tmp/fsmon_test/subdir/normal_dir/test_file.txt
+sleep 1
+
+# 6. 检查日志，确认跳过了 symlink
+grep -i "skip.*symlink" /tmp/fsmon_symlink_rec.log
+
+# 7. 清理
+sudo kill $DAEMON_PID
+rm -rf /tmp/fsmon_test/subdir
+```
+
+**预期结果：**
+- 步骤 6：日志中应包含 "Skipping symlink" 相关信息
+- symlink 指向的目录不应被加入监控
+
+---
+
+#### 18.5.5 临时文件名不可预测（F-009）
+
+**测试目的**：验证临时文件使用 `tempfile` crate 创建，文件名不可预测且权限为 0600。
+
+**测试步骤：**
+```bash
+# 1. 启动守护进程
+sudo fsmon daemon --debug &
+DAEMON_PID=$!
+sleep 2
+
+# 2. 添加监控路径并生成大量事件触发日志截断
+fsmon add _global --path /tmp/fsmon_test -r
+for i in {1..10000}; do
+    echo "test_$i" >> /tmp/fsmon_test/large_log_test.txt
+done
+sleep 2
+
+# 3. 检查是否有以 .fsmon_trunc_ 开头的临时文件（不应存在）
+ls -la /tmp/fsmon_test/.fsmon_trunc_* 2>/dev/null
+
+# 4. 检查日志目录中的临时文件权限
+find /tmp/fsmon_test -name ".tmp*" -o -name ".fsmon_*" 2>/dev/null | xargs ls -la 2>/dev/null
+
+# 5. 清理
+sudo kill $DAEMON_PID
+```
+
+**预期结果：**
+- 步骤 3：不应存在以 `.fsmon_trunc_` 开头的临时文件
+- 步骤 4：如果存在临时文件，权限应为 0600（`-rw-------`）
+
+---
+
+#### 18.5.6 truncate 拒绝 Symlink（F-010）
+
+**测试目的**：验证 `truncate_from_start()` 拒绝操作符号链接文件。
+
+**测试步骤：**
+```bash
+# 1. 创建普通文件和 symlink
+mkdir -p /tmp/fsmon_trunc_test
+echo "original content" > /tmp/fsmon_trunc_test/real_file.txt
+ln -sf /tmp/fsmon_trunc_test/real_file.txt /tmp/fsmon_trunc_test/symlink_file.txt
+
+# 2. 启动守护进程
+sudo fsmon daemon --debug 2>/tmp/fsmon_trunc.log &
+DAEMON_PID=$!
+sleep 2
+
+# 3. 尝试对 symlink 执行截断操作（通过 clean 命令触发）
+# 注意：具体触发方式取决于实现，这里模拟测试场景
+fsmon add _global --path /tmp/fsmon_trunc_test -r
+
+# 4. 检查日志中是否有拒绝 symlink 操作的记录
+grep -i "refusing.*symlink\|symlink.*refuse" /tmp/fsmon_trunc.log
+
+# 5. 清理
+sudo kill $DAEMON_PID
+rm -rf /tmp/fsmon_trunc_test
+```
+
+**预期结果：**
+- 步骤 4：日志中应包含拒绝操作 symlink 的错误信息
+- symlink 文件内容不应被修改
+
+---
+
+#### 18.5.7 rename 失败回滚机制（F-011）
+
+**测试目的**：验证 `clean_single_log()` 在 rename 失败时能正确恢复备份。
+
+**测试步骤：**
+```bash
+# 1. 启动守护进程
+sudo fsmon daemon --debug &
+DAEMON_PID=$!
+sleep 2
+
+# 2. 添加监控路径并生成事件
+fsmon add _global --path /tmp/fsmon_test -r
+for i in {1..100}; do
+    echo "test_$i" > /tmp/fsmon_test/file_$i.txt
+done
+sleep 2
+
+# 3. 记录日志文件原始内容的 hash
+ORIGINAL_HASH=$(sha256sum ~/.local/state/fsmon/_global_log.jsonl | cut -d' ' -f1)
+
+# 4. 执行清理操作
+fsmon clean _global --size "<1KB"
+
+# 5. 验证清理操作未导致数据丢失
+# 如果清理过程中 rename 失败，备份应被恢复
+ls -la ~/.local/state/fsmon/_global_log.jsonl*
+
+# 6. 清理
+sudo kill $DAEMON_PID
+```
+
+**预期结果：**
+- 步骤 5：清理操作应成功执行，或在失败时恢复原始文件
+- 不应出现数据丢失（日志文件应存在且内容有效）
+
+---
+
+#### 18.5.8 路径黑名单验证（F-014/019）
+
+**测试目的**：验证 `add` 命令拒绝添加 fsmon 自身日志目录和进程路径。
+
+**测试步骤：**
+```bash
+# 1. 启动守护进程
+sudo fsmon daemon --debug &
+DAEMON_PID=$!
+sleep 2
+
+# 2. 尝试添加 fsmon 日志目录（应被拒绝）
+fsmon add test_app --path /var/log/fsmon -r
+
+# 3. 尝试添加 fsmon 进程路径（应被拒绝）
+fsmon add test_app --path /proc/self -r
+
+# 4. 尝试添加用户自定义黑名单路径
+# 先在配置文件中添加黑名单
+mkdir -p ~/.config/fsmon
+cat > ~/.config/fsmon/fsmon.toml << 'EOF'
+[security]
+blocked_paths = ["/tmp/secret_dir"]
+EOF
+
+# 5. 尝试添加黑名单中的路径
+mkdir -p /tmp/secret_dir
+fsmon add test_app --path /tmp/secret_dir -r
+
+# 6. 清理
+sudo kill $DAEMON_PID
+rm -rf /tmp/secret_dir
+```
+
+**预期结果：**
+- 步骤 2：应返回错误信息，提示路径被阻止（blocked）
+- 步骤 3：应返回错误信息，提示路径被阻止
+- 步骤 5：应返回错误信息，提示路径在用户黑名单中
+
+---
+
+#### 18.5.9 subscribe 路径验证（F-015）
+
+**测试目的**：验证 socket 订阅功能对敏感路径的验证。
+
+**测试步骤：**
+```bash
+# 1. 启动守护进程
+sudo fsmon daemon --debug &
+DAEMON_PID=$!
+sleep 2
+SOCKET_FILE="/run/user/$(id -u)/fsmon/daemon.sock"
+
+# 2. 尝试订阅敏感路径（应被拒绝）
+echo '{"Subscribe":{"path":"/var/log/fsmon"}}' | socat - UNIX-CONNECT:$SOCKET_FILE
+
+# 3. 尝试订阅正常路径（应成功）
+echo '{"Subscribe":{"path":"/tmp/fsmon_test"}}' | socat - UNIX-CONNECT:$SOCKET_FILE &
+SUB_PID=$!
+sleep 1
+
+# 4. 检查订阅状态
+# 5. 清理
+kill $SUB_PID 2>/dev/null
+sudo kill $DAEMON_PID
+```
+
+**预期结果：**
+- 步骤 2：应返回错误信息，拒绝订阅敏感路径
+- 步骤 3：订阅正常路径应成功建立
+
+---
+
+#### 18.5.10 mount_fd 最小权限（F-016）
+
+**测试目的**：验证目录文件描述符使用 `O_DIRECTORY | O_PATH | O_CLOEXEC` 打开。
+
+**测试步骤：**
+```bash
+# 1. 启动守护进程
+sudo fsmon daemon --debug &
+DAEMON_PID=$!
+sleep 2
+
+# 2. 添加监控路径
+fsmon add _global --path /tmp/fsmon_test -r
+
+# 3. 获取守护进程的文件描述符信息
+FSPMON_PID=$(pgrep -f "fsmon daemon")
+ls -la /proc/$FSPMON_PID/fd/ 2>/dev/null | grep fsmon_test
+
+# 4. 检查 fd 的打开模式
+# O_PATH 通常显示为 "link" 类型
+sudo cat /proc/$FSPMON_PID/fdinfo/* 2>/dev/null | head -50
+
+# 5. 清理
+sudo kill $DAEMON_PID
+```
+
+**预期结果：**
+- 步骤 3：应存在指向监控目录的文件描述符
+- 步骤 4：文件描述符应以 `O_PATH` 模式打开（只获取 fd，不真正打开文件读写）
+
+---
+
+#### 18.5.11 TOCTOU 竞态防护（F-017/F-018）
+
+**测试目的**：验证 fd 级操作和 `O_NOFOLLOW` 标志防止 TOCTOU 竞态攻击。
+
+**测试步骤：**
+```bash
+# 1. 创建测试目录
+mkdir -p /tmp/fsmon_toctou_test
+
+# 2. 启动守护进程
+sudo fsmon daemon --debug 2>/tmp/fsmon_toctou.log &
+DAEMON_PID=$!
+sleep 2
+
+# 3. 添加监控路径
+fsmon add _global --path /tmp/fsmon_toctou_test -r
+
+# 4. 在另一个终端中尝试竞态攻击（模拟路径替换）
+# 创建初始目录
+mkdir -p /tmp/fsmon_toctou_test/target_dir
+
+# 尝试在 canonicalize 和 mark 之间替换路径
+# 注意：这个测试需要精确的时序，实际攻击很难复现
+
+# 5. 检查日志中的安全警告
+grep -i "toctou\|race\|nofollow" /tmp/fsmon_toctou.log
+
+# 6. 清理
+sudo kill $DAEMON_PID
+rm -rf /tmp/fsmon_toctou_test
+```
+
+**预期结果：**
+- 步骤 5：如果检测到竞态条件，日志中应有相应的安全警告
+- 文件操作应使用 `O_NOFOLLOW` 标志，不跟随符号链接
+
+---
+
+#### 18.5.12 递归深度限制（F-021）
+
+**测试目的**：验证递归遍历支持可配置的深度限制。
+
+**测试步骤：**
+```bash
+# 1. 创建深层目录结构
+mkdir -p /tmp/fsmon_test/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o
+
+echo "deep file" > /tmp/fsmon_test/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/deep.txt
+
+# 2. 启动守护进程
+sudo fsmon daemon --debug 2>/tmp/fsmon_depth.log &
+DAEMON_PID=$!
+sleep 2
+
+# 3. 添加监控路径，设置深度限制为 3
+fsmon add _global --path /tmp/fsmon_test -r --max-depth 3
+
+# 4. 在深度 3 以内创建文件（应被监控）
+touch /tmp/fsmon_test/a/file.txt
+sleep 1
+
+# 5. 在深度超过 3 的位置创建文件（不应被监控）
+touch /tmp/fsmon_test/a/b/c/d/e/file.txt
+sleep 1
+
+# 6. 检查日志，确认深度限制生效
+grep -i "depth.*max\|skip.*depth" /tmp/fsmon_depth.log
+
+# 7. 清理
+sudo kill $DAEMON_PID
+rm -rf /tmp/fsmon_test/a
+```
+
+**预期结果：**
+- 步骤 6：日志中应包含深度限制相关的跳过信息
+- 深度超过限制的目录不应被监控
+
+---
+
+#### 18.5.13 文件存在性竞态防护（F-023）
+
+**测试目的**：验证使用 fd 级操作替代 `path.exists()` 检查。
+
+**测试步骤：**
+```bash
+# 1. 启动守护进程
+sudo fsmon daemon --debug &
+DAEMON_PID=$!
+sleep 2
+
+# 2. 添加监控路径
+fsmon add _global --path /tmp/fsmon_test -r
+
+# 3. 快速创建和删除文件，制造竞态条件
+for i in {1..50}; do
+    touch /tmp/fsmon_test/race_file.txt &
+    rm -f /tmp/fsmon_test/race_file.txt &
+done
+wait
+sleep 2
+
+# 4. 检查守护进程是否仍在运行（不应崩溃）
+ps -p $DAEMON_PID
+
+# 5. 检查日志中是否有竞态相关的错误
+grep -i "race\|toctou\|not found" ~/.local/state/fsmon/_global_log.jsonl 2>/dev/null | head -5
+
+# 6. 清理
+sudo kill $DAEMON_PID
+```
+
+**预期结果：**
+- 步骤 4：守护进程应保持稳定运行，不应因竞态条件而崩溃
+- 步骤 5：日志中不应出现未处理的竞态错误
+
+---
+
+#### 18.5.14 临时文件权限 0600（F-026）
+
+**测试目的**：验证临时文件创建时权限为 0600（仅所有者可读写）。
+
+**测试步骤：**
+```bash
+# 1. 启动守护进程
+sudo fsmon daemon --debug &
+DAEMON_PID=$!
+sleep 2
+
+# 2. 添加监控路径并生成大量事件
+fsmon add _global --path /tmp/fsmon_test -r
+for i in {1..5000}; do
+    echo "permission_test_$i" >> /tmp/fsmon_test/perm_test.txt
+done
+sleep 2
+
+# 3. 触发日志清理，生成临时文件
+fsmon clean _global --size "<1KB"
+
+# 4. 检查临时文件权限
+# 临时文件应在清理完成后被删除，但可以通过 inotify 监控捕获
+# 或者检查 tempfile crate 的默认行为
+
+# 5. 验证清理后的日志文件权限
+ls -la ~/.local/state/fsmon/_global_log.jsonl
+
+# 6. 清理
+sudo kill $DAEMON_PID
+```
+
+**预期结果：**
+- 步骤 5：日志文件权限应为 0600 或 0640（安全权限）
+- 临时文件在创建时权限为 0600
+
+---
+
+#### 18.5.15 pending_paths 去重（F-030）
+
+**测试目的**：验证 `pending_paths` 向量中不添加重复条目。
+
+**测试步骤：**
+```bash
+# 1. 启动守护进程
+sudo fsmon daemon --debug 2>/tmp/fsmon_dedup.log &
+DAEMON_PID=$!
+sleep 2
+
+# 2. 创建新目录并快速多次添加监控
+mkdir -p /tmp/fsmon_test/dedup_dir
+fsmon add _global --path /tmp/fsmon_test/dedup_dir -r
+fsmon add _global --path /tmp/fsmon_test/dedup_dir -r
+fsmon add _global --path /tmp/fsmon_test/dedup_dir -r
+
+# 3. 检查监控列表，确认无重复条目
+fsmon monitored | grep dedup_dir | wc -l
+
+# 4. 检查日志中的去重信息
+grep -i "already pending\|duplicate" /tmp/fsmon_dedup.log
+
+# 5. 清理
+sudo kill $DAEMON_PID
+rm -rf /tmp/fsmon_test/dedup_dir
+```
+
+**预期结果：**
+- 步骤 3：监控列表中应只有一条 `dedup_dir` 记录
+- 步骤 4：日志中应显示路径已存在（already pending）的调试信息
+
+---
+
+#### 18.5.16 strip_deleted_suffix 精确匹配（F-031）
+
+**测试目的**：验证 `strip_deleted_suffix()` 只删除末尾的 " (deleted)"，不影响路径中间的相同字符串。
+
+**测试步骤：**
+```bash
+# 1. 创建包含 "(deleted)" 的文件名
+mkdir -p /tmp/fsmon_test
+touch "/tmp/fsmon_test/file (deleted).txt"
+touch "/tmp/fsmon_test/(deleted) file.txt"
+touch "/tmp/fsmon_test/file(deleted).txt"
+
+# 2. 启动守护进程
+sudo fsmon daemon --debug &
+DAEMON_PID=$!
+sleep 2
+
+# 3. 添加监控路径
+fsmon add _global --path /tmp/fsmon_test -r
+
+# 4. 触发事件
+echo "test" > "/tmp/fsmon_test/file (deleted).txt"
+echo "test" > "/tmp/fsmon_test/(deleted) file.txt"
+echo "test" > "/tmp/fsmon_test/file(deleted).txt"
+sleep 2
+
+# 5. 检查日志中的路径记录
+cat ~/.local/state/fsmon/_global_log.jsonl | jq '.path' | grep -i deleted
+
+# 6. 清理
+sudo kill $DAEMON_PID
+rm -f "/tmp/fsmon_test/file (deleted).txt"
+rm -f "/tmp/fsmon_test/(deleted) file.txt"
+rm -f "/tmp/fsmon_test/file(deleted).txt"
+```
+
+**预期结果：**
+- 步骤 5：日志中应正确记录文件路径
+  - `file (deleted).txt` 应保持原样（末尾有空格和括号的正常文件名）
+  - `(deleted) file.txt` 不应被误处理（路径中间的 "(deleted)" 应保留）
+  - `file(deleted).txt` 不应被误处理（无空格的变体应保留）
+
 ---
 
 ## 测试注意事项
