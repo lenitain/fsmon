@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::common::dir_cache;
-use crate::common::fid_parser::{mark_directory, mark_recursive, path_mask_from_options};
+use crate::common::fid_parser::{mark_directory_at, mark_recursive, open_dir_safe, path_mask_from_options};
 use crate::common::filters::PathOptions;
 use crate::common::monitored::PathEntry;
 
@@ -170,6 +170,7 @@ impl Monitor {
                                 format!("{}{}", f.op, crate::common::utils::format_size(f.bytes))
                             }),
                             cmd: opts.cmd,
+                            symlink_target: None,
                         },
                     ));
                 }
@@ -241,7 +242,11 @@ impl Monitor {
         );
 
         let fan_fd = &self.fanotify.groups[gi].fan_fd;
-        if mark_directory(fan_fd, path_mask, &canonical).is_err() {
+        let dir_fd = match open_dir_safe(&canonical) {
+            Ok(fd) => fd,
+            Err(_) => return Vec::new(),
+        };
+        if mark_directory_at(fan_fd, &dir_fd, path_mask).is_err() {
             return Vec::new();
         }
 

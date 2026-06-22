@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use super::{EventReceiver, EventSender, FileLogWriter, Monitor};
 use crate::common::dir_cache;
 use crate::common::fid_parser::{
-    DIR_CACHE_CAP, FsGroup, chown_to_user, mark_directory, mark_recursive,
+    DIR_CACHE_CAP, FsGroup, chown_to_user, mark_directory_at, mark_recursive, open_dir_safe,
 };
 use crate::common::filters::PathOptions;
 use crate::common::monitored::PathEntry;
@@ -98,6 +98,7 @@ impl Monitor {
                                 .size_filter
                                 .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
                             cmd: opts.cmd,
+                            symlink_target: None,
                         },
                     ));
                 }
@@ -124,7 +125,18 @@ impl Monitor {
             if let Some(&key) = fs_group_devs.get(&dev_id) {
                 // Same filesystem — just add inode mark
                 let fan_fd = &self.fanotify.groups[key].fan_fd;
-                if let Err(e) = mark_directory(fan_fd, path_mask, canonical) {
+                let dir_fd = match open_dir_safe(canonical) {
+                    Ok(fd) => fd,
+                    Err(e) => {
+                        eprintln!(
+                            "[WARNING] Cannot open {} for marking: {:#}",
+                            canonical.display(),
+                            e
+                        );
+                        continue;
+                    }
+                };
+                if let Err(e) = mark_directory_at(fan_fd, &dir_fd, path_mask) {
                     eprintln!(
                         "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
                         canonical.display(),

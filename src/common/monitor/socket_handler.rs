@@ -148,6 +148,7 @@ impl Monitor {
                     types: types.clone(),
                     size: size.clone(),
                     cmd: track_cmd.clone(),
+                    symlink_target: None,
                 };
                 match self.add_path(&entry) {
                     Ok(()) => Ok(SocketResponse::Ok),
@@ -196,6 +197,7 @@ impl Monitor {
                                 .size_filter
                                 .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
                             cmd,
+                            symlink_target: None,
                         }
                     })
                     .collect();

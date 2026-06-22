@@ -65,6 +65,10 @@ pub struct PathEntry {
     pub types: Option<Vec<String>>,
     /// Size filter with comparison operator (e.g. >1MB, >=500KB, <100MB).
     pub size: Option<String>,
+    /// If the path is a symlink, this contains the resolved target (F-027).
+    /// Used for display purposes only — monitoring uses the resolved path.
+    #[serde(skip)]
+    pub symlink_target: Option<PathBuf>,
 }
 
 impl PathParams {}
@@ -178,16 +182,29 @@ impl Monitored {
         let mut entries = Vec::new();
         for group in &self.groups {
             for (path, params) in &group.paths {
+                // Detect symlinks for display (F-027)
+                let symlink_target = Self::detect_symlink_target(path);
                 entries.push(PathEntry {
                     cmd: Some(group.cmd.clone()),
                     path: path.clone(),
                     recursive: params.recursive,
                     types: params.types.clone(),
                     size: params.size.clone(),
+                    symlink_target,
                 });
             }
         }
         entries
+    }
+
+    /// Detect if a path is a symlink and return its target (F-027).
+    fn detect_symlink_target(path: &Path) -> Option<PathBuf> {
+        let metadata = std::fs::symlink_metadata(path).ok()?;
+        if metadata.file_type().is_symlink() {
+            std::fs::canonicalize(path).ok()
+        } else {
+            None
+        }
     }
 
     /// Save Monitored to file (JSONL format). Creates parent directories if needed.
@@ -252,12 +269,14 @@ impl Monitored {
                 continue;
             }
             if let Some(params) = group.paths.get(path) {
+                let symlink_target = Self::detect_symlink_target(path);
                 return Some(PathEntry {
                     cmd: Some(group.cmd.clone()),
                     path: path.to_path_buf(),
                     recursive: params.recursive,
                     types: params.types.clone(),
                     size: params.size.clone(),
+                    symlink_target,
                 });
             }
         }
@@ -316,6 +335,7 @@ mod tests {
             types: None,
             size: None,
             cmd: cmd.map(|s| s.to_string()),
+            symlink_target: None,
         }
     }
 
@@ -411,6 +431,7 @@ mod tests {
             types: Some(vec!["CREATE".into(), "DELETE".into()]),
             size: Some("1KB".into()),
             cmd: None,
+            symlink_target: None,
         });
 
         store.save(&path).unwrap();

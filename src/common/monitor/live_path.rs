@@ -9,7 +9,7 @@ use fanotify_fid::consts::{
 use fanotify_fid::prelude::*;
 
 use crate::common::dir_cache;
-use crate::common::fid_parser::{FsGroup, mark_directory, mark_recursive, path_mask_from_options};
+use crate::common::fid_parser::{FsGroup, mark_directory, mark_directory_at, mark_recursive, open_dir_safe, path_mask_from_options};
 use crate::common::filters::{self, PathOptions};
 use crate::common::monitored::PathEntry;
 
@@ -145,15 +145,27 @@ impl Monitor {
 
         let group_key = if let Some(key) = existing_key {
             let fan_fd = &self.fanotify.groups[key].fan_fd;
-            if let Err(e) = mark_directory(fan_fd, path_mask, &canonical) {
-                eprintln!(
-                    "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
-                    canonical.display(),
-                    fan_fd.as_raw_fd(),
-                    e
-                );
-            } else if opts.recursive && canonical.is_dir() {
-                let _ = mark_recursive(fan_fd, path_mask, &canonical);
+            // Use fd-level operations to avoid TOCTOU (F-017)
+            match open_dir_safe(&canonical) {
+                Ok(dir_fd) => {
+                    if let Err(e) = mark_directory_at(fan_fd, &dir_fd, path_mask) {
+                        eprintln!(
+                            "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
+                            canonical.display(),
+                            fan_fd.as_raw_fd(),
+                            e
+                        );
+                    } else if opts.recursive && canonical.is_dir() {
+                        let _ = mark_recursive(fan_fd, path_mask, &canonical);
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[WARNING] Cannot open {} for marking: {:#}",
+                        canonical.display(),
+                        e
+                    );
+                }
             }
             self.fanotify.groups[key].ref_count += 1;
             eprintln!(
@@ -227,7 +239,19 @@ impl Monitor {
         canonical: &std::path::Path,
         recursive: bool,
     ) -> Option<()> {
-        match mark_directory(new_fd, path_mask, canonical) {
+        // Use fd-level operations to avoid TOCTOU (F-017)
+        let dir_fd = match open_dir_safe(canonical) {
+            Ok(fd) => fd,
+            Err(e) => {
+                eprintln!(
+                    "[WARNING] Cannot open {} for marking: {:#}",
+                    canonical.display(),
+                    e
+                );
+                return None;
+            }
+        };
+        match mark_directory_at(new_fd, &dir_fd, path_mask) {
             Ok(()) => {
                 eprintln!(
                     "[INFO] Monitoring {} (inode mark) on fd {}",

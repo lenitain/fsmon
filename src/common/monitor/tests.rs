@@ -271,6 +271,7 @@ fn test_add_path_and_remove_path() {
         recursive: Some(true),
         types: None,
         size: None,
+        symlink_target: None,
     };
 
     // add_path on non-existent path → goes to pending_paths

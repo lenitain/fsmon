@@ -44,7 +44,7 @@ pub fn check_path_allowed(path: &Path, user_blocked: &[String]) -> Result<(), St
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    
 
     #[test]
     fn test_allowed_path() {

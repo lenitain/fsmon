@@ -3,7 +3,7 @@ use std::path::Path;
 
 use fanotify_fid::prelude::*;
 
-use crate::common::fid_parser::{FsGroup, mark_directory, path_mask_from_options};
+use crate::common::fid_parser::{FsGroup, mark_directory_at, open_dir_safe, path_mask_from_options};
 use crate::common::filters::PathOptions;
 
 use super::Monitor;
@@ -62,7 +62,11 @@ impl Monitor {
             .find(|(_, g)| g.dev_id == dev_id)
         {
             let fan_fd = &self.fanotify.groups[key].fan_fd;
-            if mark_directory(fan_fd, path_mask, &canonical).is_err() {
+            let dir_fd = match open_dir_safe(&canonical) {
+                Ok(fd) => fd,
+                Err(_) => return false,
+            };
+            if mark_directory_at(fan_fd, &dir_fd, path_mask).is_err() {
                 return false;
             }
             self.fanotify.groups[key].ref_count += 1;
@@ -84,7 +88,14 @@ impl Monitor {
                 Ok(fd) => fd,
                 Err(_) => return false,
             };
-            if mark_directory(&new_fd, path_mask, &canonical).is_err() {
+            let dir_fd = match open_dir_safe(&canonical) {
+                Ok(fd) => fd,
+                Err(_) => {
+                    drop(new_fd);
+                    return false;
+                }
+            };
+            if mark_directory_at(&new_fd, &dir_fd, path_mask).is_err() {
                 drop(new_fd);
                 return false;
             }

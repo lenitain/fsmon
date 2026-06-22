@@ -199,6 +199,7 @@ impl Monitor {
                         .size_filter
                         .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
                     cmd: opts.cmd,
+                    symlink_target: None,
                 },
             ));
         }

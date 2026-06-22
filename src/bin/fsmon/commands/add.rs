@@ -146,6 +146,17 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
     } else {
         Some(false)
     };
+    // Detect symlink target for display (F-027)
+    let resolved_path = path.clone().unwrap_or_default();
+    let symlink_target = {
+        let meta = std::fs::symlink_metadata(&resolved_path).ok();
+        if meta.as_ref().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+            std::fs::canonicalize(&resolved_path).ok()
+        } else {
+            None
+        }
+    };
+
     let entry = PathEntry {
         path: path
             .clone()
@@ -154,6 +165,7 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         recursive,
         types: types.clone(),
         size: size_val.clone(),
+        symlink_target,
     };
 
     store.add_entry(entry.clone());
@@ -174,11 +186,19 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
 
     match result {
         Ok(SocketResponse::Ok) => {
-            println!("Entry added: {}", entry.path.display());
+            print!("Entry added: {}", entry.path.display());
+            if let Some(ref target) = entry.symlink_target {
+                print!(" (linked to {})", target.display());
+            }
+            println!();
         }
         Ok(resp) => {
             // Unexpected response type
-            println!("Entry added: {}", entry.path.display());
+            print!("Entry added: {}", entry.path.display());
+            if let Some(ref target) = entry.symlink_target {
+                print!(" (linked to {})", target.display());
+            }
+            println!();
             eprintln!("Unexpected response from daemon: {:?}", resp);
         }
         Err(SocketError::Permanent(msg)) => {
@@ -188,7 +208,11 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             eprintln!("Error: {}", msg);
         }
         Err(SocketError::Transient(_)) => {
-            println!("Entry added: {}", entry.path.display());
+            print!("Entry added: {}", entry.path.display());
+            if let Some(ref target) = entry.symlink_target {
+                print!(" (linked to {})", target.display());
+            }
+            println!();
         }
     }
     Ok(())
