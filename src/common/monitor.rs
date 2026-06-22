@@ -195,7 +195,7 @@ impl Monitor {
             .map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()));
         for (path, opts) in &cfg.paths_and_options {
             // Reject paths that overlap with the log directory.
-            let resolved = filters::resolve_recursion_check(path);
+            let (_original, resolved) = filters::resolve_recursion_check(path);
             if let Some(ref log_dir) = log_dir_canonical {
                 let is_exact = log_dir.as_path() == resolved;
                 let is_parent_recursive = opts.recursive && log_dir.starts_with(&resolved);

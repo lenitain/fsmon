@@ -4,6 +4,7 @@ use fsmon::common::monitored::{CMD_GLOBAL, Monitored, PathEntry};
 use fsmon::common::socket::{self, SocketCmd, SocketError, SocketResponse};
 use std::path::PathBuf;
 
+use fsmon::common::security;
 use crate::AddArgs;
 
 /// Add a path to the monitoring list.
@@ -44,6 +45,11 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
         }
 
         let resolved = super::resolve_path_arg(raw_path);
+
+        // Validate path against security blacklist (F-014/019)
+        if let Err(e) = security::check_path_allowed(&resolved, &[]) {
+            bail!("{}", e);
+        }
         let exists = resolved.exists();
         if !exists {
             eprintln!("[Note] path does not exist yet — will start monitoring when created.");

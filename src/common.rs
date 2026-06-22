@@ -9,6 +9,7 @@ pub mod metrics;
 pub mod monitor;
 pub mod monitored;
 pub mod proc_cache;
+pub mod security;
 pub mod query;
 pub mod socket;
 pub mod utils;

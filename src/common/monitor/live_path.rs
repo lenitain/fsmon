@@ -26,7 +26,7 @@ impl Monitor {
                 .as_deref()
                 .unwrap_or(crate::common::monitored::CMD_GLOBAL)
         );
-        let path = filters::resolve_recursion_check(&entry.path);
+        let (_original, path) = filters::resolve_recursion_check(&entry.path);
 
         let is_new_path = !self.paths.contains(&path);
         if !is_new_path {

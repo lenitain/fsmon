@@ -211,9 +211,10 @@ pub struct CliCacheOverride {
 /// - `$HOME` owner (systemd / any root context with HOME set) — one `stat` call
 /// - Current process UID/GID (normal user, no root) — no syscall
 pub fn resolve_uid_gid() -> (u32, u32) {
-    // 1. SUDO_UID — sudo
+    // 1. SUDO_UID — sudo (verify via getpwuid to prevent env var forgery)
     if let Ok(uid_str) = std::env::var("SUDO_UID")
         && let Ok(uid) = uid_str.parse::<u32>()
+        && users::get_user_by_uid(uid).is_some()
     {
         let gid = std::env::var("SUDO_GID")
             .ok()
@@ -273,6 +274,8 @@ pub fn resolve_home(uid: u32) -> Result<PathBuf> {
 /// For tests, use HOME env.
 pub fn guess_home() -> String {
     // 1. SUDO_UID — daemon running via sudo
+    //    Verify the UID actually exists in passwd database to prevent
+    //    env var forgery attacks (F-004/005).
     let uid_str = match std::env::var("SUDO_UID") {
         Ok(s) => s,
         Err(_) => return std::env::var("HOME").unwrap_or_else(|_| "/root".into()),
@@ -284,6 +287,10 @@ pub fn guess_home() -> String {
     // If we're not actually root (e.g. in tests where SUDO_UID is unset),
     // just use HOME. If we are root, try getpwuid.
     if nix::unistd::geteuid().as_raw() != 0 {
+        return std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    }
+    // Verify the UID exists before trusting it
+    if users::get_user_by_uid(uid).is_none() {
         return std::env::var("HOME").unwrap_or_else(|_| "/root".into());
     }
     match resolve_home(uid) {
@@ -328,8 +335,12 @@ impl Config {
     /// Falls back to `~/.config/fsmon/fsmon.toml`.
     pub fn user_path() -> PathBuf {
         let home = guess_home();
-        let xdg_config =
-            std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{}/.config", home));
+        // Root ignores XDG_CONFIG_HOME to prevent env var injection (F-006)
+        let xdg_config = if nix::unistd::geteuid().is_root() {
+            format!("{}/.config", home)
+        } else {
+            std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{}/.config", home))
+        };
         PathBuf::from(xdg_config).join("fsmon").join("fsmon.toml")
     }
 

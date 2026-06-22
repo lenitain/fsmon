@@ -152,21 +152,27 @@ impl Monitor {
                 );
             }
             for opts in all_opts {
-                self.inotify_state.pending_paths.push((
-                    path.clone(),
-                    PathEntry {
-                        path: path.clone(),
-                        recursive: Some(opts.recursive),
-                        types: opts
-                            .event_types
-                            .as_ref()
-                            .map(|v| v.iter().map(|t| t.to_string()).collect()),
-                        size: opts.size_filter.map(|f| {
-                            format!("{}{}", f.op, crate::common::utils::format_size(f.bytes))
-                        }),
-                        cmd: opts.cmd,
-                    },
-                ));
+                // Dedup check: skip if already pending (F-030)
+                let already_pending = self.inotify_state.pending_paths.iter().any(|(p, e)| {
+                    p == path && e.cmd == opts.cmd
+                });
+                if !already_pending {
+                    self.inotify_state.pending_paths.push((
+                        path.clone(),
+                        PathEntry {
+                            path: path.clone(),
+                            recursive: Some(opts.recursive),
+                            types: opts
+                                .event_types
+                                .as_ref()
+                                .map(|v| v.iter().map(|t| t.to_string()).collect()),
+                            size: opts.size_filter.map(|f| {
+                                format!("{}{}", f.op, crate::common::utils::format_size(f.bytes))
+                            }),
+                            cmd: opts.cmd,
+                        },
+                    ));
+                }
             }
             self.add_temp_parent_mark(path);
         }

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use libc;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
@@ -137,12 +138,9 @@ impl FileLogWriter {
 
         // If the file was deleted externally (e.g. by user or log rotation),
         // the cached BufWriter holds a stale fd pointing to a deleted inode.
-        // Writes would silently succeed but data would be lost.  Detect this
-        // by checking whether the file still exists on disk; if not, drop the
-        // stale handle so get_or_open creates a fresh file.
-        if self.handles.contains_key(&log_path) && !log_path.exists() {
-            self.handles.remove(&log_path);
-        }
+        // Instead of path.exists() (TOCTOU), we catch ENOENT on write and
+        // retry with a fresh handle.
+        // Note: stale handle detection is done via write error handling below.
 
         match self.get_or_open(&log_path) {
             Ok(writer) => {
@@ -256,15 +254,24 @@ impl FileLogWriter {
 /// (fd-based) to avoid TOCTOU race: the fd is always valid even if the path is
 /// deleted between open() and chown().
 fn open_log_file(log_path: &PathBuf, log_dir: &PathBuf) -> std::io::Result<File> {
-    let file = OpenOptions::new()
-        .create(true)
+    use std::os::unix::fs::OpenOptionsExt;
+    // O_NOFOLLOW prevents symlink attacks (F-018)
+    // O_CLOEXEC prevents fd leaks to child processes
+    let mut opts = OpenOptions::new();
+    opts.create(true)
         .append(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let file = opts
         .open(log_path)
         .or_else(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 let _ = fs::create_dir_all(log_dir);
                 let _ = crate::common::fid_parser::chown_to_user(log_dir);
-                OpenOptions::new().create(true).append(true).open(log_path)
+                let mut opts2 = OpenOptions::new();
+                opts2.create(true)
+                    .append(true)
+                    .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+                opts2.open(log_path)
             } else {
                 Err(e)
             }

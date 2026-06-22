@@ -37,9 +37,12 @@ impl Monitor {
     /// The returned `OwnedFd` has the directory open and will be
     /// closed on drop.
     pub(crate) fn open_dir(path: &Path) -> std::io::Result<OwnedFd> {
+        // Use O_PATH for minimal permissions (F-016)
+        // O_DIRECTORY ensures we open a directory
+        // O_CLOEXEC prevents fd leaks to child processes
         nix::fcntl::open(
             path,
-            nix::fcntl::OFlag::O_DIRECTORY,
+            nix::fcntl::OFlag::O_DIRECTORY | nix::fcntl::OFlag::O_PATH | nix::fcntl::OFlag::O_CLOEXEC,
             nix::sys::stat::Mode::empty(),
         )
         .map_err(std::io::Error::other)

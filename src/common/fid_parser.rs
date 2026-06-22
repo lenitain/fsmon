@@ -107,11 +107,15 @@ pub(crate) fn strip_deleted_suffix(path: &Path) -> PathBuf {
         return PathBuf::new();
     }
     let clean = path.to_string_lossy();
-    // Replace ALL occurrences, not just the trailing one.
-    // The kernel convention uses " (deleted)" exclusively for disconnected
-    // dentries, so a real file-system name never contains this pattern.
-    let cleaned = clean.replace(" (deleted)", "");
-    PathBuf::from(cleaned)
+    // Only strip " (deleted)" from the END of the path (not globally).
+    // This prevents误删 paths that legitimately contain " (deleted)" in
+    // the middle (e.g. "/home/user/dir (deleted)/file.txt" where the
+    // directory name itself contains the string).
+    if let Some(stripped) = clean.strip_suffix(" (deleted)") {
+        PathBuf::from(stripped)
+    } else {
+        path.to_path_buf()
+    }
 }
 
 /// Read and parse FID events, using a moka cache for path recovery.
@@ -391,10 +395,16 @@ fn mark_recursive_inner(fan_fd: &OwnedFd, safe_mask: u64, dir: &Path) -> Vec<Pat
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
-            let _ = fanotify_mark(fan_fd, FAN_MARK_ADD, safe_mask, AT_FDCWD, path.as_path());
-            discovered.push(path.clone());
-            discovered.extend(mark_recursive_inner(fan_fd, safe_mask, &path));
+        // Skip symlinks to prevent following links to unexpected locations (F-008)
+        if let Ok(metadata) = entry.metadata() {
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.file_type().is_dir() {
+                let _ = fanotify_mark(fan_fd, FAN_MARK_ADD, safe_mask, AT_FDCWD, path.as_path());
+                discovered.push(path.clone());
+                discovered.extend(mark_recursive_inner(fan_fd, safe_mask, &path));
+            }
         }
     }
     discovered
@@ -613,9 +623,9 @@ mod tests {
 
     #[test]
     fn test_strip_deleted_suffix_mid_component() {
-        // " (deleted)" anywhere in the path is stripped.
+        // " (deleted)" in the middle is NOT stripped (only end is stripped).
         let p = PathBuf::from("/home (deleted)/user/dir");
-        assert_eq!(strip_deleted_suffix(&p), PathBuf::from("/home/user/dir"));
+        assert_eq!(strip_deleted_suffix(&p), p);
     }
 
     #[test]
@@ -624,10 +634,10 @@ mod tests {
         let parent = PathBuf::from("/home/user/dir (deleted)");
         let dirty = parent.join("file.txt");
         assert_eq!(dirty, PathBuf::from("/home/user/dir (deleted)/file.txt"));
-        // Now strip_deleted_suffix handles embedded occurrences too.
+        // Only trailing " (deleted)" is stripped, not embedded ones.
         assert_eq!(
             strip_deleted_suffix(&dirty),
-            PathBuf::from("/home/user/dir/file.txt")
+            dirty  // no change because " (deleted)" is in the middle
         );
     }
 }

@@ -9,6 +9,7 @@ use crate::common::utils::format_size;
 use crate::common::{EventType, FileEvent};
 use serde_json;
 
+use crate::common::security;
 use super::Monitor;
 
 impl Monitor {
@@ -120,6 +121,11 @@ impl Monitor {
                 size,
                 track_cmd,
             } => {
+                // Validate path against security blacklist (F-015)
+                if let Err(e) = security::check_path_allowed(&path, &[]) {
+                    return Err(SocketError::Permanent(e));
+                }
+
                 let track_cmd = track_cmd.as_deref().and_then(|c| {
                     if c == crate::common::monitored::CMD_GLOBAL {
                         None
@@ -283,6 +289,14 @@ pub(crate) async fn subscriber_task(
     loop {
         match rx.recv().await {
             Ok((event, _cmd_name)) => {
+                // Filter fsmon's own events in global mode to prevent
+                // self-triggering feedback loops.
+                if track_cmd.as_deref() == Some(crate::common::monitored::CMD_GLOBAL) {
+                    if event.cmd == "fsmon" || event.path.starts_with("/var/log/fsmon") {
+                        continue;
+                    }
+                }
+
                 // Optional filter by cmd group.
                 // Global events have empty chains (no process tracking).
                 if let Some(ref wanted) = track_cmd {
