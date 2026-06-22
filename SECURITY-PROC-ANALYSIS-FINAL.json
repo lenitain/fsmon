@@ -6,8 +6,8 @@
     "severity": "HIGH",
     "confidence": 0.9,
     "title": "PID复用检测存在TOCTOU竞态窗口",
-    "description": "在get_process_info_by_pid函数中，PID复用检测通过比较缓存的start_time_ns与当前读取的start_time_ns实现。但读取当前start_time_ns（第90行）与后续比较（第91行）之间存在时间窗口，PID可能已被复用。",
-    "exploit_scenario": "攻击者可监控进程退出，在检查后、使用前快速创建新进程复用同一PID。新进程继承原进程的缓存信息（cmd、user等），导致进程信息伪造。",
+    "description": "get_process_info_by_pid函数中，PID复用检测通过比较缓存的start_time_ns与当前读取的start_time_ns实现。但读取缓存（第86行store.get_process）与读取当前start_time_ns（第90行read_proc_start_time_ns）之间存在时间窗口，PID可能已被复用。当前进程退出+新进程复用PID可发生在任意两步之间。",
+    "exploit_scenario": "攻击者可监控进程退出，在缓存读取后、/proc读取前快速创建新进程复用同一PID。新进程的start_time_ns与缓存不同，但若read_proc_start_time_ns因权限等原因返回0，则绕过检测（见下一个漏洞）。",
     "recommendation": "使用原子操作或锁机制确保PID与start_time_ns的读取是原子的。或在获取进程信息后立即验证PID未被复用。"
   },
   {
@@ -15,22 +15,22 @@
     "line": 91,
     "category": "进程信息伪造",
     "severity": "HIGH",
-    "confidence": 0.85,
+    "confidence": 0.9,
     "title": "read_proc_start_time_ns返回0时绕过PID复用检测",
-    "description": "当read_proc_start_time_ns返回0（表示读取失败）时，条件current_start == 0为真，函数直接返回缓存信息。攻击者可能通过权限限制或文件系统错误使/proc/{pid}/stat不可读，从而绕过PID复用检测。",
-    "exploit_scenario": "攻击者通过挂载特殊文件系统或修改/proc权限，使read_proc_start_time_ns返回0。此时系统会返回过时的缓存进程信息，可能包含错误的cmd、user等。",
-    "recommendation": "当current_start == 0时应视为异常情况，返回unknown或采取其他保守策略，而不是返回可能过时的缓存信息。"
+    "description": "条件 `cached_start == current_start || current_start == 0` 中，当current_start==0时直接返回缓存信息。read_proc_start_time_ns在进程已退出（/proc/{pid}/stat不存在）、权限不足、或解析失败时返回0。结合Fork事件插入时start_time_ns=0的缓存条目（proc-tree ops.rs:173），攻击者可构造cached_start==0且current_start==0的场景，使任意缓存信息被返回。",
+    "exploit_scenario": "1) 攻击者fork子进程A(PID=X)，proc connector记录Fork事件，缓存start_time_ns=0。2) A快速退出。3) 攻击者fork新进程B复用PID=X。4) B触发fanotify事件，get_process_info_by_pid被调用。5) cached_start=0（来自Fork缓存），current_start=0（A已退出，/proc/X/stat属于B但可能读取失败或为0），条件 `0==0||0==0` 为true，返回A的过时缓存信息。",
+    "recommendation": "当current_start==0时应视为异常，不返回缓存信息，而是回退到/proc直接读取。Fork事件处理应尝试填充start_time_ns。"
   },
   {
     "file": "src/common/proc_cache.rs",
     "line": 71,
     "category": "netlink消息截断",
     "severity": "MEDIUM",
-    "confidence": 0.8,
+    "confidence": 0.75,
     "title": "截断的netlink消息继续处理可能导致数据不一致",
-    "description": "当proc connector返回Truncated错误时（第71行），代码仅打印警告并继续处理后续消息。截断的消息可能包含不完整的事件数据，导致进程树状态不一致。",
-    "exploit_scenario": "攻击者通过向netlink socket发送精心构造的截断消息，可能导致进程事件被部分解析，造成进程树状态错误。",
-    "recommendation": "对于截断的消息，应丢弃该消息并记录错误，而不是继续处理。考虑实现消息完整性验证。"
+    "description": "当proc connector返回Truncated错误时（第71行），代码仅打印警告并继续迭代后续消息。如果NetlinkMessageIter在截断后未正确重定位到下一个消息边界，后续消息可能被错误解析，产生虚假的进程事件。",
+    "exploit_scenario": "攻击者通过向netlink socket发送精心构造的消息使解析器产生Truncated错误，后续消息被错误解析为Fork/Exec/Exit事件，导致进程树被注入虚假节点或真实节点被错误移除。",
+    "recommendation": "Truncated消息后应停止处理当前缓冲区剩余数据，等待下一次读取获取完整消息。或在NetlinkMessageIter中实现截断恢复机制。"
   },
   {
     "file": "src/common/proc_cache.rs",
@@ -38,10 +38,10 @@
     "category": "事件丢失",
     "severity": "MEDIUM",
     "confidence": 0.75,
-    "title": "proc connector overrun导致事件丢失",
-    "description": "当proc connector返回Overrun错误时（第68行），代码仅打印警告并继续。overrun意味着事件队列溢出，部分事件已丢失，可能导致进程树与真实状态不同步。",
-    "exploit_scenario": "攻击者通过快速创建/退出大量进程，使proc connector事件队列溢出。丢失的事件可能导致进程树不完整，影响安全决策。",
-    "recommendation": "实现事件丢失检测和恢复机制。在overrun发生后，考虑重建进程树或标记状态为不可信。"
+    "title": "proc connector overrun导致事件丢失和进程树不同步",
+    "description": "当proc connector返回Overrun错误时（第68行），代码仅打印警告并继续。overrun意味着内核事件队列溢出，部分Fork/Exec/Exit事件已永久丢失。丢失的事件导致进程树中缺少新进程条目或保留已退出进程条目。",
+    "exploit_scenario": "攻击者通过快速创建/退出大量进程（fork bomb变体）使proc connector事件队列溢出。丢失的Fork事件导致新进程不在进程树中，使基于进程树的过滤规则（is_descendant）失效，安全策略被绕过。",
+    "recommendation": "Overrun发生后应标记进程树为不可信状态，触发snapshot重建。或实现增量同步机制定期校验进程树与/proc的一致性。"
   },
   {
     "file": "src/common/monitor/events.rs",
@@ -50,9 +50,9 @@
     "severity": "MEDIUM",
     "confidence": 0.7,
     "title": "进程树遍历依赖可能过时的存储数据",
-    "description": "matches_process_tree函数（第138行）调用proc_tree::is_descendant，该函数遍历进程树。如果进程存储中的数据过时（例如由于事件丢失或延迟），遍历结果可能不准确。",
-    "exploit_scenario": "攻击者利用事件丢失窗口，使进程树存储过时。然后利用过时的进程树关系绕过基于进程树的过滤规则。",
-    "recommendation": "为进程存储条目添加时效性标记，过期的条目不应参与进程树遍历。考虑实现定期进程树刷新机制。"
+    "description": "matches_process_tree函数（第138行）调用proc_tree::is_descendant，该函数遍历进程树的ppid链。如果进程存储中的数据过时（由于事件丢失、TTL过期、或Fork事件延迟），遍历结果可能不准确——真实的父子关系可能已改变。",
+    "exploit_scenario": "攻击者利用overrun事件丢失窗口，使进程树存储过时。然后利用过时的进程树关系：攻击者进程的ppid链中包含目标cmd的进程，即使真实关系已改变，is_descendant仍返回true，绕过进程树过滤。",
+    "recommendation": "为进程存储条目添加last_verified时间戳，超过阈值的条目应触发/proc重新验证。在is_descendant遍历中增加深度限制防止循环攻击。"
   },
   {
     "file": "src/common/monitor/events.rs",
@@ -61,19 +61,30 @@
     "severity": "MEDIUM",
     "confidence": 0.7,
     "title": "patch_pending_events与进程状态变化之间的竞态",
-    "description": "patch_pending_events函数（第208行）在事件循环后期尝试解析'unknown'字段。但进程可能在第一次获取信息后、第二次解析前退出或PID被复用。",
-    "exploit_scenario": "攻击者在事件处理窗口期快速替换进程，导致patch_pending_events使用错误的进程信息更新事件。",
-    "recommendation": "在patch_pending_events中再次验证PID的有效性，确保进程信息的一致性。"
+    "description": "patch_pending_events函数（第208行）在事件循环后期尝试解析'unknown'字段。但进程可能在第一次获取信息后、第二次解析前退出或PID被复用。该函数不验证PID有效性（不检查start_time_ns），直接使用store.get_process返回的信息。",
+    "exploit_scenario": "攻击者在事件处理窗口期快速替换进程：原进程触发fanotify事件（cmd='unknown'），在patch_pending_events执行前退出，新进程复用PID。patch使用新进程的信息（或过时的缓存信息）更新事件，导致事件记录中cmd字段不准确。",
+    "recommendation": "在patch_pending_events中再次验证PID的有效性（检查start_time_ns），确保进程信息的一致性。对于无法验证的PID，保留'unknown'标记。"
   },
   {
     "file": "src/common/utils.rs",
-    "line": 63,
+    "line": 97,
+    "category": "PID复用竞态条件",
+    "severity": "MEDIUM",
+    "confidence": 0.7,
+    "title": "/proc回退读取存在TOCTOU竞态窗口",
+    "description": "当缓存未命中或PID复用检测失败时，代码回退到直接读取/proc（第97-105行）。retry函数调用proc_tree::parse_proc_entry(pid)读取/proc/{pid}/status和/proc/{pid}/cmdline。在读取status（获取ppid/user/tgid）与读取cmdline之间，以及两次重试之间（500µs间隔），PID可能被复用，导致返回混合了新旧进程信息的ProcessInfo。",
+    "exploit_scenario": "攻击者在retry的500µs窗口内快速替换进程。parse_proc_entry先读取status（获取新进程的ppid），再读取cmdline（可能读到旧进程的残留或新进程的cmd），返回不一致的进程信息。",
+    "recommendation": "在parse_proc_entry读取完成后，再次验证start_time_ns与读取前一致。或使用/proc/{pid}/stat中的所有字段一次性解析。"
+  },
+  {
+    "file": "src/common/utils.rs",
+    "line": 79,
     "category": "信息泄露",
     "severity": "LOW",
     "confidence": 0.6,
     "title": "进程信息读取可能泄露跨用户信息",
-    "description": "get_process_info_by_pid函数读取/proc/{pid}/cmdline和/proc/{pid}/status等文件。虽然Linux默认限制跨用户读取，但某些配置下可能允许，导致进程信息泄露。",
-    "exploit_scenario": "在配置不当的系统上，攻击者可能读取其他用户的进程信息，包括命令行参数（可能包含敏感数据）。",
-    "recommendation": "确保进程信息读取遵循最小权限原则。考虑在读取前检查进程属主权限。"
+    "description": "get_process_info_by_pid通过proc_tree::parse_proc_entry读取/proc/{pid}/cmdline和/proc/{pid}/status。Linux默认hidepid=0允许所有用户读取所有进程信息，cmdline可能包含敏感参数（密码、API密钥等）。",
+    "exploit_scenario": "在hidepid=0（默认）配置下，低权限攻击者可构造fanotify事件触发get_process_info_by_pid调用，间接获取高权限进程的cmdline内容，其中可能包含敏感参数。",
+    "recommendation": "确保进程信息读取遵循最小权限原则。在多用户环境中建议设置hidepid=2。日志输出时对cmdline中的敏感参数进行脱敏处理。"
   }
 ]

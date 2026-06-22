@@ -1,96 +1,49 @@
-# 安全分析总结：进程信息伪造与PID复用
+# 安全扫描总结：进程信息伪造与 PID 复用
 
-## 分析概述
-- **焦点区域**: 进程信息伪造与PID复用
-- **目标文件**: 
-  - `src/common/proc_cache.rs`
-  - `src/common/utils.rs`
-  - `src/common/monitor/events.rs`
-- **分析日期**: 2026-06-22
-- **分析师**: MiMo安全扫描专家
+**扫描日期**: 2026-06-22
+**目标**: fsmon 进程信息获取与 PID 复用检测机制
 
 ## 发现统计
-- **总计漏洞**: 7个
-- **高危漏洞**: 2个 (29%)
-- **中危漏洞**: 4个 (57%)
-- **低危漏洞**: 1个 (14%)
 
-## 关键发现
+| 严重性 | 数量 |
+|--------|------|
+| HIGH   | 2    |
+| MEDIUM | 5    |
+| LOW    | 1    |
+| **总计** | **8** |
 
-### 1. PID复用竞态条件 (HIGH)
-**位置**: `src/common/utils.rs:90-91`
-**问题**: PID复用检测存在TOCTOU竞态窗口
-**影响**: 攻击者可伪造进程信息，绕过安全检查
+## 核心风险
 
-### 2. 进程信息伪造 (HIGH)
-**位置**: `src/common/utils.rs:91`
-**问题**: `read_proc_start_time_ns`返回0时绕过PID复用检测
-**影响**: 可返回过时的缓存进程信息
+**最高风险**：PID 复用检测的 `current_start == 0` 绕过（漏洞 #2）
 
-### 3. netlink消息截断 (MEDIUM)
-**位置**: `src/common/proc_cache.rs:71`
-**问题**: 截断消息继续处理可能导致数据不一致
-**影响**: 进程树状态可能错误
+Fork 事件插入进程时 `start_time_ns=0`，进程退出后 `read_proc_start_time_ns` 也返回 0。两者相等导致过时缓存被信任。攻击者可利用此逻辑缺陷伪造进程信息、绕过进程树过滤。
 
-### 4. 事件丢失 (MEDIUM)
-**位置**: `src/common/proc_cache.rs:68`
-**问题**: proc connector overrun导致事件丢失
-**影响**: 进程树与真实状态不同步
-
-### 5. 进程树污染 (MEDIUM)
-**位置**: `src/common/monitor/events.rs:138`
-**问题**: 进程树遍历依赖可能过时的数据
-**影响**: 可绕过基于进程树的过滤规则
-
-### 6. 竞态条件 (MEDIUM)
-**位置**: `src/common/monitor/events.rs:208`
-**问题**: patch_pending_events与进程状态变化之间的竞态
-**影响**: 可能使用错误的进程信息
-
-### 7. 信息泄露 (LOW)
-**位置**: `src/common/utils.rs:63`
-**问题**: 进程信息读取可能泄露跨用户信息
-**影响**: 在配置不当的系统上可能泄露敏感信息
-
-## 优先修复建议
-
-### 高优先级
-1. **修复PID复用检测**: 使用原子操作确保PID与start_time_ns的读取是原子的
-2. **处理start_time_ns=0**: 当`read_proc_start_time_ns`返回0时，采取保守策略
-
-### 中优先级
-3. **改进错误处理**: 对于截断和overrun错误，实现更健壮的恢复机制
-4. **添加时效性标记**: 为进程存储条目添加过期时间
-5. **验证进程有效性**: 在patch_pending_events中再次验证PID
-
-### 低优先级
-6. **权限检查**: 在读取进程信息前检查权限
-
-## 技术细节
-
-### TOCTOU竞态窗口
-```rust
-// 当前代码存在竞态窗口
-let current_start = read_proc_start_time_ns(pid); // 第90行
-if cached_start == current_start || current_start == 0 { // 第91行
-    return info.clone();
-}
+**攻击链**:
+```
+fork → Fork事件(缓存start_time=0) → exit → fork(复用PID) → 触发事件
+→ get_process_info_by_pid → 0==0 → 返回过时缓存 → 安全策略被绕过
 ```
 
-### 建议的修复方案
-```rust
-// 使用原子操作或锁
-let (current_start, current_pid) = atomic_read_pid_and_start_time(pid);
-if cached_start == current_start && current_pid == pid {
-    return info.clone();
-}
+## 关键代码路径
+
+```
+proc_cache.rs:42  handle_proc_events()     ← netlink消息解析入口
+  ↓
+utils.rs:79       get_process_info_by_pid() ← PID复用检测（漏洞1+2）
+  ↓
+events.rs:138     matches_process_tree()   ← 进程树过滤（漏洞5）
+  ↓
+events.rs:208     patch_pending_events()   ← 二次解析（漏洞6）
 ```
 
-## 结论
-主要风险集中在PID复用检测的竞态条件和进程信息伪造。攻击者可能利用这些漏洞绕过进程过滤、注入虚假进程信息或导致进程树状态不一致。建议优先修复高危漏洞，特别是TOCTOU竞态条件和`start_time_ns`返回0时的处理逻辑。
+## 修复建议
 
-## 文件清单
-- `SECURITY-PROC-ANALYSIS-FINAL.json`: 详细漏洞报告（JSON格式）
-- `SECURITY-PROC-ANALYSIS.md`: 详细漏洞报告（Markdown格式）
-- `SECURITY-PROC-ANALYSIS.json`: 原始漏洞报告
-- `SECURITY-SUMMARY.md`: 本总结文件
+1. **P0**: `current_start == 0` 时不信任缓存，回退到 /proc 读取
+2. **P0**: Fork 事件处理时尝试填充 start_time_ns
+3. **P1**: Overrun/Truncated 后触发进程树 snapshot 重建
+4. **P1**: patch_pending_events 增加 start_time_ns 验证
+
+## 详细报告
+
+- [JSON 格式](SECURITY-PROC-ANALYSIS-FINAL.json)
+- [Markdown 格式](SECURITY-PROC-ANALYSIS.md)
