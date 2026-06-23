@@ -44,9 +44,15 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
             bail!("Invalid path: contains null byte");
         }
 
+        // Validate path against security blacklist BEFORE resolving (F-014/019)
+        // This prevents /proc/self from being resolved to /proc/<PID> before check
+        if let Err(e) = security::check_path_allowed(raw_path, &[]) {
+            bail!("{}", e);
+        }
+
         let resolved = super::resolve_path_arg(raw_path);
 
-        // Validate path against security blacklist (F-014/019)
+        // Also check resolved path (handles symlinks to blocked paths)
         if let Err(e) = security::check_path_allowed(&resolved, &[]) {
             bail!("{}", e);
         }
