@@ -229,10 +229,10 @@ pub fn resolve_uid_gid() -> (u32, u32) {
             }
             // SUDO_USER doesn't match UID — try loginuid as fallback
             // This handles the case where SUDO_UID is forged but loginuid is real
-            if let Some(login_uid) = get_loginuid() {
-                if let Some(login_user) = users::get_user_by_uid(login_uid) {
-                    return (login_uid, login_user.primary_group_id());
-                }
+            if let Some(login_uid) = get_loginuid()
+                && let Some(login_user) = users::get_user_by_uid(login_uid)
+            {
+                return (login_uid, login_user.primary_group_id());
             }
         } else {
             // No SUDO_USER but SUDO_UID exists — still use it (some sudo configs)
@@ -258,10 +258,10 @@ pub fn resolve_uid_gid() -> (u32, u32) {
     }
 
     // 3. Try loginuid (set by PAM, reliable even with sudo)
-    if let Some(login_uid) = get_loginuid() {
-        if let Some(user) = users::get_user_by_uid(login_uid) {
-            return (login_uid, user.primary_group_id());
-        }
+    if let Some(login_uid) = get_loginuid()
+        && let Some(user) = users::get_user_by_uid(login_uid)
+    {
+        return (login_uid, user.primary_group_id());
     }
 
     // 4. Running as normal user
@@ -335,10 +335,10 @@ pub fn guess_home() -> String {
             let user_name = user.name().to_string_lossy();
             if sudo_user != user_name.as_ref() {
                 // SUDO_USER doesn't match UID — try loginuid
-                if let Some(login_uid) = get_loginuid() {
-                    if let Ok(p) = resolve_home(login_uid) {
-                        return p.to_string_lossy().into_owned();
-                    }
+                if let Some(login_uid) = get_loginuid()
+                    && let Ok(p) = resolve_home(login_uid)
+                {
+                    return p.to_string_lossy().into_owned();
                 }
                 return std::env::var("HOME").unwrap_or_else(|_| "/root".into());
             }
@@ -349,10 +349,10 @@ pub fn guess_home() -> String {
         }
     } else {
         // UID doesn't exist — try loginuid
-        if let Some(login_uid) = get_loginuid() {
-            if let Ok(p) = resolve_home(login_uid) {
-                return p.to_string_lossy().into_owned();
-            }
+        if let Some(login_uid) = get_loginuid()
+            && let Ok(p) = resolve_home(login_uid)
+        {
+            return p.to_string_lossy().into_owned();
         }
         std::env::var("HOME").unwrap_or_else(|_| "/root".into())
     }
