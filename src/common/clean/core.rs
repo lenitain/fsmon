@@ -30,15 +30,16 @@ pub async fn clean_single_log(
     max_size: Option<SizeFilter>,
     dry_run: bool,
 ) -> Result<()> {
-    // Use fd-based check instead of path.exists() (F-023)
-    let original_size = match fs::metadata(log_file) {
-        Ok(m) => m.len(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            println!("Log file not found: {}", log_file.display());
-            return Ok(());
-        }
-        Err(e) => return Err(e.into()),
-    };
+    // Symlink check: refuse to clean symlinks (F-010)
+    let metadata = fs::symlink_metadata(log_file)?;
+    if metadata.file_type().is_symlink() {
+        return Err(anyhow::anyhow!(
+            "Refusing to clean symlink: {}",
+            log_file.display()
+        ));
+    }
+
+    let original_size = metadata.len();
 
     let temp_file = log_file.with_extension("tmp");
     let mut time_deleted: u64 = 0;
