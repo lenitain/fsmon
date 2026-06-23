@@ -31,6 +31,19 @@ use std::path::PathBuf;
 /// Enforces single daemon instance via Unix socket binding.
 /// Lock socket at `/run/user/<UID>/fsmon.lock.sock`.
 /// Released automatically when process exits or crashes.
+/// # Examples
+///
+/// ```ignore
+/// use fsmon::DaemonLock;
+///
+/// // Acquire exclusive lock (fails if another daemon is running)
+/// let _lock = DaemonLock::acquire(1000)?;
+///
+/// // Lock is automatically released when dropped
+/// // ...
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+#[derive(Debug)]
 pub struct DaemonLock {
     #[allow(dead_code)]
     listener: std::os::unix::net::UnixListener,
@@ -39,6 +52,13 @@ pub struct DaemonLock {
 
 impl DaemonLock {
     /// Acquire exclusive lock. Fails if another daemon is already running.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Another daemon instance is already running (`EADDRINUSE`)
+    /// - The lock socket path cannot be created or bound
+    /// - The socket file has incorrect permissions
     pub fn acquire(_uid: u32) -> Result<Self> {
         let path = crate::common::socket::lock_socket_path();
 
@@ -164,8 +184,23 @@ impl fmt::Display for EventType {
     }
 }
 
+/// EventType 解析错误
+#[derive(Debug, Clone)]
+pub struct ParseEventTypeError {
+    /// 无法解析的事件类型字符串
+    pub input: String,
+}
+
+impl std::fmt::Display for ParseEventTypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Unknown event type: {}", self.input)
+    }
+}
+
+impl std::error::Error for ParseEventTypeError {}
+
 impl FromStr for EventType {
-    type Err = String;
+    type Err = ParseEventTypeError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_uppercase().as_str() {
@@ -183,7 +218,9 @@ impl FromStr for EventType {
             "MOVED_TO" => Ok(EventType::MovedTo),
             "MOVE_SELF" => Ok(EventType::MoveSelf),
             "FS_ERROR" => Ok(EventType::FsError),
-            _ => Err(format!("Unknown event type: {}", s)),
+            _ => Err(ParseEventTypeError {
+                input: s.to_string(),
+            }),
         }
     }
 }
@@ -192,7 +229,35 @@ impl FromStr for EventType {
 ///
 /// Contains all metadata about a file change: timestamp, event type,
 /// affected path, process information, and optional process ancestry chain.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// # 示例
+///
+/// ```rust,no_run
+/// use fsmon::common::{FileEvent, EventType};
+/// use chrono::Utc;
+/// use std::path::PathBuf;
+///
+/// # fn main() -> anyhow::Result<()> {
+/// let event = FileEvent {
+///     time: Utc::now(),
+///     event_type: EventType::Create,
+///     path: PathBuf::from("/tmp/test.txt"),
+///     pid: 1234,
+///     cmd: "touch".into(),
+///     user: "user".into(),
+///     file_size: 0,
+///     ppid: 100,
+///     tgid: 1234,
+///     chain: "1234|touch|user;100|bash|user".into(),
+/// };
+///
+/// // 序列化为 JSONL
+/// let json = event.to_jsonl_string();
+/// println!("Event: {}", json);
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEvent {
     pub time: DateTime<Utc>,
     pub event_type: EventType,
@@ -206,6 +271,20 @@ pub struct FileEvent {
     #[serde(default)]
     pub tgid: u32,
     pub chain: String,
+}
+
+impl std::fmt::Display for FileEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} {} {} (pid={}, user={})",
+            self.time.format("%Y-%m-%d %H:%M:%S"),
+            self.event_type,
+            self.path.display(),
+            self.pid,
+            self.user
+        )
+    }
 }
 
 impl FileEvent {

@@ -13,6 +13,25 @@ use users::os::unix::UserExt;
 ///
 /// This file is manually edited. Only infrastructure paths go here.
 /// Monitored path entries are stored in the separate store file (see `[monitored].path`).
+///
+/// # 示例
+///
+/// ```rust,no_run
+/// use fsmon::common::config::Config;
+///
+/// # fn main() -> anyhow::Result<()> {
+/// // 加载配置文件
+/// let config = Config::load()?;
+///
+/// // 访问配置项
+/// if let Some(daemon) = &config.daemon {
+///     if let Some(debug) = daemon.debug {
+///         println!("Debug mode: {}", debug);
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub daemon: Option<DaemonConfig>,
@@ -411,6 +430,13 @@ impl Config {
     /// Load config from file. Returns default Config if file doesn't exist.
     /// Also returns default if file exists but contains only comments (e.g.
     /// a reference file created by `fsmon init`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The config file exists but cannot be read
+    /// - The config file contains invalid TOML syntax
+    /// - The config file cannot be parsed into a `Config` struct
     pub fn load() -> Result<Self> {
         let p = Self::path();
         if !p.exists() {

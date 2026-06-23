@@ -22,6 +22,15 @@ pub(crate) struct ReaderState {
     pub(crate) gave_up: bool,
 }
 
+impl std::fmt::Debug for ReaderState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReaderState")
+            .field("restart_count", &self.restart_count)
+            .field("gave_up", &self.gave_up)
+            .finish()
+    }
+}
+
 pub(crate) const MAX_RESTARTS: u32 = 3;
 pub(crate) const BACKOFF_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
 

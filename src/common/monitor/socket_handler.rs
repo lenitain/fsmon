@@ -197,7 +197,7 @@ impl Monitor {
                                 .map(|v| v.iter().map(|t| t.to_string()).collect()),
                             size: opts
                                 .size_filter
-                                .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
+                                .map(|f| format!("{}{}", f.op(), format_size(f.bytes()))),
                             cmd,
                             max_depth: opts.max_depth,
                             symlink_target: None,

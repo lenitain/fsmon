@@ -51,7 +51,7 @@ impl Monitor {
     pub(crate) fn init_process_cache(&mut self) -> Option<ProcConnector> {
         let proc_conn = proc_cache::try_create_connector();
         let store = proc_cache::DefaultStore::new(self.cache_config.proc_ttl_secs);
-        proc_tree::snapshot(&store);
+        let _ = proc_tree::snapshot(&store);
         self.proc.store = Some(store.clone());
         proc_conn
     }
@@ -97,7 +97,7 @@ impl Monitor {
                                 .map(|v| v.iter().map(|t| t.to_string()).collect()),
                             size: opts
                                 .size_filter
-                                .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
+                                .map(|f| format!("{}{}", f.op(), format_size(f.bytes()))),
                             cmd: opts.cmd,
                             max_depth: opts.max_depth,
                             symlink_target: None,

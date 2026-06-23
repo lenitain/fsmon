@@ -144,10 +144,10 @@ mod tests {
             log_dir,
             None,
             None,
-            vec![TimeFilter {
-                op: TimeOp::Gt,
-                time: now - chrono::Duration::hours(1),
-            }],
+            vec![TimeFilter::new(
+                TimeOp::Gt,
+                now - chrono::Duration::hours(1),
+            )],
             false,
         );
         let result = q.read_events_from(&log_path, None, None).unwrap();
@@ -194,10 +194,7 @@ mod tests {
             log_dir,
             None,
             None,
-            vec![TimeFilter {
-                op: TimeOp::Ge,
-                time: cutoff,
-            }],
+            vec![TimeFilter::new(TimeOp::Ge, cutoff)],
             false,
         );
         let result = q.read_events_from(&log_path, None, None).unwrap();
@@ -242,10 +239,10 @@ mod tests {
             log_dir,
             None,
             None,
-            vec![TimeFilter {
-                op: TimeOp::Lt,
-                time: now - chrono::Duration::hours(1),
-            }],
+            vec![TimeFilter::new(
+                TimeOp::Lt,
+                now - chrono::Duration::hours(1),
+            )],
             false,
         );
         let result = q.read_events_from(&log_path, None, None).unwrap();
@@ -292,10 +289,7 @@ mod tests {
             log_dir,
             None,
             None,
-            vec![TimeFilter {
-                op: TimeOp::Le,
-                time: cutoff,
-            }],
+            vec![TimeFilter::new(TimeOp::Le, cutoff)],
             false,
         );
         let result = q.read_events_from(&log_path, None, None).unwrap();
@@ -341,10 +335,7 @@ mod tests {
             log_dir,
             None,
             None,
-            vec![TimeFilter {
-                op: TimeOp::Eq,
-                time: now,
-            }],
+            vec![TimeFilter::new(TimeOp::Eq, now)],
             false,
         );
         let result = q.read_events_from(&log_path, None, None).unwrap();

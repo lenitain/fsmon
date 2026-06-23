@@ -12,6 +12,23 @@ pub enum HelpTopic {
     Changes,
 }
 
+impl std::fmt::Debug for HelpTopic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HelpTopic::Root => write!(f, "Root"),
+            HelpTopic::Daemon => write!(f, "Daemon"),
+            HelpTopic::Init => write!(f, "Init"),
+            HelpTopic::Cd => write!(f, "Cd"),
+            HelpTopic::Add => write!(f, "Add"),
+            HelpTopic::Remove => write!(f, "Remove"),
+            HelpTopic::Monitored => write!(f, "Monitored"),
+            HelpTopic::Query => write!(f, "Query"),
+            HelpTopic::Clean => write!(f, "Clean"),
+            HelpTopic::Changes => write!(f, "Changes"),
+        }
+    }
+}
+
 /// Get short description for a help topic.
 pub const fn about(topic: HelpTopic) -> &'static str {
     match topic {

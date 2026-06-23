@@ -10,6 +10,25 @@ use crate::common::{FileEvent, parse_log_line_jsonl};
 const SCAN_BACK_BYTES: u64 = 4096;
 
 /// Query engine for searching historical file change events.
+/// # Examples
+///
+/// ```ignore
+/// use fsmon::Query;
+/// use std::path::PathBuf;
+/// use fsmon::TimeFilter;
+///
+/// // Create a query to search events from the last hour
+/// let query = Query::new(
+///     PathBuf::from("/var/log/fsmon"),
+///     Some("bash".to_string()),
+///     Some(vec![PathBuf::from("/home/user")]),
+///     vec![TimeFilter::since(chrono::Utc::now() - chrono::Duration::hours(1))],
+///     false,
+/// );
+///
+/// // Execute the query
+/// // query.execute().await?;
+/// ```
 pub struct Query {
     log_dir: PathBuf,
     /// Cmd name to filter by (None = read all log files).
@@ -19,6 +38,18 @@ pub struct Query {
     time_filters: Vec<TimeFilter>,
     /// Output timestamps in local time instead of UTC.
     local_time: bool,
+}
+
+impl std::fmt::Debug for Query {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Query")
+            .field("log_dir", &self.log_dir)
+            .field("cmd_filter", &self.cmd_filter)
+            .field("path_filters", &self.path_filters)
+            .field("time_filters", &self.time_filters)
+            .field("local_time", &self.local_time)
+            .finish()
+    }
 }
 
 impl Query {
@@ -79,7 +110,7 @@ impl Query {
         let mut since = None;
         for f in &self.time_filters {
             if f.is_lower_bound() {
-                let candidate = f.time;
+                let candidate = f.time();
                 if since.is_none_or(|s| candidate > s) {
                     since = Some(candidate);
                 }
@@ -93,7 +124,7 @@ impl Query {
         let mut until = None;
         for f in &self.time_filters {
             if f.is_upper_bound() {
-                let candidate = f.time;
+                let candidate = f.time();
                 if until.is_none_or(|u| candidate < u) {
                     until = Some(candidate);
                 }

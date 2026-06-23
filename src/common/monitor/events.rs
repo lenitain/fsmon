@@ -32,22 +32,22 @@ impl Monitor {
         let mut pending: Vec<PendingEvent> = Vec::new();
 
         for raw in events {
-            if raw.mask & FAN_Q_OVERFLOW != 0 {
+            if raw.mask() & FAN_Q_OVERFLOW != 0 {
                 eprintln!("[WARNING] fanotify queue overflow - some events may have been lost");
                 continue;
             }
 
-            let event_types = mask_to_event_types(raw.mask);
-            let matched_path = self.matching_path(&raw.path).cloned();
+            let event_types = mask_to_event_types(raw.mask());
+            let matched_path = self.matching_path(raw.path()).cloned();
 
             // Detect canonical root DELETE_SELF — needs cleanup after recording.
             let is_delete_self = event_types.contains(&EventType::DeleteSelf)
                 || event_types.contains(&EventType::MovedFrom)
                 || event_types.contains(&EventType::Delete);
             let is_canonical_root =
-                is_delete_self && self.canonical_paths.iter().any(|cp| cp == &raw.path);
+                is_delete_self && self.canonical_paths.iter().any(|cp| cp == raw.path());
 
-            let event_pid = raw.pid.unsigned_abs();
+            let event_pid = raw.pid().unsigned_abs();
 
             // Exclude fsmon daemon's own events to prevent self-triggering.
             // This is the safety net that also covers socket files (lock.sock,
@@ -62,15 +62,15 @@ impl Monitor {
 
             // Also filter events from fsmon's log directory to prevent
             // feedback loops when cmd=global is used.
-            if raw.path.starts_with("/var/log/fsmon") {
-                debug_log!(self.debug, "skip fsmon log event: {}", raw.path.display());
+            if raw.path().starts_with("/var/log/fsmon") {
+                debug_log!(self.debug, "skip fsmon log event: {}", raw.path().display());
                 continue;
             }
 
             // Match event against ALL cmd groups for this path.
             // Computed BEFORE canonical-root cleanup — DELETE_SELF must be
             // recorded before the path is removed from monitored_entries.
-            let matching_entries = self.matching_opts_for_event(&raw.path);
+            let matching_entries = self.matching_opts_for_event(raw.path());
 
             // Immediately add fanotify marks for newly created subdirectories
             // under recursively-monitored paths.  Waiting for inotify would
@@ -78,10 +78,10 @@ impl Monitor {
             // arrive before the mark is placed.
             let is_new_dir = event_types.contains(&EventType::Create)
                 || event_types.contains(&EventType::MovedTo);
-            if is_new_dir && raw.path.is_dir() {
+            if is_new_dir && raw.path().is_dir() {
                 for (monitored, opts) in &matching_entries {
-                    if opts.recursive && raw.path != *monitored {
-                        self.on_new_subdirectory(&raw.path);
+                    if opts.recursive && raw.path() != *monitored {
+                        self.on_new_subdirectory(raw.path());
                         break;
                     }
                 }
@@ -90,7 +90,7 @@ impl Monitor {
                 debug_log!(
                     self.debug,
                     "event on {} (pid={}): no matching entries",
-                    raw.path.display(),
+                    raw.path().display(),
                     event_pid
                 );
             }
@@ -197,7 +197,7 @@ impl Monitor {
                         .map(|v| v.iter().map(|t| t.to_string()).collect()),
                     size: opts
                         .size_filter
-                        .map(|f| format!("{}{}", f.op, format_size(f.bytes))),
+                        .map(|f| format!("{}{}", f.op(), format_size(f.bytes()))),
                     cmd: opts.cmd,
                     max_depth: opts.max_depth,
                     symlink_target: None,
@@ -223,16 +223,16 @@ impl Monitor {
                     && let Some(info) = store.get_process(pe.pid)
                 {
                     if ev.cmd == "unknown" {
-                        ev.cmd = info.cmd.clone();
+                        ev.cmd = info.cmd().to_string();
                     }
                     if ev.user == "unknown" {
-                        ev.user = info.user.clone();
+                        ev.user = info.user().to_string();
                     }
                     if ev.ppid == 0 {
-                        ev.ppid = info.ppid;
+                        ev.ppid = info.ppid();
                     }
                     if ev.tgid == 0 {
-                        ev.tgid = info.tgid;
+                        ev.tgid = info.tgid();
                     }
                 }
             }
@@ -246,19 +246,19 @@ impl Monitor {
         event_type: EventType,
         opts: &PathOptions,
     ) -> FileEvent {
-        let pid = raw.pid.unsigned_abs();
-        let info = get_process_info_by_pid(pid, &raw.path, self.proc.store.as_ref());
+        let pid = raw.pid().unsigned_abs();
+        let info = get_process_info_by_pid(pid, raw.path(), self.proc.store.as_ref());
 
         let file_size = match event_type {
             EventType::Create | EventType::Modify | EventType::CloseWrite => {
-                let size = fs::metadata(&raw.path).map(|m| m.len()).unwrap_or(0);
-                self.file_size_cache.put(raw.path.clone(), size);
+                let size = fs::metadata(raw.path()).map(|m| m.len()).unwrap_or(0);
+                self.file_size_cache.put(raw.path().to_path_buf(), size);
                 size
             }
             EventType::Delete | EventType::DeleteSelf | EventType::MovedFrom => {
-                self.file_size_cache.pop(&raw.path).unwrap_or(0)
+                self.file_size_cache.pop(raw.path()).unwrap_or(0)
             }
-            _ => self.file_size_cache.get(&raw.path).map_or(0, |&s| s),
+            _ => self.file_size_cache.get(raw.path()).map_or(0, |&s| s),
         };
 
         // Chain building based on the specific opts' cmd
@@ -276,13 +276,13 @@ impl Monitor {
         FileEvent {
             time: Utc::now(),
             event_type,
-            path: raw.path.clone(),
+            path: raw.path().to_path_buf(),
             pid,
-            cmd: info.cmd,
-            user: info.user,
+            cmd: info.cmd().to_string(),
+            user: info.user().to_string(),
             file_size,
-            ppid: info.ppid,
-            tgid: info.tgid,
+            ppid: info.ppid(),
+            tgid: info.tgid(),
             chain,
         }
     }

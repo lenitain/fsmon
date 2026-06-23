@@ -406,7 +406,9 @@ proc_ttl_secs = 300
 
 #[test]
 fn test_user_path_equals_path() {
-    assert_eq!(Config::user_path(), Config::path());
+    with_isolated_home(|_home| {
+        assert_eq!(Config::user_path(), Config::path());
+    });
 }
 
 #[test]

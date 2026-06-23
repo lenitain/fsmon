@@ -2,6 +2,30 @@ use anyhow::{Context, Result, ensure};
 use std::path::{Path, PathBuf};
 use std::process;
 
+/// 目标目录类型，用于 `fsmon cd` 命令
+#[derive(Debug, Clone, Copy)]
+pub enum CdTarget {
+    /// 日志目录（默认）
+    Log,
+    /// 监控路径存储目录
+    Monitored,
+    /// 配置目录
+    Config,
+}
+
+impl CdTarget {
+    /// 从 bool 参数创建 CdTarget（向后兼容）
+    pub fn from_args(monitored: bool, config: bool) -> Self {
+        if config {
+            CdTarget::Config
+        } else if monitored {
+            CdTarget::Monitored
+        } else {
+            CdTarget::Log
+        }
+    }
+}
+
 /// Initialize fsmon configuration and directories.
 pub fn cmd_init(service: bool) -> Result<()> {
     fsmon::common::config::Config::init_dirs()?;
@@ -127,35 +151,39 @@ fn install_service() -> Result<()> {
 }
 
 /// Open a subshell in the monitored path, log directory,
-/// or config directory.
-pub fn cmd_cd(monitored: bool, config: bool) -> Result<()> {
+/// 或配置目录。
+pub fn cmd_cd(target: CdTarget) -> Result<()> {
     let mut cfg = fsmon::common::config::Config::load()?;
     cfg.resolve_paths()?;
 
-    let dir = if config {
-        // cd to the config directory (~/.config/fsmon/)
-        fsmon::common::config::Config::user_path()
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| {
-                let home = fsmon::common::config::guess_home();
-                PathBuf::from(format!("{}/.config/fsmon", home))
-            })
-    } else if monitored {
-        // cd to the monitored store directory (where monitored.jsonl lives).
-        // Mirror of -l which cds to the log directory.
-        let store_file = cfg.monitored.path.clone();
+    let dir = match target {
+        CdTarget::Config => {
+            // cd to the config directory (~/.config/fsmon/)
+            fsmon::common::config::Config::user_path()
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| {
+                    let home = fsmon::common::config::guess_home();
+                    PathBuf::from(format!("{}/.config/fsmon", home))
+                })
+        }
+        CdTarget::Monitored => {
+            // cd to the monitored store directory (where monitored.jsonl lives).
+            // Mirror of -l which cds to the log directory.
+            let store_file = cfg.monitored.path.clone();
 
-        store_file
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| store_file.clone())
-    } else {
-        // -l: cd to log directory (identical to old `fsmon cd`)
-        cfg.logging.path.unwrap_or_else(|| {
-            let home = fsmon::common::config::guess_home();
-            PathBuf::from(format!("{}/.local/state/fsmon", home))
-        })
+            store_file
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| store_file.clone())
+        }
+        CdTarget::Log => {
+            // -l: cd to log directory (identical to old `fsmon cd`)
+            cfg.logging.path.unwrap_or_else(|| {
+                let home = fsmon::common::config::guess_home();
+                PathBuf::from(format!("{}/.local/state/fsmon", home))
+            })
+        }
     };
 
     if !dir.exists() {
@@ -167,10 +195,10 @@ pub fn cmd_cd(monitored: bool, config: bool) -> Result<()> {
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
 
-    let label = match (config, monitored) {
-        (true, _) => "config",
-        (_, true) => "monitored path",
-        _ => "log",
+    let label = match target {
+        CdTarget::Config => "config",
+        CdTarget::Monitored => "monitored path",
+        CdTarget::Log => "log",
     };
     eprintln!(
         "Entering fsmon {} directory (type 'exit' to return)...",

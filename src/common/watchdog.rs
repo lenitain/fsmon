@@ -25,10 +25,33 @@ use std::time::Duration;
 //  if idle (no events):
 //    heartbeat_tick still fires on schedule  ──▶  heartbeat sent  ──▶  all good
 /// Watchdog timer for systemd service health monitoring.
+/// # Examples
+///
+/// ```ignore
+/// use fsmon::Watchdog;
+///
+/// // Create a watchdog with 30-second interval
+/// let watchdog = Watchdog::new(Some(30));
+/// assert!(watchdog.is_enabled());
+/// assert_eq!(watchdog.interval(), std::time::Duration::from_secs(30));
+///
+/// // Create a disabled watchdog
+/// let watchdog = Watchdog::new(None);
+/// assert!(!watchdog.is_enabled());
+/// ```
 #[derive(Clone)]
 pub struct Watchdog {
     interval: Duration,
     enabled: bool,
+}
+
+impl std::fmt::Debug for Watchdog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Watchdog")
+            .field("interval", &self.interval)
+            .field("enabled", &self.enabled)
+            .finish()
+    }
 }
 
 impl Watchdog {

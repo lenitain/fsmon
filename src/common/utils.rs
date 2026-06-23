@@ -21,21 +21,21 @@ pub trait TimeFilterExt {
 
 impl TimeFilterExt for TimeFilter {
     fn matches(&self, time: DateTime<Utc>) -> bool {
-        match self.op {
-            TimeOp::Gt => time > self.time,
-            TimeOp::Ge => time >= self.time,
-            TimeOp::Lt => time < self.time,
-            TimeOp::Le => time <= self.time,
-            TimeOp::Eq => time == self.time,
+        match self.op() {
+            TimeOp::Gt => time > self.time(),
+            TimeOp::Ge => time >= self.time(),
+            TimeOp::Lt => time < self.time(),
+            TimeOp::Le => time <= self.time(),
+            TimeOp::Eq => time == self.time(),
         }
     }
 
     fn is_lower_bound(&self) -> bool {
-        matches!(self.op, TimeOp::Gt | TimeOp::Ge)
+        matches!(self.op(), TimeOp::Gt | TimeOp::Ge)
     }
 
     fn is_upper_bound(&self) -> bool {
-        matches!(self.op, TimeOp::Lt | TimeOp::Le)
+        matches!(self.op(), TimeOp::Lt | TimeOp::Le)
     }
 }
 
@@ -86,7 +86,7 @@ pub fn get_process_info_by_pid(
         && let Some(info) = store.get_process(pid)
     {
         // Verify the process hasn't been reincarnated with a reused PID.
-        let cached_start = info.start_time_ns;
+        let cached_start = info.start_time_ns();
         let current_start = read_proc_start_time_ns(pid);
         if cached_start == current_start || current_start == 0 {
             return info.clone();
@@ -101,13 +101,13 @@ pub fn get_process_info_by_pid(
         return info;
     }
     // Last resort: use file owner as user fallback
-    ProcessInfo {
-        cmd: "unknown".to_string(),
-        user: read_file_owner(file_path).unwrap_or_else(|| "unknown".to_string()),
-        ppid: 0,
-        tgid: 0,
-        start_time_ns: 0,
-    }
+    ProcessInfo::new(
+        "unknown".to_string(),
+        read_file_owner(file_path).unwrap_or_else(|| "unknown".to_string()),
+        0,
+        0,
+        0,
+    )
 }
 
 /// Retry a fallible operation up to 3 times with 500µs sleep between attempts.
@@ -244,44 +244,44 @@ mod tests {
     #[test]
     fn test_parse_time_filter_gt() {
         let f = parse_time_filter(">1h").unwrap();
-        assert_eq!(f.op, TimeOp::Gt);
-        let diff = Utc::now() - f.time;
+        assert_eq!(f.op(), TimeOp::Gt);
+        let diff = Utc::now() - f.time();
         assert!(diff >= chrono::Duration::minutes(59) && diff <= chrono::Duration::minutes(61));
     }
 
     #[test]
     fn test_parse_time_filter_ge() {
         let f = parse_time_filter(">=7d").unwrap();
-        assert_eq!(f.op, TimeOp::Ge);
-        let diff = Utc::now() - f.time;
+        assert_eq!(f.op(), TimeOp::Ge);
+        let diff = Utc::now() - f.time();
         assert!(diff >= chrono::Duration::days(6) && diff <= chrono::Duration::days(8));
     }
 
     #[test]
     fn test_parse_time_filter_lt() {
         let f = parse_time_filter("<2026-05-01").unwrap();
-        assert_eq!(f.op, TimeOp::Lt);
-        assert_eq!(f.time.year(), 2026);
-        assert_eq!(f.time.month(), 5);
-        assert_eq!(f.time.day(), 1);
+        assert_eq!(f.op(), TimeOp::Lt);
+        assert_eq!(f.time().year(), 2026);
+        assert_eq!(f.time().month(), 5);
+        assert_eq!(f.time().day(), 1);
     }
 
     #[test]
     fn test_parse_time_filter_le() {
         let f = parse_time_filter("<=30m").unwrap();
-        assert_eq!(f.op, TimeOp::Le);
-        let diff = Utc::now() - f.time;
+        assert_eq!(f.op(), TimeOp::Le);
+        let diff = Utc::now() - f.time();
         assert!(diff >= chrono::Duration::minutes(29) && diff <= chrono::Duration::minutes(31));
     }
 
     #[test]
     fn test_parse_time_filter_eq() {
         let f = parse_time_filter("=2026-05-01 10:00").unwrap();
-        assert_eq!(f.op, TimeOp::Eq);
-        assert_eq!(f.time.year(), 2026);
-        assert_eq!(f.time.month(), 5);
-        assert_eq!(f.time.day(), 1);
-        assert_eq!(f.time.hour(), 10);
+        assert_eq!(f.op(), TimeOp::Eq);
+        assert_eq!(f.time().year(), 2026);
+        assert_eq!(f.time().month(), 5);
+        assert_eq!(f.time().day(), 1);
+        assert_eq!(f.time().hour(), 10);
     }
 
     #[test]
@@ -314,8 +314,8 @@ mod tests {
         assert_eq!(parse_size("1GB").unwrap(), 1073741824);
         assert_eq!(format_size(1024), "1.0KB");
         let f = parse_size_filter(">=500MB").unwrap();
-        assert_eq!(f.op, SizeOp::Ge);
-        assert_eq!(f.bytes, 524288000);
+        assert_eq!(f.op(), SizeOp::Ge);
+        assert_eq!(f.bytes(), 524288000);
     }
 
     #[test]
@@ -341,7 +341,7 @@ mod tests {
         assert!(check_op(TimeOp::Eq));
 
         let tf = parse_time_filter(">=1h").unwrap();
-        assert!(matches!(tf.op, TimeOp::Ge));
+        assert!(matches!(tf.op(), TimeOp::Ge));
     }
 
     #[test]

@@ -9,7 +9,20 @@ use crate::common::{EventType, FileEvent};
 ///
 /// Contains size filters, event type filters, recursion settings,
 /// and optional command name filtering.
-#[derive(Clone)]
+///
+/// # 示例
+///
+/// 创建默认的路径选项：`PathOptions::default()`
+///
+/// 创建自定义的路径选项：
+/// ```ignore
+/// PathOptions {
+///     recursive: true,
+///     event_types: Some(vec![EventType::Create, EventType::Delete]),
+///     ..Default::default()
+/// }
+/// ```
+#[derive(Debug, Clone, Default)]
 pub struct PathOptions {
     pub size_filter: Option<SizeFilter>,
     pub event_types: Option<Vec<EventType>>,
@@ -79,12 +92,12 @@ pub fn should_output(opts: Option<&PathOptions>, event: &FileEvent) -> bool {
     }
 
     if let Some(ref filter) = opts.size_filter {
-        let passes = match filter.op {
-            SizeOp::Gt => event.file_size > filter.bytes as u64,
-            SizeOp::Ge => event.file_size >= filter.bytes as u64,
-            SizeOp::Lt => event.file_size < filter.bytes as u64,
-            SizeOp::Le => event.file_size <= filter.bytes as u64,
-            SizeOp::Eq => event.file_size == filter.bytes as u64,
+        let passes = match filter.op() {
+            SizeOp::Gt => event.file_size > filter.bytes() as u64,
+            SizeOp::Ge => event.file_size >= filter.bytes() as u64,
+            SizeOp::Lt => event.file_size < filter.bytes() as u64,
+            SizeOp::Le => event.file_size <= filter.bytes() as u64,
+            SizeOp::Eq => event.file_size == filter.bytes() as u64,
         };
         if !passes {
             return false;
@@ -209,10 +222,7 @@ mod tests {
     #[test]
     fn test_should_output_size_filter_ge() {
         let opts = PathOptions {
-            size_filter: Some(SizeFilter {
-                op: SizeOp::Ge,
-                bytes: 1000,
-            }),
+            size_filter: Some(SizeFilter::new(SizeOp::Ge, 1000)),
             event_types: None,
             recursive: false,
             cmd: None,
@@ -235,10 +245,7 @@ mod tests {
     #[test]
     fn test_should_output_size_filter_lt() {
         let opts = PathOptions {
-            size_filter: Some(SizeFilter {
-                op: SizeOp::Lt,
-                bytes: 100,
-            }),
+            size_filter: Some(SizeFilter::new(SizeOp::Lt, 100)),
             event_types: None,
             recursive: false,
             cmd: None,
@@ -261,10 +268,7 @@ mod tests {
     #[test]
     fn test_should_output_size_filter_eq() {
         let opts = PathOptions {
-            size_filter: Some(SizeFilter {
-                op: SizeOp::Eq,
-                bytes: 100,
-            }),
+            size_filter: Some(SizeFilter::new(SizeOp::Eq, 100)),
             event_types: None,
             recursive: false,
             cmd: None,
@@ -287,10 +291,7 @@ mod tests {
     #[test]
     fn test_should_output_combined_filters() {
         let opts = PathOptions {
-            size_filter: Some(SizeFilter {
-                op: SizeOp::Ge,
-                bytes: 100,
-            }),
+            size_filter: Some(SizeFilter::new(SizeOp::Ge, 100)),
             event_types: Some(vec![EventType::Create]),
             recursive: false,
             cmd: None,

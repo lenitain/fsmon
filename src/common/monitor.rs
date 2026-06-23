@@ -58,6 +58,20 @@ pub(crate) use socket_handler::tokio_io_oneshot;
 // ---- MonitorConfig ----
 
 /// Configuration for creating a Monitor instance.
+/// Monitor 配置结构体
+///
+/// 用于创建 Monitor 实例的配置参数。
+///
+/// # 示例
+///
+/// ```ignore
+/// MonitorConfig {
+///     paths_and_options: vec![(PathBuf::from("/home/user"), PathOptions::default())],
+///     log_dir: Some(PathBuf::from("/var/log/fsmon")),
+///     debug: true,
+///     ..Default::default()
+/// };
+/// ```
 pub struct MonitorConfig {
     pub paths_and_options: Vec<(PathBuf, PathOptions)>,
     pub log_dir: Option<PathBuf>,
@@ -73,10 +87,48 @@ pub struct MonitorConfig {
     pub watchdog_interval: Option<u64>,
 }
 
+impl std::fmt::Debug for MonitorConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MonitorConfig")
+            .field("paths_and_options", &self.paths_and_options)
+            .field("log_dir", &self.log_dir)
+            .field("monitored_path", &self.monitored_path)
+            .field("buffer_size", &self.buffer_size)
+            .field("debug", &self.debug)
+            .field("cache_config", &self.cache_config)
+            .field("disk_min_free", &self.disk_min_free)
+            .field("subscribe_buf", &self.subscribe_buf)
+            .field("local_time", &self.local_time)
+            .field("metrics_interval", &self.metrics_interval)
+            .field("watchdog_interval", &self.watchdog_interval)
+            .finish()
+    }
+}
+
 impl MonitorConfig {
     /// Create a default config for tests (all None/false).
     #[cfg(test)]
     pub fn default_for_test() -> Self {
+        Self {
+            paths_and_options: Vec::new(),
+            log_dir: None,
+            monitored_path: None,
+            buffer_size: None,
+            socket_listener: None,
+            debug: false,
+            cache_config: None,
+            disk_min_free: None,
+            subscribe_buf: None,
+            local_time: false,
+            metrics_interval: None,
+            watchdog_interval: None,
+        }
+    }
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for MonitorConfig {
+    fn default() -> Self {
         Self {
             paths_and_options: Vec::new(),
             log_dir: None,
@@ -129,6 +181,22 @@ pub(crate) struct ProcessState {
 
 // ---- Monitor ----
 
+/// 文件系统监控器
+///
+/// 核心监控结构体，负责管理 fanotify 和 inotify 事件。
+///
+/// # 示例
+///
+/// ```ignore
+/// let config = MonitorConfig {
+///     paths_and_options: vec![(PathBuf::from("/home/user"), PathOptions::default())],
+///     log_dir: Some(PathBuf::from("/var/log/fsmon")),
+///     ..Default::default()
+/// };
+///
+/// let monitor = Monitor::new(config)?;
+/// monitor.run().await?;
+/// ```
 pub struct Monitor {
     pub(crate) paths: Vec<PathBuf>,
     pub(crate) canonical_paths: Vec<PathBuf>,
@@ -174,7 +242,31 @@ pub struct Monitor {
     pub(crate) watchdog: Option<Watchdog>,
 }
 
+impl std::fmt::Debug for Monitor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Monitor")
+            .field("paths", &self.paths)
+            .field("canonical_paths", &self.canonical_paths)
+            .field("log_dir", &self.log_dir)
+            .field("monitored_path", &self.monitored_path)
+            .field("buffer_size", &self.buffer_size)
+            .field("daemon_pid", &self.daemon_pid)
+            .field("debug", &self.debug)
+            .field("disk_min_free", &self.disk_min_free)
+            .field("local_time", &self.local_time)
+            .finish()
+    }
+}
+
 impl Monitor {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - `buffer_size` is less than 4096 bytes (4KB)
+    /// - `buffer_size` is greater than 1048576 bytes (1MB)
+    /// - Any monitored path overlaps with the log directory
+    /// - The "fsmon" process name is used as a command filter
     pub fn new(cfg: MonitorConfig) -> Result<Self> {
         let cache_config = cfg.cache_config.unwrap_or_default();
         let buffer_size = cfg.buffer_size.unwrap_or(cache_config.buffer_size);
