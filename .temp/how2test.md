@@ -2262,6 +2262,8 @@ rm -rf /tmp/secret_dir
 
 **测试目的**：验证 socket 订阅功能对敏感路径的验证。
 
+**注意**：Subscribe 命令没有路径参数（只有 types, track_cmd, local_time），订阅是全局的，不针对特定路径。因此不需要路径验证。
+
 **测试步骤：**
 ```bash
 # 1. 启动守护进程
@@ -2270,23 +2272,24 @@ DAEMON_PID=$!
 sleep 2
 SOCKET_FILE="/run/user/$(id -u)/fsmon/daemon.sock"
 
-# 2. 尝试订阅敏感路径（应被拒绝）
-echo '{"Subscribe":{"path":"/var/log/fsmon"}}' | socat - UNIX-CONNECT:$SOCKET_FILE
-
-# 3. 尝试订阅正常路径（应成功）
-echo '{"Subscribe":{"path":"/tmp/fsmon_test"}}' | socat - UNIX-CONNECT:$SOCKET_FILE &
+# 2. 订阅全局事件流
+echo '{"Subscribe":{}}' | socat - UNIX-CONNECT:$SOCKET_FILE &
 SUB_PID=$!
 sleep 1
 
-# 4. 检查订阅状态
+# 3. 生成事件
+echo "test" > /tmp/fsmon_test/test.txt
+sleep 1
+
+# 4. 检查订阅输出
 # 5. 清理
 kill $SUB_PID 2>/dev/null
 sudo kill $DAEMON_PID
 ```
 
 **预期结果：**
-- 步骤 2：应返回错误信息，拒绝订阅敏感路径
-- 步骤 3：订阅正常路径应成功建立
+- 步骤 2：订阅应成功建立
+- 步骤 3：应接收到全局事件流
 
 ---
 
