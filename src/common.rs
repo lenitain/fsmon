@@ -243,12 +243,13 @@ impl FromStr for EventType {
 ///     event_type: EventType::Create,
 ///     path: PathBuf::from("/tmp/test.txt"),
 ///     pid: 1234,
+///     comm: "touch".into(),
 ///     cmd: "touch".into(),
 ///     user: "user".into(),
 ///     file_size: 0,
 ///     ppid: 100,
 ///     tgid: 1234,
-///     chain: "1234|touch|user;100|bash|user".into(),
+///     chain: vec![],
 /// };
 ///
 /// // 序列化为 JSONL
@@ -263,6 +264,7 @@ pub struct FileEvent {
     pub event_type: EventType,
     pub path: PathBuf,
     pub pid: u32,
+    pub comm: String,
     pub cmd: String,
     pub user: String,
     pub file_size: u64,
@@ -270,7 +272,8 @@ pub struct FileEvent {
     pub ppid: u32,
     #[serde(default)]
     pub tgid: u32,
-    pub chain: String,
+    #[serde(default)]
+    pub chain: Vec<proc_tree::ProcessLink>,
 }
 
 impl std::fmt::Display for FileEvent {
@@ -347,12 +350,13 @@ mod tests {
             event_type: EventType::Create,
             path: std::path::PathBuf::from("/tmp/test.txt"),
             pid: 1234,
+            comm: "touch".into(),
             cmd: "touch".into(),
             user: "pilot".into(),
             file_size: 0,
             ppid: 100,
             tgid: 1234,
-            chain: "1234|touch|pilot;100|bash|pilot".into(),
+            chain: vec![],
         };
 
         let normal = ev.to_jsonl_string();

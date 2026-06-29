@@ -103,6 +103,7 @@ pub fn get_process_info_by_pid(
     // Last resort: use file owner as user fallback
     ProcessInfo::new(
         "unknown".to_string(),
+        "unknown".to_string(),
         read_file_owner(file_path).unwrap_or_else(|| "unknown".to_string()),
         0,
         0,

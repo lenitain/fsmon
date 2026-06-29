@@ -91,9 +91,9 @@ fn config_loads_defaults_when_no_file() {
 fn jsonl_truncated_line_is_skipped() {
     // Simulate a log file that was truncated mid-write (crash scenario)
     let lines = concat!(
-        r#"{"time":"2026-06-01T10:00:00Z","event_type":"CREATE","path":"/a","pid":1,"cmd":"x","user":"r","file_size":0,"ppid":0,"tgid":0,"chain":""}"#,
+        r#"{"time":"2026-06-01T10:00:00Z","event_type":"CREATE","path":"/a","pid":1,"comm":"test","cmd":"x","user":"r","file_size":0,"ppid":0,"tgid":0,"chain":[]}"#,
         "\n",
-        r#"{"time":"2026-06-01T10:01:00Z","event_type":"MODIFY","path":"/b","pid":2,"cmd":"y","user":"r","file_size":0,"ppid":0,"tgid"#,
+        r#"{"time":"2026-06-01T10:01:00Z","event_type":"MODIFY","path":"/b","pid":2,"comm":"test","cmd":"y","user":"r","file_size":0,"ppid":0,"tgid"#,
     );
 
     let mut count = 0;
@@ -121,11 +121,11 @@ fn jsonl_empty_file_parses_cleanly() {
 #[test]
 fn jsonl_multiple_complete_events_all_parse() {
     let lines = concat!(
-        r#"{"time":"2026-06-01T10:00:00Z","event_type":"CREATE","path":"/a","pid":1,"cmd":"x","user":"r","file_size":0,"ppid":0,"tgid":0,"chain":""}"#,
+        r#"{"time":"2026-06-01T10:00:00Z","event_type":"CREATE","path":"/a","pid":1,"comm":"test","cmd":"x","user":"r","file_size":0,"ppid":0,"tgid":0,"chain":[]}"#,
         "\n",
-        r#"{"time":"2026-06-01T10:01:00Z","event_type":"DELETE","path":"/b","pid":2,"cmd":"y","user":"r","file_size":0,"ppid":0,"tgid":0,"chain":""}"#,
+        r#"{"time":"2026-06-01T10:01:00Z","event_type":"DELETE","path":"/b","pid":2,"comm":"test","cmd":"y","user":"r","file_size":0,"ppid":0,"tgid":0,"chain":[]}"#,
         "\n",
-        r#"{"time":"2026-06-01T10:02:00Z","event_type":"MODIFY","path":"/c","pid":3,"cmd":"z","user":"r","file_size":100,"ppid":0,"tgid":0,"chain":""}"#,
+        r#"{"time":"2026-06-01T10:02:00Z","event_type":"MODIFY","path":"/c","pid":3,"comm":"test","cmd":"z","user":"r","file_size":100,"ppid":0,"tgid":0,"chain":[]}"#,
     );
 
     let count = lines

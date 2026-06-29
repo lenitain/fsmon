@@ -715,12 +715,14 @@ dependencies = [
 
 [[package]]
 name = "proc-tree"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d37697e9122b21fc91883b15cd8ee407f7505585c9fbf8bc844c59a52b93eae"
+checksum = "1983b5b12459accd77fa33cfb5f4bd5e0a3b651d7c5628e6ba6c0fd9ca7a4f45"
 dependencies = [
  "arrayvec",
  "libc",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

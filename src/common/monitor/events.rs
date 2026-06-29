@@ -269,7 +269,7 @@ impl Monitor {
                 self.proc
                     .store
                     .as_ref()
-                    .map(|store| proc_tree::build_chain_string(store, pid))
+                    .map(|store| proc_tree::build_chain_links(store, pid))
             })
             .unwrap_or_default();
 
@@ -278,6 +278,7 @@ impl Monitor {
             event_type,
             path: raw.path().to_path_buf(),
             pid,
+            comm: info.comm().to_string(),
             cmd: info.cmd().to_string(),
             user: info.user().to_string(),
             file_size,
