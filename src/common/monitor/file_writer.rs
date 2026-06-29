@@ -222,6 +222,14 @@ impl FileLogWriter {
     /// Flush + sync all dirty log files.
     /// Flush moves data from BufWriter (user-space) to OS buffer,
     /// then fdatasync persists OS buffer to disk.
+    ///
+    /// # Safety
+    ///
+    /// This function calls `libc::fstat` to check if a log file has been
+    /// externally deleted (nlink == 0). The `fstat` call is safe because:
+    /// - The fd is a valid, open file descriptor from `BufWriter<File>`
+    /// - `std::mem::zeroed()` produces a valid `libc::stat` zero-initialized struct
+    /// - The fd is not used concurrently (single-threaded access via `&mut self`)
     fn flush_and_sync_dirty_logs(&mut self) {
         if self.dirty_logs.is_empty() {
             return;
@@ -319,6 +327,16 @@ fn open_log_file(log_path: &PathBuf, log_dir: &PathBuf) -> std::io::Result<File>
 
 /// fchown a file descriptor to the original user (SUDO_UID/SUDO_GID).
 /// Best-effort: errors are logged but not propagated — the file is still usable.
+///
+/// # Safety
+///
+/// This function calls `libc::fchown` to change file ownership. The call is safe
+/// because:
+/// - The fd is a valid, open file descriptor from `File::open`
+/// - `uid` and `gid` are valid u32 values from `resolve_uid_gid()`
+/// - The return value is checked; errors are logged but not propagated
+/// - Expected errors (EPERM, EOPNOTSUPP, ENOSYS) are silently ignored for
+///   compatibility with vfat/exfat/NFS filesystems
 fn fchown_to_user(file: &File) {
     let (uid, gid) = crate::common::config::resolve_uid_gid();
     use std::os::fd::AsRawFd;
