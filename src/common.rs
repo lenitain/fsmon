@@ -193,6 +193,34 @@ impl FromStr for EventType {
 ///
 /// Contains all metadata about a file change: timestamp, event type,
 /// affected path, process information, and optional process ancestry chain.
+///
+/// # 示例
+///
+/// ```rust,no_run
+/// use fsmon::common::{FileEvent, EventType};
+/// use chrono::Utc;
+/// use std::path::PathBuf;
+///
+/// # fn main() -> anyhow::Result<()> {
+/// let event = FileEvent {
+///     time: Utc::now(),
+///     event_type: EventType::Create,
+///     path: PathBuf::from("/tmp/test.txt"),
+///     pid: 1234,
+///     cmd: "touch".into(),
+///     user: "user".into(),
+///     file_size: 0,
+///     ppid: 100,
+///     tgid: 1234,
+///     chain: "1234|touch|user;100|bash|user".into(),
+/// };
+///
+/// // 序列化为 JSONL
+/// let json = event.to_jsonl_string();
+/// println!("Event: {}", json);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEvent {
     pub time: DateTime<Utc>,

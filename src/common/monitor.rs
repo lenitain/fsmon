@@ -58,6 +58,20 @@ pub(crate) use socket_handler::tokio_io_oneshot;
 // ---- MonitorConfig ----
 
 /// Configuration for creating a Monitor instance.
+/// Monitor 配置结构体
+///
+/// 用于创建 Monitor 实例的配置参数。
+///
+/// # 示例
+///
+/// ```ignore
+/// MonitorConfig {
+///     paths_and_options: vec![(PathBuf::from("/home/user"), PathOptions::default())],
+///     log_dir: Some(PathBuf::from("/var/log/fsmon")),
+///     debug: true,
+///     ..Default::default()
+/// };
+/// ```
 pub struct MonitorConfig {
     pub paths_and_options: Vec<(PathBuf, PathOptions)>,
     pub log_dir: Option<PathBuf>,
@@ -147,6 +161,22 @@ pub(crate) struct ProcessState {
 
 // ---- Monitor ----
 
+/// 文件系统监控器
+///
+/// 核心监控结构体，负责管理 fanotify 和 inotify 事件。
+///
+/// # 示例
+///
+/// ```ignore
+/// let config = MonitorConfig {
+///     paths_and_options: vec![(PathBuf::from("/home/user"), PathOptions::default())],
+///     log_dir: Some(PathBuf::from("/var/log/fsmon")),
+///     ..Default::default()
+/// };
+///
+/// let monitor = Monitor::new(config)?;
+/// monitor.run().await?;
+/// ```
 pub struct Monitor {
     pub(crate) paths: Vec<PathBuf>,
     pub(crate) canonical_paths: Vec<PathBuf>,
