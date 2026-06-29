@@ -31,6 +31,18 @@ use std::path::PathBuf;
 /// Enforces single daemon instance via Unix socket binding.
 /// Lock socket at `/run/user/<UID>/fsmon.lock.sock`.
 /// Released automatically when process exits or crashes.
+/// # Examples
+///
+/// ```ignore
+/// use fsmon::DaemonLock;
+///
+/// // Acquire exclusive lock (fails if another daemon is running)
+/// let _lock = DaemonLock::acquire(1000)?;
+///
+/// // Lock is automatically released when dropped
+/// // ...
+/// # Ok::<(), anyhow::Error>(())
+/// ```
 #[derive(Debug)]
 pub struct DaemonLock {
     #[allow(dead_code)]
@@ -40,6 +52,13 @@ pub struct DaemonLock {
 
 impl DaemonLock {
     /// Acquire exclusive lock. Fails if another daemon is already running.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Another daemon instance is already running (`EADDRINUSE`)
+/// - The lock socket path cannot be created or bound
+/// - The socket file has incorrect permissions
     pub fn acquire(_uid: u32) -> Result<Self> {
         let path = crate::common::socket::lock_socket_path();
 

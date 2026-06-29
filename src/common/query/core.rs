@@ -10,6 +10,25 @@ use crate::common::{FileEvent, parse_log_line_jsonl};
 const SCAN_BACK_BYTES: u64 = 4096;
 
 /// Query engine for searching historical file change events.
+/// # Examples
+///
+/// ```ignore
+/// use fsmon::Query;
+/// use std::path::PathBuf;
+/// use fsmon::TimeFilter;
+///
+/// // Create a query to search events from the last hour
+/// let query = Query::new(
+///     PathBuf::from("/var/log/fsmon"),
+///     Some("bash".to_string()),
+///     Some(vec![PathBuf::from("/home/user")]),
+///     vec![TimeFilter::since(chrono::Utc::now() - chrono::Duration::hours(1))],
+///     false,
+/// );
+///
+/// // Execute the query
+/// // query.execute().await?;
+/// ```
 pub struct Query {
     log_dir: PathBuf,
     /// Cmd name to filter by (None = read all log files).

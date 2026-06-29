@@ -155,6 +155,20 @@ impl IntGauge {
 
 /// All metrics registered by the daemon.
 /// Cheap to clone (Arc-backed) — pass a clone to background tasks.
+/// # Examples
+///
+/// ```ignore
+/// use fsmon::MetricsRegistry;
+///
+/// // Create a metrics registry
+/// let registry = MetricsRegistry::new(true);
+/// assert!(registry.is_enabled());
+///
+/// // Update metrics
+/// registry.set_subscribers(5);
+/// registry.set_monitored_paths(10);
+/// registry.inc_reader_groups();
+/// ```
 #[derive(Clone)]
 pub struct MetricsRegistry {
     subscribers: IntGauge,

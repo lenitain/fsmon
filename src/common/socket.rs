@@ -34,6 +34,32 @@ pub fn lock_socket_path() -> PathBuf {
 /// Type-safe socket commands.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SocketCmd {
+/// # Examples
+///
+/// ```ignore
+/// use fsmon::SocketCmd;
+/// use std::path::PathBuf;
+///
+/// // Add a path to monitoring
+/// let cmd = SocketCmd::Add {
+///     path: PathBuf::from("/home/user"),
+///     recursive: Some(true),
+///     types: None,
+///     size: None,
+///     track_cmd: None,
+///     max_depth: None,
+/// };
+///
+/// // List all monitored paths
+/// let cmd = SocketCmd::List;
+///
+/// // Subscribe to file system events
+/// let cmd = SocketCmd::Subscribe {
+///     types: Some(vec!["MODIFY".to_string()]),
+///     track_cmd: None,
+///     local_time: None,
+/// };
+/// ```
     /// Add a path to monitoring.
     Add {
         path: PathBuf,
@@ -139,6 +165,14 @@ pub enum ErrorKind {
 /// - Non-subscribe commands: send JSON → receive JSON response → connection closes.
 /// - Subscribe command: send JSON → receive JSON OK → stream JSONL events → connection stays open.
 /// - Each connection handles exactly one command.
+///
+/// # Errors
+///
+/// Returns a `SocketError::Transient` if:
+/// - The daemon is not running (connection refused)
+/// - The command cannot be serialized to JSON
+/// - The response cannot be read from the daemon
+/// - The daemon response is empty or cannot be parsed
 pub fn send_cmd(socket_path: &Path, cmd: &SocketCmd) -> Result<SocketResponse, SocketError> {
     let stream = UnixStream::connect(socket_path).map_err(|e| {
         SocketError::Transient(format!(

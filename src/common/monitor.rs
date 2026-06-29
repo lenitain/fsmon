@@ -258,6 +258,14 @@ impl std::fmt::Debug for Monitor {
 }
 
 impl Monitor {
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - `buffer_size` is less than 4096 bytes (4KB)
+/// - `buffer_size` is greater than 1048576 bytes (1MB)
+/// - Any monitored path overlaps with the log directory
+/// - The "fsmon" process name is used as a command filter
     pub fn new(cfg: MonitorConfig) -> Result<Self> {
         let cache_config = cfg.cache_config.unwrap_or_default();
         let buffer_size = cfg.buffer_size.unwrap_or(cache_config.buffer_size);

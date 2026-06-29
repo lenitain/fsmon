@@ -430,6 +430,13 @@ impl Config {
     /// Load config from file. Returns default Config if file doesn't exist.
     /// Also returns default if file exists but contains only comments (e.g.
     /// a reference file created by `fsmon init`).
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The config file exists but cannot be read
+/// - The config file contains invalid TOML syntax
+/// - The config file cannot be parsed into a `Config` struct
     pub fn load() -> Result<Self> {
         let p = Self::path();
         if !p.exists() {
