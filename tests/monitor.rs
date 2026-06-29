@@ -4,7 +4,7 @@ use fsmon::common::{EventType, FileEvent, parse_log_line_jsonl};
 
 #[test]
 fn parse_valid_jsonl_event() {
-    let json = r#"{"time":"2026-06-01T12:00:00Z","event_type":"CREATE","path":"/tmp/test.txt","pid":1234,"cmd":"touch","user":"pilot","file_size":0,"ppid":100,"tgid":1234,"chain":"1234|touch|pilot;100|bash|pilot"}"#;
+    let json = r#"{"time":"2026-06-01T12:00:00Z","event_type":"CREATE","path":"/tmp/test.txt","pid":1234,"comm":"touch","cmd":"touch","user":"pilot","file_size":0,"ppid":100,"tgid":1234,"chain":[]}"#;
     let ev = parse_log_line_jsonl(json).unwrap();
     assert_eq!(ev.event_type, EventType::Create);
     assert_eq!(ev.path.to_string_lossy(), "/tmp/test.txt");
@@ -33,12 +33,13 @@ fn event_jsonl_round_trip() {
         event_type: EventType::Modify,
         path: std::path::PathBuf::from("/tmp/test"),
         pid: 42,
+        comm: "test".into(),
         cmd: "vim".into(),
         user: "root".into(),
         file_size: 1024,
         ppid: 1,
         tgid: 42,
-        chain: "42|vim|root;1|systemd|root".into(),
+        chain: Vec::new(),
     };
     let json = ev.to_jsonl_string();
     let parsed = parse_log_line_jsonl(&json).unwrap();
@@ -57,12 +58,13 @@ fn jsonl_local_time_has_offset_not_z() {
         event_type: EventType::Create,
         path: std::path::PathBuf::from("/tmp/x"),
         pid: 1,
+        comm: "test".into(),
         cmd: "x".into(),
         user: "x".into(),
         file_size: 0,
         ppid: 0,
         tgid: 0,
-        chain: String::new(),
+        chain: Vec::new(),
     };
     let local = ev.to_jsonl_string_local();
     // local time must have + or - offset, not Z
@@ -86,12 +88,13 @@ fn jsonl_normal_uses_utc() {
         event_type: EventType::Create,
         path: std::path::PathBuf::from("/tmp/x"),
         pid: 1,
+        comm: "test".into(),
         cmd: "x".into(),
         user: "x".into(),
         file_size: 0,
         ppid: 0,
         tgid: 0,
-        chain: String::new(),
+        chain: Vec::new(),
     };
     let normal = ev.to_jsonl_string();
     assert!(normal.contains('Z'), "normal time should use UTC Z suffix");
@@ -157,12 +160,13 @@ fn file_event_all_fields_present_in_json() {
         event_type: EventType::Create,
         path: std::path::PathBuf::from("/a/b"),
         pid: 99,
+        comm: "test".into(),
         cmd: "test_cmd".into(),
         user: "test_user".into(),
         file_size: 42,
         ppid: 7,
         tgid: 99,
-        chain: "99|test_cmd|test_user;7|parent|test_user".into(),
+        chain: Vec::new(),
     };
     let json = ev.to_jsonl_string();
     assert!(json.contains("\"time\":\""));
@@ -174,5 +178,5 @@ fn file_event_all_fields_present_in_json() {
     assert!(json.contains("\"file_size\":42"));
     assert!(json.contains("\"ppid\":7"));
     assert!(json.contains("\"tgid\":99"));
-    assert!(json.contains("\"chain\":\"99|test_cmd|test_user;7|parent|test_user\""));
+    assert!(json.contains("\"chain\":[]"));
 }

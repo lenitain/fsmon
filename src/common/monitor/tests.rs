@@ -355,12 +355,13 @@ fn make_event(path: &str, event_type: EventType, pid: u32, size: u64) -> FileEve
         event_type,
         path: PathBuf::from(path),
         pid,
+        comm: "test_cmd".to_string(),
         cmd: "test".to_string(),
         user: "root".to_string(),
         file_size: size,
         ppid: 0,
         tgid: 0,
-        chain: String::new(),
+        chain: Vec::new(),
     }
 }
 
@@ -541,26 +542,45 @@ fn test_monitor_run_captures_events() {
 
 #[test]
 fn test_chains_contain_exact() {
-    assert!(chains_contain("bash → myapp → fsmon", "myapp"));
+    use proc_tree::ProcessLink;
+    let chain = vec![
+        ProcessLink::new(100, "bash".into(), "bash".into(), "root".into()),
+        ProcessLink::new(200, "myapp".into(), "myapp --flag".into(), "root".into()),
+    ];
+    assert!(chains_contain(&chain, "myapp"));
 }
 
 #[test]
 fn test_chains_contain_not_found() {
-    assert!(!chains_contain("bash → other → fsmon", "myapp"));
+    use proc_tree::ProcessLink;
+    let chain = vec![
+        ProcessLink::new(100, "bash".into(), "bash".into(), "root".into()),
+        ProcessLink::new(200, "other".into(), "other".into(), "root".into()),
+    ];
+    assert!(!chains_contain(&chain, "myapp"));
 }
 
 #[test]
 fn test_chains_contain_empty_chain() {
-    assert!(!chains_contain("", "myapp"));
+    let empty: Vec<proc_tree::ProcessLink> = vec![];
+    assert!(!chains_contain(&empty, "myapp"));
 }
 
 #[test]
 fn test_chains_contain_partial_name_not_match() {
-    assert!(!chains_contain("bash → myapp-backup → fsmon", "myapp"));
+    use proc_tree::ProcessLink;
+    let chain = vec![ProcessLink::new(
+        200,
+        "myapp-backup".into(),
+        "myapp-backup".into(),
+        "root".into(),
+    )];
+    assert!(!chains_contain(&chain, "myapp"));
 }
 
 #[tokio::test]
 async fn test_subscriber_task_receives_events() {
+    use proc_tree::ProcessLink;
     let (tx, mut rx) = tokio::sync::broadcast::channel(64);
     let mut rx2 = tx.subscribe();
     let event = FileEvent {
@@ -568,12 +588,16 @@ async fn test_subscriber_task_receives_events() {
         event_type: EventType::Create,
         path: PathBuf::from("/tmp/test.txt"),
         pid: 1234,
+        comm: "test_cmd".to_string(),
         cmd: "test-cmd".to_string(),
         user: "root".to_string(),
         file_size: 100,
         ppid: 0,
         tgid: 0,
-        chain: "bash → test-cmd".to_string(),
+        chain: vec![
+            ProcessLink::new(100, "bash".into(), "bash".into(), "root".into()),
+            ProcessLink::new(200, "test-cmd".into(), "test-cmd".into(), "root".into()),
+        ],
     };
     tx.send(event.clone()).unwrap();
 
@@ -585,8 +609,13 @@ async fn test_subscriber_task_receives_events() {
 
 #[tokio::test]
 async fn test_subscriber_task_filters_by_cmd() {
-    assert!(chains_contain("bash → myapp", "myapp"));
-    assert!(!chains_contain("bash → myapp", "other-app"));
+    use proc_tree::ProcessLink;
+    let chain = vec![
+        ProcessLink::new(100, "bash".into(), "bash".into(), "root".into()),
+        ProcessLink::new(200, "myapp".into(), "myapp".into(), "root".into()),
+    ];
+    assert!(chains_contain(&chain, "myapp"));
+    assert!(!chains_contain(&chain, "other-app"));
 }
 
 #[tokio::test]
@@ -598,12 +627,13 @@ async fn test_subscriber_task_filters_by_type() {
         event_type: EventType::Create,
         path: PathBuf::from("/tmp/ignored.txt"),
         pid: 1,
+        comm: "test_cmd".to_string(),
         cmd: "test".to_string(),
         user: "root".to_string(),
         file_size: 0,
         ppid: 0,
         tgid: 0,
-        chain: String::new(),
+        chain: Vec::new(),
     };
     assert!(!allowed.contains(&create_event.event_type));
 
@@ -612,12 +642,13 @@ async fn test_subscriber_task_filters_by_type() {
         event_type: EventType::Delete,
         path: PathBuf::from("/tmp/deleted.txt"),
         pid: 2,
+        comm: "test_cmd".to_string(),
         cmd: "test".to_string(),
         user: "root".to_string(),
         file_size: 0,
         ppid: 0,
         tgid: 0,
-        chain: String::new(),
+        chain: Vec::new(),
     };
     assert!(allowed.contains(&delete_event.event_type));
 }
@@ -632,12 +663,13 @@ async fn test_subscriber_task_handles_lagged() {
             event_type: EventType::Create,
             path: PathBuf::from(format!("/tmp/batch_{}.txt", i)),
             pid: 100 + i as u32,
+            comm: "test_cmd".to_string(),
             cmd: "test".to_string(),
             user: "root".to_string(),
             file_size: i as u64,
             ppid: 0,
             tgid: 0,
-            chain: String::new(),
+            chain: Vec::new(),
         });
     }
 
@@ -655,4 +687,96 @@ async fn test_subscriber_task_handles_lagged() {
         }
         Err(e) => panic!("unexpected error: {:?}", e),
     }
+}
+
+// ---- FileEvent.comm and chain format tests ----
+
+#[test]
+fn test_file_event_comm_field() {
+    let event = FileEvent {
+        time: chrono::Utc::now(),
+        event_type: EventType::Create,
+        path: PathBuf::from("/tmp/test.txt"),
+        pid: 1234,
+        comm: "touch".to_string(),
+        cmd: "touch /tmp/test.txt".to_string(),
+        user: "root".to_string(),
+        file_size: 0,
+        ppid: 100,
+        tgid: 1234,
+        chain: Vec::new(),
+    };
+
+    assert_eq!(event.comm, "touch");
+    assert_eq!(event.cmd, "touch /tmp/test.txt");
+    // comm != cmd
+    assert_ne!(event.comm, event.cmd);
+}
+
+#[test]
+fn test_file_event_chain_as_vec() {
+    use proc_tree::ProcessLink;
+    let event = FileEvent {
+        time: chrono::Utc::now(),
+        event_type: EventType::Create,
+        path: PathBuf::from("/tmp/test.txt"),
+        pid: 1234,
+        comm: "touch".to_string(),
+        cmd: "touch /tmp/test.txt".to_string(),
+        user: "root".to_string(),
+        file_size: 0,
+        ppid: 100,
+        tgid: 1234,
+        chain: vec![
+            ProcessLink::new(
+                1234,
+                "touch".into(),
+                "touch /tmp/test.txt".into(),
+                "root".into(),
+            ),
+            ProcessLink::new(100, "bash".into(), "bash -l".into(), "root".into()),
+        ],
+    };
+
+    assert_eq!(event.chain.len(), 2);
+    assert_eq!(event.chain[0].comm(), "touch");
+    assert_eq!(event.chain[1].comm(), "bash");
+}
+
+#[test]
+fn test_file_event_json_serialization() {
+    use proc_tree::ProcessLink;
+    let event = FileEvent {
+        time: chrono::Utc::now(),
+        event_type: EventType::Create,
+        path: PathBuf::from("/tmp/test.txt"),
+        pid: 1234,
+        comm: "touch".to_string(),
+        cmd: "touch /tmp/test.txt".to_string(),
+        user: "root".to_string(),
+        file_size: 0,
+        ppid: 100,
+        tgid: 1234,
+        chain: vec![ProcessLink::new(
+            1234,
+            "touch".into(),
+            "touch /tmp/test.txt".into(),
+            "root".into(),
+        )],
+    };
+
+    let json = event.to_jsonl_string();
+    // Should contain comm field
+    assert!(json.contains("\"comm\":\"touch\""));
+    // Should contain chain as JSON array (not escaped string)
+    assert!(json.contains("\"chain\":[{"));
+    // Should NOT have escaped quotes in chain
+    assert!(!json.contains("\\\""));
+
+    // Round-trip
+    let parsed = FileEvent::from_jsonl_str(&json).unwrap();
+    assert_eq!(parsed.comm, "touch");
+    assert_eq!(parsed.cmd, "touch /tmp/test.txt");
+    assert_eq!(parsed.chain.len(), 1);
+    assert_eq!(parsed.chain[0].comm(), "touch");
 }

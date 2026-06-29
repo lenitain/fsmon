@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-06-30
+
+### Changed
+
+- **proc-tree format adaptation**: Adapted to `proc-tree` crate API changes. `FileEvent` struct has breaking changes:
+  - Added `comm` field (process name), separated from `cmd` (full command line)
+  - Changed `chain` field from `String` (format: `"pid|comm|user;..."`) to `Vec<proc_tree::ProcessLink>` structured type
+  - Internal API migrated from `build_chain_string` to `build_chain_links`
+  - `chains_contain` function signature changed from `&str` to `&[proc_tree::ProcessLink]`
+
+**⚠️ Breaking Change**: JSONL log format changed — `chain` is now a JSON array instead of a string, and `comm` field is added. Old log files can still be parsed (`chain` field uses `#[serde(default)]` for backward compatibility).
+
 ## [0.4.16] - 2026-06-29
 
 ### Added

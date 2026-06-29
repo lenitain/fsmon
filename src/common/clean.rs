@@ -102,24 +102,26 @@ mod tests {
             event_type: EventType::Create,
             path: PathBuf::from("/tmp/old"),
             pid: 1,
+            comm: "test_cmd".to_string(),
             cmd: "test".into(),
             user: "root".into(),
             file_size: 0,
             ppid: 0,
             tgid: 0,
-            chain: String::new(),
+            chain: Vec::new(),
         };
         let new_event = FileEvent {
             time: Utc::now(),
             event_type: EventType::Create,
             path: PathBuf::from("/tmp/new"),
             pid: 1,
+            comm: "test_cmd".to_string(),
             cmd: "test".into(),
             user: "root".into(),
             file_size: 0,
             ppid: 0,
             tgid: 0,
-            chain: String::new(),
+            chain: Vec::new(),
         };
 
         {
@@ -161,12 +163,13 @@ mod tests {
             event_type: EventType::Create,
             path: PathBuf::from("/tmp/old"),
             pid: 1,
+            comm: "test_cmd".to_string(),
             cmd: "test".into(),
             user: "root".into(),
             file_size: 0,
             ppid: 0,
             tgid: 0,
-            chain: String::new(),
+            chain: Vec::new(),
         };
 
         {
@@ -221,12 +224,13 @@ mod tests {
                     event_type: EventType::Create,
                     path: PathBuf::from(format!("/tmp/file{}", i)),
                     pid: 1,
+                    comm: "test_cmd".to_string(),
                     cmd: "test".into(),
                     user: "root".into(),
                     file_size: 0,
                     ppid: 0,
                     tgid: 0,
-                    chain: String::new(),
+                    chain: Vec::new(),
                 };
                 writeln!(f, "{}", event.to_jsonl_string()).unwrap();
             }
@@ -302,12 +306,13 @@ mod tests {
                 event_type: EventType::Create,
                 path: PathBuf::from("/f"),
                 pid: 1,
+                comm: "test_cmd".to_string(),
                 cmd: "t".into(),
                 user: "r".into(),
                 file_size: 0,
                 ppid: 0,
                 tgid: 0,
-                chain: String::new(),
+                chain: Vec::new(),
             };
             writeln!(f, "{}", event.to_jsonl_string()).unwrap();
         }
@@ -342,12 +347,13 @@ mod tests {
                 event_type: EventType::Create,
                 path: PathBuf::from("/f"),
                 pid: 1,
+                comm: "test_cmd".to_string(),
                 cmd: "t".into(),
                 user: "r".into(),
                 file_size: 0,
                 ppid: 0,
                 tgid: 0,
-                chain: String::new(),
+                chain: Vec::new(),
             };
             writeln!(f, "{}", event.to_jsonl_string()).unwrap();
         }
@@ -383,12 +389,13 @@ mod tests {
                     event_type: EventType::Create,
                     path: PathBuf::from(format!("/f{}", i)),
                     pid: 1,
+                    comm: "test_cmd".to_string(),
                     cmd: "t".into(),
                     user: "r".into(),
                     file_size: 0,
                     ppid: 0,
                     tgid: 0,
-                    chain: String::new(),
+                    chain: Vec::new(),
                 };
                 writeln!(f, "{}", event.to_jsonl_string()).unwrap();
             }
@@ -426,36 +433,39 @@ mod tests {
             event_type: EventType::Create,
             path: PathBuf::from("/old"),
             pid: 1,
+            comm: "test_cmd".to_string(),
             cmd: "t".into(),
             user: "r".into(),
             file_size: 0,
             ppid: 0,
             tgid: 0,
-            chain: String::new(),
+            chain: Vec::new(),
         };
         let mid_event = FileEvent {
             time: now - chrono::Duration::days(5),
             event_type: EventType::Create,
             path: PathBuf::from("/mid"),
             pid: 1,
+            comm: "test_cmd".to_string(),
             cmd: "t".into(),
             user: "r".into(),
             file_size: 0,
             ppid: 0,
             tgid: 0,
-            chain: String::new(),
+            chain: Vec::new(),
         };
         let new_event = FileEvent {
             time: now,
             event_type: EventType::Create,
             path: PathBuf::from("/new"),
             pid: 1,
+            comm: "test_cmd".to_string(),
             cmd: "t".into(),
             user: "r".into(),
             file_size: 0,
             ppid: 0,
             tgid: 0,
-            chain: String::new(),
+            chain: Vec::new(),
         };
         {
             let mut f = fs::File::create(&log_path).unwrap();
@@ -486,24 +496,26 @@ mod tests {
             event_type: EventType::Create,
             path: PathBuf::from("/old"),
             pid: 1,
+            comm: "test_cmd".to_string(),
             cmd: "t".into(),
             user: "r".into(),
             file_size: 0,
             ppid: 0,
             tgid: 0,
-            chain: String::new(),
+            chain: Vec::new(),
         };
         let new_event = FileEvent {
             time: now,
             event_type: EventType::Create,
             path: PathBuf::from("/new"),
             pid: 1,
+            comm: "test_cmd".to_string(),
             cmd: "t".into(),
             user: "r".into(),
             file_size: 0,
             ppid: 0,
             tgid: 0,
-            chain: String::new(),
+            chain: Vec::new(),
         };
         {
             let mut f = fs::File::create(&log_path).unwrap();
@@ -533,12 +545,13 @@ mod tests {
             event_type: EventType::Create,
             path: PathBuf::from("/old"),
             pid: 1,
+            comm: "test_cmd".to_string(),
             cmd: "t".into(),
             user: "r".into(),
             file_size: 0,
             ppid: 0,
             tgid: 0,
-            chain: String::new(),
+            chain: Vec::new(),
         };
         {
             let mut f = fs::File::create(&log_path).unwrap();
@@ -569,12 +582,13 @@ mod tests {
                 event_type: EventType::Create,
                 path: PathBuf::from("/a/x"),
                 pid: 1,
+                comm: "test_cmd".to_string(),
                 cmd: "t".into(),
                 user: "r".into(),
                 file_size: 0,
                 ppid: 0,
                 tgid: 0,
-                chain: String::new(),
+                chain: Vec::new(),
             };
             writeln!(f, "{}", event.to_jsonl_string()).unwrap();
         }
@@ -609,12 +623,13 @@ mod tests {
                 event_type: EventType::Create,
                 path: PathBuf::from("/old"),
                 pid: 1,
+                comm: "test_cmd".to_string(),
                 cmd: "t".into(),
                 user: "r".into(),
                 file_size: 0,
                 ppid: 0,
                 tgid: 0,
-                chain: String::new(),
+                chain: Vec::new(),
             };
             writeln!(f, "{}", old.to_jsonl_string()).unwrap();
             for i in 0..50 {
@@ -623,12 +638,13 @@ mod tests {
                     event_type: EventType::Create,
                     path: PathBuf::from(format!("/f{}", i)),
                     pid: 1,
+                    comm: "test_cmd".to_string(),
                     cmd: "t".into(),
                     user: "r".into(),
                     file_size: 0,
                     ppid: 0,
                     tgid: 0,
-                    chain: String::new(),
+                    chain: Vec::new(),
                 };
                 writeln!(f, "{}", ev.to_jsonl_string()).unwrap();
             }

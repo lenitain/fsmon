@@ -175,12 +175,13 @@ mod tests {
             event_type,
             path: PathBuf::from(path),
             pid,
+            comm: "test_cmd".to_string(),
             cmd: "test".to_string(),
             user: "root".to_string(),
             file_size: size,
             ppid: 0,
             tgid: 0,
-            chain: String::new(),
+            chain: Vec::new(),
         }
     }
 
