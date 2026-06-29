@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.16] - 2026-06-29
+
+### Added
+
+- **Public type Debug implementations**: Added `Debug` trait implementations for 17 public types that were missing them, and added `PartialEq` and `Eq` traits to `FileEvent`. This fixes Rust API Guidelines violations for C-DEBUG and C-COMMON-TRAITS.
+
+### Fixed
+
+- **Dependency API adaptation**: Adapted to new APIs for 5 dependency crates:
+  - `SizeFilter`: `filter.op` → `filter.op()`, `filter.bytes` → `filter.bytes()`
+  - `TimeFilter`: `f.time` → `f.time()`, `f.op` → `f.op()`
+  - `FidEvent`: `ev.path` → `ev.path()`, `ev.mask` → `ev.mask()`, `ev.pid` → `ev.pid()`
+  - `ProcessInfo`: `info.cmd` → `info.cmd()`, `info.user` → `info.user()`, etc.
+  - Used constructors instead of struct literals
+  - Fixed clippy warnings
+
+- **Default implementations**: Added `Default` implementations for `PathOptions` and `MonitorConfig` structs, and added `rust-version` and documentation to `Cargo.toml`.
+
+- **Error type improvements**: Added dedicated `ParseEventTypeError` error type for `EventType::from_str` and implemented `Display` trait for `FileEvent`. Fixes Rust API Guidelines violations for C-GOOD-ERR and C-CONV-TRAITS.
+
+### Refactored
+
+- **CdTarget enum**: Refactored `cmd_cd` function from multiple boolean parameters to `CdTarget` enum with variants `Log`, `Monitored`, and `Config`. Provides `from_args` method for backward compatibility. Fixes C-CUSTOM-TYPE violation.
+
+### Documentation
+
+- **Safety documentation**: Added `# Safety` documentation for unsafe code in `flush_and_sync_dirty_logs()` and `fchown_to_user()` functions, explaining safety guarantees and error handling. Fixes C-FAILURE violation.
+
+- **Crate-level documentation**: Added detailed crate-level documentation to `lib.rs` with overview, usage examples, and module structure. Added documentation examples to `Config`, `FileEvent`, `PathOptions`, `MonitorConfig`, and `Monitor` types. Fixes C-CRATE-DOC and C-EXAMPLE violations.
+
+- **API examples and errors**: Added examples to `DaemonLock`, `SocketCmd`, `Query`, `Watchdog`, and `MetricsRegistry`. Added `# Errors` documentation to `DaemonLock::acquire()`, `Config::load()`, `Monitored::save()`, `Monitor::new()`, and `send_cmd()`. Improves C-EXAMPLE and C-FAILURE compliance.
+
+- **Rust API Guidelines audit report**: Added comprehensive audit report (`audit_report.md`) documenting API Guidelines compliance. Updated report with completed documentation fixes, improving compliance from 83.3% to 87.5%.
+
+### Chore
+
+- **Cargo.lock added**: Added `Cargo.lock` to version control for reproducible builds.
+- **Code formatting**: Applied `cargo fmt` across codebase for consistent style.
+
 ## [0.4.15] - 2026-06-23
 
 ### Security
