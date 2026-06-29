@@ -32,6 +32,18 @@ pub(crate) struct FileLogWriter {
     handles: HashMap<PathBuf, BufWriter<File>>,
 }
 
+impl std::fmt::Debug for FileLogWriter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileLogWriter")
+            .field("log_dir", &self.log_dir)
+            .field("disk_buf_len", &self.disk_buf.len())
+            .field("disk_healthy", &self.disk_healthy)
+            .field("debug", &self.debug)
+            .field("local_time", &self.local_time)
+            .finish()
+    }
+}
+
 impl FileLogWriter {
     pub(crate) fn new(
         log_dir: PathBuf,

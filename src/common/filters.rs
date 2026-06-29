@@ -9,7 +9,7 @@ use crate::common::{EventType, FileEvent};
 ///
 /// Contains size filters, event type filters, recursion settings,
 /// and optional command name filtering.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PathOptions {
     pub size_filter: Option<SizeFilter>,
     pub event_types: Option<Vec<EventType>>,

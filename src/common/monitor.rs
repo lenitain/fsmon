@@ -73,6 +73,24 @@ pub struct MonitorConfig {
     pub watchdog_interval: Option<u64>,
 }
 
+impl std::fmt::Debug for MonitorConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MonitorConfig")
+            .field("paths_and_options", &self.paths_and_options)
+            .field("log_dir", &self.log_dir)
+            .field("monitored_path", &self.monitored_path)
+            .field("buffer_size", &self.buffer_size)
+            .field("debug", &self.debug)
+            .field("cache_config", &self.cache_config)
+            .field("disk_min_free", &self.disk_min_free)
+            .field("subscribe_buf", &self.subscribe_buf)
+            .field("local_time", &self.local_time)
+            .field("metrics_interval", &self.metrics_interval)
+            .field("watchdog_interval", &self.watchdog_interval)
+            .finish()
+    }
+}
+
 impl MonitorConfig {
     /// Create a default config for tests (all None/false).
     #[cfg(test)]
@@ -172,6 +190,22 @@ pub struct Monitor {
     pub(crate) metrics: MetricsRegistry,
     /// Watchdog manager for systemd integration.
     pub(crate) watchdog: Option<Watchdog>,
+}
+
+impl std::fmt::Debug for Monitor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Monitor")
+            .field("paths", &self.paths)
+            .field("canonical_paths", &self.canonical_paths)
+            .field("log_dir", &self.log_dir)
+            .field("monitored_path", &self.monitored_path)
+            .field("buffer_size", &self.buffer_size)
+            .field("daemon_pid", &self.daemon_pid)
+            .field("debug", &self.debug)
+            .field("disk_min_free", &self.disk_min_free)
+            .field("local_time", &self.local_time)
+            .finish()
+    }
 }
 
 impl Monitor {

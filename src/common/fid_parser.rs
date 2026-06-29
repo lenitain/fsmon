@@ -23,6 +23,12 @@ use std::path::{Path, PathBuf};
 /// Implements `AsRawFd` and `AsFd` so it can be used with `AsyncFd`.
 pub struct FanFd(pub RawFd);
 
+impl std::fmt::Debug for FanFd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("FanFd").field(&self.0).finish()
+    }
+}
+
 impl AsRawFd for FanFd {
     fn as_raw_fd(&self) -> RawFd {
         self.0
@@ -38,6 +44,15 @@ pub struct FsGroup {
     pub fan_fd: OwnedFd,
     pub mount_fd: OwnedFd,
     pub ref_count: usize,
+}
+
+impl std::fmt::Debug for FsGroup {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FsGroup")
+            .field("dev_id", &self.dev_id)
+            .field("ref_count", &self.ref_count)
+            .finish()
+    }
 }
 
 /// Convert an EventType to its fanotify kernel flag.

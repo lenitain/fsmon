@@ -31,6 +31,7 @@ use std::path::PathBuf;
 /// Enforces single daemon instance via Unix socket binding.
 /// Lock socket at `/run/user/<UID>/fsmon.lock.sock`.
 /// Released automatically when process exits or crashes.
+#[derive(Debug)]
 pub struct DaemonLock {
     #[allow(dead_code)]
     listener: std::os::unix::net::UnixListener,
@@ -192,7 +193,7 @@ impl FromStr for EventType {
 ///
 /// Contains all metadata about a file change: timestamp, event type,
 /// affected path, process information, and optional process ancestry chain.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEvent {
     pub time: DateTime<Utc>,
     pub event_type: EventType,
