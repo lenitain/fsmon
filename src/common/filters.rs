@@ -9,7 +9,20 @@ use crate::common::{EventType, FileEvent};
 ///
 /// Contains size filters, event type filters, recursion settings,
 /// and optional command name filtering.
-#[derive(Clone)]
+///
+/// # 示例
+///
+/// 创建默认的路径选项：`PathOptions::default()`
+///
+/// 创建自定义的路径选项：
+/// ```ignore
+/// PathOptions {
+///     recursive: true,
+///     event_types: Some(vec![EventType::Create, EventType::Delete]),
+///     ..Default::default()
+/// }
+/// ```
+#[derive(Debug, Clone)]
 pub struct PathOptions {
     pub size_filter: Option<SizeFilter>,
     pub event_types: Option<Vec<EventType>>,

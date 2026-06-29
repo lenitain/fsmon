@@ -21,6 +21,18 @@ pub struct Query {
     local_time: bool,
 }
 
+impl std::fmt::Debug for Query {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Query")
+            .field("log_dir", &self.log_dir)
+            .field("cmd_filter", &self.cmd_filter)
+            .field("path_filters", &self.path_filters)
+            .field("time_filters", &self.time_filters)
+            .field("local_time", &self.local_time)
+            .finish()
+    }
+}
+
 impl Query {
     pub fn new(
         log_dir: PathBuf,

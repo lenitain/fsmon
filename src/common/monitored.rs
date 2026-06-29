@@ -112,7 +112,7 @@ impl TryFrom<&PathEntry> for crate::common::filters::PathOptions {
                     .collect::<std::result::Result<Vec<_>, _>>()
             })
             .transpose()
-            .map_err(|e: String| anyhow::anyhow!(e))?;
+            .map_err(|e: crate::common::ParseEventTypeError| anyhow::anyhow!(e))?;
         let cmd = entry.cmd.as_deref().and_then(|c| {
             if c == CMD_GLOBAL {
                 None

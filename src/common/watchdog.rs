@@ -31,6 +31,15 @@ pub struct Watchdog {
     enabled: bool,
 }
 
+impl std::fmt::Debug for Watchdog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Watchdog")
+            .field("interval", &self.interval)
+            .field("enabled", &self.enabled)
+            .finish()
+    }
+}
+
 impl Watchdog {
     /// Create new watchdog from config interval.
     /// If interval is None or zero, watchdog is disabled.

@@ -71,7 +71,7 @@ pub fn run(command: crate::Commands) -> Result<()> {
         Init { service } => cmd_init(service),
         Cd {
             monitored, config, ..
-        } => cmd_cd(monitored, config),
+        } => cmd_cd(init_cd::CdTarget::from_args(monitored, config)),
         Health => cmd_health(),
         ListMonitoredPaths => cmd_list_monitored_paths(),
     }

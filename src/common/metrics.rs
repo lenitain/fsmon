@@ -19,6 +19,14 @@ pub struct CounterVec {
     inner: Arc<RwLock<CounterVecInner>>,
 }
 
+impl std::fmt::Debug for CounterVec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CounterVec")
+            .field("enabled", &self.enabled)
+            .finish()
+    }
+}
+
 struct CounterVecInner {
     counters: HashMap<Vec<String>, Arc<AtomicU64>>,
 }
@@ -90,6 +98,15 @@ pub struct IntGauge {
     value: Arc<AtomicI64>,
 }
 
+impl std::fmt::Debug for IntGauge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IntGauge")
+            .field("enabled", &self.enabled)
+            .field("value", &self.value.load(Ordering::Relaxed))
+            .finish()
+    }
+}
+
 impl Default for IntGauge {
     fn default() -> Self {
         Self::new(false)
@@ -145,6 +162,18 @@ pub struct MetricsRegistry {
     reader_groups: IntGauge,
     pending_paths: IntGauge,
     disk_buffer_events: IntGauge,
+}
+
+impl std::fmt::Debug for MetricsRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MetricsRegistry")
+            .field("subscribers", &self.subscribers)
+            .field("monitored_paths", &self.monitored_paths)
+            .field("reader_groups", &self.reader_groups)
+            .field("pending_paths", &self.pending_paths)
+            .field("disk_buffer_events", &self.disk_buffer_events)
+            .finish()
+    }
 }
 
 impl Default for MetricsRegistry {

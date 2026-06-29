@@ -6,6 +6,15 @@ pub(crate) enum EventSender {
     Bounded(tokio::sync::mpsc::Sender<Vec<FidEvent>>),
 }
 
+impl std::fmt::Debug for EventSender {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EventSender::Unbounded(_) => write!(f, "EventSender::Unbounded(...)"),
+            EventSender::Bounded(_) => write!(f, "EventSender::Bounded(...)"),
+        }
+    }
+}
+
 impl Clone for EventSender {
     fn clone(&self) -> Self {
         match self {
@@ -19,6 +28,15 @@ impl Clone for EventSender {
 pub(crate) enum EventReceiver {
     Unbounded(tokio::sync::mpsc::UnboundedReceiver<Vec<FidEvent>>),
     Bounded(tokio::sync::mpsc::Receiver<Vec<FidEvent>>),
+}
+
+impl std::fmt::Debug for EventReceiver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EventReceiver::Unbounded(_) => write!(f, "EventReceiver::Unbounded(...)"),
+            EventReceiver::Bounded(_) => write!(f, "EventReceiver::Bounded(...)"),
+        }
+    }
 }
 
 impl EventReceiver {
