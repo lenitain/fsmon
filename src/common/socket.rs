@@ -34,32 +34,32 @@ pub fn lock_socket_path() -> PathBuf {
 /// Type-safe socket commands.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SocketCmd {
-/// # Examples
-///
-/// ```ignore
-/// use fsmon::SocketCmd;
-/// use std::path::PathBuf;
-///
-/// // Add a path to monitoring
-/// let cmd = SocketCmd::Add {
-///     path: PathBuf::from("/home/user"),
-///     recursive: Some(true),
-///     types: None,
-///     size: None,
-///     track_cmd: None,
-///     max_depth: None,
-/// };
-///
-/// // List all monitored paths
-/// let cmd = SocketCmd::List;
-///
-/// // Subscribe to file system events
-/// let cmd = SocketCmd::Subscribe {
-///     types: Some(vec!["MODIFY".to_string()]),
-///     track_cmd: None,
-///     local_time: None,
-/// };
-/// ```
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use fsmon::SocketCmd;
+    /// use std::path::PathBuf;
+    ///
+    /// // Add a path to monitoring
+    /// let cmd = SocketCmd::Add {
+    ///     path: PathBuf::from("/home/user"),
+    ///     recursive: Some(true),
+    ///     types: None,
+    ///     size: None,
+    ///     track_cmd: None,
+    ///     max_depth: None,
+    /// };
+    ///
+    /// // List all monitored paths
+    /// let cmd = SocketCmd::List;
+    ///
+    /// // Subscribe to file system events
+    /// let cmd = SocketCmd::Subscribe {
+    ///     types: Some(vec!["MODIFY".to_string()]),
+    ///     track_cmd: None,
+    ///     local_time: None,
+    /// };
+    /// ```
     /// Add a path to monitoring.
     Add {
         path: PathBuf,

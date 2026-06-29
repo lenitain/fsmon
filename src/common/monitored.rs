@@ -218,15 +218,15 @@ impl Monitored {
 
     /// Save Monitored to file (JSONL format). Creates parent directories if needed.
     /// Uses atomic write (temp file + rename) to prevent corruption on crash/kill.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - The parent directory cannot be created
-/// - The temporary file cannot be created or written
-/// - The file cannot be synced to disk
-/// - The atomic rename operation fails
-/// - The file permissions cannot be set
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The parent directory cannot be created
+    /// - The temporary file cannot be created or written
+    /// - The file cannot be synced to disk
+    /// - The atomic rename operation fails
+    /// - The file permissions cannot be set
     pub fn save(&self, path: &Path) -> Result<()> {
         let parent = path.parent().context("Monitored path has no parent")?;
         fs::create_dir_all(parent)

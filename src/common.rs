@@ -52,13 +52,13 @@ pub struct DaemonLock {
 
 impl DaemonLock {
     /// Acquire exclusive lock. Fails if another daemon is already running.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - Another daemon instance is already running (`EADDRINUSE`)
-/// - The lock socket path cannot be created or bound
-/// - The socket file has incorrect permissions
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Another daemon instance is already running (`EADDRINUSE`)
+    /// - The lock socket path cannot be created or bound
+    /// - The socket file has incorrect permissions
     pub fn acquire(_uid: u32) -> Result<Self> {
         let path = crate::common::socket::lock_socket_path();
 

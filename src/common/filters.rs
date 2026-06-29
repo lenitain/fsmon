@@ -32,7 +32,6 @@ pub struct PathOptions {
     pub max_depth: Option<u32>,
 }
 
-
 /// Resolve a path for recursion check: expand tilde, then canonicalize if the path exists
 /// (follows symlinks). Returns (original_expanded, resolved_path).
 /// If the path is a symlink, resolved_path will be the target.
@@ -223,7 +222,7 @@ mod tests {
     #[test]
     fn test_should_output_size_filter_ge() {
         let opts = PathOptions {
-            size_filter: Some(SizeFilter::new(SizeOp::Ge, 1000,)),
+            size_filter: Some(SizeFilter::new(SizeOp::Ge, 1000)),
             event_types: None,
             recursive: false,
             cmd: None,
@@ -246,7 +245,7 @@ mod tests {
     #[test]
     fn test_should_output_size_filter_lt() {
         let opts = PathOptions {
-            size_filter: Some(SizeFilter::new(SizeOp::Lt, 100,)),
+            size_filter: Some(SizeFilter::new(SizeOp::Lt, 100)),
             event_types: None,
             recursive: false,
             cmd: None,
@@ -269,7 +268,7 @@ mod tests {
     #[test]
     fn test_should_output_size_filter_eq() {
         let opts = PathOptions {
-            size_filter: Some(SizeFilter::new(SizeOp::Eq, 100,)),
+            size_filter: Some(SizeFilter::new(SizeOp::Eq, 100)),
             event_types: None,
             recursive: false,
             cmd: None,
@@ -292,7 +291,7 @@ mod tests {
     #[test]
     fn test_should_output_combined_filters() {
         let opts = PathOptions {
-            size_filter: Some(SizeFilter::new(SizeOp::Ge, 100,)),
+            size_filter: Some(SizeFilter::new(SizeOp::Ge, 100)),
             event_types: Some(vec![EventType::Create]),
             recursive: false,
             cmd: None,
