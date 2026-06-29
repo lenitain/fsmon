@@ -126,6 +126,25 @@ impl MonitorConfig {
     }
 }
 
+impl Default for MonitorConfig {
+    fn default() -> Self {
+        Self {
+            paths_and_options: Vec::new(),
+            log_dir: None,
+            monitored_path: None,
+            buffer_size: None,
+            socket_listener: None,
+            debug: false,
+            cache_config: None,
+            disk_min_free: None,
+            subscribe_buf: None,
+            local_time: false,
+            metrics_interval: None,
+            watchdog_interval: None,
+        }
+    }
+}
+
 // ---- Sub-structures for Monitor ----
 
 /// Fanotify state: per-filesystem groups and directory handle cache.

@@ -32,6 +32,18 @@ pub struct PathOptions {
     pub max_depth: Option<u32>,
 }
 
+
+impl Default for PathOptions {
+    fn default() -> Self {
+        Self {
+            size_filter: None,
+            event_types: None,
+            recursive: false,
+            cmd: None,
+            max_depth: None,
+        }
+    }
+}
 /// Resolve a path for recursion check: expand tilde, then canonicalize if the path exists
 /// (follows symlinks). Returns (original_expanded, resolved_path).
 /// If the path is a symlink, resolved_path will be the target.

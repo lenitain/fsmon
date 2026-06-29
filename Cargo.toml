@@ -9,6 +9,8 @@ readme = "README.md"
 keywords = ["filesystem", "monitor", "linux", "fanotify"]
 categories = ["filesystem", "command-line-utilities"]
 authors = ["lenitain <xt.zhu@qq.com>"]
+rust-version = "1.85"
+documentation = "https://docs.rs/fsmon"
 
 include = [
     "Cargo.toml",
