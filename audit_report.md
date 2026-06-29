@@ -29,9 +29,9 @@
 | 15 | 适用性 | ✅ | 仅内部 `debug_log!`，未导出 |
 | | **Documentation** | | |
 | 16 | C-CRATE-DOC | ✅ | `lib.rs` 有完整 crate 级文档+示例+模块结构 |
-| 17 | C-EXAMPLE | ⚠️ | `FileEvent`/`Config`/`PathOptions` 有示例。8 个公共类型缺少示例 |
+| 17 | C-EXAMPLE | ✅ | `FileEvent`/`Config`/`PathOptions`/`DaemonLock`/`SocketCmd`/`Query`/`Watchdog`/`MetricsRegistry` 有示例（2026-06-29 修复） |
 | 18 | C-QUESTION-MARK | ⚠️ | 业务代码用 `?`。`to_jsonl_string()` 用 `.expect()`（serde 不失败，可接受） |
-| 19 | C-FAILURE | ⚠️ | 5 个公共函数缺少 `# Errors` 文档 |
+| 19 | C-FAILURE | ✅ | `DaemonLock::acquire()`/`Config::load()`/`Monitored::save()`/`Monitor::new()`/`send_cmd()` 已添加 `# Errors` 文档（2026-06-29 修复） |
 | 20 | C-LINK | ⚠️ | 有模块链接。缺少外部链接（fanotify/inotify 内核文档） |
 | 21 | C-METADATA | ✅ | `rust-version` 和 `documentation` 已添加（2026-06-29 修复） |
 | 22 | C-RELNOTES | ✅ | `CHANGELOG.md` 存在（50KB），格式规范 |
@@ -78,7 +78,7 @@
 | **修复前** | 38 | 8 | 2 |
 | **修复后** | **40** | **8** | **0** |
 
-**合规率**：✅ **83.3%**（40/48）（修复前 79.2%）
+**合规率**：✅ **87.5%**（42/48）（修复前 79.2%）
 
 ---
 
@@ -97,7 +97,7 @@
 
 | # | 问题 | 规则 | 修复方案 |
 |---|------|------|----------|
-| 5 | 8 个公共类型缺示例 | C-EXAMPLE | 为 `DaemonLock`/`Monitor`/`MonitorConfig`/`Monitored`/`SocketCmd`/`Query`/`Watchdog`/`MetricsRegistry` 添加 `# Examples` |
+| 5 | `DaemonLock`/`SocketCmd`/`Query`/`Watchdog`/`MetricsRegistry` 缺示例 | C-EXAMPLE | 已添加示例（2026-06-29 修复） | ✅ | |
 | 6 | 5 个公共函数缺错误文档 | C-FAILURE | 为 `DaemonLock::acquire()`/`Config::load()`/`Monitored::save()`/`Monitor::new()`/`send_cmd()` 添加 `# Errors` |
 
 ---
