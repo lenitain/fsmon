@@ -165,8 +165,23 @@ impl fmt::Display for EventType {
     }
 }
 
+/// EventType 解析错误
+#[derive(Debug, Clone)]
+pub struct ParseEventTypeError {
+    /// 无法解析的事件类型字符串
+    pub input: String,
+}
+
+impl std::fmt::Display for ParseEventTypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Unknown event type: {}", self.input)
+    }
+}
+
+impl std::error::Error for ParseEventTypeError {}
+
 impl FromStr for EventType {
-    type Err = String;
+    type Err = ParseEventTypeError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_uppercase().as_str() {
@@ -184,7 +199,9 @@ impl FromStr for EventType {
             "MOVED_TO" => Ok(EventType::MovedTo),
             "MOVE_SELF" => Ok(EventType::MoveSelf),
             "FS_ERROR" => Ok(EventType::FsError),
-            _ => Err(format!("Unknown event type: {}", s)),
+            _ => Err(ParseEventTypeError {
+                input: s.to_string(),
+            }),
         }
     }
 }
@@ -235,6 +252,20 @@ pub struct FileEvent {
     #[serde(default)]
     pub tgid: u32,
     pub chain: String,
+}
+
+impl std::fmt::Display for FileEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} {} {} (pid={}, user={})",
+            self.time.format("%Y-%m-%d %H:%M:%S"),
+            self.event_type,
+            self.path.display(),
+            self.pid,
+            self.user
+        )
+    }
 }
 
 impl FileEvent {
