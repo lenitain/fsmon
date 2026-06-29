@@ -126,6 +126,7 @@ impl MonitorConfig {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for MonitorConfig {
     fn default() -> Self {
         Self {

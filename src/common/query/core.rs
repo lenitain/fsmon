@@ -110,7 +110,7 @@ impl Query {
         let mut since = None;
         for f in &self.time_filters {
             if f.is_lower_bound() {
-                let candidate = f.time;
+                let candidate = f.time();
                 if since.is_none_or(|s| candidate > s) {
                     since = Some(candidate);
                 }
@@ -124,7 +124,7 @@ impl Query {
         let mut until = None;
         for f in &self.time_filters {
             if f.is_upper_bound() {
-                let candidate = f.time;
+                let candidate = f.time();
                 if until.is_none_or(|u| candidate < u) {
                     until = Some(candidate);
                 }

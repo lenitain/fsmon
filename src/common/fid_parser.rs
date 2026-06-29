@@ -190,7 +190,7 @@ pub fn read_fid_events_cached(
 
     // ---- Phase 0.5: strip " (deleted)" from Phase 0 resolved paths ----
     for ev in events.iter_mut() {
-        ev.path = strip_deleted_suffix(&ev.path);
+        ev.set_path(strip_deleted_suffix(ev.path()));
     }
 
     // ---- Phase 1: seed local handle_map from resolved events ----
@@ -199,25 +199,25 @@ pub fn read_fid_events_cached(
     let mut handle_map: std::collections::HashMap<Vec<u8>, PathBuf> =
         std::collections::HashMap::new();
     for ev in events.iter() {
-        if ev.path.as_os_str().is_empty() {
+        if ev.path().as_os_str().is_empty() {
             continue;
         }
         // self_handle → full path of the object itself
-        if let Some(ref key) = ev.self_handle {
+        if let Some(key) = ev.self_handle() {
             handle_map
-                .entry(key.clone())
-                .or_insert_with(|| ev.path.clone());
+                .entry(key.to_vec())
+                .or_insert_with(|| ev.path().to_path_buf());
         }
         // dfid_name_handle → parent directory path
-        if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
+        if let (Some(key), Some(filename)) = (ev.dfid_name_handle(), ev.dfid_name_filename()) {
             let parent = if filename.is_empty() {
-                ev.path.clone()
-            } else if let Some(p) = ev.path.parent() {
+                ev.path().to_path_buf()
+            } else if let Some(p) = ev.path().parent() {
                 p.to_path_buf()
             } else {
                 continue;
             };
-            handle_map.entry(key.clone()).or_insert(parent);
+            handle_map.entry(key.to_vec()).or_insert(parent);
         }
     }
 
@@ -233,12 +233,12 @@ pub fn read_fid_events_cached(
         let mut made_progress = false;
 
         for ev in events.iter_mut() {
-            if !ev.path.as_os_str().is_empty() {
+            if !ev.path().as_os_str().is_empty() {
                 continue;
             }
 
             // Try dfid_name_handle → parent directory path
-            if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
+            if let (Some(key), Some(filename)) = (ev.dfid_name_handle(), ev.dfid_name_filename()) {
                 let dir_path = handle_map
                     .get(key)
                     .cloned()
@@ -253,24 +253,24 @@ pub fn read_fid_events_cached(
                     } else {
                         dp.clone()
                     };
-                    ev.path = if filename.is_empty() {
+                    ev.set_path(if filename.is_empty() {
                         parent
                     } else {
                         parent.join(filename)
-                    };
+                    });
                     // Newly resolved → extract its handles for other events
-                    if let Some(ref sk) = ev.self_handle {
+                    if let Some(sk) = ev.self_handle() {
                         handle_map
-                            .entry(sk.clone())
-                            .or_insert_with(|| ev.path.clone());
+                            .entry(sk.to_vec())
+                            .or_insert_with(|| ev.path().to_path_buf());
                     }
                     made_progress = true;
                 }
             }
 
             // Try self_handle (only if dfid_name didn't resolve)
-            if ev.path.as_os_str().is_empty()
-                && let Some(ref key) = ev.self_handle
+            if ev.path().as_os_str().is_empty()
+                && let Some(key) = ev.self_handle()
             {
                 // Check same three-tier chain (add resolve_file_handle as
                 // third tier — same as dfid_name path, but for events
@@ -290,13 +290,13 @@ pub fn read_fid_events_cached(
                         })
                     })
                 {
-                    ev.path = path;
+                    ev.set_path(path);
                     // Newly resolved → seed handle_map so child events can
                     // find this directory via their dfid_name_handle
-                    if let Some(ref sk) = ev.self_handle {
+                    if let Some(sk) = ev.self_handle() {
                         handle_map
-                            .entry(sk.clone())
-                            .or_insert_with(|| ev.path.clone());
+                            .entry(sk.to_vec())
+                            .or_insert_with(|| ev.path().to_path_buf());
                     }
                     made_progress = true;
                 }
@@ -311,20 +311,20 @@ pub fn read_fid_events_cached(
     // ---- Phase 3: update persistent cache (side effect, not used by resolve) ----
     // Write resolved handles back so future read cycles benefit.
     for ev in events.iter() {
-        if ev.path.as_os_str().is_empty() {
+        if ev.path().as_os_str().is_empty() {
             continue;
         }
-        if let Some(ref key) = ev.self_handle {
-            dir_cache.get_with(key.clone(), || ev.path.clone());
+        if let Some(key) = ev.self_handle() {
+            dir_cache.get_with(key.to_vec(), || ev.path().to_path_buf());
         }
-        if let (Some(key), Some(filename)) = (&ev.dfid_name_handle, &ev.dfid_name_filename) {
+        if let (Some(key), Some(filename)) = (ev.dfid_name_handle(), ev.dfid_name_filename()) {
             let parent = if filename.is_empty() {
-                Some(ev.path.clone())
+                Some(ev.path().to_path_buf())
             } else {
-                ev.path.parent().map(|p| p.to_path_buf())
+                ev.path().parent().map(|p| p.to_path_buf())
             };
             if let Some(dp) = parent {
-                dir_cache.get_with(key.clone(), || dp);
+                dir_cache.get_with(key.to_vec(), || dp);
             }
         }
     }

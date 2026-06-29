@@ -129,10 +129,7 @@ mod tests {
         }
 
         let cutoff = Utc::now() - chrono::Duration::days(30);
-        let time_filter = TimeFilter {
-            op: TimeOp::Gt,
-            time: cutoff,
-        };
+        let time_filter = TimeFilter::new(TimeOp::Gt, cutoff,);
         let rt = tokio::runtime::Runtime::new().unwrap();
         let log_dir = log_path.parent().unwrap();
         rt.block_on(clean_logs(
@@ -180,10 +177,7 @@ mod tests {
         let original_content = fs::read_to_string(&log_path).unwrap();
 
         let cutoff = Utc::now() - chrono::Duration::days(30);
-        let time_filter = TimeFilter {
-            op: TimeOp::Gt,
-            time: cutoff,
-        };
+        let time_filter = TimeFilter::new(TimeOp::Gt, cutoff,);
         let rt = tokio::runtime::Runtime::new().unwrap();
         let log_dir = log_path.parent().unwrap();
         rt.block_on(clean_logs(
@@ -206,10 +200,7 @@ mod tests {
         let path = PathBuf::from("/tmp/fsmon_nonexistent_dir_clean_test");
         let rt = tokio::runtime::Runtime::new().unwrap();
         let cutoff = Utc::now() - chrono::Duration::days(30);
-        let time_filter = TimeFilter {
-            op: TimeOp::Gt,
-            time: cutoff,
-        };
+        let time_filter = TimeFilter::new(TimeOp::Gt, cutoff,);
         assert!(
             rt.block_on(clean_logs(&path, "_global", Some(time_filter), None, false))
                 .is_ok()
@@ -249,10 +240,7 @@ mod tests {
             log_dir,
             "_global",
             None,
-            Some(SizeFilter {
-                op: SizeOp::Gt,
-                bytes: 500,
-            }),
+            Some(SizeFilter::new(SizeOp::Gt, 500,)),
             false,
         ))
         .unwrap();
@@ -269,24 +257,15 @@ mod tests {
     fn test_should_trim_gt() {
         assert!(should_trim(
             100,
-            &SizeFilter {
-                op: SizeOp::Gt,
-                bytes: 50
-            }
+            &SizeFilter::new(SizeOp::Gt, 50)
         ));
         assert!(!should_trim(
             50,
-            &SizeFilter {
-                op: SizeOp::Gt,
-                bytes: 50
-            }
+            &SizeFilter::new(SizeOp::Gt, 50)
         ));
         assert!(!should_trim(
             30,
-            &SizeFilter {
-                op: SizeOp::Gt,
-                bytes: 50
-            }
+            &SizeFilter::new(SizeOp::Gt, 50)
         ));
     }
 
@@ -294,24 +273,15 @@ mod tests {
     fn test_should_trim_ge() {
         assert!(should_trim(
             100,
-            &SizeFilter {
-                op: SizeOp::Ge,
-                bytes: 50
-            }
+            &SizeFilter::new(SizeOp::Ge, 50)
         ));
         assert!(should_trim(
             50,
-            &SizeFilter {
-                op: SizeOp::Ge,
-                bytes: 50
-            }
+            &SizeFilter::new(SizeOp::Ge, 50)
         ));
         assert!(!should_trim(
             30,
-            &SizeFilter {
-                op: SizeOp::Ge,
-                bytes: 50
-            }
+            &SizeFilter::new(SizeOp::Ge, 50)
         ));
     }
 
@@ -319,24 +289,15 @@ mod tests {
     fn test_should_trim_lt() {
         assert!(should_trim(
             30,
-            &SizeFilter {
-                op: SizeOp::Lt,
-                bytes: 50
-            }
+            &SizeFilter::new(SizeOp::Lt, 50)
         ));
         assert!(!should_trim(
             50,
-            &SizeFilter {
-                op: SizeOp::Lt,
-                bytes: 50
-            }
+            &SizeFilter::new(SizeOp::Lt, 50)
         ));
         assert!(!should_trim(
             100,
-            &SizeFilter {
-                op: SizeOp::Lt,
-                bytes: 50
-            }
+            &SizeFilter::new(SizeOp::Lt, 50)
         ));
     }
 
@@ -344,24 +305,15 @@ mod tests {
     fn test_should_trim_le() {
         assert!(should_trim(
             30,
-            &SizeFilter {
-                op: SizeOp::Le,
-                bytes: 50
-            }
+            &SizeFilter::new(SizeOp::Le, 50)
         ));
         assert!(should_trim(
             50,
-            &SizeFilter {
-                op: SizeOp::Le,
-                bytes: 50
-            }
+            &SizeFilter::new(SizeOp::Le, 50)
         ));
         assert!(!should_trim(
             100,
-            &SizeFilter {
-                op: SizeOp::Le,
-                bytes: 50
-            }
+            &SizeFilter::new(SizeOp::Le, 50)
         ));
     }
 
@@ -369,24 +321,15 @@ mod tests {
     fn test_should_trim_eq() {
         assert!(should_trim(
             50,
-            &SizeFilter {
-                op: SizeOp::Eq,
-                bytes: 50
-            }
+            &SizeFilter::new(SizeOp::Eq, 50)
         ));
         assert!(!should_trim(
             100,
-            &SizeFilter {
-                op: SizeOp::Eq,
-                bytes: 50
-            }
+            &SizeFilter::new(SizeOp::Eq, 50)
         ));
         assert!(!should_trim(
             30,
-            &SizeFilter {
-                op: SizeOp::Eq,
-                bytes: 50
-            }
+            &SizeFilter::new(SizeOp::Eq, 50)
         ));
     }
 
@@ -420,10 +363,7 @@ mod tests {
             log_dir,
             "_global",
             None,
-            Some(SizeFilter {
-                op: SizeOp::Eq,
-                bytes: 0,
-            }),
+            Some(SizeFilter::new(SizeOp::Eq, 0,)),
             false,
         ))
         .unwrap();
@@ -462,10 +402,7 @@ mod tests {
             log_dir,
             "_global",
             None,
-            Some(SizeFilter {
-                op: SizeOp::Gt,
-                bytes: 0,
-            }),
+            Some(SizeFilter::new(SizeOp::Gt, 0,)),
             false,
         ))
         .unwrap();
@@ -503,10 +440,7 @@ mod tests {
         }
         let log_dir = log_path.parent().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let size_filter = SizeFilter {
-            op: SizeOp::Lt,
-            bytes: 100000,
-        };
+        let size_filter = SizeFilter::new(SizeOp::Lt, 100000,);
         rt.block_on(clean_logs(
             log_dir,
             "_global",
@@ -575,10 +509,7 @@ mod tests {
             writeln!(f, "{}", new_event.to_jsonl_string()).unwrap();
         }
         let cutoff = now - chrono::Duration::days(7);
-        let tf = TimeFilter {
-            op: TimeOp::Ge,
-            time: cutoff,
-        };
+        let tf = TimeFilter::new(TimeOp::Ge, cutoff,);
         let log_dir = log_path.parent().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(clean_logs(log_dir, "_global", Some(tf), None, false))
@@ -625,10 +556,7 @@ mod tests {
             writeln!(f, "{}", new_event.to_jsonl_string()).unwrap();
         }
         let cutoff = now - chrono::Duration::days(7);
-        let tf = TimeFilter {
-            op: TimeOp::Le,
-            time: cutoff,
-        };
+        let tf = TimeFilter::new(TimeOp::Le, cutoff,);
         let log_dir = log_path.parent().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(clean_logs(log_dir, "_global", Some(tf), None, false))
@@ -700,10 +628,7 @@ mod tests {
             writeln!(f, "keep").unwrap();
         }
         let cutoff = Utc::now();
-        let tf = TimeFilter {
-            op: TimeOp::Gt,
-            time: cutoff,
-        };
+        let tf = TimeFilter::new(TimeOp::Gt, cutoff,);
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(clean_logs(&dir, "_global", Some(tf), None, false))
             .unwrap();
@@ -753,14 +678,8 @@ mod tests {
                 writeln!(f, "{}", ev.to_jsonl_string()).unwrap();
             }
         }
-        let tf = TimeFilter {
-            op: TimeOp::Gt,
-            time: now - chrono::Duration::days(7),
-        };
-        let sf = SizeFilter {
-            op: SizeOp::Gt,
-            bytes: 2000,
-        };
+        let tf = TimeFilter::new(TimeOp::Gt, now - chrono::Duration::days(7),);
+        let sf = SizeFilter::new(SizeOp::Gt, 2000,);
         let original_size = fs::metadata(&log_path).unwrap().len();
         let log_dir = log_path.parent().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();

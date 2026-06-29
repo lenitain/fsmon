@@ -21,15 +21,15 @@ pub async fn cmd_clean(args: CleanArgs) -> Result<()> {
     let time_filter: TimeFilter = if let Some(ref t) = args.time {
         parse_time_filter(t)?
     } else if let Some(days) = cfg.logging.keep_days {
-        TimeFilter {
-            op: TimeOp::Gt,
-            time: Utc::now() - chrono::Duration::days(days as i64),
-        }
+        TimeFilter::new(
+            TimeOp::Gt,
+            Utc::now() - chrono::Duration::days(days as i64),
+        )
     } else {
-        TimeFilter {
-            op: TimeOp::Gt,
-            time: Utc::now() - chrono::Duration::days(DEFAULT_KEEP_DAYS as i64),
-        }
+        TimeFilter::new(
+            TimeOp::Gt,
+            Utc::now() - chrono::Duration::days(DEFAULT_KEEP_DAYS as i64),
+        )
     };
 
     let max_size_filter: Option<SizeFilter> = args

@@ -10,8 +10,8 @@ use crate::common::{SizeFilter, SizeOp, TimeFilter, parse_log_line_jsonl};
 
 /// Check if `kept_bytes` exceeds the limit per the filter's operator.
 pub fn should_trim(kept_bytes: usize, filter: &SizeFilter) -> bool {
-    let max = filter.bytes as usize;
-    match filter.op {
+    let max = filter.bytes() as usize;
+    match filter.op() {
         SizeOp::Gt => kept_bytes > max,
         SizeOp::Ge => kept_bytes >= max,
         SizeOp::Lt => kept_bytes < max,
@@ -86,7 +86,7 @@ pub async fn clean_single_log(
 
     let size_deleted = if let Some(ref filter) = max_size {
         if should_trim(kept_bytes, filter) {
-            let max = filter.bytes as usize;
+            let max = filter.bytes() as usize;
             let trim_start = find_tail_offset(&temp_file, max)?;
             let dropped = count_lines(&temp_file, trim_start)?;
             truncate_from_start(&temp_file, trim_start)?;
@@ -133,7 +133,7 @@ pub async fn clean_single_log(
         chown_to_original_user(log_file);
         println!("Cleaning {}...", log_file.display());
         let time_desc = time_filter.as_ref().map_or("all time".to_string(), |f| {
-            format!("{} {}", f.op, utils::format_datetime(&f.time))
+            format!("{} {}", f.op(), utils::format_datetime(&f.time()))
         });
         println!(
             "Deleted {} entries (time filter: {})",

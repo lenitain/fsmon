@@ -44,42 +44,42 @@ fn parse_size_invalid_returns_err() {
 #[test]
 fn size_filter_gt() {
     let f = parse_size_filter(">1MB").unwrap();
-    assert_eq!(f.op, SizeOp::Gt);
-    assert_eq!(f.bytes, 1024 * 1024);
+    assert_eq!(f.op(), SizeOp::Gt);
+    assert_eq!(f.bytes(), 1024 * 1024);
 }
 
 #[test]
 fn size_filter_ge() {
     let f = parse_size_filter(">=1GB").unwrap();
-    assert_eq!(f.op, SizeOp::Ge);
-    assert_eq!(f.bytes, 1024 * 1024 * 1024);
+    assert_eq!(f.op(), SizeOp::Ge);
+    assert_eq!(f.bytes(), 1024 * 1024 * 1024);
 }
 
 #[test]
 fn size_filter_lt() {
     let f = parse_size_filter("<500KB").unwrap();
-    assert_eq!(f.op, SizeOp::Lt);
-    assert_eq!(f.bytes, 500 * 1024);
+    assert_eq!(f.op(), SizeOp::Lt);
+    assert_eq!(f.bytes(), 500 * 1024);
 }
 
 #[test]
 fn size_filter_le() {
     let f = parse_size_filter("<=100MB").unwrap();
-    assert_eq!(f.op, SizeOp::Le);
-    assert_eq!(f.bytes, 100 * 1024 * 1024);
+    assert_eq!(f.op(), SizeOp::Le);
+    assert_eq!(f.bytes(), 100 * 1024 * 1024);
 }
 
 #[test]
 fn size_filter_eq() {
     let f = parse_size_filter("=0").unwrap();
-    assert_eq!(f.op, SizeOp::Eq);
-    assert_eq!(f.bytes, 0);
+    assert_eq!(f.op(), SizeOp::Eq);
+    assert_eq!(f.bytes(), 0);
 }
 
 #[test]
 fn size_filter_case_insensitive_units() {
     let f = parse_size_filter(">1mb").unwrap();
-    assert_eq!(f.bytes, 1024 * 1024);
+    assert_eq!(f.bytes(), 1024 * 1024);
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn size_filter_invalid_returns_err() {
 #[test]
 fn time_filter_relative_hours() {
     let f = parse_time_filter(">1h").unwrap();
-    assert!(matches!(f.op, TimeOp::Gt));
+    assert!(matches!(f.op(), TimeOp::Gt));
     // Relative filter should compute a cutoff before now
 }
 
@@ -106,7 +106,7 @@ fn time_filter_relative_minutes() {
 #[test]
 fn time_filter_absolute_date_only() {
     let f = parse_time_filter("<2026-05-01").unwrap();
-    assert!(matches!(f.op, TimeOp::Lt));
+    assert!(matches!(f.op(), TimeOp::Lt));
 }
 
 #[test]

@@ -132,10 +132,7 @@ fn test_should_output_type_filter_match() {
 fn test_should_output_size_filter() {
     let m = make_monitor(
         vec!["/tmp"],
-        Some(SizeFilter {
-            op: SizeOp::Ge,
-            bytes: 1000,
-        }),
+        Some(SizeFilter::new(SizeOp::Ge, 1000,)),
         None,
         false,
     );
@@ -147,10 +144,7 @@ fn test_should_output_size_filter() {
 fn test_should_output_combined_filters() {
     let m = make_monitor(
         vec!["/tmp"],
-        Some(SizeFilter {
-            op: SizeOp::Ge,
-            bytes: 100,
-        }),
+        Some(SizeFilter::new(SizeOp::Ge, 100,)),
         Some(vec![EventType::Create]),
         false,
     );
@@ -318,14 +312,7 @@ fn test_delete_self_canonical_root_is_recorded() {
     m.canonical_paths = vec![std::path::PathBuf::from("/tmp/fsmon_test_delete_self")];
 
     // Synthetic DELETE_SELF FidEvent matching the canonical root
-    let event = FidEvent {
-        mask: fanotify_fid::consts::FAN_DELETE_SELF,
-        pid: 1234,
-        path: std::path::PathBuf::from("/tmp/fsmon_test_delete_self"),
-        dfid_name_handle: None,
-        dfid_name_filename: None,
-        self_handle: None,
-    };
+    let event = FidEvent::new(fanotify_fid::consts::FAN_DELETE_SELF, 1234, std::path::PathBuf::from("/tmp/fsmon_test_delete_self"), None, None, None,);
 
     let pending = m.process_event_batch(&[event]);
 
