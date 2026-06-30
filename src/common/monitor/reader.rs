@@ -2,6 +2,7 @@ use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::{debug_log, error_log, info_log, warning_log};
 use tokio::io::unix::AsyncFd;
 
 use crate::common::fid_parser::read_fid_events_cached;
@@ -66,14 +67,14 @@ impl Monitor {
         let tx = match self.event_tx.as_ref() {
             Some(t) => t.clone(),
             None => {
-                eprintln!("[ERROR] Cannot spawn reader: event_tx not initialized");
+                error_log!("Cannot spawn reader: event_tx not initialized");
                 return;
             }
         };
         let dc = match &self.fanotify.shared_dir_cache {
             Some(d) => d.clone(),
             None => {
-                eprintln!("[ERROR] Cannot spawn reader: shared_dir_cache not initialized");
+                error_log!("Cannot spawn reader: shared_dir_cache not initialized");
                 return;
             }
         };
@@ -86,8 +87,8 @@ impl Monitor {
         let owned_fan_fd = match Self::dup_fd(&group.fan_fd) {
             Ok(fd) => fd,
             Err(e) => {
-                eprintln!(
-                    "[ERROR] Failed to dup fanotify fd {}: {}",
+                error_log!(
+                    "Failed to dup fanotify fd {}: {}",
                     group.fan_fd.as_raw_fd(),
                     e
                 );
@@ -97,8 +98,8 @@ impl Monitor {
         let owned_mount_fd = match Self::dup_fd(&group.mount_fd) {
             Ok(fd) => fd,
             Err(e) => {
-                eprintln!(
-                    "[ERROR] Failed to dup mount fd {}: {}",
+                error_log!(
+                    "Failed to dup mount fd {}: {}",
                     group.mount_fd.as_raw_fd(),
                     e
                 );
@@ -110,28 +111,32 @@ impl Monitor {
         let mfds = Arc::new(vec![owned_mount_fd]);
 
         if debug {
-            eprintln!(
-                "[DEBUG] spawning reader for group {:?} (fd {})",
-                group_key, raw_fd
+            debug_log!(
+                debug,
+                "spawning reader for group {:?} (fd {})",
+                group_key,
+                raw_fd
             );
         }
 
         tokio::spawn(async move {
             if debug {
-                eprintln!(
-                    "[DEBUG] reader task spawned for group {:?} (fd {})",
-                    group_key, raw_fd
+                debug_log!(
+                    debug,
+                    "reader task spawned for group {:?} (fd {})",
+                    group_key,
+                    raw_fd
                 );
             }
             let afd = match AsyncFd::new(owned_fan_fd) {
                 Ok(a) => {
                     if debug {
-                        eprintln!("[DEBUG] reader {} AsyncFd created, entering loop", raw_fd);
+                        debug_log!(debug, "reader {} AsyncFd created, entering loop", raw_fd);
                     }
                     a
                 }
                 Err(e) => {
-                    eprintln!("[ERROR] AsyncFd for fd {}: {}", raw_fd, e);
+                    error_log!("AsyncFd for fd {}: {}", raw_fd, e);
                     let _ = death_tx.send(group_key);
                     return;
                 }
@@ -142,17 +147,13 @@ impl Monitor {
                 let mut guard = match result {
                     Ok(g) => g,
                     Err(e) => {
-                        eprintln!("[ERROR] fd {} readable: {}", raw_fd, e);
+                        error_log!("fd {} readable: {}", raw_fd, e);
                         break;
                     }
                 };
                 let events = read_fid_events_cached(afd.get_ref(), &mfds, &dc, &mut buf);
                 if debug {
-                    eprintln!(
-                        "[DEBUG] fd {} reader: got {} event(s)",
-                        raw_fd,
-                        events.len()
-                    );
+                    debug_log!(debug, "fd {} reader: got {} event(s)", raw_fd, events.len());
                 }
                 if !events.is_empty() {
                     let send_err = match &tx {
@@ -167,19 +168,21 @@ impl Monitor {
                     // are still queued (e.g. DELETE → DELETE_SELF batch).
                     guard.retain_ready();
                     if debug {
-                        eprintln!("[DEBUG] fd {} reader: retain_ready, looping", raw_fd);
+                        debug_log!(debug, "fd {} reader: retain_ready, looping", raw_fd);
                     }
                 } else {
                     if debug {
-                        eprintln!("[DEBUG] fd {} reader: empty read, clear_ready", raw_fd);
+                        debug_log!(debug, "fd {} reader: empty read, clear_ready", raw_fd);
                     }
                     guard.clear_ready();
                 }
             }
             if debug {
-                eprintln!(
-                    "[DEBUG] Reader task for group {:?} (fd {}) exited",
-                    group_key, raw_fd
+                debug_log!(
+                    debug,
+                    "Reader task for group {:?} (fd {}) exited",
+                    group_key,
+                    raw_fd
                 );
             }
             let _ = death_tx.send(group_key);
@@ -217,9 +220,8 @@ impl Monitor {
         if let Some(s) = state {
             let in_window = now.duration_since(s.last_restart) < BACKOFF_WINDOW;
             if in_window && s.restart_count >= MAX_RESTARTS {
-                eprintln!(
-                    "[ERROR] Reader task for group {:?} has crashed {} times in \
-                     the last {}s — giving up. fsmon daemon restart required.",
+                error_log!(
+                    "Reader task for group {:?} has crashed {} times in the last {}s — giving up. fsmon daemon restart required.",
                     group_key,
                     MAX_RESTARTS,
                     BACKOFF_WINDOW.as_secs(),
@@ -235,17 +237,18 @@ impl Monitor {
 
         // Verify the FsGroup still exists (may have been removed during shutdown)
         if !self.fanotify.groups.contains_key(group_key) {
-            eprintln!(
-                "[WARNING] Cannot restart reader for group {:?}: group no longer exists",
+            warning_log!(
+                "Cannot restart reader for group {:?}: group no longer exists",
                 group_key
             );
             return;
         }
 
         let dev_id = self.fanotify.groups[group_key].dev_id;
-        eprintln!(
-            "[INFO] Restarting reader task for group {:?} (dev_id={})...",
-            group_key, dev_id
+        info_log!(
+            "Restarting reader task for group {:?} (dev_id={})...",
+            group_key,
+            dev_id
         );
         self.spawn_fd_reader(group_key);
     }

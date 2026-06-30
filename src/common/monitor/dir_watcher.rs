@@ -6,6 +6,7 @@ use crate::common::fid_parser::{
 };
 use crate::common::filters::PathOptions;
 use crate::common::monitored::PathEntry;
+use crate::{debug_log, info_log};
 
 use super::Monitor;
 
@@ -309,8 +310,8 @@ impl Monitor {
                 let entry = self.inotify_state.pending_paths.remove(i);
                 match self.add_path(&entry.1) {
                     Ok(()) => {
-                        eprintln!(
-                            "[INFO] Path '{}' now exists — monitoring started.",
+                        info_log!(
+                            "Path '{}' now exists — monitoring started.",
                             entry.0.display()
                         );
                     }

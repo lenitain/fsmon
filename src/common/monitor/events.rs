@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::debug_log;
 use chrono::Utc;
 use fanotify_fid::consts::FAN_Q_OVERFLOW;
 use fanotify_fid::types::FidEvent;

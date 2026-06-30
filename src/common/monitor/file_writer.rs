@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use crate::common::FileEvent;
 use crate::common::metrics::MetricsRegistry;
+use crate::{debug_log, warning_log};
 
 /// Maximum number of open file handles to keep cached.
 const MAX_OPEN_HANDLES: usize = 64;
@@ -90,11 +91,11 @@ impl FileLogWriter {
                         Ok((event, cmd_name)) => {
                             if let Err(e) = self.write_event(&event, &cmd_name)
                                 && self.debug {
-                                    eprintln!("[DEBUG] FileLogWriter write error: {}", e);
+                                    debug_log!(self.debug, "FileLogWriter write error: {}", e);
                                 }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                            eprintln!("[WARNING] FileLogWriter dropped {} events (disk too slow)", n);
+                            warning_log!("FileLogWriter dropped {} events (disk too slow)", n);
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                             break;
@@ -214,7 +215,7 @@ impl FileLogWriter {
     fn flush_all(&mut self) {
         for (path, writer) in &mut self.handles {
             if let Err(e) = writer.flush() {
-                eprintln!("[WARNING] flush failed for '{}': {}", path.display(), e);
+                warning_log!("flush failed for '{}': {}", path.display(), e);
             }
         }
     }
@@ -250,9 +251,9 @@ impl FileLogWriter {
                 };
                 if nlink == 0 {
                     if self.debug {
-                        eprintln!(
-                            "[DEBUG] Log file '{}' was deleted externally, \
-                             dropping stale handle (next write will recreate)",
+                        debug_log!(
+                            self.debug,
+                            "Log file '{}' was deleted externally, dropping stale handle (next write will recreate)",
                             path.display()
                         );
                     }
@@ -262,28 +263,24 @@ impl FileLogWriter {
 
                 // Flush BufWriter's user-space buffer to OS
                 if let Err(e) = writer.flush() {
-                    eprintln!("[WARNING] flush failed for '{}': {}", path.display(), e);
+                    warning_log!("flush failed for '{}': {}", path.display(), e);
                     continue;
                 }
                 // Then sync OS buffer to disk
                 if let Err(e) = writer.get_ref().sync_data() {
-                    eprintln!("[WARNING] fdatasync failed for '{}': {}", path.display(), e);
+                    warning_log!("fdatasync failed for '{}': {}", path.display(), e);
                 }
             } else {
                 // Fallback: open for sync (handle was evicted)
                 match File::options().write(true).open(path) {
                     Ok(file) => {
                         if let Err(e) = file.sync_data() {
-                            eprintln!("[WARNING] fdatasync failed for '{}': {}", path.display(), e);
+                            warning_log!("fdatasync failed for '{}': {}", path.display(), e);
                         }
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                     Err(e) => {
-                        eprintln!(
-                            "[WARNING] Could not open '{}' for sync: {}",
-                            path.display(),
-                            e
-                        );
+                        warning_log!("Could not open '{}' for sync: {}", path.display(), e);
                     }
                 }
             }
@@ -346,8 +343,8 @@ fn fchown_to_user(file: &File) {
         // EPERM / EOPNOTSUPP / ENOSYS are expected on vfat/exfat/NFS — skip warning.
         let errno = err.raw_os_error().unwrap_or(0);
         if errno != libc::EPERM && errno != libc::EOPNOTSUPP && errno != libc::ENOSYS {
-            eprintln!(
-                "[WARNING] fchown failed for log file (fd {}): {}",
+            warning_log!(
+                "fchown failed for log file (fd {}): {}",
                 file.as_raw_fd(),
                 err
             );

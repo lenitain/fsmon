@@ -20,19 +20,12 @@ use crate::common::metrics::MetricsRegistry;
 use crate::common::monitored::PathEntry;
 use crate::common::proc_cache::{self, DefaultStore as ProcessStore};
 use crate::common::watchdog::Watchdog;
+use crate::debug_log;
 use serde_json;
 use slotmap::SlotMap;
 
 /// Key type for FsGroup SlotMap lookups.
 pub(crate) type FsGroupKey = slotmap::DefaultKey;
-
-// ---- Debug logging macro ----
-// Avoids format!() allocation when debug is disabled.
-macro_rules! debug_log {
-    ($debug:expr, $($arg:tt)*) => {
-        if $debug { eprintln!("[DEBUG] {}", format!($($arg)*)); }
-    };
-}
 
 // ---- Submodules ----
 
@@ -378,22 +371,24 @@ impl Monitor {
             watchdog: Some(Watchdog::new(cfg.watchdog_interval)),
         };
         if debug {
-            eprintln!(
-                "[DEBUG] Monitor initialized with {} path entries:",
+            debug_log!(
+                debug,
+                "Monitor initialized with {} path entries:",
                 paths_and_options_len
             );
             for (i, (p, o)) in cfg.paths_and_options.iter().enumerate() {
                 let label = o.cmd.as_deref().unwrap_or("global");
-                eprintln!(
-                    "[DEBUG]   [{}] {} cmd={} recursive={}",
+                debug_log!(
+                    debug,
+                    "  [{}] {} cmd={} recursive={}",
                     i,
                     p.display(),
                     label,
                     o.recursive
                 );
             }
-            eprintln!("[DEBUG] log_dir: {:?}", monitor.log_dir);
-            eprintln!("[DEBUG] buffer_size: {}", buffer_size);
+            debug_log!(debug, "log_dir: {:?}", monitor.log_dir);
+            debug_log!(debug, "buffer_size: {}", buffer_size);
         }
         Ok(monitor)
     }

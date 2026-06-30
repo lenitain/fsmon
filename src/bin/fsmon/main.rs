@@ -8,7 +8,7 @@ mod commands;
 
 const STYLES: styling::Styles = styling::Styles::styled()
     .header(styling::AnsiColor::Yellow.on_default())
-    .usage(styling::AnsiColor::Green.on_default())
+    .usage(styling::AnsiColor::Yellow.on_default())
     .literal(styling::AnsiColor::Green.on_default())
     .placeholder(styling::AnsiColor::Green.on_default());
 
@@ -17,7 +17,9 @@ const STYLES: styling::Styles = styling::Styles::styled()
 #[command(author = "fsmon contributors")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = help::about(HelpTopic::Root))]
+#[command(long_about = help::long_about(HelpTopic::Root))]
 #[command(styles = STYLES)]
+#[command(color = clap::ColorChoice::Always)]
 #[command(disable_version_flag = true)]
 struct Cli {
     /// Print version
@@ -186,7 +188,7 @@ pub enum Commands {
 
     /// Query daemon health status from the running daemon
     #[command(visible_alias = "h")]
-    #[command(about = "Query daemon health status")]
+    #[command(about = help::about(HelpTopic::Health), long_about = help::long_about(HelpTopic::Health))]
     Health,
 
     /// List monitored paths (one per line, for shell completion use)
