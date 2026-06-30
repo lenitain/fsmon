@@ -110,23 +110,17 @@ impl Monitor {
         let mfds = Arc::new(vec![owned_mount_fd]);
 
         if debug {
-            eprintln!(
-                "[DEBUG] spawning reader for group {:?} (fd {})",
-                group_key, raw_fd
-            );
+            debug_log!(debug, "spawning reader for group {:?} (fd {})", group_key, raw_fd);
         }
 
         tokio::spawn(async move {
             if debug {
-                eprintln!(
-                    "[DEBUG] reader task spawned for group {:?} (fd {})",
-                    group_key, raw_fd
-                );
+                debug_log!(debug, "reader task spawned for group {:?} (fd {})", group_key, raw_fd);
             }
             let afd = match AsyncFd::new(owned_fan_fd) {
                 Ok(a) => {
                     if debug {
-                        eprintln!("[DEBUG] reader {} AsyncFd created, entering loop", raw_fd);
+                        debug_log!(debug, "reader {} AsyncFd created, entering loop", raw_fd);
                     }
                     a
                 }
@@ -148,11 +142,7 @@ impl Monitor {
                 };
                 let events = read_fid_events_cached(afd.get_ref(), &mfds, &dc, &mut buf);
                 if debug {
-                    eprintln!(
-                        "[DEBUG] fd {} reader: got {} event(s)",
-                        raw_fd,
-                        events.len()
-                    );
+                    debug_log!(debug, "fd {} reader: got {} event(s)", raw_fd, events.len());
                 }
                 if !events.is_empty() {
                     let send_err = match &tx {
@@ -167,20 +157,17 @@ impl Monitor {
                     // are still queued (e.g. DELETE → DELETE_SELF batch).
                     guard.retain_ready();
                     if debug {
-                        eprintln!("[DEBUG] fd {} reader: retain_ready, looping", raw_fd);
+                        debug_log!(debug, "fd {} reader: retain_ready, looping", raw_fd);
                     }
                 } else {
                     if debug {
-                        eprintln!("[DEBUG] fd {} reader: empty read, clear_ready", raw_fd);
+                        debug_log!(debug, "fd {} reader: empty read, clear_ready", raw_fd);
                     }
                     guard.clear_ready();
                 }
             }
             if debug {
-                eprintln!(
-                    "[DEBUG] Reader task for group {:?} (fd {}) exited",
-                    group_key, raw_fd
-                );
+                debug_log!(debug, "Reader task for group {:?} (fd {}) exited", group_key, raw_fd);
             }
             let _ = death_tx.send(group_key);
         });

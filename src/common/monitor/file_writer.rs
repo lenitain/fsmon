@@ -90,7 +90,7 @@ impl FileLogWriter {
                         Ok((event, cmd_name)) => {
                             if let Err(e) = self.write_event(&event, &cmd_name)
                                 && self.debug {
-                                    eprintln!("[DEBUG] FileLogWriter write error: {}", e);
+                                    debug_log!(self.debug, "FileLogWriter write error: {}", e);
                                 }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -250,11 +250,7 @@ impl FileLogWriter {
                 };
                 if nlink == 0 {
                     if self.debug {
-                        eprintln!(
-                            "[DEBUG] Log file '{}' was deleted externally, \
-                             dropping stale handle (next write will recreate)",
-                            path.display()
-                        );
+                        debug_log!(self.debug, "Log file '{}' was deleted externally, dropping stale handle (next write will recreate)", path.display());
                     }
                     self.handles.remove(path);
                     continue;
