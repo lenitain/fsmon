@@ -19,23 +19,32 @@ Unlike standard file monitoring tools that only report which file changed, **fsm
 ## Usage
 
 ```
-Usage: fsmon [OPTIONS] <COMMAND>
+Note: If installed via 'cargo install', copy to system path for sudo compatibility:
+  sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
+
+Config:  ~/.config/fsmon/fsmon.toml (created by 'fsmon init')
+Monitor: ~/.local/share/fsmon/monitored.jsonl
+Logs:    ~/.local/state/fsmon/
+Socket:  /run/user/<UID>/fsmon/daemon.sock
+
+Usage: fsmon <COMMAND>
 
 Commands:
-  daemon, d       Start the fsmon daemon
-  add, a          Add a path to the monitoring list
-  remove, r       Remove paths from the monitoring list
-  monitored, m    List monitored paths
-  query, q        Query historical events
-  clean, cl       Clean log files
-  changes, ch     Show most recent event per path
-  init, i         Create config file
-  cd              Open subshell in directory
-  health, h       Query daemon health status
+  daemon     Run the fsmon daemon (requires sudo for fanotify) [aliases: d]
+  add        Add a path to the monitoring list [aliases: a]
+  remove     Remove one or more paths from the monitoring list [aliases: r]
+  monitored  List all monitored paths with their configuration [aliases: m]
+  query      Query historical file change events from log files [aliases: q]
+  clean      Clean historical log files, retain by time or size [aliases: cl]
+  changes    Show the most recent event per path (deduplicated changes) [aliases: ch]
+  init       Create the config file (directories created on first use) [aliases: i]
+  cd         Open a subshell in the monitored path or log directory
+  health     Query daemon health status [aliases: h]
+  help       Print this message or the help of the given subcommand(s)
 
 Options:
-  -h, --help      Print help
-  -V, --version   Print version
+  -v, --version  Print version
+  -h, --help     Print help
 ```
 
 ### Quick start
