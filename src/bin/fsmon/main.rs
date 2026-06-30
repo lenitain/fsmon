@@ -19,6 +19,7 @@ const STYLES: styling::Styles = styling::Styles::styled()
 #[command(about = help::about(HelpTopic::Root))]
 #[command(after_help = help::after_help())]
 #[command(styles = STYLES)]
+#[command(color = clap::ColorChoice::Always)]
 #[command(disable_version_flag = true)]
 struct Cli {
     /// Print version
