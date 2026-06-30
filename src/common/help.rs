@@ -138,15 +138,4 @@ Requires the daemon to be running."
     }
 }
 
-/// Get help text displayed after command help.
-pub const fn after_help() -> &'static str {
-    r#"Use 'fsmon <COMMAND> --help' for detailed help
 
-[33mNote:[0m If installed via 'cargo install', copy to system path for sudo compatibility:
-  [32msudo cp ~/.cargo/bin/fsmon /usr/local/bin/[0m
-
-Config:  ~/.config/fsmon/fsmon.toml (created by 'fsmon init')
-Monitor: ~/.local/share/fsmon/monitored.jsonl
-Logs:    ~/.local/state/fsmon/
-Socket:  /run/user/<UID>/fsmon/daemon.sock"#
-}
