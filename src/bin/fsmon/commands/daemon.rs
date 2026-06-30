@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use fsmon::common::DaemonLock;
+use fsmon::common::color::{YELLOW, RESET};
 use fsmon::common::config::{CacheConfig, CliCacheOverride, Config};
 use fsmon::common::monitor::Monitor;
 use fsmon::common::monitored::Monitored;
@@ -108,18 +109,18 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
         });
 
     if debug {
-        eprintln!("[DEBUG] --- cache configuration ---");
-        eprintln!("[DEBUG]   dir_capacity:       {}", cache_cfg.dir_capacity);
-        eprintln!("[DEBUG]   dir_ttl_secs:       {}", cache_cfg.dir_ttl_secs);
+        eprintln!("{}[DEBUG]{} --- cache configuration ---", YELLOW, RESET);
+        eprintln!("{}[DEBUG]{}   dir_capacity:       {}", YELLOW, RESET, cache_cfg.dir_capacity);
+        eprintln!("{}[DEBUG]{}   dir_ttl_secs:       {}", YELLOW, RESET, cache_cfg.dir_ttl_secs);
         eprintln!(
-            "[DEBUG]   file_size_capacity: {}",
-            cache_cfg.file_size_capacity
+            "{}[DEBUG]{}   file_size_capacity: {}",
+            YELLOW, RESET, cache_cfg.file_size_capacity
         );
-        eprintln!("[DEBUG]   proc_ttl_secs:      {}", cache_cfg.proc_ttl_secs);
-        eprintln!("[DEBUG]   buffer_size:        {}", cache_cfg.buffer_size);
+        eprintln!("{}[DEBUG]{}   proc_ttl_secs:      {}", YELLOW, RESET, cache_cfg.proc_ttl_secs);
+        eprintln!("{}[DEBUG]{}   buffer_size:        {}", YELLOW, RESET, cache_cfg.buffer_size);
         match cache_cfg.channel_capacity {
-            Some(cap) => eprintln!("[DEBUG]   channel_capacity:   {} (bounded)", cap),
-            None => eprintln!("[DEBUG]   channel_capacity:   unbounded"),
+            Some(cap) => eprintln!("{}[DEBUG]{}   channel_capacity:   {} (bounded)", YELLOW, RESET, cap),
+            None => eprintln!("{}[DEBUG]{}   channel_capacity:   unbounded", YELLOW, RESET),
         }
     }
 
@@ -153,13 +154,13 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
 
     if debug {
         if let Some(i) = watchdog_interval {
-            eprintln!("[DEBUG]   watchdog_interval:  {}s", i);
-            eprintln!("[DEBUG]   watchdog_multiplier: {}x", watchdog_multiplier);
+            eprintln!("{}[DEBUG]{}   watchdog_interval:  {}s", YELLOW, RESET, i);
+            eprintln!("{}[DEBUG]{}   watchdog_multiplier: {}x", YELLOW, RESET, watchdog_multiplier);
             if let Some(s) = watchdog_sec {
-                eprintln!("[DEBUG]   watchdog_sec:       {}s", s);
+                eprintln!("{}[DEBUG]{}   watchdog_sec:       {}s", YELLOW, RESET, s);
             }
         } else {
-            eprintln!("[DEBUG]   watchdog:           disabled");
+            eprintln!("{}[DEBUG]{}   watchdog:           disabled", YELLOW, RESET);
         }
     }
 
@@ -168,7 +169,8 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
     let log_dir = log_path;
     if debug {
         eprintln!(
-            "[DEBUG]   local logging:      {}",
+            "{}[DEBUG]{}   local logging:      {}",
+            YELLOW, RESET,
             if log_dir.is_some() {
                 "enabled"
             } else {

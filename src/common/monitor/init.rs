@@ -57,10 +57,7 @@ impl Monitor {
                 self.canonical_paths.push(canonical);
                 keep_paths.push(path);
             } else {
-                eprintln!(
-                    "[INFO] Path '{}' does not exist yet — will start monitoring when created.",
-                    path.display()
-                );
+                info_log!("Path '{}' does not exist yet — will start monitoring when created.", path.display());
                 let pending_opts: Vec<PathOptions> = self
                     .monitored_entries
                     .iter()
@@ -129,11 +126,7 @@ impl Monitor {
                         e
                     );
                 } else {
-                    eprintln!(
-                        "[INFO] Added {} (inode mark) on existing fd {}",
-                        canonical.display(),
-                        fan_fd.as_raw_fd()
-                    );
+                    info_log!("Added {} (inode mark) on existing fd {}", canonical.display(), fan_fd.as_raw_fd());
                     let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
                     if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
                         let max_depth = opts.and_then(|o| o.max_depth);

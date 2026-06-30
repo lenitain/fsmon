@@ -100,10 +100,7 @@ impl Monitor {
                 .iter()
                 .any(|(p, e)| p == &path && e.cmd == entry.cmd);
             if !already_pending {
-                eprintln!(
-                    "[INFO] Path '{}' does not exist yet — will start monitoring when created.",
-                    path.display()
-                );
+                info_log!("Path '{}' does not exist yet — will start monitoring when created.", path.display());
                 self.inotify_state
                     .pending_paths
                     .push((path.clone(), entry.clone()));
@@ -176,11 +173,7 @@ impl Monitor {
                 }
             }
             self.fanotify.groups[key].ref_count += 1;
-            eprintln!(
-                "[INFO] Monitoring {} on existing fd {}",
-                canonical.display(),
-                self.fanotify.groups[key].fan_fd.as_raw_fd()
-            );
+            info_log!("Monitoring {} on existing fd {}", canonical.display(), self.fanotify.groups[key].fan_fd.as_raw_fd());
             key
         } else {
             let new_fd = fanotify_init(
@@ -268,11 +261,7 @@ impl Monitor {
         };
         match mark_directory_at(new_fd, &dir_fd, path_mask) {
             Ok(()) => {
-                eprintln!(
-                    "[INFO] Monitoring {} (inode mark) on fd {}",
-                    canonical.display(),
-                    new_fd.as_raw_fd()
-                );
+                info_log!("Monitoring {} (inode mark) on fd {}", canonical.display(), new_fd.as_raw_fd());
                 if recursive && canonical.is_dir() {
                     let _ = mark_recursive_with_depth(new_fd, path_mask, canonical, max_depth);
                 }
@@ -441,11 +430,7 @@ impl Monitor {
         };
 
         if !below {
-            eprintln!(
-                "[INFO] Disk space OK on '{}': {} free",
-                log_dir.display(),
-                crate::common::utils::format_size(free as i64),
-            );
+            info_log!("Disk space OK on '{}': {} free", log_dir.display(), crate::common::utils::format_size(free as i64));
         }
     }
 

@@ -1,5 +1,6 @@
 pub mod clean;
 pub mod cli;
+pub mod color;
 pub mod config;
 pub mod dir_cache;
 pub mod fid_parser;

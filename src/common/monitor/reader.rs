@@ -243,10 +243,7 @@ impl Monitor {
         }
 
         let dev_id = self.fanotify.groups[group_key].dev_id;
-        eprintln!(
-            "[INFO] Restarting reader task for group {:?} (dev_id={})...",
-            group_key, dev_id
-        );
+        info_log!("Restarting reader task for group {:?} (dev_id={})...", group_key, dev_id);
         self.spawn_fd_reader(group_key);
     }
 }

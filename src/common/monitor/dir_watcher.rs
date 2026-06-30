@@ -309,10 +309,7 @@ impl Monitor {
                 let entry = self.inotify_state.pending_paths.remove(i);
                 match self.add_path(&entry.1) {
                     Ok(()) => {
-                        eprintln!(
-                            "[INFO] Path '{}' now exists — monitoring started.",
-                            entry.0.display()
-                        );
+                        info_log!("Path '{}' now exists — monitoring started.", entry.0.display());
                     }
                     Err(e) => {
                         eprintln!(
