@@ -1,12 +1,12 @@
 use std::path::{Path, PathBuf};
 
-use crate::{debug_log, info_log};
 use crate::common::dir_cache;
 use crate::common::fid_parser::{
     mark_directory_at, mark_recursive_with_depth, open_dir_safe, path_mask_from_options,
 };
 use crate::common::filters::PathOptions;
 use crate::common::monitored::PathEntry;
+use crate::{debug_log, info_log};
 
 use super::Monitor;
 
@@ -310,7 +310,10 @@ impl Monitor {
                 let entry = self.inotify_state.pending_paths.remove(i);
                 match self.add_path(&entry.1) {
                     Ok(()) => {
-                        info_log!("Path '{}' now exists — monitoring started.", entry.0.display());
+                        info_log!(
+                            "Path '{}' now exists — monitoring started.",
+                            entry.0.display()
+                        );
                     }
                     Err(e) => {
                         eprintln!(

@@ -5,9 +5,9 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::{debug_log, warning_log};
 use crate::common::FileEvent;
 use crate::common::metrics::MetricsRegistry;
+use crate::{debug_log, warning_log};
 
 /// Maximum number of open file handles to keep cached.
 const MAX_OPEN_HANDLES: usize = 64;
@@ -251,7 +251,11 @@ impl FileLogWriter {
                 };
                 if nlink == 0 {
                     if self.debug {
-                        debug_log!(self.debug, "Log file '{}' was deleted externally, dropping stale handle (next write will recreate)", path.display());
+                        debug_log!(
+                            self.debug,
+                            "Log file '{}' was deleted externally, dropping stale handle (next write will recreate)",
+                            path.display()
+                        );
                     }
                     self.handles.remove(path);
                     continue;
@@ -339,7 +343,11 @@ fn fchown_to_user(file: &File) {
         // EPERM / EOPNOTSUPP / ENOSYS are expected on vfat/exfat/NFS — skip warning.
         let errno = err.raw_os_error().unwrap_or(0);
         if errno != libc::EPERM && errno != libc::EOPNOTSUPP && errno != libc::ENOSYS {
-            warning_log!("fchown failed for log file (fd {}): {}", file.as_raw_fd(), err);
+            warning_log!(
+                "fchown failed for log file (fd {}): {}",
+                file.as_raw_fd(),
+                err
+            );
         }
     }
 }

@@ -12,7 +12,6 @@ use tokio::signal::unix::{SignalKind, signal};
 
 use moka::sync::Cache;
 
-use crate::debug_log;
 use crate::common::FileEvent;
 use crate::common::config::ResolvedCacheConfig;
 use crate::common::fid_parser::FsGroup;
@@ -21,6 +20,7 @@ use crate::common::metrics::MetricsRegistry;
 use crate::common::monitored::PathEntry;
 use crate::common::proc_cache::{self, DefaultStore as ProcessStore};
 use crate::common::watchdog::Watchdog;
+use crate::debug_log;
 use serde_json;
 use slotmap::SlotMap;
 
@@ -371,10 +371,21 @@ impl Monitor {
             watchdog: Some(Watchdog::new(cfg.watchdog_interval)),
         };
         if debug {
-            debug_log!(debug, "Monitor initialized with {} path entries:", paths_and_options_len);
+            debug_log!(
+                debug,
+                "Monitor initialized with {} path entries:",
+                paths_and_options_len
+            );
             for (i, (p, o)) in cfg.paths_and_options.iter().enumerate() {
                 let label = o.cmd.as_deref().unwrap_or("global");
-                debug_log!(debug, "  [{}] {} cmd={} recursive={}", i, p.display(), label, o.recursive);
+                debug_log!(
+                    debug,
+                    "  [{}] {} cmd={} recursive={}",
+                    i,
+                    p.display(),
+                    label,
+                    o.recursive
+                );
             }
             debug_log!(debug, "log_dir: {:?}", monitor.log_dir);
             debug_log!(debug, "buffer_size: {}", buffer_size);

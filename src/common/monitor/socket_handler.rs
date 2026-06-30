@@ -2,12 +2,12 @@ use anyhow::Context;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 
-use crate::debug_log;
 use crate::common::metrics::MetricsRegistry;
 use crate::common::monitored::{Monitored, PathEntry};
 use crate::common::socket::{SocketCmd, SocketError, SocketResponse};
 use crate::common::utils::format_size;
 use crate::common::{EventType, FileEvent};
+use crate::debug_log;
 use serde_json;
 
 use super::Monitor;

@@ -124,7 +124,10 @@ pub async fn clean_single_log(
             }
             Err(e) => {
                 // Rename failed: restore backup
-                eprintln!("\x1b[33m[WARNING]\x1b[0m Rename failed, restoring backup: {}", e);
+                eprintln!(
+                    "\x1b[33m[WARNING]\x1b[0m Rename failed, restoring backup: {}",
+                    e
+                );
                 let _ = fs::rename(&backup_file, log_file);
                 let _ = fs::remove_file(&temp_file);
                 return Err(e.into());

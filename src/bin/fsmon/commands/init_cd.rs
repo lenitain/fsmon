@@ -133,7 +133,10 @@ fn install_service() -> Result<()> {
         .context("Failed to run systemctl daemon-reload")?;
 
     if !reload_status.success() {
-        warning_log!("systemctl daemon-reload exited with status: {}", reload_status);
+        warning_log!(
+            "systemctl daemon-reload exited with status: {}",
+            reload_status
+        );
     }
 
     eprintln!();

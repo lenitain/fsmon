@@ -101,7 +101,10 @@ impl Monitor {
                 .iter()
                 .any(|(p, e)| p == &path && e.cmd == entry.cmd);
             if !already_pending {
-                info_log!("Path '{}' does not exist yet — will start monitoring when created.", path.display());
+                info_log!(
+                    "Path '{}' does not exist yet — will start monitoring when created.",
+                    path.display()
+                );
                 self.inotify_state
                     .pending_paths
                     .push((path.clone(), entry.clone()));
@@ -150,7 +153,12 @@ impl Monitor {
             match open_dir_safe(&canonical) {
                 Ok(dir_fd) => {
                     if let Err(e) = mark_directory_at(fan_fd, &dir_fd, path_mask) {
-                        warning_log!("Cannot inode-mark {} on fd {}: {:#}", canonical.display(), fan_fd.as_raw_fd(), e);
+                        warning_log!(
+                            "Cannot inode-mark {} on fd {}: {:#}",
+                            canonical.display(),
+                            fan_fd.as_raw_fd(),
+                            e
+                        );
                     } else if opts.recursive && canonical.is_dir() {
                         let _ = mark_recursive_with_depth(
                             fan_fd,
@@ -165,7 +173,11 @@ impl Monitor {
                 }
             }
             self.fanotify.groups[key].ref_count += 1;
-            info_log!("Monitoring {} on existing fd {}", canonical.display(), self.fanotify.groups[key].fan_fd.as_raw_fd());
+            info_log!(
+                "Monitoring {} on existing fd {}",
+                canonical.display(),
+                self.fanotify.groups[key].fan_fd.as_raw_fd()
+            );
             key
         } else {
             let new_fd = fanotify_init(
@@ -249,14 +261,22 @@ impl Monitor {
         };
         match mark_directory_at(new_fd, &dir_fd, path_mask) {
             Ok(()) => {
-                info_log!("Monitoring {} (inode mark) on fd {}", canonical.display(), new_fd.as_raw_fd());
+                info_log!(
+                    "Monitoring {} (inode mark) on fd {}",
+                    canonical.display(),
+                    new_fd.as_raw_fd()
+                );
                 if recursive && canonical.is_dir() {
                     let _ = mark_recursive_with_depth(new_fd, path_mask, canonical, max_depth);
                 }
                 Some(())
             }
             Err(e) => {
-                warning_log!("Cannot monitor {} (inode mark): {:#}", canonical.display(), e);
+                warning_log!(
+                    "Cannot monitor {} (inode mark): {:#}",
+                    canonical.display(),
+                    e
+                );
                 None
             }
         }
@@ -382,9 +402,11 @@ impl Monitor {
                 if free_pct < min_pct {
                     warning_log!(
                         "Low disk space on '{}': {:.1}% free ({}/{}), threshold is {}%",
-                        log_dir.display(), free_pct,
+                        log_dir.display(),
+                        free_pct,
                         crate::common::utils::format_size(free as i64),
-                        crate::common::utils::format_size(total as i64), min_pct,
+                        crate::common::utils::format_size(total as i64),
+                        min_pct,
                     );
                     true
                 } else {
@@ -407,7 +429,11 @@ impl Monitor {
         };
 
         if !below {
-            info_log!("Disk space OK on '{}': {} free", log_dir.display(), crate::common::utils::format_size(free as i64));
+            info_log!(
+                "Disk space OK on '{}': {} free",
+                log_dir.display(),
+                crate::common::utils::format_size(free as i64)
+            );
         }
     }
 
