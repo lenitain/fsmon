@@ -7,6 +7,24 @@ pub const GREEN: &str = "\x1b[32m";
 /// Reset color to default
 pub const RESET: &str = "\x1b[0m";
 
+// ---- Const macros for use in const fn ----
+
+/// Wrap text with yellow color (for use in const context)
+#[macro_export]
+macro_rules! yellow {
+    ($text:expr) => {
+        concat!("\x1b[33m", $text, "\x1b[0m")
+    };
+}
+
+/// Wrap text with green color (for use in const context)
+#[macro_export]
+macro_rules! green {
+    ($text:expr) => {
+        concat!("\x1b[32m", $text, "\x1b[0m")
+    };
+}
+
 /// Helper macro for colored debug output
 #[macro_export]
 macro_rules! debug_log_color {

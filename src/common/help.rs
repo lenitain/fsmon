@@ -1,3 +1,5 @@
+use crate::{green, yellow};
+
 /// Help topic for fsmon commands.
 pub enum HelpTopic {
     Root,
@@ -36,9 +38,10 @@ pub const fn about(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::Root => {
             concat!(
-                "\x1b[33m", "Note:", "\x1b[0m",
+                yellow!("Note:"),
                 " If installed via 'cargo install', copy to system path for sudo compatibility:\n",
-                "  ", "\x1b[32m", "sudo cp ~/.cargo/bin/fsmon /usr/local/bin/", "\x1b[0m",
+                "  ",
+                green!("sudo cp ~/.cargo/bin/fsmon /usr/local/bin/"),
                 "\n\nConfig:  ~/.config/fsmon/fsmon.toml (created by 'fsmon init')",
                 "\nMonitor: ~/.local/share/fsmon/monitored.jsonl",
                 "\nLogs:    ~/.local/state/fsmon/",
@@ -62,7 +65,53 @@ pub const fn about(topic: HelpTopic) -> &'static str {
 pub const fn long_about(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::Root => {
-            "Lightweight high-performance file change tracking tool.\n\n\x1b[33mSetup (no sudo needed):\x1b[0m\n  \x1b[32mfsmon init\x1b[0m                        Create config file\n  \x1b[32msudo fsmon init --service\x1b[0m         Also install systemd service\n  \x1b[32mfsmon cd -l\x1b[0m                       Open subshell in log directory\n  \x1b[32mfsmon cd -m\x1b[0m                       Open subshell in monitored store directory\n  \x1b[32mfsmon cd -c\x1b[0m                       Open subshell in config directory\n\n\x1b[33mDaemon (requires sudo):\x1b[0m\n  \x1b[32msudo fsmon daemon &\x1b[0m               Start daemon in background\n  \x1b[32msudo systemctl start fsmon\x1b[0m        Start via systemd\n  \x1b[32mjournalctl -u fsmon -f\x1b[0m           View daemon logs\n  \x1b[32mkill %1\x1b[0m                           Stop daemon (or Ctrl+C)\n\n\x1b[33mManagement (no sudo needed):\x1b[0m\n  \x1b[32mfsmon add <cmd> --path /home -r\x1b[0m   Track cmd on /home (recursive)\n  \x1b[32mfsmon add _global --path /home\x1b[0m   Monitor /home (all processes)\n  \x1b[32mfsmon remove <cmd>\x1b[0m                Remove cmd group\n  \x1b[32mfsmon monitored\x1b[0m                   List monitored paths\n\n\x1b[33mQuery (stdout JSONL, pipe to jq):\x1b[0m\n  \x1b[32mfsmon query <cmd> -t '>1h'\x1b[0m       Events from last hour\n  \x1b[32mfsmon query <cmd> | jq '.'\x1b[0m       Pretty print events\n\n\x1b[33mClean (config defaults: keep_days=30, size>=1GB):\x1b[0m\n  \x1b[32mfsmon clean <cmd>\x1b[0m                 Clean cmd log\n  \x1b[32mfsmon clean <cmd> -t '>7d'\x1b[0m      Keep last 7 days"
+            concat!(
+                "Lightweight high-performance file change tracking tool.\n\n",
+                yellow!("Setup (no sudo needed):"),
+                "\n  ",
+                green!("fsmon init"),
+                "                        Create config file\n  ",
+                green!("sudo fsmon init --service"),
+                "         Also install systemd service\n  ",
+                green!("fsmon cd -l"),
+                "                       Open subshell in log directory\n  ",
+                green!("fsmon cd -m"),
+                "                       Open subshell in monitored store directory\n  ",
+                green!("fsmon cd -c"),
+                "                       Open subshell in config directory\n\n",
+                yellow!("Daemon (requires sudo):"),
+                "\n  ",
+                green!("sudo fsmon daemon &"),
+                "               Start daemon in background\n  ",
+                green!("sudo systemctl start fsmon"),
+                "        Start via systemd\n  ",
+                green!("journalctl -u fsmon -f"),
+                "           View daemon logs\n  ",
+                green!("kill %1"),
+                "                           Stop daemon (or Ctrl+C)\n\n",
+                yellow!("Management (no sudo needed):"),
+                "\n  ",
+                green!("fsmon add <cmd> --path /home -r"),
+                "   Track cmd on /home (recursive)\n  ",
+                green!("fsmon add _global --path /home"),
+                "   Monitor /home (all processes)\n  ",
+                green!("fsmon remove <cmd>"),
+                "                Remove cmd group\n  ",
+                green!("fsmon monitored"),
+                "                   List monitored paths\n\n",
+                yellow!("Query (stdout JSONL, pipe to jq):"),
+                "\n  ",
+                green!("fsmon query <cmd> -t '>1h'"),
+                "       Events from last hour\n  ",
+                green!("fsmon query <cmd> | jq '.'"),
+                "       Pretty print events\n\n",
+                yellow!("Clean (config defaults: keep_days=30, size>=1GB):"),
+                "\n  ",
+                green!("fsmon clean <cmd>"),
+                "                 Clean cmd log\n  ",
+                green!("fsmon clean <cmd> -t '>7d'"),
+                "      Keep last 7 days"
+            )
         }
         HelpTopic::Daemon => {
             "Monitors all configured paths via fanotify and logs events.\nUse 'fsmon add'/'fsmon remove' to manage paths dynamically without restarting.\n\nExamples:\n  sudo fsmon daemon &                     Start daemon in background\n  sudo fsmon daemon --debug               Enable debug output\n\nFor systemd integration:\n  sudo fsmon init --service             Install systemd service\n  sudo systemctl start fsmon            Start via systemd\n  journalctl -u fsmon -f               View daemon logs\n\nConfig: ~/.config/fsmon/fsmon.toml\nLogs:   ~/.local/state/fsmon/"
