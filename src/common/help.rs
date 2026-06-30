@@ -125,6 +125,9 @@ only the latest event for each unique path is shown, sorted by time descending."
 pub const fn after_help() -> &'static str {
     r#"Use 'fsmon <COMMAND> --help' for detailed help
 
+Note: If installed via 'cargo install', copy to system path for sudo compatibility:
+  sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
+
 Setup (no sudo needed):
   fsmon init                        Create config file (directories created on first use)
   sudo fsmon init --service         Also install systemd service (auto-start on crash)

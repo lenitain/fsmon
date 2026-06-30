@@ -25,24 +25,7 @@ impl Monitor {
     /// Root privilege check. Bails if not root.
     pub(crate) fn check_root(&self) -> Result<()> {
         if nix::unistd::geteuid().as_raw() != 0 {
-            let hint = if let Ok(exe) = std::env::current_exe() {
-                if exe.to_string_lossy().contains(".cargo/bin") {
-                    "\n\nHint: It looks like fsmon was installed via cargo install (~/.cargo/bin).\n\
-                    sudo cannot find it because ~/.cargo/bin is not in sudo's secure_path.\n\
-                    Please either:\n\
-                      1. Copy to system path: sudo cp ~/.cargo/bin/fsmon /usr/local/bin/\n\
-                      2. Or use full path: sudo ~/.cargo/bin/fsmon monitor ..."
-                } else {
-                    ""
-                }
-            } else {
-                ""
-            };
-
-            bail!(
-                "fanotify requires root privileges, please run with sudo{}",
-                hint
-            );
+            bail!("fanotify requires root privileges, please run with sudo");
         }
         Ok(())
     }
