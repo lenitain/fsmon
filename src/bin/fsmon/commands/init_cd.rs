@@ -2,6 +2,8 @@ use anyhow::{Context, Result, ensure};
 use std::path::{Path, PathBuf};
 use std::process;
 
+use fsmon::warning_log;
+
 /// 目标目录类型，用于 `fsmon cd` 命令
 #[derive(Debug, Clone, Copy)]
 pub enum CdTarget {
@@ -131,10 +133,7 @@ fn install_service() -> Result<()> {
         .context("Failed to run systemctl daemon-reload")?;
 
     if !reload_status.success() {
-        eprintln!(
-            "[WARNING] systemctl daemon-reload exited with status: {}",
-            reload_status
-        );
+        warning_log!("systemctl daemon-reload exited with status: {}", reload_status);
     }
 
     eprintln!();

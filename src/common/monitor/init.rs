@@ -1,6 +1,7 @@
 // Initialization methods extracted from Monitor::run() for readability.
 
 use super::FsGroupKey;
+use crate::{debug_log, info_log};
 use anyhow::{Context, Result, bail};
 use fanotify_fid::consts::{
     FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_NONBLOCK, FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,

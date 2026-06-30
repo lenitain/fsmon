@@ -1,6 +1,7 @@
 use std::os::fd::AsRawFd;
 use std::path::Path;
 
+use crate::debug_log;
 use fanotify_fid::prelude::*;
 
 use crate::common::fid_parser::{

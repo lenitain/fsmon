@@ -2,6 +2,7 @@ use anyhow::{Context, bail};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 
+use crate::{debug_log, info_log, warning_log};
 use fanotify_fid::consts::{
     AT_FDCWD, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE, FAN_NONBLOCK,
     FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
@@ -149,12 +150,7 @@ impl Monitor {
             match open_dir_safe(&canonical) {
                 Ok(dir_fd) => {
                     if let Err(e) = mark_directory_at(fan_fd, &dir_fd, path_mask) {
-                        eprintln!(
-                            "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
-                            canonical.display(),
-                            fan_fd.as_raw_fd(),
-                            e
-                        );
+                        warning_log!("Cannot inode-mark {} on fd {}: {:#}", canonical.display(), fan_fd.as_raw_fd(), e);
                     } else if opts.recursive && canonical.is_dir() {
                         let _ = mark_recursive_with_depth(
                             fan_fd,
@@ -165,11 +161,7 @@ impl Monitor {
                     }
                 }
                 Err(e) => {
-                    eprintln!(
-                        "[WARNING] Cannot open {} for marking: {:#}",
-                        canonical.display(),
-                        e
-                    );
+                    warning_log!("Cannot open {} for marking: {:#}", canonical.display(), e);
                 }
             }
             self.fanotify.groups[key].ref_count += 1;
@@ -251,11 +243,7 @@ impl Monitor {
         let dir_fd = match open_dir_safe(canonical) {
             Ok(fd) => fd,
             Err(e) => {
-                eprintln!(
-                    "[WARNING] Cannot open {} for marking: {:#}",
-                    canonical.display(),
-                    e
-                );
+                warning_log!("Cannot open {} for marking: {:#}", canonical.display(), e);
                 return None;
             }
         };
@@ -268,11 +256,7 @@ impl Monitor {
                 Some(())
             }
             Err(e) => {
-                eprintln!(
-                    "[WARNING] Cannot monitor {} (inode mark): {:#}",
-                    canonical.display(),
-                    e
-                );
+                warning_log!("Cannot monitor {} (inode mark): {:#}", canonical.display(), e);
                 None
             }
         }
@@ -379,11 +363,7 @@ impl Monitor {
         let stat = match nix::sys::statvfs::statvfs(log_dir) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!(
-                    "[WARNING] Cannot stat filesystem for '{}': {}",
-                    log_dir.display(),
-                    e
-                );
+                warning_log!("Cannot stat filesystem for '{}': {}", log_dir.display(), e);
                 return;
             }
         };
@@ -400,14 +380,11 @@ impl Monitor {
             crate::common::utils::DiskFreeThreshold::Percent(min_pct) => {
                 let free_pct = (free as f64 / total as f64) * 100.0;
                 if free_pct < min_pct {
-                    eprintln!(
-                        "[WARNING] Low disk space on '{}': {:.1}% free ({}/{}), \
-                         threshold is {}%",
-                        log_dir.display(),
-                        free_pct,
+                    warning_log!(
+                        "Low disk space on '{}': {:.1}% free ({}/{}), threshold is {}%",
+                        log_dir.display(), free_pct,
                         crate::common::utils::format_size(free as i64),
-                        crate::common::utils::format_size(total as i64),
-                        min_pct,
+                        crate::common::utils::format_size(total as i64), min_pct,
                     );
                     true
                 } else {
@@ -416,8 +393,8 @@ impl Monitor {
             }
             crate::common::utils::DiskFreeThreshold::Bytes(min_bytes) => {
                 if free < min_bytes {
-                    eprintln!(
-                        "[WARNING] Low disk space on '{}': {} free, threshold is {}",
+                    warning_log!(
+                        "Low disk space on '{}': {} free, threshold is {}",
                         log_dir.display(),
                         crate::common::utils::format_size(free as i64),
                         crate::common::utils::format_size(min_bytes as i64),
