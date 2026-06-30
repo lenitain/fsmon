@@ -128,44 +128,8 @@ pub const fn after_help() -> &'static str {
 Note: If installed via 'cargo install', copy to system path for sudo compatibility:
   sudo cp ~/.cargo/bin/fsmon /usr/local/bin/
 
-Setup (no sudo needed):
-  fsmon init                        Create config file (directories created on first use)
-  sudo fsmon init --service         Also install systemd service (auto-start on crash)
-  fsmon cd -l                       Open subshell in log directory
-  fsmon cd -m                       Open subshell in monitored store directory
-  fsmon cd -c                       Open subshell in config directory
-
-Daemon (requires sudo):
-  sudo fsmon daemon &               Start daemon in background
-  sudo systemctl start fsmon        Start via systemd (if installed)
-  sudo systemctl stop fsmon         Stop via systemd
-  journalctl -u fsmon -f           View daemon logs via systemd
-  kill %1                           Stop daemon (or Ctrl+C)
-
-Management (no sudo needed):
-  fsmon add openclaw --path /home -r   Track openclaw on /home (recursive)
-  fsmon add _global --path /home       Monitor /home (all processes)
-  fsmon remove _global                 Remove entire global cmd group
-  fsmon remove openclaw              Remove entire openclaw cmd group
-  fsmon monitored                   List monitored paths
-
-Query (stdout JSONL, pipe to jq):
-  fsmon query _global -t '>1h'             Events from last hour
-  fsmon query _global | jq 'select(.cmd == "nginx")'  Custom filter
-
-Clean (config defaults: keep_days=30, size=>=1GB):
-  fsmon clean _global               Clean global log (keep >30d)
-  fsmon clean openclaw -t '>7d'    Keep last 7 days of openclaw
-  fsmon clean nginx --dry-run       Preview nginx log cleaning
-
-Config:  ~/.config/fsmon/fsmon.toml (created by fsmon init, defaults apply without modification)
-Monitor: ~/.local/share/fsmon/monitored.jsonl (configurable via [monitored].path)
-Logs:    ~/.local/state/fsmon/*_log.jsonl (configurable via [logging].path)
-Socket:  /run/user/<UID>/fsmon/daemon.sock (hardcoded)
-
-3 data exit points:
-  ① JSONL log files (on by default, configurable via [logging].path)
-  ② Unix socket subscribe — real-time JSONL stream (examples/)
-  ③ Unix socket admin — add/remove/list/health (examples/)
-"#
+Config:  ~/.config/fsmon/fsmon.toml (created by 'fsmon init')
+Monitor: ~/.local/share/fsmon/monitored.jsonl
+Logs:    ~/.local/state/fsmon/
+Socket:  /run/user/<UID>/fsmon/daemon.sock"#
 }
