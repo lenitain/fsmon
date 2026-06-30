@@ -8,7 +8,7 @@ mod commands;
 
 const STYLES: styling::Styles = styling::Styles::styled()
     .header(styling::AnsiColor::Yellow.on_default())
-    .usage(styling::AnsiColor::Green.on_default())
+    .usage(styling::AnsiColor::Yellow.on_default())
     .literal(styling::AnsiColor::Green.on_default())
     .placeholder(styling::AnsiColor::Green.on_default());
 
