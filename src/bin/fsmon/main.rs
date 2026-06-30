@@ -17,6 +17,7 @@ const STYLES: styling::Styles = styling::Styles::styled()
 #[command(author = "fsmon contributors")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = help::about(HelpTopic::Root))]
+#[command(after_help = help::after_help())]
 #[command(styles = STYLES)]
 #[command(disable_version_flag = true)]
 struct Cli {
