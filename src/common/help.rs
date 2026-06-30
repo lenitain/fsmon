@@ -51,7 +51,15 @@ pub const fn about(topic: HelpTopic) -> &'static str {
 /// Get detailed description for a help topic.
 pub const fn long_about(topic: HelpTopic) -> &'static str {
     match topic {
-        HelpTopic::Root => "",
+        HelpTopic::Root => {
+            r#"[33mNote:[0m If installed via 'cargo install', copy to system path for sudo compatibility:
+  [32msudo cp ~/.cargo/bin/fsmon /usr/local/bin/[0m
+
+Config:  ~/.config/fsmon/fsmon.toml (created by 'fsmon init')
+Monitor: ~/.local/share/fsmon/monitored.jsonl
+Logs:    ~/.local/state/fsmon/
+Socket:  /run/user/<UID>/fsmon/daemon.sock"#
+        }
         HelpTopic::Daemon => {
             r"Monitors all configured paths via fanotify and logs events.
 Use 'fsmon add'/'fsmon remove' to manage paths dynamically without restarting.
