@@ -20,10 +20,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `fsmon init --service`: Shows "Try: sudo fsmon init --service"
   - Removed verbose cargo install detection hints from runtime errors
 
+- **Unified color system**: Centralized all ANSI color codes in `color.rs`:
+  - `[DEBUG]`: Yellow
+  - `[INFO]`: Green
+  - `[WARNING]`: Yellow
+  - `[ERROR]`: Red
+  - All log output now uses consistent macros: `debug_log!`, `info_log!`, `warning_log!`, `error_log!`
+  - Help text colors: yellow for headers, green for commands
+
 ### Added
 
 - **Cargo install note**: Added prominent note in `-h` output reminding users to copy binary to `/usr/local/bin` if installed via `cargo install`
 - **Health subcommand help**: Added `HelpTopic::Health` with detailed description for `--help` output
+- **Color module** (`color.rs`): New centralized color management with ANSI codes and macros
 
 ## [0.5.0] - 2026-06-30
 
