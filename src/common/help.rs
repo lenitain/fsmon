@@ -35,7 +35,15 @@ impl std::fmt::Debug for HelpTopic {
 pub const fn about(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::Root => {
-            "\x1b[33mNote:\x1b[0m If installed via 'cargo install', copy to system path for sudo compatibility:\n  \x1b[32msudo cp ~/.cargo/bin/fsmon /usr/local/bin/\x1b[0m\n\nConfig:  ~/.config/fsmon/fsmon.toml (created by 'fsmon init')\nMonitor: ~/.local/share/fsmon/monitored.jsonl\nLogs:    ~/.local/state/fsmon/\nSocket:  /run/user/<UID>/fsmon/daemon.sock"
+            concat!(
+                "\x1b[33m", "Note:", "\x1b[0m",
+                " If installed via 'cargo install', copy to system path for sudo compatibility:\n",
+                "  ", "\x1b[32m", "sudo cp ~/.cargo/bin/fsmon /usr/local/bin/", "\x1b[0m",
+                "\n\nConfig:  ~/.config/fsmon/fsmon.toml (created by 'fsmon init')",
+                "\nMonitor: ~/.local/share/fsmon/monitored.jsonl",
+                "\nLogs:    ~/.local/state/fsmon/",
+                "\nSocket:  /run/user/<UID>/fsmon/daemon.sock"
+            )
         }
         HelpTopic::Daemon => "Run the fsmon daemon (requires sudo for fanotify)",
         HelpTopic::Init => "Create the config file (directories created on first use)",
