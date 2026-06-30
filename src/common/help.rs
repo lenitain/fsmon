@@ -34,7 +34,9 @@ impl std::fmt::Debug for HelpTopic {
 /// Get short description for a help topic.
 pub const fn about(topic: HelpTopic) -> &'static str {
     match topic {
-        HelpTopic::Root => "Lightweight high-performance file change tracking tool",
+        HelpTopic::Root => {
+            "\x1b[33mNote:\x1b[0m If installed via 'cargo install', copy to system path for sudo compatibility:\n  \x1b[32msudo cp ~/.cargo/bin/fsmon /usr/local/bin/\x1b[0m\n\nConfig:  ~/.config/fsmon/fsmon.toml (created by 'fsmon init')\nMonitor: ~/.local/share/fsmon/monitored.jsonl\nLogs:    ~/.local/state/fsmon/\nSocket:  /run/user/<UID>/fsmon/daemon.sock"
+        }
         HelpTopic::Daemon => "Run the fsmon daemon (requires sudo for fanotify)",
         HelpTopic::Init => "Create the config file (directories created on first use)",
         HelpTopic::Cd => "Open a subshell in the monitored path or log directory",
@@ -52,90 +54,37 @@ pub const fn about(topic: HelpTopic) -> &'static str {
 pub const fn long_about(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::Root => {
-            r#"[33mNote:[0m If installed via 'cargo install', copy to system path for sudo compatibility:
-  [32msudo cp ~/.cargo/bin/fsmon /usr/local/bin/[0m
-
-Config:  ~/.config/fsmon/fsmon.toml (created by 'fsmon init')
-Monitor: ~/.local/share/fsmon/monitored.jsonl
-Logs:    ~/.local/state/fsmon/
-Socket:  /run/user/<UID>/fsmon/daemon.sock"#
+            "Lightweight high-performance file change tracking tool.\n\nSetup (no sudo needed):\n  fsmon init                        Create config file\n  sudo fsmon init --service         Also install systemd service\n  fsmon cd -l                       Open subshell in log directory\n  fsmon cd -m                       Open subshell in monitored store directory\n  fsmon cd -c                       Open subshell in config directory\n\nDaemon (requires sudo):\n  sudo fsmon daemon &               Start daemon in background\n  sudo systemctl start fsmon        Start via systemd\n  journalctl -u fsmon -f           View daemon logs\n  kill %1                           Stop daemon (or Ctrl+C)\n\nManagement (no sudo needed):\n  fsmon add <cmd> --path /home -r   Track cmd on /home (recursive)\n  fsmon add _global --path /home   Monitor /home (all processes)\n  fsmon remove <cmd>                Remove cmd group\n  fsmon monitored                   List monitored paths\n\nQuery (stdout JSONL, pipe to jq):\n  fsmon query <cmd> -t '>1h'       Events from last hour\n  fsmon query <cmd> | jq '.'       Pretty print events\n\nClean (config defaults: keep_days=30, size=>=1GB):\n  fsmon clean <cmd>                 Clean cmd log\n  fsmon clean <cmd> -t '>7d'      Keep last 7 days"
         }
         HelpTopic::Daemon => {
-            r"Monitors all configured paths via fanotify and logs events.
-Use 'fsmon add'/'fsmon remove' to manage paths dynamically without restarting.
-
-Examples:
-  sudo fsmon daemon &                     Start daemon in background
-  sudo fsmon daemon --debug               Enable debug output
-
-For systemd integration:
-  sudo fsmon init --service             Install systemd service
-  sudo systemctl start fsmon            Start via systemd
-  journalctl -u fsmon -f               View daemon logs
-
-Config: ~/.config/fsmon/fsmon.toml
-Logs:   ~/.local/state/fsmon/"
+            "Monitors all configured paths via fanotify and logs events.\nUse 'fsmon add'/'fsmon remove' to manage paths dynamically without restarting.\n\nExamples:\n  sudo fsmon daemon &                     Start daemon in background\n  sudo fsmon daemon --debug               Enable debug output\n\nFor systemd integration:\n  sudo fsmon init --service             Install systemd service\n  sudo systemctl start fsmon            Start via systemd\n  journalctl -u fsmon -f               View daemon logs\n\nConfig: ~/.config/fsmon/fsmon.toml\nLogs:   ~/.local/state/fsmon/"
         }
         HelpTopic::Init => {
-            r"Directories are created on first use:
-  - Monitored dir: by 'fsmon add' on first run
-  - Log dir: by 'fsmon daemon' or 'fsmon cd -l' on first run
-
-With --service, also installs a systemd service:
-  sudo fsmon init --service"
+            "Directories are created on first use:\n  - Monitored dir: by 'fsmon add' on first run\n  - Log dir: by 'fsmon daemon' or 'fsmon cd -l' on first run\n\nWith --service, also installs a systemd service:\n  sudo fsmon init --service"
         }
         HelpTopic::Cd => {
-            r"Spawns a new shell (using $SHELL, fallback /bin/sh) in the target directory.
-Type 'exit' to return to the original directory.
-
-Options:
-  -m, --monitored    cd to the monitored store directory
-  -l, --logging      cd to the log directory
-  -c, --config       cd to the config directory (~/.config/fsmon/)
-
-Examples:
-  fsmon cd -l                       Open subshell in log directory
-  fsmon cd -m                       Open subshell in monitored store directory
-  fsmon cd -c                       Open subshell in config directory"
+            "Spawns a new shell (using $SHELL, fallback /bin/sh) in the target directory.\nType 'exit' to return to the original directory.\n\nOptions:\n  -m, --monitored    cd to the monitored store directory\n  -l, --logging      cd to the log directory\n  -c, --config       cd to the config directory (~/.config/fsmon/)\n\nExamples:\n  fsmon cd -l                       Open subshell in log directory\n  fsmon cd -m                       Open subshell in monitored store directory\n  fsmon cd -c                       Open subshell in config directory"
         }
         HelpTopic::Add => {
-            r"The entry is added immediately if the daemon is running, and persisted
-in the monitored paths database for automatic monitoring on daemon restart.
-
-No sudo needed — store is updated immediately.
-
-<CMD> enables process tree tracking: fork/exec children are auto-included.
-Use '_global' to monitor all events on a path (no process tracking)."
+            "The entry is added immediately if the daemon is running, and persisted\nin the monitored paths database for automatic monitoring on daemon restart.\n\nNo sudo needed — store is updated immediately.\n\n<CMD> enables process tree tracking: fork/exec children are auto-included.\nUse '_global' to monitor all events on a path (no process tracking)."
         }
         HelpTopic::Remove => {
-            r"Without --path, removes the entire cmd group.
-With --path, removes only the specified paths. Multiple paths are atomic:
-all must exist, or nothing is removed."
+            "Without --path, removes the entire cmd group.\nWith --path, removes only the specified paths. Multiple paths are atomic:\nall must exist, or nothing is removed."
         }
         HelpTopic::Monitored => {
-            r"Displays each path with its recursive flag, event type filters,
-size threshold, path/cmd exclusion patterns."
+            "Displays each path with its recursive flag, event type filters,\nsize threshold, path/cmd exclusion patterns."
         }
         HelpTopic::Query => {
-            r"Output is JSONL (one JSON object per line), pipe to jq for custom filtering.
-
-Native fsmon query uses binary search and is significantly faster on large logs."
+            "Output is JSONL (one JSON object per line), pipe to jq for custom filtering.\n\nNative fsmon query uses binary search and is significantly faster on large logs."
         }
         HelpTopic::Clean => {
-            r"Defaults: keep_days=30, size=>=1GB (from fsmon.toml or code fallback).
-CLI args override config. Daemon does not auto-clean; use cron/systemd timer."
+            "Defaults: keep_days=30, size=>=1GB (from fsmon.toml or code fallback).\nCLI args override config. Daemon does not auto-clean; use cron/systemd timer."
         }
         HelpTopic::Changes => {
-            r"Same format as 'query', but with duplicate paths collapsed:
-only the latest event for each unique path is shown, sorted by time descending."
+            "Same format as 'query', but with duplicate paths collapsed:\nonly the latest event for each unique path is shown, sorted by time descending."
         }
         HelpTopic::Health => {
-            r"Queries the running daemon's health status via the Unix socket.
-
-Returns daemon uptime, memory usage, and monitored path count.
-Requires the daemon to be running."
+            "Queries the running daemon's health status via the Unix socket.\n\nReturns daemon uptime, memory usage, and monitored path count.\nRequires the daemon to be running."
         }
     }
 }
-
-
