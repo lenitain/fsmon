@@ -123,7 +123,9 @@ only the latest event for each unique path is shown, sorted by time descending."
 
 /// Get help text displayed after command help.
 pub const fn after_help() -> &'static str {
-    r#"[33mNote:[0m If installed via 'cargo install', copy to system path for sudo compatibility:
+    r#"Use 'fsmon <COMMAND> --help' for detailed help
+
+[33mNote:[0m If installed via 'cargo install', copy to system path for sudo compatibility:
   [32msudo cp ~/.cargo/bin/fsmon /usr/local/bin/[0m
 
 Config:  ~/.config/fsmon/fsmon.toml (created by 'fsmon init')
