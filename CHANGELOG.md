@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-06-30
+
+### Changed
+
+- **Improved help system**: Redesigned `-h` and `--help` to show different levels of detail:
+  - `-h`: Shows summary with Note about cargo install, config paths, and command list
+  - `--help`: Shows detailed usage examples for all commands
+  - Added color coding: yellow for section headers (Usage, Commands, Options), green for command examples
+  - All subcommands now follow the same `-h`/`--help` pattern
+
+- **Simplified permission error messages**:
+  - `fsmon daemon`: Now shows simple "fanotify requires root privileges, please run with sudo"
+  - `fsmon init --service`: Shows "Try: sudo fsmon init --service"
+  - Removed verbose cargo install detection hints from runtime errors
+
+### Added
+
+- **Cargo install note**: Added prominent note in `-h` output reminding users to copy binary to `/usr/local/bin` if installed via `cargo install`
+- **Health subcommand help**: Added `HelpTopic::Health` with detailed description for `--help` output
+
 ## [0.5.0] - 2026-06-30
 
 ### Changed
