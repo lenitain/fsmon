@@ -188,7 +188,7 @@ pub enum Commands {
 
     /// Query daemon health status from the running daemon
     #[command(visible_alias = "h")]
-    #[command(about = "Query daemon health status")]
+    #[command(about = help::about(HelpTopic::Health), long_about = help::long_about(HelpTopic::Health))]
     Health,
 
     /// List monitored paths (one per line, for shell completion use)

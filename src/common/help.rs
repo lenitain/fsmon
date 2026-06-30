@@ -10,6 +10,7 @@ pub enum HelpTopic {
     Query,
     Clean,
     Changes,
+    Health,
 }
 
 impl std::fmt::Debug for HelpTopic {
@@ -25,6 +26,7 @@ impl std::fmt::Debug for HelpTopic {
             HelpTopic::Query => write!(f, "Query"),
             HelpTopic::Clean => write!(f, "Clean"),
             HelpTopic::Changes => write!(f, "Changes"),
+            HelpTopic::Health => write!(f, "Health"),
         }
     }
 }
@@ -42,6 +44,7 @@ pub const fn about(topic: HelpTopic) -> &'static str {
         HelpTopic::Query => "Query historical file change events from log files",
         HelpTopic::Clean => "Clean historical log files, retain by time or size",
         HelpTopic::Changes => "Show the most recent event per path (deduplicated changes)",
+        HelpTopic::Health => "Query daemon health status",
     }
 }
 
@@ -117,6 +120,12 @@ CLI args override config. Daemon does not auto-clean; use cron/systemd timer."
         HelpTopic::Changes => {
             r"Same format as 'query', but with duplicate paths collapsed:
 only the latest event for each unique path is shown, sorted by time descending."
+        }
+        HelpTopic::Health => {
+            r"Queries the running daemon's health status via the Unix socket.
+
+Returns daemon uptime, memory usage, and monitored path count.
+Requires the daemon to be running."
         }
     }
 }
