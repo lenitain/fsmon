@@ -3,10 +3,18 @@ use fsmon::common::config::Config;
 use fsmon::common::monitored::{CMD_GLOBAL, Monitored};
 
 /// List all monitored paths with their configuration.
-pub fn cmd_monitored() -> Result<()> {
+/// With `paths_only`, output one path per line (for shell completion use).
+pub fn cmd_monitored(paths_only: bool) -> Result<()> {
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
     let store = Monitored::load(&cfg.monitored.path).unwrap_or_default();
+
+    if paths_only {
+        for entry in store.flatten() {
+            println!("{}", entry.path.display());
+        }
+        return Ok(());
+    }
 
     if store.groups.is_empty() {
         println!("No monitored paths.");
@@ -65,16 +73,5 @@ pub fn cmd_monitored() -> Result<()> {
         println!();
     }
 
-    Ok(())
-}
-
-/// Output all monitored paths (one per line) — used by shell completion scripts.
-pub fn cmd_list_monitored_paths() -> Result<()> {
-    let mut cfg = Config::load()?;
-    cfg.resolve_paths()?;
-    let store = Monitored::load(&cfg.monitored.path).unwrap_or_default();
-    for entry in store.flatten() {
-        println!("{}", entry.path.display());
-    }
     Ok(())
 }

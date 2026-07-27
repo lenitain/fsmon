@@ -19,7 +19,7 @@ pub use clean::cmd_clean;
 pub use daemon::{DaemonOptions, cmd_daemon};
 pub use health::cmd_health;
 pub use init_cd::{cmd_cd, cmd_init};
-pub use monitored::{cmd_list_monitored_paths, cmd_monitored};
+pub use monitored::cmd_monitored;
 pub use query::cmd_query;
 pub use remove::cmd_remove;
 
@@ -64,16 +64,18 @@ pub fn run(command: crate::Commands) -> Result<()> {
         }
         Add(args) => cmd_add(args),
         Remove { cmd, path } => cmd_remove(cmd, path),
-        Monitored => cmd_monitored(),
+        Monitored { paths_only } => cmd_monitored(paths_only),
         Query(args) => cmd_query(args).await_(),
         Changes(args) => cmd_changes(args).await_(),
         Clean(args) => cmd_clean(args).await_(),
-        Init { service } => cmd_init(service),
+        Init {
+            service,
+            completions,
+        } => cmd_init(service, completions),
         Cd {
             monitored, config, ..
         } => cmd_cd(init_cd::CdTarget::from_args(monitored, config)),
         Health => cmd_health(),
-        ListMonitoredPaths => cmd_list_monitored_paths(),
     }
 }
 

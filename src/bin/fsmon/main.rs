@@ -129,7 +129,11 @@ pub enum Commands {
     /// List all monitored paths with their configuration
     #[command(visible_alias = "m")]
     #[command(about = help::about(HelpTopic::Monitored), long_about = help::long_about(HelpTopic::Monitored))]
-    Monitored,
+    Monitored {
+        /// Output paths only (one per line), for shell completion use
+        #[arg(short = 'p', long)]
+        paths_only: bool,
+    },
 
     /// Query historical file change events
     #[command(visible_alias = "q")]
@@ -149,12 +153,17 @@ pub enum Commands {
     /// Create the config file. Directories are created on first use by
     /// other commands (monitored: fsmon add; logs: fsmon daemon / fsmon cd).
     /// With --service, also create a systemd service file.
+    /// With --completions, generate man pages and shell completion scripts.
     #[command(visible_alias = "i")]
     #[command(about = help::about(HelpTopic::Init), long_about = help::long_about(HelpTopic::Init))]
     Init {
         /// Also create a systemd service file at /etc/systemd/system/fsmon.service
-        #[arg(long)]
+        #[arg(short = 's', long)]
         service: bool,
+
+        /// Also generate man pages and shell completion scripts (bash, fish, zsh, nushell)
+        #[arg(short = 'c', long)]
+        completions: bool,
     },
 
     /// Open a subshell in the monitored path, log, or config directory
@@ -190,10 +199,6 @@ pub enum Commands {
     #[command(visible_alias = "h")]
     #[command(about = help::about(HelpTopic::Health), long_about = help::long_about(HelpTopic::Health))]
     Health,
-
-    /// List monitored paths (one per line, for shell completion use)
-    #[command(hide = true)]
-    ListMonitoredPaths,
 }
 
 fn main() -> Result<()> {

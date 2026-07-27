@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-07-27
+
+### Added
+
+- **`init --completions` / `init -c`**: Generate man pages (via `clap_mangen`) and shell completion scripts for bash, fish, zsh (via `clap_complete`) and nushell (via `clap_complete_nushell`) to standard per-shell directories
+- **`monitored --paths-only`**: New flag replacing hidden `list-monitored-paths` subcommand, outputs one path per line for shell completion use
+
+### Changed
+
+- **`about`/`long_about` split**: Shortened `-h` to one-liner per command, moved detailed docs to `--help` only — man page NAME sections are now clean and standard
+- **Duplicate detection**: Man pages and completion scripts now check existence before regenerating, printing `Exists <type>: <path>` (consistent with config and service behavior)
+- **Ownership safety**: Man pages and completion scripts are now `chown_to_original_user` when created via sudo, matching the existing behavior for config files
+
+### Removed
+
+- **Hidden `Completions` subcommand**: Fully replaced by `init -c`
+- **Hidden `ListMonitoredPaths` subcommand**: Replaced by `monitored --paths-only`
+
+### Fixed
+
+- **Output blank lines**: `init -c` and `init -cs` now consistently separate config/service/man-pages/completions sections with blank lines
+- **Man page stale files**: Man pages for removed/hidden subcommands are no longer generated
+
 ## [0.5.1] - 2026-06-30
 
 ### Changed

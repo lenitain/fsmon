@@ -1,8 +1,14 @@
 use anyhow::{Context, Result, ensure};
+use clap::CommandFactory;
+use clap_complete::Shell;
+use clap_complete_nushell::Nushell;
 use std::path::{Path, PathBuf};
 use std::process;
 
+use fsmon::common::config::chown_to_original_user;
 use fsmon::warning_log;
+
+use crate::Cli;
 
 /// 目标目录类型，用于 `fsmon cd` 命令
 #[derive(Debug, Clone, Copy)]
@@ -29,11 +35,61 @@ impl CdTarget {
 }
 
 /// Initialize fsmon configuration and directories.
-pub fn cmd_init(service: bool) -> Result<()> {
+pub fn cmd_init(service: bool, completions: bool) -> Result<()> {
     fsmon::common::config::Config::init_dirs()?;
+    if service || completions {
+        eprintln!();
+    }
     if service {
         install_service()?;
+        if completions {
+            eprintln!();
+        }
     }
+    if completions {
+        generate_man_pages().context("Failed to generate man pages")?;
+        eprintln!();
+        generate_shell_completions().context("Failed to generate shell completions")?;
+    }
+    Ok(())
+}
+
+fn generate_man_pages() -> Result<()> {
+    let home = fsmon::common::config::guess_home();
+    let man_dir = PathBuf::from(format!("{}/.local/share/man/man1", home));
+    std::fs::create_dir_all(&man_dir)
+        .with_context(|| format!("Failed to create {}", man_dir.display()))?;
+    chown_to_original_user(&man_dir);
+
+    let base = man_dir.join("fsmon.1");
+    if base.exists() {
+        eprintln!("Exists man page: {}", base.display());
+        return Ok(());
+    }
+
+    let cmd = Cli::command();
+
+    let man = clap_mangen::Man::new(cmd.clone());
+    let root_path = man
+        .generate_to(&man_dir)
+        .with_context(|| format!("Failed to write man page to {}", man_dir.display()))?;
+    chown_to_original_user(&root_path);
+
+    for sub in cmd.get_subcommands() {
+        let man = clap_mangen::Man::new(sub.clone());
+        let path = man.generate_to(&man_dir)?;
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if !stem.starts_with("fsmon-") {
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("1");
+            let new_path = path.with_file_name(format!("fsmon-{}.{}", stem, ext));
+            std::fs::rename(&path, &new_path)?;
+            chown_to_original_user(&new_path);
+        } else {
+            chown_to_original_user(&path);
+        }
+    }
+
+    eprintln!("Generated man pages in {}", man_dir.display());
     Ok(())
 }
 
@@ -149,6 +205,65 @@ fn install_service() -> Result<()> {
     eprintln!("To view logs:");
     eprintln!("  journalctl -u fsmon -f");
 
+    Ok(())
+}
+
+fn generate_one_completion(dir: &Path, filename: &str, shell: Shell) -> Result<()> {
+    let path = dir.join(filename);
+    if path.exists() {
+        eprintln!("Exists {} completions: {}", shell, path.display());
+        return Ok(());
+    }
+    let mut file = std::fs::File::create(&path)?;
+    clap_complete::generate(shell, &mut Cli::command(), "fsmon", &mut file);
+    chown_to_original_user(&path);
+    eprintln!("Generated {} completions: {}", shell, path.display());
+    Ok(())
+}
+
+fn generate_one_completion_nushell(dir: &Path, filename: &str) -> Result<()> {
+    let path = dir.join(filename);
+    if path.exists() {
+        eprintln!("Exists nushell completions: {}", path.display());
+        return Ok(());
+    }
+    let mut file = std::fs::File::create(&path)?;
+    clap_complete::generate(Nushell, &mut Cli::command(), "fsmon", &mut file);
+    chown_to_original_user(&path);
+    eprintln!("Generated nushell completions: {}", path.display());
+    Ok(())
+}
+
+fn generate_shell_completions() -> Result<()> {
+    let home = fsmon::common::config::guess_home();
+
+    let fish_dir = PathBuf::from(format!("{}/.config/fish/completions", home));
+    std::fs::create_dir_all(&fish_dir)
+        .with_context(|| format!("Failed to create {}", fish_dir.display()))?;
+    chown_to_original_user(&fish_dir);
+    generate_one_completion(&fish_dir, "fsmon.fish", Shell::Fish)?;
+
+    let bash_dir = PathBuf::from(format!("{}/.local/share/bash-completion/completions", home));
+    std::fs::create_dir_all(&bash_dir)
+        .with_context(|| format!("Failed to create {}", bash_dir.display()))?;
+    chown_to_original_user(&bash_dir);
+    generate_one_completion(&bash_dir, "fsmon", Shell::Bash)?;
+
+    let zsh_dir = PathBuf::from(format!("{}/.local/share/zsh/site-functions", home));
+    std::fs::create_dir_all(&zsh_dir)
+        .with_context(|| format!("Failed to create {}", zsh_dir.display()))?;
+    chown_to_original_user(&zsh_dir);
+    generate_one_completion(&zsh_dir, "_fsmon", Shell::Zsh)?;
+
+    let nu_dir = PathBuf::from(format!("{}/.local/share/nushell/completions", home));
+    std::fs::create_dir_all(&nu_dir)
+        .with_context(|| format!("Failed to create {}", nu_dir.display()))?;
+    chown_to_original_user(&nu_dir);
+    generate_one_completion_nushell(&nu_dir, "fsmon.nu")?;
+
+    eprintln!(
+        "Restart your shell or run 'exec fish' / 'exec zsh' / 'exec nu' / 'source ~/.bashrc' to activate."
+    );
     Ok(())
 }
 

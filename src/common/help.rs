@@ -36,19 +36,7 @@ impl std::fmt::Debug for HelpTopic {
 /// Get short description for a help topic.
 pub const fn about(topic: HelpTopic) -> &'static str {
     match topic {
-        HelpTopic::Root => {
-            concat!(
-                "Lightweight high-performance file change tracking tool.\n\n",
-                yellow!("Note:"),
-                " If installed via 'cargo install', copy to system path for sudo compatibility:\n",
-                "  ",
-                green!("sudo cp ~/.cargo/bin/fsmon /usr/local/bin/"),
-                "\n\nConfig:  ~/.config/fsmon/fsmon.toml (created by 'fsmon init')",
-                "\nMonitor: ~/.local/share/fsmon/monitored.jsonl",
-                "\nLogs:    ~/.local/state/fsmon/",
-                "\nSocket:  /run/user/<UID>/fsmon/daemon.sock"
-            )
-        }
+        HelpTopic::Root => "Lightweight high-performance file change tracking tool",
         HelpTopic::Daemon => "Run the fsmon daemon (requires sudo for fanotify)",
         HelpTopic::Init => "Create the config file (directories created on first use)",
         HelpTopic::Cd => "Open a subshell in the monitored path or log directory",
