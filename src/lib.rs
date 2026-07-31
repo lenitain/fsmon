@@ -29,6 +29,9 @@
 //!
 //! # 平台支持
 //!
-//! 目前仅支持 Linux 系统（需要 fanotify 支持）。
+//! **仅支持 Linux。** 在其他平台编译将失败并给出明确的错误信息。
+
+#[cfg(not(target_os = "linux"))]
+compile_error!("fsmon only supports Linux");
 
 pub mod common;

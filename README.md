@@ -16,6 +16,8 @@ Real-time Linux filesystem change monitoring with process attribution.
 
 Unlike standard file monitoring tools that only report which file changed, **fsmon** adds **process attribution** — it identifies which process caused each change. This makes it easier to debug unexpected file modifications in multi-process environments. For system administrators and developers who need to track down the source of filesystem changes, fsmon provides deeper insights that traditional tools cannot offer.
 
+This crate is Linux-only and will fail to compile on other platforms.
+
 ## Usage
 
 ```
