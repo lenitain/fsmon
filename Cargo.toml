@@ -19,6 +19,8 @@ include = [
     "README.md",
     "README.zh-CN.md",
     "src/",
+    "CHANGELOG.md",
+    "tests/",
 ]
 
 [[bin]]
@@ -50,7 +52,7 @@ sizefilter = { path = "../sizefilter" }
 timefilter = { path = "../timefilter" }
 libsystemd = "0.7"
 slotmap = "1.1"
-proc-tree = { path = "../proc-tree" }
+proc-tree = { path = "../proc-tree", default-features = false, features = ["procf"] }
 clap_mangen = "0.3"
 clap_complete_nushell = "4.6"
 
