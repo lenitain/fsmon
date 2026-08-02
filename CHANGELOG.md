@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2026-08-02
+
+### Changed
+
+- **Event-driven process tracking** (proc-tree 0.6 migration): process
+  topology is maintained by the cn_proc event stream (fork/exec/exit)
+  instead of periodic `/proc` snapshots — no polling, no recursive `/proc`
+  scanning. The one-shot `/proc` scan now serves only as the bootstrap
+  baseline, with comm/uid enrichment.
+- **Quantified event-loss detection**: per-CPU message sequences from
+  proc-connector v0.3 drive exact cursors and report the lost sequence
+  range on a jump.
+- **Path resolution delegated to fanotify-fid v0.7**: batch-internal
+  handle propagation, cache tiers and the `open_by_handle_at` fallback are
+  now upstream; fsmon supplies only its bounded moka cache.
+- **`proc_ttl_secs` semantics**: time-based TTL replaced by a bounded
+  tombstone history (65536 generations).
+
+### Fixed
+
+- **comm for live processes**: cn_proc `Comm` enrichment now applies after
+  the event batch, so the spawned process exists in the tracker first.
+- **ppid for event-driven parents**: parent edges attach even when the
+  parent node is provisional (identity pending) — a fork event's
+  parent-child relation is authoritative.
+- PID-reuse verification removed: generation-safe `ProcessKey`s make it
+  unnecessary.
+
+### Notes
+
+- Kernel limitation: cn_proc emits `COMM` events only on
+  `prctl(PR_SET_NAME)`, never on `exec` — short-lived processes have
+  empty `comm`/`cmd` fields (see README "Known Limitations").
+- Dependencies (proc-tree / proc-connector / fanotify-fid / sizefilter /
+  timefilter) are local path dependencies in this release; switch to
+  crates.io versions when publishing.
+
 ## [0.5.2] - 2026-07-27
 
 ### Added

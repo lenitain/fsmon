@@ -12,11 +12,29 @@ Real-time Linux filesystem change monitoring with process attribution.
 
 **fsmon** is a real-time Linux filesystem change monitor powered by fanotify. It watches files and directories, captures every event (create, modify, delete, move, attribute change, etc.), and attributes each change back to the process that caused it — including the PID, command name, user, parent PID, thread group ID, and optional full process ancestry chain.
 
+Process tracking is **event-driven** (proc-tree 0.6): the kernel's cn_proc
+event stream maintains the topology with no polling and no recursive
+`/proc` scanning; per-CPU message sequences quantify lost events. A
+one-shot `/proc` scan serves only as the bootstrap baseline.
+
 ### Why fsmon?
 
 Unlike standard file monitoring tools that only report which file changed, **fsmon** adds **process attribution** — it identifies which process caused each change. This makes it easier to debug unexpected file modifications in multi-process environments. For system administrators and developers who need to track down the source of filesystem changes, fsmon provides deeper insights that traditional tools cannot offer.
 
 This crate is Linux-only and will fail to compile on other platforms.
+
+## Dependencies (local development)
+
+0.5.3 builds against local path dependencies; publish them first when
+releasing:
+
+| crate | local | crates.io target |
+|---|---|---|
+| proc-tree | `../proc-tree` | 0.6 |
+| proc-connector | `../proc-connector` | 0.3 |
+| fanotify-fid | `../fanotify-fid` | 0.7 |
+| sizefilter | `../sizefilter` | 0.2 |
+| timefilter | `../timefilter` | 0.2 |
 
 ## Usage
 
