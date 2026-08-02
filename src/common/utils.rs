@@ -3,9 +3,8 @@ use std::path::Path;
 pub use sizefilter::{SizeFilter, SizeOp, format_size, parse_size, parse_size_filter};
 pub use timefilter::{TimeFilter, TimeOp, format_datetime, parse_time, parse_time_filter};
 
-use crate::common::proc_cache::{DefaultStore as ProcStore, ProcessInfo};
 use chrono::{DateTime, Utc};
-use proc_tree::{ProcessStore, read_proc_start_time_ns};
+use proc_tree::{ProcessTracker, Tgid};
 
 /// Extension trait for TimeFilter to provide matching and classification methods.
 pub trait TimeFilterExt {
@@ -72,67 +71,106 @@ pub fn parse_disk_min_free(s: &str) -> Result<DiskFreeThreshold, String> {
     }
 }
 
-/// Get process info by PID (from fanotify event)
-/// Checks proc connector cache first (for short-lived processes),
-/// then falls back to /proc (for long-lived processes),
-/// then falls back to file owner for USER.
-pub fn get_process_info_by_pid(
-    pid: u32,
-    file_path: &Path,
-    proc_store: Option<&ProcStore>,
-) -> ProcessInfo {
-    // Check proc store first (only source for short-lived processes)
-    if let Some(store) = proc_store
-        && let Some(info) = store.get_process(pid)
-    {
-        // Verify the process hasn't been reincarnated with a reused PID.
-        let cached_start = info.start_time_ns();
-        let current_start = read_proc_start_time_ns(pid);
-        if cached_start == current_start || current_start == 0 {
-            return info.clone();
-        }
-        // PID was reused! Fall through to /proc fallback.
-    }
-
-    // Fallback to reading /proc directly (for long-lived processes)
-    // If the process just exited, /proc/{pid} might still exist briefly
-    // as a zombie before the parent reaps it. Retry with short sleep.
-    if let Some(info) = retry(|| proc_tree::parse_proc_entry(pid)) {
-        return info;
-    }
-    // Last resort: use file owner as user fallback
-    ProcessInfo::new(
-        "unknown".to_string(),
-        "unknown".to_string(),
-        read_file_owner(file_path).unwrap_or_else(|| "unknown".to_string()),
-        0,
-        0,
-        0,
-    )
+/// Resolved process info for a file event (event-driven, RUN-23).
+///
+/// The tracker contributes generation-safe topology (tgid/ppid, comm from
+/// the cn_proc `Comm` events); `/proc` is read on demand for the fields the
+/// event stream cannot carry (cmdline, uid). PID reuse needs no manual
+/// verification — `ProcessKey` generations guarantee the current lookup.
+#[derive(Debug, Clone, Default)]
+pub struct ProcInfo {
+    pub comm: String,
+    pub cmd: String,
+    pub user: String,
+    pub ppid: u32,
+    pub tgid: u32,
 }
 
-/// Retry a fallible operation up to 3 times with 500µs sleep between attempts.
-fn retry<T, F>(mut f: F) -> Option<T>
-where
-    F: FnMut() -> Option<T>,
-{
-    if let Some(val) = f() {
-        return Some(val);
-    }
-    for _ in 0..2 {
-        std::thread::sleep(std::time::Duration::from_micros(500));
-        if let Some(val) = f() {
-            return Some(val);
+pub fn get_proc_info(
+    tracker: Option<&ProcessTracker>,
+    pid: u32,
+    file_path: &Path,
+) -> ProcInfo {
+    // 1. Generation-safe topology from the event-driven tracker.
+    let mut info = ProcInfo::default();
+    if let Some(t) = tracker {
+        let view = t.view();
+        if let Some(key) = view.current(Tgid(pid)) {
+            info.tgid = key.tgid.0;
+            if let Some(parent) = view.get(key).and_then(|n| n.current_parent()) {
+                info.ppid = parent.tgid.0;
+            }
+            if let Some(meta) = view.metadata(key) {
+                info.comm = meta.comm.clone().unwrap_or_default();
+            }
         }
     }
-    None
+    // 2. On-demand /proc for comm/cmd/uid (short-lived processes may be
+    // gone; fall back to file owner for user).
+    let proc_root = std::path::Path::new("/proc");
+    if let Some(meta) = proc_tree::read_metadata(proc_root, pid) {
+        if info.comm.is_empty() {
+            info.comm = meta.comm.clone().unwrap_or_default();
+        }
+        if let Some(uid) = meta.uid {
+            info.user = uid_to_username(uid);
+        }
+    }
+    if info.cmd.is_empty() {
+        info.cmd = proc_tree::read_cmdline(proc_root, pid).unwrap_or_default();
+    }
+    if info.user.is_empty() {
+        info.user = read_file_owner(file_path).unwrap_or_default();
+    }
+    info
+}
+
+/// UID → username via the `users` crate (0.5's `uid_to_username` was
+/// removed with the compat layer).
+pub fn uid_to_username(uid: u32) -> String {
+    users::get_user_by_uid(uid)
+        .map(|u| u.name().to_string_lossy().into_owned())
+        .unwrap_or_else(|| uid.to_string())
+}
+
+/// Build the current-parent ancestry chain for a PID (RUN-23): walks the
+/// tracker's generation-safe ancestry, resolving comm from metadata and
+/// cmdline on demand.
+pub fn build_chain(tracker: &ProcessTracker, pid: u32) -> Vec<crate::common::ChainLink> {
+    let view = tracker.view();
+    let Some(key) = view.current(Tgid(pid)) else {
+        return Vec::new();
+    };
+    let (keys, _end) = view.ancestors(key, proc_tree::AncestorMode::CurrentParent);
+    let proc_root = std::path::Path::new("/proc");
+    keys.into_iter()
+        .filter_map(|k| {
+            let node = view.get(k)?;
+            let comm = node
+                .metadata()
+                .and_then(|m| m.comm.clone())
+                .unwrap_or_default();
+            let user = node
+                .metadata()
+                .and_then(|m| m.uid)
+                .map(uid_to_username)
+                .unwrap_or_default();
+            let cmd = proc_tree::read_cmdline(proc_root, k.tgid.0).unwrap_or_default();
+            Some(crate::common::ChainLink {
+                pid: k.tgid.0,
+                comm,
+                cmd,
+                user,
+            })
+        })
+        .collect()
 }
 
 /// Fallback: read file owner UID from filesystem metadata
 fn read_file_owner(path: &Path) -> Option<String> {
     use std::os::unix::fs::MetadataExt;
     let metadata = std::fs::metadata(path).ok()?;
-    proc_tree::uid_to_username(metadata.uid()).map(|s| s.to_string())
+    Some(uid_to_username(metadata.uid()))
 }
 
 /// Convert a monitored path to a deterministic, fixed-length log filename.

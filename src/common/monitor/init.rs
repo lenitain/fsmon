@@ -31,12 +31,19 @@ impl Monitor {
         Ok(())
     }
 
-    /// Initialize process store. Returns proc connector for event loop.
+    /// Initialize process tracking (event-driven, RUN-23). Returns the proc
+    /// connector for the event loop. The tracker adopts a one-shot `/proc`
+    /// baseline; events maintain it from then on.
     pub(crate) fn init_process_cache(&mut self) -> Option<ProcConnector> {
         let proc_conn = proc_cache::try_create_connector();
-        let store = proc_cache::DefaultStore::new(self.cache_config.proc_ttl_secs);
-        let _ = proc_tree::snapshot(&store);
-        self.proc.store = Some(store.clone());
+        let config = proc_tree::TrackerConfig {
+            domain: proc_tree::DomainId(1),
+            history: proc_tree::HistoryPolicy::Count(proc_cache::PROC_HISTORY_CAP),
+            stop: proc_tree::StopPolicy::Continue,
+        };
+        let (tracker, src) = proc_cache::init_tracker(config, std::path::Path::new("/proc"));
+        self.proc.tracker = Some(tracker);
+        self.proc.source = Some(src);
         proc_conn
     }
 
@@ -305,8 +312,8 @@ impl Monitor {
                 self.fanotify.dir_cache.entry_count(),
                 DIR_CACHE_CAP
             );
-            if let Some(ref s) = self.proc.store {
-                debug_log!(self.debug, "  proc_store:       {} entries", s.len());
+            if let Some(ref t) = self.proc.tracker {
+                debug_log!(self.debug, "  proc_store:       {} live", t.live_count());
             }
             debug_log!(
                 self.debug,

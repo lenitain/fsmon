@@ -11,9 +11,8 @@ use crate::common::fid_parser::mask_to_event_types;
 use crate::common::filters;
 use crate::common::filters::PathOptions;
 use crate::common::monitored::PathEntry;
-use crate::common::utils::{format_size, get_process_info_by_pid};
+use crate::common::utils::{format_size, get_proc_info};
 use crate::common::{EventType, FileEvent};
-use proc_tree::ProcessStore;
 
 use super::Monitor;
 
@@ -146,12 +145,19 @@ impl Monitor {
     fn matches_process_tree(&self, cmd: Option<&str>, event_pid: u32) -> bool {
         match cmd {
             Some(cmd_name) => {
-                let matched = self
-                    .proc
-                    .store
-                    .as_ref()
-                    .map(|store| proc_tree::is_descendant(store, event_pid, cmd_name))
-                    .unwrap_or(false);
+                let matched = self.proc.tracker.as_ref().is_some_and(|t| {
+                    let view = t.view();
+                    let Some(child) = view.current(proc_tree::Tgid(event_pid)) else {
+                        return false;
+                    };
+                    // comm match + descendant check (RUN-23): comm comes from
+                    // cn_proc Comm events / bootstrap enrichment; processes
+                    // without comm data simply never match.
+                    view.live_keys().any(|k| {
+                        view.metadata(k).and_then(|m| m.comm.as_deref()) == Some(cmd_name)
+                            && view.descendant_of(child, k)
+                    })
+                });
                 debug_log!(
                     self.debug,
                     "  check cmd=\"{}\" pid={}: {}",
@@ -219,21 +225,26 @@ impl Monitor {
         for pe in pending {
             let ev = &mut pe.event;
             if ev.cmd == "unknown" || ev.user == "unknown" || ev.ppid == 0 || ev.tgid == 0 {
-                // Try proc store (now populated by the second drain)
-                if let Some(ref store) = self.proc.store
-                    && let Some(info) = store.get_process(pe.pid)
-                {
-                    if ev.cmd == "unknown" {
-                        ev.cmd = info.cmd().to_string();
-                    }
-                    if ev.user == "unknown" {
-                        ev.user = info.user().to_string();
-                    }
-                    if ev.ppid == 0 {
-                        ev.ppid = info.ppid();
-                    }
-                    if ev.tgid == 0 {
-                        ev.tgid = info.tgid();
+                // Generation-safe topology from the event-driven tracker
+                // (after the second drain).
+                if let Some(t) = self.proc.tracker.as_ref() {
+                    let view = t.view();
+                    if let Some(key) = view.current(proc_tree::Tgid(pe.pid)) {
+                        let node = view.get(key);
+                        if ev.cmd == "unknown"
+                            && let Some(comm) = view.metadata(key).and_then(|m| m.comm.clone())
+                        {
+                            ev.cmd = comm;
+                        }
+                        if ev.ppid == 0 {
+                            ev.ppid = node
+                                .and_then(|n| n.current_parent())
+                                .map(|p| p.tgid.0)
+                                .unwrap_or(0);
+                        }
+                        if ev.tgid == 0 {
+                            ev.tgid = key.tgid.0;
+                        }
                     }
                 }
             }
@@ -248,7 +259,7 @@ impl Monitor {
         opts: &PathOptions,
     ) -> FileEvent {
         let pid = raw.pid().unsigned_abs();
-        let info = get_process_info_by_pid(pid, raw.path(), self.proc.store.as_ref());
+        let info = get_proc_info(self.proc.tracker.as_ref(), pid, raw.path());
 
         let file_size = match event_type {
             EventType::Create | EventType::Modify | EventType::CloseWrite => {
@@ -262,29 +273,25 @@ impl Monitor {
             _ => self.file_size_cache.get(raw.path()).map_or(0, |&s| s),
         };
 
-        // Chain building based on the specific opts' cmd
-        let chain = opts
-            .cmd
-            .as_ref()
-            .and_then(|_| {
-                self.proc
-                    .store
-                    .as_ref()
-                    .map(|store| proc_tree::build_chain_links(store, pid))
-            })
-            .unwrap_or_default();
+        // Chain building based on the specific opts' cmd (RUN-23): walk the
+        // current-parent ancestry from the generation-safe tracker; cmdline
+        // is read on demand.
+        let chain = match (opts.cmd.as_ref(), self.proc.tracker.as_ref()) {
+            (Some(_), Some(t)) => crate::common::utils::build_chain(t, pid),
+            _ => Vec::new(),
+        };
 
         FileEvent {
             time: Utc::now(),
             event_type,
             path: raw.path().to_path_buf(),
             pid,
-            comm: info.comm().to_string(),
-            cmd: info.cmd().to_string(),
-            user: info.user().to_string(),
+            comm: info.comm,
+            cmd: info.cmd,
+            user: info.user,
             file_size,
-            ppid: info.ppid(),
-            tgid: info.tgid(),
+            ppid: info.ppid,
+            tgid: info.tgid,
             chain,
         }
     }

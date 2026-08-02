@@ -10,6 +10,7 @@ pub mod metrics;
 pub mod monitor;
 pub mod monitored;
 pub mod proc_cache;
+pub mod proc_scan;
 pub mod query;
 pub mod security;
 pub mod socket;
@@ -274,7 +275,17 @@ pub struct FileEvent {
     #[serde(default)]
     pub tgid: u32,
     #[serde(default)]
-    pub chain: Vec<proc_tree::ProcessLink>,
+    pub chain: Vec<ChainLink>,
+}
+
+/// One ancestry link of a file event chain (RUN-23 replacement for the 0.5
+/// `ProcessLink`; JSON shape preserved: pid/comm/cmd/user).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChainLink {
+    pub pid: u32,
+    pub comm: String,
+    pub cmd: String,
+    pub user: String,
 }
 
 impl std::fmt::Display for FileEvent {

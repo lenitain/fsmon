@@ -265,8 +265,8 @@ pub(crate) async fn tokio_io_oneshot(mut writer: tokio::net::unix::OwnedWriteHal
 }
 
 /// Check if a cmd group name appears in a chain.
-pub(crate) fn chains_contain(chain: &[proc_tree::ProcessLink], cmd_name: &str) -> bool {
-    chain.iter().any(|link| link.comm() == cmd_name)
+pub(crate) fn chains_contain(chain: &[crate::common::ChainLink], cmd_name: &str) -> bool {
+    chain.iter().any(|link| link.comm == cmd_name)
 }
 
 /// Stream events from a broadcast receiver to a subscriber socket.

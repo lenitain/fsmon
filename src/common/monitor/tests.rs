@@ -542,45 +542,45 @@ fn test_monitor_run_captures_events() {
 
 #[test]
 fn test_chains_contain_exact() {
-    use proc_tree::ProcessLink;
+    use crate::common::ChainLink;
     let chain = vec![
-        ProcessLink::new(100, "bash".into(), "bash".into(), "root".into()),
-        ProcessLink::new(200, "myapp".into(), "myapp --flag".into(), "root".into()),
+        ChainLink { pid: 100, comm: "bash".into(), cmd: "bash".into(), user: "root".into() },
+        ChainLink { pid: 200, comm: "myapp".into(), cmd: "myapp --flag".into(), user: "root".into() },
     ];
     assert!(chains_contain(&chain, "myapp"));
 }
 
 #[test]
 fn test_chains_contain_not_found() {
-    use proc_tree::ProcessLink;
+    use crate::common::ChainLink;
     let chain = vec![
-        ProcessLink::new(100, "bash".into(), "bash".into(), "root".into()),
-        ProcessLink::new(200, "other".into(), "other".into(), "root".into()),
+        ChainLink { pid: 100, comm: "bash".into(), cmd: "bash".into(), user: "root".into() },
+        ChainLink { pid: 200, comm: "other".into(), cmd: "other".into(), user: "root".into() },
     ];
     assert!(!chains_contain(&chain, "myapp"));
 }
 
 #[test]
 fn test_chains_contain_empty_chain() {
-    let empty: Vec<proc_tree::ProcessLink> = vec![];
+    let empty: Vec<crate::common::ChainLink> = vec![];
     assert!(!chains_contain(&empty, "myapp"));
 }
 
 #[test]
 fn test_chains_contain_partial_name_not_match() {
-    use proc_tree::ProcessLink;
-    let chain = vec![ProcessLink::new(
-        200,
-        "myapp-backup".into(),
-        "myapp-backup".into(),
-        "root".into(),
-    )];
+    use crate::common::ChainLink;
+    let chain = vec![ChainLink {
+        pid: 200,
+        comm: "myapp-backup".into(),
+        cmd: "myapp-backup".into(),
+        user: "root".into(),
+    }];
     assert!(!chains_contain(&chain, "myapp"));
 }
 
 #[tokio::test]
 async fn test_subscriber_task_receives_events() {
-    use proc_tree::ProcessLink;
+    use crate::common::ChainLink;
     let (tx, mut rx) = tokio::sync::broadcast::channel(64);
     let mut rx2 = tx.subscribe();
     let event = FileEvent {
@@ -595,8 +595,8 @@ async fn test_subscriber_task_receives_events() {
         ppid: 0,
         tgid: 0,
         chain: vec![
-            ProcessLink::new(100, "bash".into(), "bash".into(), "root".into()),
-            ProcessLink::new(200, "test-cmd".into(), "test-cmd".into(), "root".into()),
+            ChainLink { pid: 100, comm: "bash".into(), cmd: "bash".into(), user: "root".into() },
+            ChainLink { pid: 200, comm: "test-cmd".into(), cmd: "test-cmd".into(), user: "root".into() },
         ],
     };
     tx.send(event.clone()).unwrap();
@@ -609,10 +609,10 @@ async fn test_subscriber_task_receives_events() {
 
 #[tokio::test]
 async fn test_subscriber_task_filters_by_cmd() {
-    use proc_tree::ProcessLink;
+    use crate::common::ChainLink;
     let chain = vec![
-        ProcessLink::new(100, "bash".into(), "bash".into(), "root".into()),
-        ProcessLink::new(200, "myapp".into(), "myapp".into(), "root".into()),
+        ChainLink { pid: 100, comm: "bash".into(), cmd: "bash".into(), user: "root".into() },
+        ChainLink { pid: 200, comm: "myapp".into(), cmd: "myapp".into(), user: "root".into() },
     ];
     assert!(chains_contain(&chain, "myapp"));
     assert!(!chains_contain(&chain, "other-app"));
@@ -715,7 +715,7 @@ fn test_file_event_comm_field() {
 
 #[test]
 fn test_file_event_chain_as_vec() {
-    use proc_tree::ProcessLink;
+    use crate::common::ChainLink;
     let event = FileEvent {
         time: chrono::Utc::now(),
         event_type: EventType::Create,
@@ -728,24 +728,24 @@ fn test_file_event_chain_as_vec() {
         ppid: 100,
         tgid: 1234,
         chain: vec![
-            ProcessLink::new(
-                1234,
-                "touch".into(),
-                "touch /tmp/test.txt".into(),
-                "root".into(),
-            ),
-            ProcessLink::new(100, "bash".into(), "bash -l".into(), "root".into()),
+            ChainLink {
+                pid: 1234,
+                comm: "touch".into(),
+                cmd: "touch /tmp/test.txt".into(),
+                user: "root".into(),
+            },
+            ChainLink { pid: 100, comm: "bash".into(), cmd: "bash -l".into(), user: "root".into() },
         ],
     };
 
     assert_eq!(event.chain.len(), 2);
-    assert_eq!(event.chain[0].comm(), "touch");
-    assert_eq!(event.chain[1].comm(), "bash");
+    assert_eq!(event.chain[0].comm, "touch");
+    assert_eq!(event.chain[1].comm, "bash");
 }
 
 #[test]
 fn test_file_event_json_serialization() {
-    use proc_tree::ProcessLink;
+    use crate::common::ChainLink;
     let event = FileEvent {
         time: chrono::Utc::now(),
         event_type: EventType::Create,
@@ -757,12 +757,12 @@ fn test_file_event_json_serialization() {
         file_size: 0,
         ppid: 100,
         tgid: 1234,
-        chain: vec![ProcessLink::new(
-            1234,
-            "touch".into(),
-            "touch /tmp/test.txt".into(),
-            "root".into(),
-        )],
+        chain: vec![ChainLink {
+            pid: 1234,
+            comm: "touch".into(),
+            cmd: "touch /tmp/test.txt".into(),
+            user: "root".into(),
+        }],
     };
 
     let json = event.to_jsonl_string();
@@ -778,5 +778,5 @@ fn test_file_event_json_serialization() {
     assert_eq!(parsed.comm, "touch");
     assert_eq!(parsed.cmd, "touch /tmp/test.txt");
     assert_eq!(parsed.chain.len(), 1);
-    assert_eq!(parsed.chain[0].comm(), "touch");
+    assert_eq!(parsed.chain[0].comm, "touch");
 }

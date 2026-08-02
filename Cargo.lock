@@ -74,12 +74,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "arrayvec"
-version = "0.7.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
-
-[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -729,9 +723,7 @@ checksum = "3d20d5497ef88037a52ff98267d066e7f11fcc5e99bbfbd58a42336193aacec3"
 
 [[package]]
 name = "proc-connector"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f00b47b250af30a786c7d36b85af8d0771b2cbed83a79036fd3669ddbbbb7b30"
+version = "0.2.0"
 dependencies = [
  "libc",
 ]
@@ -748,13 +740,8 @@ dependencies = [
 [[package]]
 name = "proc-tree"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1983b5b12459accd77fa33cfb5f4bd5e0a3b651d7c5628e6ba6c0fd9ca7a4f45"
 dependencies = [
- "arrayvec",
- "libc",
- "serde",
- "serde_json",
+ "foldhash",
 ]
 
 [[package]]

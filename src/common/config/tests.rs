@@ -292,7 +292,7 @@ fn test_cache_config_defaults() {
     );
     assert_eq!(
         r.proc_ttl_secs,
-        crate::common::proc_cache::PROC_STORE_TTL_SECS
+        crate::common::proc_cache::PROC_HISTORY_CAP as u64
     );
     assert_eq!(r.buffer_size, 4096 * 8);
 }
@@ -348,7 +348,7 @@ fn test_cache_config_resolve_config_over_default() {
     assert_eq!(r.file_size_capacity, 20000);
     assert_eq!(
         r.proc_ttl_secs,
-        crate::common::proc_cache::PROC_STORE_TTL_SECS
+        crate::common::proc_cache::PROC_HISTORY_CAP as u64
     );
 }
 
