@@ -46,8 +46,8 @@ path-clean = "1.0"
 smallvec = "1.15"
 inotify = "0.11"
 toml = "1.1"
-sizefilter = "0.2.0"
-timefilter = '0.2.0'
+sizefilter = { path = "../sizefilter" }
+timefilter = { path = "../timefilter" }
 libsystemd = "0.7"
 slotmap = "1.1"
 proc-tree = { path = "../proc-tree" }

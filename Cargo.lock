@@ -879,8 +879,6 @@ dependencies = [
 [[package]]
 name = "sizefilter"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55f182e8ff86b512b19479ff16187cf82782e241d6aadc249e4d14da57f58d5c"
 
 [[package]]
 name = "slab"
@@ -998,8 +996,6 @@ dependencies = [
 [[package]]
 name = "timefilter"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea891e8148d1abd5eca2e06c2d9abc6f273b9535a63d695cdecaf3277c652bff"
 dependencies = [
  "chrono",
 ]

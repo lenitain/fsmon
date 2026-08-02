@@ -119,12 +119,66 @@ impl EventMapper {
     }
 }
 
+/// Map one parsed proc-connector event into the tracker input protocol
+/// (pure; no tracker access). `cursor` comes from the [`EventMapper`].
+fn map_proc_event(ev: &PcEvent, src: SourceId, cursor: u64) -> LifecycleEvent {
+    let ts = match ev {
+        PcEvent::Exit { .. } => None,
+        PcEvent::Fork { timestamp_ns, .. }
+        | PcEvent::Exec { timestamp_ns, .. }
+        | PcEvent::Uid { timestamp_ns, .. }
+        | PcEvent::Gid { timestamp_ns, .. }
+        | PcEvent::Sid { timestamp_ns, .. }
+        | PcEvent::Ptrace { timestamp_ns, .. }
+        | PcEvent::Comm { timestamp_ns, .. }
+        | PcEvent::Coredump { timestamp_ns, .. } => Some(*timestamp_ns),
+        PcEvent::Unknown { .. } => None,
+    };
+    let meta = EventMeta {
+        src,
+        epoch: 0,
+        timestamp: ts,
+        clock: ClockDomain::BootMonotonic,
+        cursor: Some(cursor),
+    };
+    match ev {
+        PcEvent::Fork {
+            parent_pid,
+            parent_tgid,
+            child_pid,
+            child_tgid,
+            ..
+        } => LifecycleEvent::Spawn {
+            meta,
+            child_tid: Tid(*child_pid),
+            child_tgid: Tgid(*child_tgid),
+            parent_tid: Tid(*parent_pid),
+            parent_tgid: Tgid(*parent_tgid),
+            evidence: IdentityEvidence::Weak,
+        },
+        PcEvent::Exec { pid, tgid, .. } => LifecycleEvent::Exec {
+            meta,
+            tid: Tid(*pid),
+            tgid: Tgid(*tgid),
+        },
+        PcEvent::Exit { pid, tgid, .. } => LifecycleEvent::Exit {
+            meta,
+            tid: Tid(*pid),
+            tgid: Tgid(*tgid),
+            scope: ExitScope::Task,
+        },
+        _ => unreachable!("map_proc_event only receives Fork/Exec/Exit"),
+    }
+}
+
 /// Parse raw proc-connector bytes and drive the tracker's event protocol.
 ///
 /// Lifecycle events are batched into one `apply_events` call (single commit
-/// revision); `Comm` updates attach metadata immediately; per-CPU sequence
-/// jumps degrade continuity via `report_health` (quantified gap); netlink
-/// overrun reports a separate health signal.
+/// revision); `Comm` updates attach metadata AFTER the batch (the Spawn
+/// event for the same process sits in the batch — enriching before it is
+/// applied would miss the key); per-CPU sequence jumps degrade continuity
+/// via `report_health` (quantified gap); netlink overrun reports a separate
+/// health signal.
 pub fn handle_proc_events(
     tracker: &mut ProcessTracker,
     src: SourceId,
@@ -134,76 +188,22 @@ pub fn handle_proc_events(
 ) {
     let mut events: Vec<LifecycleEvent> = Vec::new();
     let mut health: Option<SourceHealth> = None;
+    // Comm enrichments are applied AFTER the batch: the Spawn event for the
+    // same process sits in the batch and is not in the tracker yet, so
+    // `current(tgid)` would miss it during the parse loop.
+    let mut comm_updates: Vec<(Tgid, String)> = Vec::new();
     for msg in NetlinkMessageIter::new(data, n) {
         match msg {
-            Ok(Some(PcEvent::Fork {
-                cpu,
-                seq,
-                parent_pid,
-                parent_tgid,
-                child_pid,
-                child_tgid,
-                timestamp_ns,
-            })) => {
+            Ok(Some(ev @ (PcEvent::Fork { .. } | PcEvent::Exec { .. } | PcEvent::Exit { .. }))) => {
+                let (cpu, seq) = match ev {
+                    PcEvent::Fork { cpu, seq, .. }
+                    | PcEvent::Exec { cpu, seq, .. }
+                    | PcEvent::Exit { cpu, seq, .. } => (cpu, seq),
+                    _ => unreachable!(),
+                };
                 let (cursor, h) = mapper.cursor(cpu, seq);
                 health = health.or(h);
-                events.push(LifecycleEvent::Spawn {
-                    meta: EventMeta {
-                        src,
-                        epoch: 0,
-                        timestamp: Some(timestamp_ns),
-                        clock: ClockDomain::BootMonotonic,
-                        cursor: Some(cursor),
-                    },
-                    child_tid: Tid(child_pid),
-                    child_tgid: Tgid(child_tgid),
-                    parent_tid: Tid(parent_pid),
-                    parent_tgid: Tgid(parent_tgid),
-                    evidence: IdentityEvidence::Weak,
-                });
-            }
-            Ok(Some(PcEvent::Exec {
-                cpu,
-                seq,
-                pid,
-                tgid,
-                timestamp_ns,
-            })) => {
-                let (cursor, h) = mapper.cursor(cpu, seq);
-                health = health.or(h);
-                events.push(LifecycleEvent::Exec {
-                    meta: EventMeta {
-                        src,
-                        epoch: 0,
-                        timestamp: Some(timestamp_ns),
-                        clock: ClockDomain::BootMonotonic,
-                        cursor: Some(cursor),
-                    },
-                    tid: Tid(pid),
-                    tgid: Tgid(tgid),
-                });
-            }
-            Ok(Some(PcEvent::Exit {
-                cpu,
-                seq,
-                pid,
-                tgid,
-                ..
-            })) => {
-                let (cursor, h) = mapper.cursor(cpu, seq);
-                health = health.or(h);
-                events.push(LifecycleEvent::Exit {
-                    meta: EventMeta {
-                        src,
-                        epoch: 0,
-                        timestamp: None,
-                        clock: ClockDomain::BootMonotonic,
-                        cursor: Some(cursor),
-                    },
-                    tid: Tid(pid),
-                    tgid: Tgid(tgid),
-                    scope: ExitScope::Task,
-                });
+                events.push(map_proc_event(&ev, src, cursor));
             }
             Ok(Some(PcEvent::Comm {
                 cpu,
@@ -220,16 +220,8 @@ pub fn handle_proc_events(
                 let comm = String::from_utf8_lossy(&comm)
                     .trim_matches('\0')
                     .to_string();
-                if !comm.is_empty()
-                    && let Some(key) = tracker.current(Tgid(tgid))
-                {
-                    tracker.enrich(
-                        key,
-                        Some(ProcessMetadata {
-                            comm: Some(comm),
-                            uid: None,
-                        }),
-                    );
+                if !comm.is_empty() {
+                    comm_updates.push((Tgid(tgid), comm));
                 }
                 let _ = pid;
             }
@@ -249,6 +241,17 @@ pub fn handle_proc_events(
     if !events.is_empty() {
         let _ = tracker.apply_events(src, &events);
     }
+    for (tgid, comm) in comm_updates {
+        if let Some(key) = tracker.current(tgid) {
+            tracker.enrich(
+                key,
+                Some(ProcessMetadata {
+                    comm: Some(comm),
+                    uid: None,
+                }),
+            );
+        }
+    }
     if let Some(h) = health {
         tracker.report_health(src, h);
     }
@@ -257,6 +260,135 @@ pub fn handle_proc_events(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proc_tree::{ApplyOutcome, HistoryPolicy, ProcessTracker, TrackerConfig};
+
+    fn tracker() -> ProcessTracker {
+        ProcessTracker::new(TrackerConfig {
+            domain: proc_tree::DomainId(1),
+            history: HistoryPolicy::Count(16),
+            stop: proc_tree::StopPolicy::Continue,
+        })
+    }
+
+    fn boot_source(t: &mut ProcessTracker) -> SourceId {
+        t.register_source(source_capabilities())
+    }
+
+    /// A Fork(pid) from pid 1 with per-CPU seq.
+    fn fork_event(cpu: u32, seq: u32, child: u32) -> PcEvent {
+        PcEvent::Fork {
+            cpu,
+            seq,
+            parent_pid: 1,
+            parent_tgid: 1,
+            child_pid: child,
+            child_tgid: child,
+            timestamp_ns: 10,
+        }
+    }
+
+    #[test]
+    fn spawn_maps_to_weak_evidence_event() {
+        let ev = fork_event(0, 5, 100);
+        let mapped = map_proc_event(&ev, SourceId(1), 5);
+        match mapped {
+            LifecycleEvent::Spawn {
+                child_tid,
+                child_tgid,
+                parent_tid: _,
+                parent_tgid,
+                evidence,
+                meta,
+            } => {
+                assert_eq!(child_tid.0, 100);
+                assert_eq!(child_tgid.0, 100);
+                assert_eq!(parent_tgid.0, 1);
+                assert_eq!(evidence, IdentityEvidence::Weak);
+                assert_eq!(meta.cursor, Some(5));
+            }
+            other => panic!("expected Spawn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn comm_enriches_after_batch_apply() {
+        // Regression: Comm enrichment used to run BEFORE apply_events, so
+        // the Spawn for the same process was not yet in the tracker and
+        // `current(tgid)` missed — comm was silently dropped.
+        let mut t = tracker();
+        let src = boot_source(&mut t);
+        t.apply(&LifecycleEvent::Spawn {
+            meta: EventMeta {
+                src,
+                epoch: 0,
+                timestamp: None,
+                clock: ClockDomain::BootMonotonic,
+                cursor: Some(1),
+            },
+            child_tid: Tid(100),
+            child_tgid: Tgid(100),
+            parent_tid: Tid(1),
+            parent_tgid: Tgid(1),
+            evidence: IdentityEvidence::Weak,
+        });
+        let key = t.current(Tgid(100)).expect("spawn applied");
+        t.enrich(
+            key,
+            Some(ProcessMetadata {
+                comm: Some("touch".into()),
+                uid: None,
+            }),
+        );
+        let view = t.view();
+        assert_eq!(
+            view.metadata(key).and_then(|m| m.comm.as_deref()),
+            Some("touch")
+        );
+    }
+
+    #[test]
+    fn spawn_parent_edge_with_weak_evidence() {
+        // fsmon ppid regression: event-driven spawn from an existing
+        // parent must attach the parent edge even with Weak evidence.
+        let mut t = tracker();
+        let src = boot_source(&mut t);
+        t.apply(&LifecycleEvent::Spawn {
+            meta: EventMeta {
+                src,
+                epoch: 0,
+                timestamp: None,
+                clock: ClockDomain::BootMonotonic,
+                cursor: Some(1),
+            },
+            child_tid: Tid(1),
+            child_tgid: Tgid(1),
+            parent_tid: Tid(0),
+            parent_tgid: Tgid(0),
+            evidence: IdentityEvidence::Weak,
+        });
+        let (outcome, _) = t.apply(&LifecycleEvent::Spawn {
+            meta: EventMeta {
+                src,
+                epoch: 0,
+                timestamp: None,
+                clock: ClockDomain::BootMonotonic,
+                cursor: Some(2),
+            },
+            child_tid: Tid(100),
+            child_tgid: Tgid(100),
+            parent_tid: Tid(1),
+            parent_tgid: Tgid(1),
+            evidence: IdentityEvidence::Weak,
+        });
+        assert_eq!(outcome, ApplyOutcome::Applied);
+        let view = t.view();
+        let key = view.current(Tgid(100)).expect("child");
+        assert_eq!(
+            view.get(key).and_then(|n| n.current_parent()).map(|p| p.tgid.0),
+            Some(1),
+            "parent edge must attach (fsmon ppid regression)"
+        );
+    }
 
     #[test]
     fn mapper_detects_per_cpu_gap() {

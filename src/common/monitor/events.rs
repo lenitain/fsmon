@@ -224,17 +224,28 @@ impl Monitor {
     pub(crate) fn patch_pending_events(&self, pending: &mut [PendingEvent]) {
         for pe in pending {
             let ev = &mut pe.event;
-            if ev.cmd == "unknown" || ev.user == "unknown" || ev.ppid == 0 || ev.tgid == 0 {
+            if ev.comm.is_empty() || ev.cmd.is_empty() || ev.user.is_empty()
+                || ev.ppid == 0 || ev.tgid == 0
+            {
                 // Generation-safe topology from the event-driven tracker
-                // (after the second drain).
+                // (after the second drain). comm comes from cn_proc Comm
+                // events; cmd needs /proc (may be gone for short-lived
+                // processes); ppid/tgid are topology.
                 if let Some(t) = self.proc.tracker.as_ref() {
                     let view = t.view();
                     if let Some(key) = view.current(proc_tree::Tgid(pe.pid)) {
                         let node = view.get(key);
-                        if ev.cmd == "unknown"
+                        if ev.comm.is_empty()
                             && let Some(comm) = view.metadata(key).and_then(|m| m.comm.clone())
                         {
-                            ev.cmd = comm;
+                            ev.comm = comm;
+                        }
+                        if ev.cmd.is_empty() {
+                            ev.cmd = proc_tree::read_cmdline(
+                                std::path::Path::new("/proc"),
+                                pe.pid,
+                            )
+                            .unwrap_or_default();
                         }
                         if ev.ppid == 0 {
                             ev.ppid = node
