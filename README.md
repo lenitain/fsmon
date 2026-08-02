@@ -75,3 +75,27 @@ git clone https://github.com/lenitain/fsmon.git
 cd fsmon
 cargo build --release
 ```
+
+## Known Limitations
+
+### `comm` for short-lived processes (kernel limitation)
+
+fsmon tracks processes via the kernel's cn_proc connector (fork/exec/exit
+events). The kernel only emits a `COMM` event when a process renames itself
+via `prctl(PR_SET_NAME)` — **never on `exec`** (`proc_comm_connector` is only
+called from the `PR_SET_NAME` branch in `kernel/sys.c`). This is kernel
+design, not a bug in fsmon or its dependencies.
+
+Consequences for short-lived processes (spawn → exec → exit in <1 ms, e.g.
+`touch`):
+
+- File events are **never missed**; pid/tgid/ppid/chain are complete.
+- The `comm`/`cmd` fields of the recorded event are **empty** — the
+  process is usually already gone by the time the event is processed, so
+  `/proc` cannot be read either.
+- A `cmd=` filter group does not match such processes (same behavior as
+  the 0.5 polling-based version, which also could not see them — it just
+  displayed `unknown` instead of an empty string).
+
+Long-lived processes are unaffected: their comm is captured by the
+bootstrap `/proc` scan and refreshed via rename events.
