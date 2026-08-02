@@ -4,6 +4,20 @@ use std::path::{Path, PathBuf};
 
 pub use fanotify_fid::types::HandleKey;
 
+/// Adapter so the moka-backed directory cache can plug into
+/// `fanotify_fid`'s convergence resolver (`PathStore`).
+pub struct MokaPathStore(pub Cache<HandleKey, PathBuf>);
+
+impl fanotify_fid::types::PathStore for MokaPathStore {
+    fn get(&self, key: &[u8]) -> Option<PathBuf> {
+        self.0.get(key)
+    }
+
+    fn insert(&mut self, key: Vec<u8>, path: PathBuf) {
+        self.0.insert(key, path);
+    }
+}
+
 /// Look up the file handle for a path, using [`fanotify_fid::handle::name_to_handle_at`].
 ///
 /// Returns the handle key bytes matching the file_handle format in fanotify FID events.

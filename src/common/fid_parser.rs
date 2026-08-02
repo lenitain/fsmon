@@ -6,7 +6,6 @@ use fanotify_fid::consts::{
     FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_FS_ERROR, FAN_MARK_ADD, FAN_MODIFY, FAN_MOVE_SELF,
     FAN_MOVED_FROM, FAN_MOVED_TO, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC,
 };
-use fanotify_fid::handle::resolve_file_handle;
 use fanotify_fid::prelude::*;
 use fanotify_fid::types::{FidEvent, HandleKey};
 use libc;
@@ -111,28 +110,6 @@ pub fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
         .collect()
 }
 
-/// Strip the " (deleted)" suffix that the kernel appends to paths resolved
-/// via `open_by_handle_at` + `readlink(/proc/self/fd/N)` for deleted-but-
-/// not-yet-reclaimed files and directories.
-///
-/// When a file inside a deleted directory is resolved, the kernel appends
-/// " (deleted)" to the intermediate directory component (e.g.
-/// `/dir (deleted)/file.txt`), not just at the end.  Strip every occurrence.
-pub(crate) fn strip_deleted_suffix(path: &Path) -> PathBuf {
-    if path.as_os_str().is_empty() {
-        return PathBuf::new();
-    }
-    let clean = path.to_string_lossy();
-    // Only strip " (deleted)" from the END of the path (not globally).
-    // This prevents误删 paths that legitimately contain " (deleted)" in
-    // the middle (e.g. "/home/user/dir (deleted)/file.txt" where the
-    // directory name itself contains the string).
-    if let Some(stripped) = clean.strip_suffix(" (deleted)") {
-        PathBuf::from(stripped)
-    } else {
-        path.to_path_buf()
-    }
-}
 
 /// Read and parse FID events, using a moka cache for path recovery.
 ///
@@ -172,164 +149,15 @@ pub fn read_fid_events_cached(
     dir_cache: &Cache<HandleKey, PathBuf>,
     buf: &mut Vec<u8>,
 ) -> Vec<FidEvent> {
-    // Phase 0: raw read + parse (fanotify-fid resolves paths via open_by_handle_at)
-    let mut events = match fanotify_fid::read::read_fid_events(fan_fd, mount_fds, buf, None) {
-        Ok(e) => e,
-        Err(FanotifyError::Read(code)) if code == libc::EAGAIN => {
-            // Non-blocking fd, no events available — normal.
-            return vec![];
-        }
+    let mut store = crate::common::dir_cache::MokaPathStore(dir_cache.clone());
+    match fanotify_fid::read::read_fid_events(fan_fd, mount_fds, buf, Some(&mut store)) {
+        Ok(events) => events,
+        Err(FanotifyError::Read(code)) if code == libc::EAGAIN => Vec::new(),
         Err(err) => {
-            eprintln!(
-                "[WARNING] fanotify read error on fd {}: {err}",
-                fan_fd.as_raw_fd()
-            );
-            return vec![];
-        }
-    };
-
-    // ---- Phase 0.5: strip " (deleted)" from Phase 0 resolved paths ----
-    for ev in events.iter_mut() {
-        ev.set_path(strip_deleted_suffix(ev.path()));
-    }
-
-    // ---- Phase 1: seed local handle_map from resolved events ----
-    // Collect all handle→path knowledge from events whose paths resolved
-    // directly via open_by_handle_at in the parse phase.
-    let mut handle_map: std::collections::HashMap<Vec<u8>, PathBuf> =
-        std::collections::HashMap::new();
-    for ev in events.iter() {
-        if ev.path().as_os_str().is_empty() {
-            continue;
-        }
-        // self_handle → full path of the object itself
-        if let Some(key) = ev.self_handle() {
-            handle_map
-                .entry(key.to_vec())
-                .or_insert_with(|| ev.path().to_path_buf());
-        }
-        // dfid_name_handle → parent directory path
-        if let (Some(key), Some(filename)) = (ev.dfid_name_handle(), ev.dfid_name_filename()) {
-            let parent = if filename.is_empty() {
-                ev.path().to_path_buf()
-            } else if let Some(p) = ev.path().parent() {
-                p.to_path_buf()
-            } else {
-                continue;
-            };
-            handle_map.entry(key.to_vec()).or_insert(parent);
+            eprintln!("[WARNING] fanotify read error on fd {}: {err}", fan_fd.as_raw_fd());
+            Vec::new()
         }
     }
-
-    // ---- Phase 2: propagate knowledge until convergence ----
-    // Each newly-resolved event may carry additional handles that help
-    // resolve other events in the same batch (e.g. nested directory deletion).
-    //
-    // Priority chain per unresolved event:
-    //   1. local handle_map (fresh batch-internal knowledge)
-    //   2. persistent dir_cache (cross-batch memory)
-    //   3. resolve_file_handle (syscall, fails for deleted objects)
-    loop {
-        let mut made_progress = false;
-
-        for ev in events.iter_mut() {
-            if !ev.path().as_os_str().is_empty() {
-                continue;
-            }
-
-            // Try dfid_name_handle → parent directory path
-            if let (Some(key), Some(filename)) = (ev.dfid_name_handle(), ev.dfid_name_filename()) {
-                let dir_path = handle_map
-                    .get(key)
-                    .cloned()
-                    .or_else(|| dir_cache.get(key))
-                    .or_else(|| resolve_file_handle(mount_fds, key.as_slice()));
-
-                if let Some(ref dp) = dir_path {
-                    // Strip " (deleted)" suffix from resolve_file_handle paths
-                    let clean = dp.to_string_lossy();
-                    let parent = if let Some(stripped) = clean.strip_suffix(" (deleted)") {
-                        PathBuf::from(stripped)
-                    } else {
-                        dp.clone()
-                    };
-                    ev.set_path(if filename.is_empty() {
-                        parent
-                    } else {
-                        parent.join(filename)
-                    });
-                    // Newly resolved → extract its handles for other events
-                    if let Some(sk) = ev.self_handle() {
-                        handle_map
-                            .entry(sk.to_vec())
-                            .or_insert_with(|| ev.path().to_path_buf());
-                    }
-                    made_progress = true;
-                }
-            }
-
-            // Try self_handle (only if dfid_name didn't resolve)
-            if ev.path().as_os_str().is_empty()
-                && let Some(key) = ev.self_handle()
-            {
-                // Check same three-tier chain (add resolve_file_handle as
-                // third tier — same as dfid_name path, but for events
-                // without a parent reference, e.g. DELETE_SELF on dirs).
-                if let Some(path) = handle_map
-                    .get(key)
-                    .cloned()
-                    .or_else(|| dir_cache.get(key))
-                    .or_else(|| {
-                        resolve_file_handle(mount_fds, key.as_slice()).map(|p| {
-                            let clean = p.to_string_lossy();
-                            if let Some(stripped) = clean.strip_suffix(" (deleted)") {
-                                PathBuf::from(stripped)
-                            } else {
-                                p
-                            }
-                        })
-                    })
-                {
-                    ev.set_path(path);
-                    // Newly resolved → seed handle_map so child events can
-                    // find this directory via their dfid_name_handle
-                    if let Some(sk) = ev.self_handle() {
-                        handle_map
-                            .entry(sk.to_vec())
-                            .or_insert_with(|| ev.path().to_path_buf());
-                    }
-                    made_progress = true;
-                }
-            }
-        }
-
-        if !made_progress {
-            break;
-        }
-    }
-
-    // ---- Phase 3: update persistent cache (side effect, not used by resolve) ----
-    // Write resolved handles back so future read cycles benefit.
-    for ev in events.iter() {
-        if ev.path().as_os_str().is_empty() {
-            continue;
-        }
-        if let Some(key) = ev.self_handle() {
-            dir_cache.get_with(key.to_vec(), || ev.path().to_path_buf());
-        }
-        if let (Some(key), Some(filename)) = (ev.dfid_name_handle(), ev.dfid_name_filename()) {
-            let parent = if filename.is_empty() {
-                Some(ev.path().to_path_buf())
-            } else {
-                ev.path().parent().map(|p| p.to_path_buf())
-            };
-            if let Some(dp) = parent {
-                dir_cache.get_with(key.to_vec(), || dp);
-            }
-        }
-    }
-
-    events
 }
 
 // ---- Constants ----
@@ -692,43 +520,4 @@ mod tests {
         };
     }
 
-    // ---- strip_deleted_suffix ----
-
-    #[test]
-    fn test_strip_deleted_suffix_basic() {
-        let p = PathBuf::from("/home/user/dir (deleted)");
-        assert_eq!(strip_deleted_suffix(&p), PathBuf::from("/home/user/dir"));
-    }
-
-    #[test]
-    fn test_strip_deleted_suffix_no_change() {
-        let p = PathBuf::from("/home/user/dir");
-        assert_eq!(strip_deleted_suffix(&p), p);
-    }
-
-    #[test]
-    fn test_strip_deleted_suffix_empty() {
-        let p = PathBuf::new();
-        assert_eq!(strip_deleted_suffix(&p), PathBuf::new());
-    }
-
-    #[test]
-    fn test_strip_deleted_suffix_mid_component() {
-        // " (deleted)" in the middle is NOT stripped (only end is stripped).
-        let p = PathBuf::from("/home (deleted)/user/dir");
-        assert_eq!(strip_deleted_suffix(&p), p);
-    }
-
-    #[test]
-    fn test_strip_deleted_suffix_nested_join() {
-        // Parent resolved with (deleted), joined with child filename.
-        let parent = PathBuf::from("/home/user/dir (deleted)");
-        let dirty = parent.join("file.txt");
-        assert_eq!(dirty, PathBuf::from("/home/user/dir (deleted)/file.txt"));
-        // Only trailing " (deleted)" is stripped, not embedded ones.
-        assert_eq!(
-            strip_deleted_suffix(&dirty),
-            dirty // no change because " (deleted)" is in the middle
-        );
-    }
 }

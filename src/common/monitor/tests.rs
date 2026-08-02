@@ -507,7 +507,11 @@ fn test_monitor_run_captures_events() {
         let mut buf = vec![0u8; 4096];
         let start = std::time::Instant::now();
         while start.elapsed() < std::time::Duration::from_millis(200) {
-            if let Ok(events) = fanotify_fid::read::read_fid_events(&fd, &[], &mut buf, None)
+            if let Ok(events) =
+                fanotify_fid::read::read_fid_events::<fanotify_fid::types::HandleCache>(
+                    &fd, &[], &mut buf, None,
+                )
+
                 && !events.is_empty()
             {
                 counter_clone.fetch_add(events.len(), Ordering::SeqCst);

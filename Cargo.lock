@@ -296,8 +296,6 @@ dependencies = [
 [[package]]
 name = "fanotify-fid"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "782ae10362af76db5f8bb7f336a00951087c20b0c5aaacecc1ddc49cc4b65ed7"
 dependencies = [
  "libc",
  "smallvec",
