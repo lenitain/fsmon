@@ -507,11 +507,9 @@ fn test_monitor_run_captures_events() {
         let mut buf = vec![0u8; 4096];
         let start = std::time::Instant::now();
         while start.elapsed() < std::time::Duration::from_millis(200) {
-            if let Ok(events) =
-                fanotify_fid::read::read_fid_events::<fanotify_fid::types::HandleCache>(
-                    &fd, &[], &mut buf, None,
-                )
-
+            if let Ok(events) = fanotify_fid::read::read_fid_events::<
+                fanotify_fid::types::HandleCache,
+            >(&fd, &[], &mut buf, None)
                 && !events.is_empty()
             {
                 counter_clone.fetch_add(events.len(), Ordering::SeqCst);
@@ -548,8 +546,18 @@ fn test_monitor_run_captures_events() {
 fn test_chains_contain_exact() {
     use crate::common::ChainLink;
     let chain = vec![
-        ChainLink { pid: 100, comm: "bash".into(), cmd: "bash".into(), user: "root".into() },
-        ChainLink { pid: 200, comm: "myapp".into(), cmd: "myapp --flag".into(), user: "root".into() },
+        ChainLink {
+            pid: 100,
+            comm: "bash".into(),
+            cmd: "bash".into(),
+            user: "root".into(),
+        },
+        ChainLink {
+            pid: 200,
+            comm: "myapp".into(),
+            cmd: "myapp --flag".into(),
+            user: "root".into(),
+        },
     ];
     assert!(chains_contain(&chain, "myapp"));
 }
@@ -558,8 +566,18 @@ fn test_chains_contain_exact() {
 fn test_chains_contain_not_found() {
     use crate::common::ChainLink;
     let chain = vec![
-        ChainLink { pid: 100, comm: "bash".into(), cmd: "bash".into(), user: "root".into() },
-        ChainLink { pid: 200, comm: "other".into(), cmd: "other".into(), user: "root".into() },
+        ChainLink {
+            pid: 100,
+            comm: "bash".into(),
+            cmd: "bash".into(),
+            user: "root".into(),
+        },
+        ChainLink {
+            pid: 200,
+            comm: "other".into(),
+            cmd: "other".into(),
+            user: "root".into(),
+        },
     ];
     assert!(!chains_contain(&chain, "myapp"));
 }
@@ -599,8 +617,18 @@ async fn test_subscriber_task_receives_events() {
         ppid: 0,
         tgid: 0,
         chain: vec![
-            ChainLink { pid: 100, comm: "bash".into(), cmd: "bash".into(), user: "root".into() },
-            ChainLink { pid: 200, comm: "test-cmd".into(), cmd: "test-cmd".into(), user: "root".into() },
+            ChainLink {
+                pid: 100,
+                comm: "bash".into(),
+                cmd: "bash".into(),
+                user: "root".into(),
+            },
+            ChainLink {
+                pid: 200,
+                comm: "test-cmd".into(),
+                cmd: "test-cmd".into(),
+                user: "root".into(),
+            },
         ],
     };
     tx.send(event.clone()).unwrap();
@@ -615,8 +643,18 @@ async fn test_subscriber_task_receives_events() {
 async fn test_subscriber_task_filters_by_cmd() {
     use crate::common::ChainLink;
     let chain = vec![
-        ChainLink { pid: 100, comm: "bash".into(), cmd: "bash".into(), user: "root".into() },
-        ChainLink { pid: 200, comm: "myapp".into(), cmd: "myapp".into(), user: "root".into() },
+        ChainLink {
+            pid: 100,
+            comm: "bash".into(),
+            cmd: "bash".into(),
+            user: "root".into(),
+        },
+        ChainLink {
+            pid: 200,
+            comm: "myapp".into(),
+            cmd: "myapp".into(),
+            user: "root".into(),
+        },
     ];
     assert!(chains_contain(&chain, "myapp"));
     assert!(!chains_contain(&chain, "other-app"));
@@ -738,7 +776,12 @@ fn test_file_event_chain_as_vec() {
                 cmd: "touch /tmp/test.txt".into(),
                 user: "root".into(),
             },
-            ChainLink { pid: 100, comm: "bash".into(), cmd: "bash -l".into(), user: "root".into() },
+            ChainLink {
+                pid: 100,
+                comm: "bash".into(),
+                cmd: "bash -l".into(),
+                user: "root".into(),
+            },
         ],
     };
 

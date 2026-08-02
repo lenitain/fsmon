@@ -110,7 +110,6 @@ pub fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
         .collect()
 }
 
-
 /// Read and parse FID events, using a moka cache for path recovery.
 ///
 /// # Design
@@ -154,7 +153,10 @@ pub fn read_fid_events_cached(
         Ok(events) => events,
         Err(FanotifyError::Read(code)) if code == libc::EAGAIN => Vec::new(),
         Err(err) => {
-            eprintln!("[WARNING] fanotify read error on fd {}: {err}", fan_fd.as_raw_fd());
+            eprintln!(
+                "[WARNING] fanotify read error on fd {}: {err}",
+                fan_fd.as_raw_fd()
+            );
             Vec::new()
         }
     }
@@ -519,5 +521,4 @@ mod tests {
             assert!(DEFAULT_EVENT_MASK > 0, "DEFAULT_EVENT_MASK should be > 0");
         };
     }
-
 }

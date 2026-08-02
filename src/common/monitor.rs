@@ -19,9 +19,9 @@ use crate::common::filters::{self, PathOptions};
 use crate::common::metrics::MetricsRegistry;
 use crate::common::monitored::PathEntry;
 use crate::common::proc_cache;
-use proc_tree::{ProcessTracker, SourceId};
 use crate::common::watchdog::Watchdog;
 use crate::debug_log;
+use proc_tree::{ProcessTracker, SourceId};
 use serde_json;
 use slotmap::SlotMap;
 
@@ -348,7 +348,11 @@ impl Monitor {
                 pending_paths: Vec::new(),
                 temp_parent_marks: HashMap::new(),
             },
-            proc: ProcessState { tracker: None, source: None, mapper: proc_cache::EventMapper::new() },
+            proc: ProcessState {
+                tracker: None,
+                source: None,
+                mapper: proc_cache::EventMapper::new(),
+            },
             file_size_cache: LruCache::new(
                 NonZeroUsize::new(cache_config.file_size_capacity).unwrap(),
             ),
@@ -440,7 +444,6 @@ impl Monitor {
             }
         });
         let mut proc_buf = vec![0u8; 65536];
-
 
         // Move the reader death receiver out of self so tokio::select! can use it.
         let mut reader_death_rx = std::mem::replace(

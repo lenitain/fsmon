@@ -2,8 +2,8 @@
 //! used only for the bootstrap baseline — never a poll loop.
 
 use proc_tree::{
-    procf::{ProcScanConfig, scan},
     SnapshotEntry, SnapshotMeta,
+    procf::{ProcScanConfig, scan},
 };
 
 /// Scan `/proc` once and return `(entries, meta)` for bootstrap.

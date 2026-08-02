@@ -54,7 +54,10 @@ pub const PROC_HISTORY_CAP: usize = 65536;
 /// one-shot `/proc` snapshot as the bootstrap baseline (not a poll loop —
 /// events maintain the tree from here on). Returns the tracker and the
 /// registered source id.
-pub fn init_tracker(config: TrackerConfig, proc_root: &std::path::Path) -> (ProcessTracker, SourceId) {
+pub fn init_tracker(
+    config: TrackerConfig,
+    proc_root: &std::path::Path,
+) -> (ProcessTracker, SourceId) {
     let mut tracker = ProcessTracker::new(config);
     let src = tracker.register_source(source_capabilities());
     let (entries, meta) = crate::common::proc_scan::scan_once(proc_root);
@@ -384,7 +387,9 @@ mod tests {
         let view = t.view();
         let key = view.current(Tgid(100)).expect("child");
         assert_eq!(
-            view.get(key).and_then(|n| n.current_parent()).map(|p| p.tgid.0),
+            view.get(key)
+                .and_then(|n| n.current_parent())
+                .map(|p| p.tgid.0),
             Some(1),
             "parent edge must attach (fsmon ppid regression)"
         );

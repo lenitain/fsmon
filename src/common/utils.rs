@@ -86,11 +86,7 @@ pub struct ProcInfo {
     pub tgid: u32,
 }
 
-pub fn get_proc_info(
-    tracker: Option<&ProcessTracker>,
-    pid: u32,
-    file_path: &Path,
-) -> ProcInfo {
+pub fn get_proc_info(tracker: Option<&ProcessTracker>, pid: u32, file_path: &Path) -> ProcInfo {
     // 1. Generation-safe topology from the event-driven tracker.
     let mut info = ProcInfo::default();
     if let Some(t) = tracker {

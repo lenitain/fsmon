@@ -224,8 +224,11 @@ impl Monitor {
     pub(crate) fn patch_pending_events(&self, pending: &mut [PendingEvent]) {
         for pe in pending {
             let ev = &mut pe.event;
-            if ev.comm.is_empty() || ev.cmd.is_empty() || ev.user.is_empty()
-                || ev.ppid == 0 || ev.tgid == 0
+            if ev.comm.is_empty()
+                || ev.cmd.is_empty()
+                || ev.user.is_empty()
+                || ev.ppid == 0
+                || ev.tgid == 0
             {
                 // Generation-safe topology from the event-driven tracker
                 // (after the second drain). comm comes from cn_proc Comm
@@ -241,11 +244,8 @@ impl Monitor {
                             ev.comm = comm;
                         }
                         if ev.cmd.is_empty() {
-                            ev.cmd = proc_tree::read_cmdline(
-                                std::path::Path::new("/proc"),
-                                pe.pid,
-                            )
-                            .unwrap_or_default();
+                            ev.cmd = proc_tree::read_cmdline(std::path::Path::new("/proc"), pe.pid)
+                                .unwrap_or_default();
                         }
                         if ev.ppid == 0 {
                             ev.ppid = node

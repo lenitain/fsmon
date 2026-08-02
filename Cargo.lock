@@ -295,7 +295,9 @@ dependencies = [
 
 [[package]]
 name = "fanotify-fid"
-version = "0.6.0"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74384a841d86e19723000a0414cb34c839617e2cf0f38a0980f2c609352c742e"
 dependencies = [
  "libc",
  "smallvec",
@@ -331,7 +333,7 @@ dependencies = [
 
 [[package]]
 name = "fsmon"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -721,7 +723,9 @@ checksum = "3d20d5497ef88037a52ff98267d066e7f11fcc5e99bbfbd58a42336193aacec3"
 
 [[package]]
 name = "proc-connector"
-version = "0.2.0"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c0e5eb14bec5d6c81b03a83c26110b5e07206102954b5809c07232cfcda1c0d"
 dependencies = [
  "libc",
 ]
@@ -737,7 +741,9 @@ dependencies = [
 
 [[package]]
 name = "proc-tree"
-version = "0.5.0"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf3622ca3c1a273873c5d123197fc5fc75c37126c4309b83b27f46fe3b23604a"
 dependencies = [
  "foldhash",
 ]
@@ -879,6 +885,8 @@ dependencies = [
 [[package]]
 name = "sizefilter"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55f182e8ff86b512b19479ff16187cf82782e241d6aadc249e4d14da57f58d5c"
 
 [[package]]
 name = "slab"
@@ -996,6 +1004,8 @@ dependencies = [
 [[package]]
 name = "timefilter"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea891e8148d1abd5eca2e06c2d9abc6f273b9535a63d695cdecaf3277c652bff"
 dependencies = [
  "chrono",
 ]
