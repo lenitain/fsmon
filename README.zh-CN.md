@@ -12,6 +12,8 @@
 
 **fsmon** 是一款基于 Linux fanotify 的实时文件系统变更监控工具。它监视文件和目录，捕获每一次创建、修改、删除、移动、属性变更等事件，并追溯每个变更的来源进程 — 包括 PID、命令名、用户、父进程 PID、线程组 ID，和可选的完整进程祖先链。
 
+进程跟踪是**事件驱动的**：内核的 cn_proc 事件流维护进程拓扑，无需轮询，也无需递归扫描 `/proc`；每 CPU 的消息序列号可量化丢失的事件。一次性 `/proc` 扫描仅作为启动时的基线。
+
 ### 为什么选择 fsmon？
 
 与仅报告文件变更的传统监控工具不同，**fsmon** 增加了**进程追溯**功能 — 它能识别是哪个进程导致了每次变更。这使得在多进程环境中调试意外的文件修改变得更加容易。对于需要追踪文件系统变更源头的系统管理员和开发人员来说，fsmon 提供了传统工具无法比拟的深入洞察。
@@ -80,17 +82,12 @@ cargo build --release
 
 ### 短生命周期进程的 `comm`（内核限制）
 
-fsmon 通过内核 cn_proc connector（fork/exec/exit 事件）跟踪进程。内核只在进程
-通过 `prctl(PR_SET_NAME)` 主动改名时发送 `COMM` 事件——**exec 时从不发送**
-（`proc_comm_connector` 仅在 `kernel/sys.c` 的 `PR_SET_NAME` 分支被调用）。
-这是内核设计，不是 fsmon 或其依赖的 bug。
+fsmon 通过内核 cn_proc connector（fork/exec/exit 事件）跟踪进程。内核只在进程通过 `prctl(PR_SET_NAME)` 主动改名时发送 `COMM` 事件——**exec 时从不发送**（`proc_comm_connector` 仅在 `kernel/sys.c` 的 `PR_SET_NAME` 分支被调用）。这是内核设计，不是 fsmon 或其依赖的 bug。
 
 对短生命周期进程（spawn → exec → 退出 <1ms，如 `touch`）的影响：
 
 - 文件事件**不会遗漏**；pid/tgid/ppid/chain 完整。
-- 记录事件中的 `comm`/`cmd` 字段为**空**——事件被处理时进程通常已退出，
-  `/proc` 也来不及读取。
-- `cmd=` 过滤组匹配不到此类进程（与基于轮询的 0.5 版本行为一致——0.5 同样
-  看不到它们，只是显示 `unknown` 而非空串）。
+- 记录事件中的 `comm`/`cmd` 字段为**空**——事件被处理时进程通常已退出，`/proc` 也来不及读取。
+- `cmd=` 过滤组匹配不到此类进程。
 
 长生命周期进程不受影响：其 comm 由启动时的 `/proc` 扫描捕获，并通过改名事件刷新。

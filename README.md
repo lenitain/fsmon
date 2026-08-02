@@ -12,29 +12,13 @@ Real-time Linux filesystem change monitoring with process attribution.
 
 **fsmon** is a real-time Linux filesystem change monitor powered by fanotify. It watches files and directories, captures every event (create, modify, delete, move, attribute change, etc.), and attributes each change back to the process that caused it — including the PID, command name, user, parent PID, thread group ID, and optional full process ancestry chain.
 
-Process tracking is **event-driven** (proc-tree 0.6): the kernel's cn_proc
-event stream maintains the topology with no polling and no recursive
-`/proc` scanning; per-CPU message sequences quantify lost events. A
-one-shot `/proc` scan serves only as the bootstrap baseline.
+Process tracking is **event-driven** : the kernel's cn_proc event stream maintains the topology with no polling and no recursive `/proc` scanning; per-CPU message sequences quantify lost events. A one-shot `/proc` scan serves only as the bootstrap baseline.
 
 ### Why fsmon?
 
 Unlike standard file monitoring tools that only report which file changed, **fsmon** adds **process attribution** — it identifies which process caused each change. This makes it easier to debug unexpected file modifications in multi-process environments. For system administrators and developers who need to track down the source of filesystem changes, fsmon provides deeper insights that traditional tools cannot offer.
 
 This crate is Linux-only and will fail to compile on other platforms.
-
-## Dependencies (local development)
-
-0.5.3 builds against local path dependencies; publish them first when
-releasing:
-
-| crate | local | crates.io target |
-|---|---|---|
-| proc-tree | `../proc-tree` | 0.6 |
-| proc-connector | `../proc-connector` | 0.3 |
-| fanotify-fid | `../fanotify-fid` | 0.7 |
-| sizefilter | `../sizefilter` | 0.2 |
-| timefilter | `../timefilter` | 0.2 |
 
 ## Usage
 
@@ -98,22 +82,12 @@ cargo build --release
 
 ### `comm` for short-lived processes (kernel limitation)
 
-fsmon tracks processes via the kernel's cn_proc connector (fork/exec/exit
-events). The kernel only emits a `COMM` event when a process renames itself
-via `prctl(PR_SET_NAME)` — **never on `exec`** (`proc_comm_connector` is only
-called from the `PR_SET_NAME` branch in `kernel/sys.c`). This is kernel
-design, not a bug in fsmon or its dependencies.
+fsmon tracks processes via the kernel's cn_proc connector (fork/exec/exit events). The kernel only emits a `COMM` event when a process renames itself via `prctl(PR_SET_NAME)` — **never on `exec`** (`proc_comm_connector` is only called from the `PR_SET_NAME` branch in `kernel/sys.c`). This is kernel design, not a bug in fsmon or its dependencies.
 
-Consequences for short-lived processes (spawn → exec → exit in <1 ms, e.g.
-`touch`):
+Consequences for short-lived processes (spawn → exec → exit in <1 ms, e.g. `touch`):
 
 - File events are **never missed**; pid/tgid/ppid/chain are complete.
-- The `comm`/`cmd` fields of the recorded event are **empty** — the
-  process is usually already gone by the time the event is processed, so
-  `/proc` cannot be read either.
-- A `cmd=` filter group does not match such processes (same behavior as
-  the 0.5 polling-based version, which also could not see them — it just
-  displayed `unknown` instead of an empty string).
+- The `comm`/`cmd` fields of the recorded event are **empty** — the process is usually already gone by the time the event is processed, so `/proc` cannot be read either.
+- A `cmd=` filter group does not match such processes.
 
-Long-lived processes are unaffected: their comm is captured by the
-bootstrap `/proc` scan and refreshed via rename events.
+Long-lived processes are unaffected: their comm is captured by the bootstrap `/proc` scan and refreshed via rename events.
