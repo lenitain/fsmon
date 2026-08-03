@@ -1,4 +1,4 @@
-use libsystemd::daemon;
+use std::os::unix::ffi::OsStrExt;
 use std::time::Duration;
 
 /// Watchdog configuration for systemd integration.
@@ -77,18 +77,47 @@ impl Watchdog {
     /// Called from the main event loop's heartbeat tick.
     /// Returns Ok(()) on success, or error message on failure.
     pub fn send_heartbeat(&self) -> Result<(), String> {
-        daemon::notify(false, &[daemon::NotifyState::Watchdog])
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+        sd_notify(NotifyState::Watchdog)
+    }
+}
+
+/// systemd notify states (subset of sd_notify(3) messages used by fsmon).
+pub(crate) enum NotifyState {
+    Ready,
+    Watchdog,
+}
+
+impl NotifyState {
+    fn to_message(&self) -> String {
+        match self {
+            NotifyState::Ready => "READY=1".to_string(),
+            NotifyState::Watchdog => "WATCHDOG=1".to_string(),
+        }
     }
 }
 
 /// Send a notify state to systemd.
 /// Used internally for both READY and WATCHDOG signals.
-pub(crate) fn sd_notify(state: daemon::NotifyState) -> Result<(), String> {
-    daemon::notify(false, &[state])
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+///
+/// Minimal pure-std implementation of sd_notify(3): sends a datagram to
+/// `$NOTIFY_SOCKET` (leading `@` denotes an abstract socket address).
+pub(crate) fn sd_notify(state: NotifyState) -> Result<(), String> {
+    use std::os::linux::net::SocketAddrExt;
+    use std::os::unix::net::SocketAddr as UnixSocketAddr;
+    use std::os::unix::net::UnixDatagram;
+
+    let raw =
+        std::env::var_os("NOTIFY_SOCKET").ok_or_else(|| "NOTIFY_SOCKET is not set".to_string())?;
+    let addr = if raw.as_bytes().first() == Some(&b'@') {
+        // Abstract socket address: '@' prefix maps to the Linux abstract namespace.
+        UnixSocketAddr::from_abstract_name(&raw.as_bytes()[1..]).map_err(|e| e.to_string())?
+    } else {
+        UnixSocketAddr::from_pathname(&raw).map_err(|e| e.to_string())?
+    };
+    let sock = UnixDatagram::unbound().map_err(|e| e.to_string())?;
+    sock.send_to_addr(state.to_message().as_bytes(), &addr)
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -124,29 +153,37 @@ mod tests {
     }
 
     #[test]
-    fn test_libsystemd_notify_ready() {
-        // Test that libsystemd notify function works.
-        // In non-systemd environment, this returns an error — that's expected.
-        let result = sd_notify(daemon::NotifyState::Ready);
-        let _ = result; // don't care about result in test
+    fn test_sd_notify_roundtrip() {
+        use std::os::unix::net::UnixDatagram;
+
+        let dir = tempfile::tempdir().unwrap();
+        let sock_path = dir.path().join("notify.sock");
+        let listener = match UnixDatagram::bind(&sock_path) {
+            Ok(l) => l,
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                eprintln!("skipping: unix datagram sockets blocked in this environment");
+                return;
+            }
+            Err(e) => panic!("bind failed: {e}"),
+        };
+        temp_env::with_var("NOTIFY_SOCKET", Some(&sock_path), || {
+            match sd_notify(NotifyState::Ready) {
+                Ok(()) => {}
+                Err(e) if e.contains("Operation not permitted") => {
+                    eprintln!("skipping: unix datagram send blocked in this environment");
+                }
+                Err(e) => panic!("sd_notify failed: {e}"),
+            }
+        });
+        let mut buf = [0u8; 64];
+        let n = listener.recv(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"READY=1");
     }
 
     #[test]
-    fn test_libsystemd_notify_watchdog() {
-        let result = sd_notify(daemon::NotifyState::Watchdog);
-        let _ = result;
-    }
-
-    #[test]
-    fn test_libsystemd_notify_status() {
-        let result = sd_notify(daemon::NotifyState::Status("fsmon test".to_string()));
-        let _ = result;
-    }
-
-    #[test]
-    fn test_libsystemd_watchdog_enabled() {
-        // In non-systemd environment, this returns None
-        let _ = daemon::watchdog_enabled(false);
+    fn test_sd_notify_message_format() {
+        assert_eq!(NotifyState::Ready.to_message(), "READY=1");
+        assert_eq!(NotifyState::Watchdog.to_message(), "WATCHDOG=1");
     }
 
     #[test]

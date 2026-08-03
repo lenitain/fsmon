@@ -10,10 +10,9 @@ use tokio::io::AsyncBufReadExt;
 use tokio::io::unix::AsyncFd;
 use tokio::signal::unix::{SignalKind, signal};
 
-use moka::sync::Cache;
-
 use crate::common::FileEvent;
 use crate::common::config::ResolvedCacheConfig;
+use crate::common::dir_cache::DirCache;
 use crate::common::fid_parser::FsGroup;
 use crate::common::filters::{self, PathOptions};
 use crate::common::metrics::MetricsRegistry;
@@ -150,9 +149,9 @@ pub(crate) struct FanotifyState {
     /// Maps monitored path → key in groups for fast lookup in remove_path.
     pub path_to_group: HashMap<PathBuf, FsGroupKey>,
     /// Directory handle → path cache (shared with reader tasks).
-    pub dir_cache: Cache<fanotify_fid::types::HandleKey, PathBuf>,
+    pub dir_cache: DirCache,
     /// Clone of dir_cache for spawning reader tasks during live-add.
-    pub shared_dir_cache: Option<Cache<fanotify_fid::types::HandleKey, PathBuf>>,
+    pub shared_dir_cache: Option<DirCache>,
 }
 
 /// Inotify state: watches for pending paths and new subdirectory detection.
@@ -336,10 +335,10 @@ impl Monitor {
             fanotify: FanotifyState {
                 groups: SlotMap::new(),
                 path_to_group: HashMap::new(),
-                dir_cache: Cache::builder()
-                    .max_capacity(cache_config.dir_capacity)
-                    .time_to_live(Duration::from_secs(cache_config.dir_ttl_secs))
-                    .build(),
+                dir_cache: DirCache::new(
+                    cache_config.dir_capacity,
+                    Duration::from_secs(cache_config.dir_ttl_secs),
+                ),
                 shared_dir_cache: None,
             },
             inotify_state: InotifyState {
@@ -452,7 +451,9 @@ impl Monitor {
         );
 
         // Notify systemd: READY=1
-        if let Err(e) = crate::common::watchdog::sd_notify(libsystemd::daemon::NotifyState::Ready) {
+        if let Err(e) =
+            crate::common::watchdog::sd_notify(crate::common::watchdog::NotifyState::Ready)
+        {
             eprintln!("[WARNING] systemd notify READY failed: {}", e);
         }
 
@@ -587,10 +588,7 @@ impl Monitor {
     }
 
     /// Collect runtime metrics for periodic reporting.
-    pub(crate) fn collect_metrics(
-        &self,
-        dir_cache: &moka::sync::Cache<fanotify_fid::types::HandleKey, std::path::PathBuf>,
-    ) -> MetricsReport {
+    pub(crate) fn collect_metrics(&self, dir_cache: &DirCache) -> MetricsReport {
         let reader_groups_alive = self.reader_states.values().filter(|s| !s.gave_up).count() as u64;
         let reader_groups_gave_up =
             self.reader_states.values().filter(|s| s.gave_up).count() as u64;

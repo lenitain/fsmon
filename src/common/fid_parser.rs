@@ -7,14 +7,15 @@ use fanotify_fid::consts::{
     FAN_MOVED_FROM, FAN_MOVED_TO, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC,
 };
 use fanotify_fid::prelude::*;
-use fanotify_fid::types::{FidEvent, HandleKey};
+use fanotify_fid::types::FidEvent;
 use libc;
-use moka::sync::Cache;
 use std::collections::VecDeque;
 use std::ffi::CString;
 use std::fs;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
+
+use crate::common::dir_cache::DirCache;
 
 // ---- FanFd wrapper for AsyncFd ----
 
@@ -110,7 +111,7 @@ pub fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
         .collect()
 }
 
-/// Read and parse FID events, using a moka cache for path recovery.
+/// Read and parse FID events, using a bounded TTL cache for path recovery.
 ///
 /// # Design
 ///
@@ -145,10 +146,10 @@ pub fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
 pub fn read_fid_events_cached(
     fan_fd: &OwnedFd,
     mount_fds: &[OwnedFd],
-    dir_cache: &Cache<HandleKey, PathBuf>,
+    dir_cache: &DirCache,
     buf: &mut Vec<u8>,
 ) -> Vec<FidEvent> {
-    let mut store = crate::common::dir_cache::MokaPathStore(dir_cache.clone());
+    let mut store = crate::common::dir_cache::DirCacheStore(dir_cache.clone());
     match fanotify_fid::read::read_fid_events(fan_fd, mount_fds, buf, Some(&mut store)) {
         Ok(events) => events,
         Err(FanotifyError::Read(code)) if code == libc::EAGAIN => Vec::new(),
@@ -164,9 +165,9 @@ pub fn read_fid_events_cached(
 
 // ---- Constants ----
 
-/// Capacity for the moka directory handle cache (path→handle key reverse lookup).
+/// Capacity for the directory handle cache (path→handle key reverse lookup).
 /// 100k covers ~10s of thousands of directories with room to spare.
-/// moka uses W-TinyLFU eviction when this limit is reached.
+/// Expired or excess entries are evicted when the limit is reached.
 pub const DIR_CACHE_CAP: u64 = 100_000;
 
 /// TTL for directory handle cache entries.

@@ -349,12 +349,7 @@ impl Monitor {
     }
 
     /// Spawn reader tasks and file writer. Returns (event_rx, dir_cache).
-    pub(crate) fn spawn_tasks(
-        &mut self,
-    ) -> (
-        EventReceiver,
-        moka::sync::Cache<fanotify_fid::types::HandleKey, std::path::PathBuf>,
-    ) {
+    pub(crate) fn spawn_tasks(&mut self) -> (EventReceiver, dir_cache::DirCache) {
         // Spawn one reader task per FsGroup
         let (event_tx, event_rx) = match self.cache_config.channel_capacity {
             Some(cap) if cap > 0 => {
