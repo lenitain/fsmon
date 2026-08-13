@@ -1,0 +1,63 @@
+[package]
+name = "fsmon"
+version = "0.5.4"
+edition = "2024"
+license = "MIT"
+description = "Lightweight High-Performance File System Change Tracking Tool"
+repository = "https://github.com/lenitain/fsmon"
+readme = "README.md"
+keywords = ["filesystem", "monitor", "linux", "fanotify"]
+categories = ["filesystem", "command-line-utilities"]
+authors = ["lenitain <xt.zhu@qq.com>"]
+rust-version = "1.85"
+documentation = "https://docs.rs/fsmon"
+
+include = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "LICENSE",
+    "README.md",
+    "README.zh-CN.md",
+    "src/",
+    "CHANGELOG.md",
+    "tests/",
+]
+
+[[bin]]
+name = "fsmon"
+path = "src/bin/fsmon/main.rs"
+
+[dependencies]
+tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "net", "io-util", "signal", "sync", "time"] }
+fanotify-fid = "0.7.0"
+clap = { version = "4.6", features = ["derive", "color"] }
+clap_complete = "4.6"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+proc-connector = "0.3.0"
+libc = "0.2"
+tempfile = "3"
+nix = { version = "0.31", default-features = false, features = ["user", "fs", "socket", "signal"] }
+anyhow = "1.0"
+users = "0.11"
+lru = "0.18"
+path-clean = "1.0"
+smallvec = "1.15"
+inotify = { version = "0.11", default-features = false }
+toml = "1.1"
+sizefilter = "0.2.0"
+timefilter = "0.2.0"
+slotmap = "1.1"
+proc-tree = { version = "0.6.0", default-features = false, features = ["procf"] }
+clap_mangen = "0.3"
+clap_complete_nushell = "4.6"
+
+[profile.release]
+opt-level = 3
+strip = true
+lto = true
+
+[dev-dependencies]
+temp-env = "0.3.6"
+tempfile = "3.27.0"

@@ -1,0 +1,247 @@
+use anyhow::{Context, Result};
+use fsmon::common::DaemonLock;
+use fsmon::common::color::{RESET, YELLOW};
+use fsmon::common::config::{CacheConfig, CliCacheOverride, Config};
+use fsmon::common::monitor::Monitor;
+use fsmon::common::monitored::Monitored;
+use std::fs;
+use std::path::Path;
+
+use super::parse_path_entries;
+
+/// Command-line options for `fsmon daemon`.
+pub struct DaemonOptions {
+    pub debug: bool,
+    pub cli_cache: CliCacheOverride,
+    pub disk_min_free: Option<String>,
+    pub local_time: bool,
+    pub metrics_interval: Option<u64>,
+    pub watchdog_interval: Option<u64>,
+    pub watchdog_multiplier: Option<u64>,
+}
+
+pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
+    let DaemonOptions {
+        debug,
+        cli_cache,
+        disk_min_free,
+        local_time,
+        metrics_interval,
+        watchdog_interval,
+        watchdog_multiplier,
+    } = opts;
+    // Acquire singleton lock first — only one daemon instance allowed
+    let (uid, _gid) = fsmon::common::config::resolve_uid_gid();
+    let _lock = DaemonLock::acquire(uid)?;
+
+    let mut cfg = Config::load()?;
+    cfg.resolve_paths()?;
+
+    eprintln!("Config loaded:");
+    eprintln!(
+        "  Monitored path database:  {}",
+        cfg.monitored.path.display()
+    );
+    // Log path comes purely from config
+    let log_path = cfg.logging.path.clone();
+    if let Some(ref p) = log_path {
+        eprintln!("  Event logs:     {}", p.display());
+    } else {
+        eprintln!("  Event logs:     disabled (path not configured)");
+    }
+    eprintln!(
+        "  Singleton lock: {}",
+        fsmon::common::socket::lock_socket_path().display()
+    );
+    eprintln!(
+        "  Command socket: {}",
+        fsmon::common::socket::socket_path().display()
+    );
+
+    let store = Monitored::load(&cfg.monitored.path)?;
+
+    let socket_path = fsmon::common::socket::socket_path();
+
+    // Create parent directories for socket
+    if socket_path.exists() {
+        fs::remove_file(&socket_path)?;
+    }
+    if let Some(parent) = socket_path.parent() {
+        fs::create_dir_all(parent)?;
+        fsmon::common::ensure_daemon_dir_permissions(parent)?;
+    }
+
+    let socket_listener = tokio::net::UnixListener::bind(&socket_path)
+        .with_context(|| format!("Failed to bind socket at {}", socket_path.display()))?;
+
+    // Set socket permissions to 0666 so any user can send commands
+    set_socket_permissions(&socket_path)?;
+
+    // Chown store parent dir to the original user (daemon runs as root)
+    if let Some(parent) = cfg.monitored.path.parent() {
+        fsmon::common::config::chown_to_original_user(parent);
+    }
+
+    // Merge daemon config: CLI > fsmon.toml > code defaults
+    // debug: CLI --debug wins, otherwise config [daemon] debug, default false
+    let debug = debug || cfg.daemon.as_ref().and_then(|d| d.debug).unwrap_or(false);
+    // metrics_interval: CLI --metrics-interval wins, otherwise config [daemon] metrics_interval
+    let metrics_interval = metrics_interval
+        .or(cfg.daemon.as_ref().and_then(|d| d.metrics_interval))
+        .filter(|&n| n > 0);
+
+    // Merge cache config: CLI > fsmon.toml > code defaults
+    let cache_cfg = cfg
+        .cache
+        .as_ref()
+        .map(|c| c.resolve_with_cli(&cli_cache))
+        .unwrap_or_else(|| {
+            let empty = CacheConfig {
+                dir_capacity: None,
+                dir_ttl_secs: None,
+                file_size_capacity: None,
+                proc_ttl_secs: None,
+                channel_capacity: None,
+                subscribe_buf: None,
+                buffer_size: None,
+            };
+            empty.resolve_with_cli(&cli_cache)
+        });
+
+    if debug {
+        eprintln!("{}[DEBUG]{} --- cache configuration ---", YELLOW, RESET);
+        eprintln!(
+            "{}[DEBUG]{}   dir_capacity:       {}",
+            YELLOW, RESET, cache_cfg.dir_capacity
+        );
+        eprintln!(
+            "{}[DEBUG]{}   dir_ttl_secs:       {}",
+            YELLOW, RESET, cache_cfg.dir_ttl_secs
+        );
+        eprintln!(
+            "{}[DEBUG]{}   file_size_capacity: {}",
+            YELLOW, RESET, cache_cfg.file_size_capacity
+        );
+        eprintln!(
+            "{}[DEBUG]{}   proc_ttl_secs:      {}",
+            YELLOW, RESET, cache_cfg.proc_ttl_secs
+        );
+        eprintln!(
+            "{}[DEBUG]{}   buffer_size:        {}",
+            YELLOW, RESET, cache_cfg.buffer_size
+        );
+        match cache_cfg.channel_capacity {
+            Some(cap) => eprintln!(
+                "{}[DEBUG]{}   channel_capacity:   {} (bounded)",
+                YELLOW, RESET, cap
+            ),
+            None => eprintln!("{}[DEBUG]{}   channel_capacity:   unbounded", YELLOW, RESET),
+        }
+    }
+
+    let paths_and_options = parse_path_entries(&store.flatten())?;
+
+    // Merge disk_min_free: CLI > config > None
+    let disk_min_free = disk_min_free.or_else(|| cfg.logging.disk_min_free.clone());
+
+    // Merge watchdog_interval: CLI > config > None (disabled)
+    let watchdog_interval = watchdog_interval
+        .or(cfg.watchdog.as_ref().and_then(|w| w.interval_secs))
+        .filter(|&n| n > 0);
+
+    // Merge watchdog_multiplier: CLI > config > None (default: 2)
+    let watchdog_multiplier = watchdog_multiplier
+        .or(cfg.watchdog.as_ref().and_then(|w| w.multiplier))
+        .unwrap_or(2);
+
+    // Validate watchdog_multiplier
+    // Exit code 2 = configuration error (systemd will not restart)
+    if watchdog_multiplier <= 1 {
+        eprintln!(
+            "Error: watchdog multiplier must be > 1, got {}.",
+            watchdog_multiplier
+        );
+        std::process::exit(2);
+    }
+
+    // Compute WatchdogSec = interval × multiplier
+    let watchdog_sec = watchdog_interval.map(|i| i * watchdog_multiplier);
+
+    if debug {
+        if let Some(i) = watchdog_interval {
+            eprintln!("{}[DEBUG]{}   watchdog_interval:  {}s", YELLOW, RESET, i);
+            eprintln!(
+                "{}[DEBUG]{}   watchdog_multiplier: {}x",
+                YELLOW, RESET, watchdog_multiplier
+            );
+            if let Some(s) = watchdog_sec {
+                eprintln!("{}[DEBUG]{}   watchdog_sec:       {}s", YELLOW, RESET, s);
+            }
+        } else {
+            eprintln!("{}[DEBUG]{}   watchdog:           disabled", YELLOW, RESET);
+        }
+    }
+
+    let store_path = cfg.monitored.path.clone();
+    let subscribe_buf = cache_cfg.subscribe_buf;
+    let log_dir = log_path;
+    if debug {
+        eprintln!(
+            "{}[DEBUG]{}   local logging:      {}",
+            YELLOW,
+            RESET,
+            if log_dir.is_some() {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+    }
+    let mut monitor = match Monitor::new(fsmon::common::monitor::MonitorConfig {
+        paths_and_options,
+        log_dir,
+        monitored_path: Some(store_path),
+        buffer_size: Some(cache_cfg.buffer_size),
+        socket_listener: Some(socket_listener),
+        debug,
+        cache_config: Some(cache_cfg),
+        disk_min_free,
+        subscribe_buf: Some(subscribe_buf),
+        local_time: local_time || cfg.logging.local_time.unwrap_or(false),
+        metrics_interval,
+        watchdog_interval,
+    }) {
+        Ok(m) => m,
+        Err(e) => {
+            // Exit code 2 = configuration error (systemd will not restart)
+            eprintln!("Error: {}", e);
+            std::process::exit(2);
+        }
+    };
+
+    if !store.is_empty() {
+        for group in &store.groups {
+            let cmd_label = if group.cmd == fsmon::common::monitored::CMD_GLOBAL {
+                "[global]".to_string()
+            } else {
+                format!("[{}]", group.cmd)
+            };
+            eprintln!("  {} ({} path(s)):", cmd_label, group.paths.len());
+            for path in group.paths.keys() {
+                eprintln!("    {}", path.display());
+            }
+        }
+    }
+
+    monitor.run().await?;
+    Ok(())
+}
+
+/// Set socket permissions to 0666 so non-root users can communicate with the daemon.
+pub fn set_socket_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let perm = fs::Permissions::from_mode(0o666);
+    fs::set_permissions(path, perm)
+        .with_context(|| format!("Failed to set socket permissions on {}", path.display()))?;
+    Ok(())
+}
