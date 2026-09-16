@@ -1,16 +1,15 @@
 //! Privileged "fanotify factory" subprocess.
 //!
-//! See `PRIVILEGE-SEPARATION-PLAN.md` §5.5 / §6 阶段 3.
 //!
 //! `CAP_SYS_ADMIN` is needed for exactly one thing: calling `fanotify_init()`
 //! as a privileged process, so the kernel does **not** set `FANOTIFY_UNPRIV`
 //! on the group (which would blank out `metadata.pid` for every event caused
-//! by another process — see plan §2).
+//! by another process).
 //!
-//! Because a group can only ever hold marks from a single filesystem (the
-//! kernel returns `EXDEV`, plan §5.2), and new filesystems can appear at any
-//! time, that capability must stay available for the whole daemon lifetime.
-//! The plan's answer is to confine it to a fork()ed child whose entire input
+//! A group can only ever hold marks from a single filesystem — the kernel
+//! returns `EXDEV` for a second one — and new filesystems can appear at any
+//! time, so that capability must stay available for the whole daemon lifetime.
+//! The answer is to confine it to a fork()ed child whose entire input
 //! is `(dirfd[, fan_fd], flags, mask)` and whose syscall surface is a seccomp
 //! whitelist:
 //!
@@ -22,8 +21,9 @@
 //! ```
 //!
 //! The privilege is inherited at fork() time and never exists as a file on
-//! disk, so no other user can obtain it (unlike a `setcap` helper binary,
-//! plan §5.4). The child never sees a path string: the parent opens
+//! disk, so no other user can obtain it — not even one who can run the
+//! binary, which is what a `setcap` helper would expose. The child never sees
+//! a path string either: the parent opens
 //! directories and passes the fds over `SCM_RIGHTS`.
 
 use std::io;
@@ -36,8 +36,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result, bail};
 
-/// `fanotify_init()` flags fsmon always wants (plan §3: exactly the
-/// non-privileged `FANOTIFY_USER_INIT_FLAGS` set).
+/// `fanotify_init()` flags fsmon always wants: exactly the flags the kernel
+/// accepts from an unprivileged caller, so the group starts as privileged as
+/// it can and only `UNLIMITED_MARKS` needs to be added on top.
 pub(crate) const GROUP_INIT_FLAGS: u32 = fanotify_fid::consts::FAN_CLOEXEC
     | fanotify_fid::consts::FAN_NONBLOCK
     | fanotify_fid::consts::FAN_CLASS_NOTIF
@@ -46,8 +47,8 @@ pub(crate) const GROUP_INIT_FLAGS: u32 = fanotify_fid::consts::FAN_CLOEXEC
     | fanotify_fid::consts::FAN_REPORT_NAME;
 
 /// Extra flag that only a privileged group can accept. It lifts the
-/// per-uid `max_user_marks` cap (plan §5.7), which otherwise applies even
-/// to root. Never add `FAN_UNLIMITED_QUEUE`: that would remove kernel-side
+/// per-uid `max_user_marks` cap, which otherwise applies even to root.
+/// Never add `FAN_UNLIMITED_QUEUE`: that would remove kernel-side
 /// backpressure and trade dropped events for unbounded memory growth.
 pub(crate) const UNLIMITED_MARKS: u32 = fanotify_fid::consts::FAN_UNLIMITED_MARKS;
 
@@ -567,7 +568,8 @@ impl std::fmt::Debug for FanotifyFactory {
 /// The kernel decides that with `capable(CAP_SYS_ADMIN)` inside
 /// `fanotify_init()`, so asking it directly is more faithful than `capget()`
 /// (which lies inside a user namespace). `FAN_UNLIMITED_MARKS` is the probe:
-/// it is one of the admin-only init flags (plan §2/§5.7).
+/// it is one of the admin-only init flags, so a non-root process can never
+/// set it.
 pub(crate) fn has_privileged_fanotify() -> bool {
     // SAFETY: fanotify_init is a pure syscall.
     let fd = unsafe {

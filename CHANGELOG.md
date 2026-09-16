@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`check_pending` no longer spins forever**: on `add_path` failure the entry was removed and re-appended, so the loop index never advanced. A failure that cannot change (no fanotify factory, for instance) hung the caller; it is now a single pass per call.
 - **`StartLimitIntervalSec` moved to `[Unit]`**: systemd has ignored it in `[Service]` since v229, so the generated unit silently lost its restart-rate policy. `systemd-analyze verify` is clean on the result.
 - **`FS_ERROR` records carry the error**: `FileEvent.fs_error` is `Option<(i32, u32)>` — negative errno plus the count of errors the kernel merged. Omitted for every other event type, so existing JSONL output is byte-for-byte unchanged. Loss counters for unplaceable renames and unparsed info records appear in the metrics line as `lost(rename/unparsed)=N/M`.
-- **`fanotify-fid` 0.7.1**: the dependency moves to the release that stops dropping info record types 4/5/6/7/10/12 (see `tools/fidtest/`, and `fanotify-fid/KNOWN-ISSUES.md` for the audit). fsmon did not depend on the dropped records by construction, so this is a prerequisite for the rename handling above rather than a behaviour change on its own.
+- **`fanotify-fid` 0.7.1**: the dependency moves to the release that stops dropping info record types 4/5/6/7/10/12 fsmon did not depend on the dropped records by construction, so this is a prerequisite for the rename handling above rather than a behaviour change on its own.
 
 ## [0.5.4] - 2026-08-03
 

@@ -38,7 +38,7 @@ impl Monitor {
     /// Missing it means every event caused by another process gets
     /// `metadata.pid = 0` (fanotify_user.c), silently destroying the process
     /// attribution that is fsmon's entire point. Hence: loud failure, not a
-    /// quiet degraded run (PRIVILEGE-SEPARATION-PLAN.md §6 阶段 1).
+    /// quiet degraded run.
     pub(crate) fn check_privileges(&self) -> Result<()> {
         if self.privileged {
             return Ok(());
@@ -78,9 +78,9 @@ impl Monitor {
         crate::common::privileges::drop_privileges()
     }
 
-    /// Group init flags. `FAN_UNLIMITED_MARKS` lifts the per-uid mark cap
-    /// (plan §5.7) but is an admin-only flag, so it is only requested when
-    /// the daemon actually holds CAP_SYS_ADMIN.
+    /// Group init flags. `FAN_UNLIMITED_MARKS` lifts the per-uid mark cap,
+    /// which otherwise applies even to root, but it is an admin-only flag — so
+    /// it is only requested when the daemon actually holds CAP_SYS_ADMIN.
     pub(crate) fn group_init_flags(&self) -> u32 {
         if self.privileged {
             GROUP_INIT_FLAGS | UNLIMITED_MARKS

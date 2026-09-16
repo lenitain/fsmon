@@ -95,7 +95,7 @@ fn generate_man_pages() -> Result<()> {
 
 /// Build the hardened systemd unit.
 ///
-/// Hardening rationale (PRIVILEGE-SEPARATION-PLAN.md §6 阶段 2 / 阶段 5):
+/// Hardening rationale:
 /// - `CAP_SYS_ADMIN` is the *only* capability `fanotify_init()` needs — it
 ///   clears the group's `FANOTIFY_UNPRIV` flag so pids are not blanked.
 /// - `SystemCallFilter=@system-service` covers everything fsmon uses, but

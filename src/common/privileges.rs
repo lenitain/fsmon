@@ -1,12 +1,11 @@
-//! Privilege handling for the daemon (PRIVILEGE-SEPARATION-PLAN.md §6 阶段 3).
+//! Privilege handling for the daemon.
 //!
 //! After the fanotify factory has been forked and the initial groups have
 //! been created, the main daemon process calls [`drop_privileges`]. From
-//! that point on it holds no capabilities at all (`CapEff = 0`), mirroring
-//! gsr's auditable main process.
+//! that point on it holds no capabilities at all (`CapEff = 0`).
 //!
 //! The privileged groups keep reporting real pids because the kernel stores
-//! `FANOTIFY_UNPRIV` on the *group* object, not on the process (plan §3).
+//! `FANOTIFY_UNPRIV` on the *group* object, not on the process.
 
 use anyhow::{Context, Result, bail};
 use std::io;

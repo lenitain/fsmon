@@ -20,8 +20,7 @@
  *
  * WHY THIS MATTERS
  *   If CONFIRMED -> fsmon needs CAP_SYS_ADMIN for one syscall at startup only;
- *               the daemon can run with zero capabilities (better than gsr,
- *               whose privileged helper must stay resident).
+ *               the daemon itself can then run with zero capabilities.
  *   If REFUTED -> the privileged component must itself read the event stream,
  *               i.e. a resident privileged broker is unavoidable.
  *

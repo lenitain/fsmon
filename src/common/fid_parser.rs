@@ -42,9 +42,9 @@ impl AsRawFd for FanFd {
 /// One fanotify fd per filesystem, shared by all paths on it.
 ///
 /// The key is `st_dev`, the userspace view of the superblock the kernel
-/// actually compares when it decides whether two marks may share a group
-/// (PRIVILEGE-SEPARATION-PLAN.md §5.6.2). Do not replace it with `fsid`:
-/// one fsid can map to two superblocks, which the kernel would reject.
+/// actually compares when it decides whether two marks may share a group.
+/// Do not replace it with `fsid`: one fsid can map to two superblocks, which
+/// the kernel would reject.
 pub struct FsGroup {
     pub dev_id: u64,
     pub fan_fd: OwnedFd,

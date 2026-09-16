@@ -47,7 +47,7 @@ impl Monitor {
     ///
     /// No mount fd is passed to the resolver: fsmon deliberately does not
     /// request `CAP_DAC_READ_SEARCH`, so `open_by_handle_at` could never
-    /// succeed (plan §6 阶段 4). An empty slice makes every tier-3 fallback
+    /// succeed. An empty slice makes every tier-3 fallback
     /// a zero-syscall immediate failure, and the miss counter in `DirCache`
     /// records how often that happens.
     pub(crate) fn spawn_fd_reader(&mut self, group_key: super::FsGroupKey) {

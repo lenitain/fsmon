@@ -17,7 +17,7 @@ pub struct DirCache {
     inner: Arc<Mutex<HashMap<HandleKey, (PathBuf, Instant)>>>,
     capacity: u64,
     ttl: Duration,
-    /// Number of lookups that missed. With `mount_fds = &[]` (plan §6 阶段 4)
+    /// Number of lookups that missed. With `mount_fds = &[]`
     /// every miss means the fanotify-fid tier-3 `open_by_handle_at` fallback
     /// is a zero-syscall immediate failure, so this counter is the observable
     /// "path resolution degraded" signal.

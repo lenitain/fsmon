@@ -651,7 +651,7 @@ impl Monitor {
         }
     }
 
-    /// Emit the privilege state once at startup (plan §6 阶段 1.2).
+    /// Emit the privilege state once at startup.
     pub(crate) fn report_privilege_state(&self) {
         if !self.privileged {
             eprintln!(

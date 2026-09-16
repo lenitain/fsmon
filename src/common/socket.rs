@@ -145,7 +145,7 @@ pub struct HealthInfo {
     /// Index-aligned with fs_groups, one entry per reader task.
     pub readers: Vec<ReaderHealth>,
     /// True when the daemon could not create a privileged fanotify group, so
-    /// event pid attribution is degraded to 0. See PRIVILEGE-SEPARATION-PLAN §6.
+    /// event pid attribution is degraded to 0.
     #[serde(default)]
     pub unprivileged: bool,
     /// Directory-handle cache misses. With no `CAP_DAC_READ_SEARCH` these are
