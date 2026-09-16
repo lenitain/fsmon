@@ -1,18 +1,13 @@
 use anyhow::{Context, bail};
-use std::os::fd::{AsRawFd, OwnedFd};
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
 use crate::{debug_log, info_log, warning_log};
-use fanotify_fid::consts::{
-    AT_FDCWD, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_MARK_FILESYSTEM, FAN_MARK_REMOVE, FAN_NONBLOCK,
-    FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
-};
-use fanotify_fid::prelude::*;
 
 use crate::common::dir_cache;
 use crate::common::fid_parser::{
     FsGroup, mark_directory, mark_directory_at, mark_recursive_with_depth, open_dir_safe,
-    path_mask_from_options,
+    path_mask_from_options, unmark_directory_at,
 };
 use crate::common::filters::{self, PathOptions};
 use crate::common::monitored::PathEntry;
@@ -56,7 +51,9 @@ impl Monitor {
                     .position(|p| p == &path)
                     .and_then(|i| self.canonical_paths.get(i).cloned())
                     .unwrap_or_else(|| path.clone());
-                let _ = mark_directory(fan_fd, new_mask, &canonical);
+                if let Some(factory) = self.fanotify.factory.clone() {
+                    let _ = mark_directory(&factory, fan_fd, new_mask, &canonical);
+                }
                 debug_log!(self.debug, "  updated fanotify mask to {:#x}", new_mask);
             }
             let cmd_label = opts
@@ -141,6 +138,12 @@ impl Monitor {
             .map(|m| std::os::linux::fs::MetadataExt::st_dev(&m))
             .unwrap_or(0);
 
+        let factory = self
+            .fanotify
+            .factory
+            .clone()
+            .context("fanotify factory has not been started")?;
+
         let existing_key = self
             .fanotify
             .groups
@@ -152,7 +155,7 @@ impl Monitor {
             // Use fd-level operations to avoid TOCTOU (F-017)
             match open_dir_safe(&canonical) {
                 Ok(dir_fd) => {
-                    if let Err(e) = mark_directory_at(fan_fd, &dir_fd, path_mask) {
+                    if let Err(e) = mark_directory_at(&factory, fan_fd, &dir_fd, path_mask) {
                         warning_log!(
                             "Cannot inode-mark {} on fd {}: {:#}",
                             canonical.display(),
@@ -161,6 +164,7 @@ impl Monitor {
                         );
                     } else if opts.recursive && canonical.is_dir() {
                         let _ = mark_recursive_with_depth(
+                            &factory,
                             fan_fd,
                             path_mask,
                             &canonical,
@@ -180,41 +184,29 @@ impl Monitor {
             );
             key
         } else {
-            let new_fd = fanotify_init(
-                FAN_CLOEXEC
-                    | FAN_NONBLOCK
-                    | FAN_CLASS_NOTIF
-                    | FAN_REPORT_FID
-                    | FAN_REPORT_DIR_FID
-                    | FAN_REPORT_NAME,
-                (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
-            )
-            .with_context(|| {
-                format!(
-                    "fanotify_init failed for {} (requires Linux 5.9+ kernel)",
-                    canonical.display()
-                )
-            })?;
+            let dir_fd = open_dir_safe(&canonical)?;
+            let new_fd = factory
+                .create_group_and_mark(&dir_fd, self.group_init_flags(), path_mask)
+                .with_context(|| {
+                    format!(
+                        "fanotify group creation failed for {} (requires Linux 5.9+ kernel)",
+                        canonical.display()
+                    )
+                })?;
 
-            if self
-                .add_mark_upward(
+            if opts.recursive && canonical.is_dir() {
+                let _ = mark_recursive_with_depth(
+                    &factory,
                     &new_fd,
                     path_mask,
                     &canonical,
-                    opts.recursive,
                     opts.max_depth,
-                )
-                .is_none()
-            {
-                bail!("Failed to mark {}: inode mark failed", canonical.display());
+                );
             }
-
-            let mount_fd = Self::open_dir(&canonical)?;
 
             let key = self.fanotify.groups.insert(FsGroup {
                 dev_id,
                 fan_fd: new_fd,
-                mount_fd,
                 ref_count: 1,
             });
 
@@ -242,46 +234,6 @@ impl Monitor {
         Ok(())
     }
 
-    /// Set up inode-based fanotify monitoring for a directory.
-    pub(crate) fn add_mark_upward(
-        &self,
-        new_fd: &OwnedFd,
-        path_mask: u64,
-        canonical: &std::path::Path,
-        recursive: bool,
-        max_depth: Option<u32>,
-    ) -> Option<()> {
-        // Use fd-level operations to avoid TOCTOU (F-017)
-        let dir_fd = match open_dir_safe(canonical) {
-            Ok(fd) => fd,
-            Err(e) => {
-                warning_log!("Cannot open {} for marking: {:#}", canonical.display(), e);
-                return None;
-            }
-        };
-        match mark_directory_at(new_fd, &dir_fd, path_mask) {
-            Ok(()) => {
-                info_log!(
-                    "Monitoring {} (inode mark) on fd {}",
-                    canonical.display(),
-                    new_fd.as_raw_fd()
-                );
-                if recursive && canonical.is_dir() {
-                    let _ = mark_recursive_with_depth(new_fd, path_mask, canonical, max_depth);
-                }
-                Some(())
-            }
-            Err(e) => {
-                warning_log!(
-                    "Cannot monitor {} (inode mark): {:#}",
-                    canonical.display(),
-                    e
-                );
-                None
-            }
-        }
-    }
-
     pub fn remove_path(&mut self, path: &Path, cmd: Option<&str>) -> anyhow::Result<()> {
         debug_log!(
             self.debug,
@@ -289,8 +241,6 @@ impl Monitor {
             path.display(),
             cmd.unwrap_or("*")
         );
-
-        let saved_opts = self.first_opt_for_path(path).cloned();
 
         let before = self.monitored_entries.len();
         self.monitored_entries.retain(|(p, o)| {
@@ -312,25 +262,21 @@ impl Monitor {
 
         if !has_other {
             if let Some(pos) = self.paths.iter().position(|p| p == path) {
-                if let Some(ref opts) = saved_opts {
-                    let path_mask = path_mask_from_options(opts);
-                    if let Some(&key) = self.fanotify.path_to_group.get(path) {
-                        let canonical = &self.canonical_paths[pos];
-                        let fan_fd = &self.fanotify.groups[key].fan_fd;
-                        let _ = fanotify_mark(
-                            fan_fd,
-                            FAN_MARK_REMOVE | FAN_MARK_FILESYSTEM,
-                            path_mask,
-                            AT_FDCWD,
-                            canonical,
-                        );
-                        let _ =
-                            fanotify_mark(fan_fd, FAN_MARK_REMOVE, path_mask, AT_FDCWD, canonical);
-                        self.fanotify.groups[key].ref_count =
-                            self.fanotify.groups[key].ref_count.saturating_sub(1);
-                        if self.fanotify.groups[key].ref_count == 0 {
-                            self.fanotify.groups.remove(key);
-                        }
+                if let Some(&key) = self.fanotify.path_to_group.get(path) {
+                    let canonical = self.canonical_paths[pos].clone();
+                    let fan_fd = &self.fanotify.groups[key].fan_fd;
+                    // Remove the inode mark through the factory (the parent has
+                    // no capabilities). Mask 0 with FAN_MARK_REMOVE drops every
+                    // mark on that inode.
+                    if let Some(factory) = self.fanotify.factory.clone()
+                        && let Ok(dir_fd) = open_dir_safe(&canonical)
+                    {
+                        let _ = unmark_directory_at(&factory, fan_fd, &dir_fd);
+                    }
+                    self.fanotify.groups[key].ref_count =
+                        self.fanotify.groups[key].ref_count.saturating_sub(1);
+                    if self.fanotify.groups[key].ref_count == 0 {
+                        self.fanotify.groups.remove(key);
                     }
                 }
                 self.paths.remove(pos);
@@ -353,7 +299,9 @@ impl Monitor {
                     .position(|p| p == path)
                     .and_then(|i| self.canonical_paths.get(i).cloned())
                     .unwrap_or_else(|| path.to_path_buf());
-                let _ = mark_directory(fan_fd, new_mask, &canonical);
+                if let Some(factory) = self.fanotify.factory.clone() {
+                    let _ = mark_directory(&factory, fan_fd, new_mask, &canonical);
+                }
             }
             debug_log!(
                 self.debug,

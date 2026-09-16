@@ -28,7 +28,7 @@ Lightweight high-performance file change tracking tool
 Usage: fsmon <COMMAND>
 
 Commands:
-  daemon     Run the fsmon daemon (requires sudo for fanotify) [alias: d]
+  daemon     Run the fsmon daemon (needs CAP_SYS_ADMIN for pid attribution) [alias: d]
   add        Add a path to the monitoring list [alias: a]
   remove     Remove one or more paths from the monitoring list [alias: r]
   monitored  List all monitored paths with their configuration [alias: m]
@@ -58,7 +58,12 @@ fsmon init -c
 # 安装
 cargo install fsmon
 
-# 启动守护进程（需要 root 权限以使用 fanotify）
+# 安装加固版 systemd 服务：以你的用户身份运行，只授予 CAP_SYS_ADMIN，
+# 并用 seccomp 收窄系统调用面
+sudo fsmon init --service
+sudo systemctl enable --now fsmon
+
+# 也可以手动运行以便调试
 sudo fsmon daemon
 
 # 在另一个终端，添加监控路径
@@ -67,6 +72,46 @@ fsmon add _global --path /var/www -r
 # 查询事件
 fsmon query _global | jq 'select(.cmd == "nginx")'
 ```
+
+## 权限
+
+fsmon 需要 **`CAP_SYS_ADMIN`，且只用于一件事**：创建*特权* fanotify group。
+内核会把没有该能力时创建的 group 标记为 `FANOTIFY_UNPRIV`，随后把**其他进程**
+造成的每一条事件的 `metadata.pid` 抹成 0
+（`fs/notify/fanotify/fanotify_user.c`）—— 进程追溯是 fsmon 的立身之本，
+却会**静默**退化成 `pid: 0`。
+
+除此之外都不需要特权：打标记、读事件、FID→路径解析、进程追踪、写日志
+在非特权下均可正常工作。
+
+守护进程把这一个能力关得很紧：
+
+- 启动时 fork 出一个极小的 **fanotify 工厂**子进程，由它继承 `CAP_SYS_ADMIN`。
+  它的全部输入是 `(dirfd[, fan_fd], flags, mask)` —— 没有路径字符串、没有 JSON、
+  没有事件流 —— 并且运行在只有 8 个系统调用的 seccomp 白名单下
+  （`fanotify_init`、`fanotify_mark`、`recvmsg`、`sendmsg`、`read`、`write`、
+  `close`、`exit_group`）。
+- 随后主进程丢弃**全部**能力（`CapEff=0`、`PR_SET_NO_NEW_PRIVS`）。那些特权
+  group 依然报告真实 pid，因为内核把 `FANOTIFY_UNPRIV` 存在 **group 对象**上。
+- 该特权**不以磁盘文件的形式存在**，其他本地用户无法取得
+  （这正是 `setcap` helper 二进制做不到的）。
+
+`fsmon init --service` 生成的 unit 以你的用户身份运行，并设置
+`AmbientCapabilities=CAP_SYS_ADMIN`、`CapabilityBoundingSet=CAP_SYS_ADMIN`、
+`NoNewPrivileges=yes`、`SystemCallFilter=@system-service fanotify_init
+fanotify_mark`，且只允许写 store、日志与 runtime 目录。注意
+`fanotify_init`/`fanotify_mark` **不在** systemd 的 `@system-service` 集合里，
+必须显式追加。
+
+fsmon **故意不申请** `CAP_DAC_READ_SEARCH`。它只对 `open_by_handle_at`
+路径回退有用，而实践中根本不会走到（目录句柄已通过无需特权的
+`name_to_handle_at` 预热），委托它反而会造出一个真正的任意文件读取 oracle。
+因此解析器拿到的是空的 mount-fd 列表，回退是零系统调用的立即失败；
+`fsmon health` 用 `dir_cache_misses` 暴露其发生次数。
+
+如果启动时没有 `CAP_SYS_ADMIN`，守护进程会**拒绝运行**，而不是静默记录
+`pid: 0`。设置 `FSMON_ALLOW_UNPRIVILEGED=1` 可显式接受降级模式，
+此时 `fsmon health` 会返回 `"unprivileged": true`。
 
 ## 从源码构建
 

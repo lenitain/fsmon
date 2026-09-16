@@ -37,7 +37,7 @@ impl std::fmt::Debug for HelpTopic {
 pub const fn about(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::Root => "Lightweight high-performance file change tracking tool",
-        HelpTopic::Daemon => "Run the fsmon daemon (requires sudo for fanotify)",
+        HelpTopic::Daemon => "Run the fsmon daemon (needs CAP_SYS_ADMIN for pid attribution)",
         HelpTopic::Init => "Create the config file (directories created on first use)",
         HelpTopic::Cd => "Open a subshell in the monitored path or log directory",
         HelpTopic::Add => "Add a path to the monitoring list",
@@ -56,10 +56,13 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
         HelpTopic::Root => {
             concat!(
                 "Lightweight high-performance file change tracking tool.\n\n",
-                yellow!("Note:"),
-                " If installed via 'cargo install', copy to system path for sudo compatibility:\n",
+                yellow!("Privileges:"),
+                " fsmon needs CAP_SYS_ADMIN for exactly one thing: creating a\n",
+                "privileged fanotify group. Without it the kernel blanks the pid of\n",
+                "events caused by other processes, so attribution silently becomes pid=0.\n",
+                "The recommended setup grants that single capability to the daemon only:\n",
                 "  ",
-                green!("sudo cp ~/.cargo/bin/fsmon /usr/local/bin/"),
+                green!("sudo fsmon init --service"),
                 "\n\nConfig:  ~/.config/fsmon/fsmon.toml (created by 'fsmon init')",
                 "\nMonitor: ~/.local/share/fsmon/monitored.jsonl",
                 "\nLogs:    ~/.local/state/fsmon/",
@@ -69,19 +72,19 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
                 green!("fsmon init"),
                 "                        Create config file\n  ",
                 green!("sudo fsmon init --service"),
-                "         Also install systemd service\n  ",
+                "         Install hardened systemd service\n  ",
                 green!("fsmon cd -l"),
                 "                       Open subshell in log directory\n  ",
                 green!("fsmon cd -m"),
                 "                       Open subshell in monitored store directory\n  ",
                 green!("fsmon cd -c"),
                 "                       Open subshell in config directory\n\n",
-                yellow!("Daemon (requires sudo):"),
+                yellow!("Daemon (needs CAP_SYS_ADMIN):"),
                 "\n  ",
+                green!("sudo fsmon init --service"),
+                "        Install + start via systemd (recommended)\n  ",
                 green!("sudo fsmon daemon &"),
-                "               Start daemon in background\n  ",
-                green!("sudo systemctl start fsmon"),
-                "        Start via systemd\n  ",
+                "               Start daemon manually in background\n  ",
                 green!("journalctl -u fsmon -f"),
                 "           View daemon logs\n  ",
                 green!("kill %1"),
@@ -111,16 +114,21 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
             )
         }
         HelpTopic::Daemon => {
-            "Run the fsmon daemon (requires sudo for fanotify)\n\n\
+            "Run the fsmon daemon (needs CAP_SYS_ADMIN for pid attribution)\n\n\
             Monitors all configured paths via fanotify and logs events.\n\
             Use 'fsmon add'/'fsmon remove' to manage paths dynamically without restarting.\n\n\
+            fsmon needs CAP_SYS_ADMIN to create a *privileged* fanotify group. Without\n\
+            it the kernel blanks the pid of events caused by other processes\n\
+            (fanotify_user.c: metadata.pid = 0), so process attribution degrades to\n\
+            pid=0. The recommended setup installs a hardened systemd unit that grants\n\
+            exactly this one capability, keeps it only in a tiny forked factory\n\
+            subprocess, and runs the daemon itself with CapEff=0.\n\n\
             Examples:\n\
-              sudo fsmon daemon &                     Start daemon in background\n\
-              sudo fsmon daemon --debug               Enable debug output\n\n\
-            For systemd integration:\n\
-              sudo fsmon init --service             Install systemd service\n\
-              sudo systemctl start fsmon            Start via systemd\n\
-              journalctl -u fsmon -f               View daemon logs\n\n\
+              sudo fsmon init --service              Install hardened systemd service\n\
+              sudo systemctl start fsmon             Start via systemd\n\
+              sudo fsmon daemon --debug              Run manually with debug output\n\
+              FSMON_ALLOW_UNPRIVILEGED=1 fsmon daemon\n\
+                                                     Accept degraded mode (pid=0)\n\n\
             Config: ~/.config/fsmon/fsmon.toml\n\
             Logs:   ~/.local/state/fsmon/"
         }
@@ -129,7 +137,10 @@ pub const fn long_about(topic: HelpTopic) -> &'static str {
             Directories are created on first use:\n\
               - Monitored dir: by 'fsmon add' on first run\n\
               - Log dir: by 'fsmon daemon' or 'fsmon cd -l' on first run\n\n\
-            With --service, also installs a systemd service:\n\
+            With --service, also installs a hardened systemd unit that runs the\n\
+            daemon as your user with only CAP_SYS_ADMIN (AmbientCapabilities),\n\
+            SystemCallFilter=@system-service plus the two fanotify syscalls, and\n\
+            write access limited to the store/log/runtime directories:\n\
               sudo fsmon init --service"
         }
         HelpTopic::Cd => {

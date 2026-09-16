@@ -2,14 +2,11 @@
 
 use super::FsGroupKey;
 use crate::{debug_log, info_log};
-use anyhow::{Context, Result, bail};
-use fanotify_fid::consts::{
-    FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_NONBLOCK, FAN_REPORT_DIR_FID, FAN_REPORT_FID, FAN_REPORT_NAME,
-};
-use fanotify_fid::prelude::*;
+use anyhow::{Context, Result};
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 
+use super::factory::{FanotifyFactory, GROUP_INIT_FLAGS, UNLIMITED_MARKS};
 use super::{EventReceiver, EventSender, FileLogWriter, Monitor};
 use crate::common::dir_cache;
 use crate::common::fid_parser::{
@@ -22,13 +19,74 @@ use crate::common::proc_cache;
 use crate::common::utils::format_size;
 use proc_connector::ProcConnector;
 
+/// Degraded-mode opt-in. Without `CAP_SYS_ADMIN` the daemon refuses to start
+/// unless the operator explicitly accepts losing pid attribution.
+fn unprivileged_allowed() -> bool {
+    std::env::var_os("FSMON_ALLOW_UNPRIVILEGED")
+        .map(|v| v != "0")
+        .unwrap_or(false)
+}
+
 impl Monitor {
-    /// Root privilege check. Bails if not root.
-    pub(crate) fn check_root(&self) -> Result<()> {
-        if nix::unistd::geteuid().as_raw() != 0 {
-            bail!("fanotify requires root privileges, please run with sudo");
+    /// Verify that this process can create a *privileged* fanotify group.
+    ///
+    /// The kernel decides that itself with `capable(CAP_SYS_ADMIN)` inside
+    /// `fanotify_init()`, so probing an admin-only init flag is more faithful
+    /// than `capget()` — inside a user namespace `capget()` reports full
+    /// capabilities while the group is still marked `FANOTIFY_UNPRIV`.
+    ///
+    /// Missing it means every event caused by another process gets
+    /// `metadata.pid = 0` (fanotify_user.c), silently destroying the process
+    /// attribution that is fsmon's entire point. Hence: loud failure, not a
+    /// quiet degraded run (PRIVILEGE-SEPARATION-PLAN.md §6 阶段 1).
+    pub(crate) fn check_privileges(&self) -> Result<()> {
+        if self.privileged {
+            return Ok(());
         }
+        if unprivileged_allowed() {
+            eprintln!(
+                "[WARNING] Running WITHOUT CAP_SYS_ADMIN (FSMON_ALLOW_UNPRIVILEGED is set).\n\
+                 \x20        The kernel will blank metadata.pid for events caused by other\n\
+                 \x20        processes, so `pid`/`comm`/`cmd` attribution is degraded to 0/empty.\n\
+                 \x20        Paths, event types and timestamps are still correct."
+            );
+            return Ok(());
+        }
+        return Err(crate::common::privileges::PermanentStartupError::new(
+            "fsmon requires CAP_SYS_ADMIN to create a privileged fanotify group.\n\
+             Without it the kernel blanks the pid of events caused by other processes\n\
+             (fanotify_user.c: `metadata.pid = 0`), so process attribution silently fails.\n\
+             Start fsmon through the hardened systemd unit\n\
+             (`AmbientCapabilities=CAP_SYS_ADMIN`, see 'fsmon init --service'),\n\
+             or set FSMON_ALLOW_UNPRIVILEGED=1 to accept the degraded mode.",
+        )
+        .into());
+    }
+
+    /// Fork the privileged "fanotify factory" subprocess.
+    ///
+    /// Must run before [`Self::drop_privileges`]: the child inherits
+    /// CAP_SYS_ADMIN at fork() time, the parent then sheds it.
+    pub(crate) fn spawn_factory(&mut self) -> Result<()> {
+        let factory = FanotifyFactory::spawn().context("forking the fanotify factory")?;
+        self.fanotify.factory = Some(std::sync::Arc::new(factory));
         Ok(())
+    }
+
+    /// Drop the daemon's own privileges once the initial marks exist.
+    pub(crate) fn drop_privileges(&self) -> Result<()> {
+        crate::common::privileges::drop_privileges()
+    }
+
+    /// Group init flags. `FAN_UNLIMITED_MARKS` lifts the per-uid mark cap
+    /// (plan §5.7) but is an admin-only flag, so it is only requested when
+    /// the daemon actually holds CAP_SYS_ADMIN.
+    pub(crate) fn group_init_flags(&self) -> u32 {
+        if self.privileged {
+            GROUP_INIT_FLAGS | UNLIMITED_MARKS
+        } else {
+            GROUP_INIT_FLAGS
+        }
     }
 
     /// Initialize process tracking (event-driven, RUN-23). Returns the proc
@@ -102,7 +160,13 @@ impl Monitor {
         self.inotify_state.inotify = Some(inotify::Inotify::init().context("inotify_init")?);
         self.setup_inotify_watches();
 
-        // Initialize per-filesystem fanotify fds.
+        // Initialize per-filesystem fanotify fds via the privileged factory.
+        let factory = self
+            .fanotify
+            .factory
+            .clone()
+            .context("fanotify factory has not been started")?;
+        let init_flags = self.group_init_flags();
         let mut fs_group_devs: std::collections::HashMap<u64, FsGroupKey> =
             std::collections::HashMap::new();
         for (i, canonical) in self.canonical_paths.iter().enumerate() {
@@ -129,7 +193,7 @@ impl Monitor {
                         continue;
                     }
                 };
-                if let Err(e) = mark_directory_at(fan_fd, &dir_fd, path_mask) {
+                if let Err(e) = mark_directory_at(&factory, fan_fd, &dir_fd, path_mask) {
                     eprintln!(
                         "[WARNING] Cannot inode-mark {} on fd {}: {:#}",
                         canonical.display(),
@@ -145,7 +209,9 @@ impl Monitor {
                     let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
                     if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
                         let max_depth = opts.and_then(|o| o.max_depth);
-                        let _ = mark_recursive_with_depth(fan_fd, path_mask, canonical, max_depth);
+                        let _ = mark_recursive_with_depth(
+                            &factory, fan_fd, path_mask, canonical, max_depth,
+                        );
                     }
                 }
                 self.fanotify.groups[key].ref_count += 1;
@@ -155,52 +221,47 @@ impl Monitor {
                 continue;
             }
 
-            // New filesystem — create fanotify fd + mount fd
-            let new_fd = fanotify_init(
-                FAN_CLOEXEC
-                    | FAN_NONBLOCK
-                    | FAN_CLASS_NOTIF
-                    | FAN_REPORT_FID
-                    | FAN_REPORT_DIR_FID
-                    | FAN_REPORT_NAME,
-                (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
-            )
-            .with_context(|| {
-                format!(
-                    "fanotify_init failed for {} (requires Linux 5.9+ kernel)",
-                    canonical.display()
-                )
-            })?;
-
+            // New filesystem — ask the factory for a group and mark the root.
             let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
             let recursive = opts.is_some_and(|o| o.recursive) && canonical.is_dir();
             let max_depth = opts.and_then(|o| o.max_depth);
-            if self
-                .add_mark_upward(&new_fd, path_mask, canonical, recursive, max_depth)
-                .is_none()
-            {
-                drop(new_fd);
-                continue;
-            }
 
-            // Open directory fd for open_by_handle_at
-            let mount_fd = match Self::open_dir(canonical) {
+            let dir_fd = match open_dir_safe(canonical) {
                 Ok(fd) => fd,
                 Err(e) => {
                     eprintln!(
-                        "[WARNING] Could not open directory fd for {}: {}",
+                        "[WARNING] Cannot open {} for marking: {:#}",
                         canonical.display(),
                         e
                     );
-                    drop(new_fd);
                     continue;
                 }
             };
+            let new_fd = match factory.create_group_and_mark(&dir_fd, init_flags, path_mask) {
+                Ok(fd) => fd,
+                Err(e) => {
+                    eprintln!(
+                        "[WARNING] Cannot create fanotify group for {}: {:#}",
+                        canonical.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
+            // create_group_and_mark() already added the inode mark on `dir_fd`.
+            info_log!(
+                "Monitoring {} (inode mark) on fd {}",
+                canonical.display(),
+                new_fd.as_raw_fd()
+            );
+            if recursive {
+                let _ =
+                    mark_recursive_with_depth(&factory, &new_fd, path_mask, canonical, max_depth);
+            }
 
             let key = self.fanotify.groups.insert(FsGroup {
                 dev_id,
                 fan_fd: new_fd,
-                mount_fd,
                 ref_count: 1,
             });
             fs_group_devs.insert(dev_id, key);

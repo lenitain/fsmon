@@ -33,7 +33,7 @@ struct Cli {
 /// fsmon CLI commands.
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Run the fsmon daemon (requires sudo for fanotify)
+    /// Run the fsmon daemon (needs CAP_SYS_ADMIN for pid attribution)
     #[command(visible_alias = "d")]
     #[command(about = help::about(HelpTopic::Daemon), long_about = help::long_about(HelpTopic::Daemon))]
     Daemon {

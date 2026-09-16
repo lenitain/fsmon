@@ -17,8 +17,9 @@ pub struct FsmonDaemon {
 }
 
 impl FsmonDaemon {
-    /// Check whether we can run the daemon (requires root for fanotify).
-    /// Non-root environments skip daemon integration tests.
+    /// Check whether we can run the daemon with a privileged fanotify group
+    /// (requires root / CAP_SYS_ADMIN). Non-root environments skip daemon
+    /// integration tests.
     pub fn can_run() -> bool {
         nix::unistd::geteuid().is_root()
     }

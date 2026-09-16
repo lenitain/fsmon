@@ -9,6 +9,7 @@ pub mod help;
 pub mod metrics;
 pub mod monitor;
 pub mod monitored;
+pub mod privileges;
 pub mod proc_cache;
 pub mod proc_scan;
 pub mod query;

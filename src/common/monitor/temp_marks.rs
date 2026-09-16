@@ -2,10 +2,9 @@ use std::os::fd::AsRawFd;
 use std::path::Path;
 
 use crate::debug_log;
-use fanotify_fid::prelude::*;
 
 use crate::common::fid_parser::{
-    FsGroup, mark_directory_at, open_dir_safe, path_mask_from_options,
+    FsGroup, mark_directory_at, open_dir_safe, path_mask_from_options, unmark_directory_at,
 };
 use crate::common::filters::PathOptions;
 
@@ -58,6 +57,10 @@ impl Monitor {
             .map(|m| std::os::linux::fs::MetadataExt::st_dev(&m))
             .unwrap_or(0);
 
+        let Some(factory) = self.fanotify.factory.clone() else {
+            return false;
+        };
+
         let group_key = if let Some((key, _)) = self
             .fanotify
             .groups
@@ -69,50 +72,24 @@ impl Monitor {
                 Ok(fd) => fd,
                 Err(_) => return false,
             };
-            if mark_directory_at(fan_fd, &dir_fd, path_mask).is_err() {
+            if mark_directory_at(&factory, fan_fd, &dir_fd, path_mask).is_err() {
                 return false;
             }
             self.fanotify.groups[key].ref_count += 1;
             key
         } else {
-            use fanotify_fid::consts::{
-                FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_NONBLOCK, FAN_REPORT_DIR_FID, FAN_REPORT_FID,
-                FAN_REPORT_NAME,
-            };
-            let new_fd = match fanotify_fid::prelude::fanotify_init(
-                FAN_CLOEXEC
-                    | FAN_NONBLOCK
-                    | FAN_CLASS_NOTIF
-                    | FAN_REPORT_FID
-                    | FAN_REPORT_DIR_FID
-                    | FAN_REPORT_NAME,
-                (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
-            ) {
+            let dir_fd = match open_dir_safe(&canonical) {
                 Ok(fd) => fd,
                 Err(_) => return false,
             };
-            let dir_fd = match open_dir_safe(&canonical) {
-                Ok(fd) => fd,
-                Err(_) => {
-                    drop(new_fd);
-                    return false;
-                }
-            };
-            if mark_directory_at(&new_fd, &dir_fd, path_mask).is_err() {
-                drop(new_fd);
-                return false;
-            }
-            let mount_fd = match Self::open_dir(&canonical) {
-                Ok(fd) => fd,
-                Err(_) => {
-                    drop(new_fd);
-                    return false;
-                }
-            };
+            let new_fd =
+                match factory.create_group_and_mark(&dir_fd, self.group_init_flags(), path_mask) {
+                    Ok(fd) => fd,
+                    Err(_) => return false,
+                };
             let key = self.fanotify.groups.insert(FsGroup {
                 dev_id,
                 fan_fd: new_fd,
-                mount_fd,
                 ref_count: 1,
             });
             self.spawn_fd_reader(key);
@@ -152,34 +129,28 @@ impl Monitor {
         };
 
         let canonical = parent.canonicalize().unwrap_or_else(|_| parent.clone());
+        let factory = self.fanotify.factory.clone();
 
-        if let Some(group) = self.fanotify.groups.get(key) {
-            let fan_fd_raw = group.fan_fd.as_raw_fd();
-            let _ = fanotify_mark(
-                &group.fan_fd,
-                fanotify_fid::consts::FAN_MARK_REMOVE | fanotify_fid::consts::FAN_MARK_FILESYSTEM,
-                0,
-                fanotify_fid::consts::AT_FDCWD,
-                &canonical,
-            );
-            let _ = fanotify_mark(
-                &group.fan_fd,
-                fanotify_fid::consts::FAN_MARK_REMOVE,
-                0,
-                fanotify_fid::consts::AT_FDCWD,
-                &canonical,
-            );
-
-            self.fanotify.groups[key].ref_count =
-                self.fanotify.groups[key].ref_count.saturating_sub(1);
-            if self.fanotify.groups[key].ref_count == 0 {
-                debug_log!(
-                    self.debug,
-                    "temp parent mark removed, freeing FsGroup (fd {})",
-                    fan_fd_raw
-                );
-                self.fanotify.groups.remove(key);
+        let fan_fd_raw = self.fanotify.groups.get(key).map(|g| g.fan_fd.as_raw_fd());
+        if let (Some(factory), Some(raw), Some(group)) =
+            (factory.as_ref(), fan_fd_raw, self.fanotify.groups.get(key))
+        {
+            if let Ok(dir_fd) = open_dir_safe(&canonical) {
+                let _ = unmark_directory_at(factory, &group.fan_fd, &dir_fd);
             }
+            debug_log!(self.debug, "temp parent mark removed (fd {})", raw);
+        }
+
+        if let Some(group) = self.fanotify.groups.get_mut(key) {
+            group.ref_count = group.ref_count.saturating_sub(1);
+        }
+        if self
+            .fanotify
+            .groups
+            .get(key)
+            .is_some_and(|g| g.ref_count == 0)
+        {
+            self.fanotify.groups.remove(key);
         }
     }
 }

@@ -263,14 +263,18 @@ impl Monitor {
             Ok(fd) => fd,
             Err(_) => return Vec::new(),
         };
-        if mark_directory_at(fan_fd, &dir_fd, path_mask).is_err() {
+        let Some(factory) = self.fanotify.factory.clone() else {
+            return Vec::new();
+        };
+        if mark_directory_at(&factory, fan_fd, &dir_fd, path_mask).is_err() {
             return Vec::new();
         }
 
         if let Some(ref cache) = self.fanotify.shared_dir_cache {
             dir_cache::cache_dir_handle(cache, &canonical);
         }
-        let discovered = mark_recursive_with_depth(fan_fd, path_mask, &canonical, max_depth);
+        let discovered =
+            mark_recursive_with_depth(&factory, fan_fd, path_mask, &canonical, max_depth);
         if let Some(ref cache) = self.fanotify.shared_dir_cache {
             dir_cache::cache_recursive(cache, &canonical);
         }

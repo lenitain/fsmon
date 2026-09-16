@@ -93,11 +93,29 @@ fn generate_man_pages() -> Result<()> {
     Ok(())
 }
 
-fn service_template(binary: &str, home: &str, watchdog_sec: Option<u64>) -> String {
+/// Build the hardened systemd unit.
+///
+/// Hardening rationale (PRIVILEGE-SEPARATION-PLAN.md §6 阶段 2 / 阶段 5):
+/// - `CAP_SYS_ADMIN` is the *only* capability `fanotify_init()` needs — it
+///   clears the group's `FANOTIFY_UNPRIV` flag so pids are not blanked.
+/// - `SystemCallFilter=@system-service` covers everything fsmon uses, but
+///   `fanotify_init`/`fanotify_mark` live in systemd's `@privileged` group
+///   and must be listed explicitly.
+/// - `ProtectHome=read-only` also makes `/run/user` read-only, so the
+///   runtime socket directory has to be re-opened via `ReadWritePaths=`.
+/// - `PrivateTmp=` is deliberately absent: a private /tmp would silently
+///   hide monitored paths under /tmp.
+fn service_template(
+    binary: &str,
+    user: &str,
+    watchdog_sec: Option<u64>,
+    read_write_paths: &[String],
+) -> String {
     let watchdog_line = match watchdog_sec {
-        Some(secs) => format!("WatchdogSec={}", secs),
+        Some(secs) => format!("WatchdogSec={}\n", secs),
         None => String::new(),
     };
+    let read_write = read_write_paths.join(" ");
     format!(
         r"[Unit]
 Description=fsmon - File System Change Monitor
@@ -106,20 +124,48 @@ After=local-fs.target
 
 [Service]
 Type=notify
+User={user}
 ExecStart={binary} daemon
+
+# fanotify_init() needs CAP_SYS_ADMIN for exactly one thing: clearing the
+# group's FANOTIFY_UNPRIV flag. Without it the kernel blanks the pid of
+# events caused by other processes. The forked fanotify factory inherits
+# this capability; the main process drops it right after startup.
+AmbientCapabilities=CAP_SYS_ADMIN
+CapabilityBoundingSet=CAP_SYS_ADMIN
+NoNewPrivileges=yes
+
 Restart=always
 RestartSec=5
 RestartPreventExitStatus=2
 StartLimitBurst=5
 StartLimitIntervalSec=300
-Environment=HOME={home}
 {watchdog_line}
+# fsmon only writes its own store, its logs and its runtime socket.
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths={read_write}
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+# fanotify_init/fanotify_mark belong to systemd's @privileged group and are
+# NOT part of @system-service, so they must be added explicitly. Everything
+# else CAP_SYS_ADMIN could abuse (mount, setns, bpf, open_by_handle_at, ...)
+# stays filtered out.
+SystemCallFilter=@system-service fanotify_init fanotify_mark
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target
 ",
+        user = user,
         binary = binary,
-        home = home,
+        read_write = read_write,
         watchdog_line = if watchdog_line.is_empty() {
             ""
         } else {
@@ -142,15 +188,17 @@ fn install_service() -> Result<()> {
         .to_string_lossy()
         .to_string();
 
-    // Resolve the original user's home directory
+    // Resolve the original user's uid/name
     let uid = fsmon::common::config::resolve_uid();
-    let home = fsmon::common::config::resolve_home(uid)
-        .context("Failed to resolve home directory")?
-        .to_string_lossy()
-        .to_string();
 
-    // Load config to check watchdog settings
-    let cfg = fsmon::common::config::Config::load()?;
+    // `User=` accepts a name or a numeric uid.
+    let user_name = users::get_user_by_uid(uid)
+        .map(|u| u.name().to_string_lossy().into_owned())
+        .unwrap_or_else(|| uid.to_string());
+
+    // Load config to check watchdog settings and resolve store/log paths.
+    let mut cfg = fsmon::common::config::Config::load()?;
+    cfg.resolve_paths()?;
     let watchdog_cfg = cfg.watchdog.as_ref();
     let watchdog_sec = watchdog_cfg.and_then(|w| {
         w.interval_secs.map(|interval| {
@@ -159,7 +207,22 @@ fn install_service() -> Result<()> {
         })
     });
 
-    let content = service_template(&binary, &home, watchdog_sec);
+    // Paths the daemon must be able to write: the monitored store directory,
+    // the log directory and the runtime directory that holds the sockets.
+    let mut read_write_paths: Vec<String> = Vec::new();
+    if let Some(parent) = cfg.monitored.path.parent() {
+        read_write_paths.push(parent.to_string_lossy().to_string());
+    }
+    if let Some(ref log_path) = cfg.logging.path {
+        read_write_paths.push(log_path.to_string_lossy().to_string());
+    }
+    let runtime_dir =
+        std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", uid));
+    if !read_write_paths.iter().any(|p| p == &runtime_dir) {
+        read_write_paths.push(runtime_dir);
+    }
+
+    let content = service_template(&binary, &user_name, watchdog_sec, &read_write_paths);
 
     let service_path = Path::new("/etc/systemd/system/fsmon.service");
     if service_path.exists() {
@@ -335,4 +398,51 @@ pub fn cmd_cd(target: CdTarget) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unit() -> String {
+        service_template(
+            "/usr/local/bin/fsmon",
+            "lenitain",
+            Some(30),
+            &[
+                "/home/lenitain/.local/share/fsmon".to_string(),
+                "/home/lenitain/.local/state/fsmon".to_string(),
+                "/run/user/1000".to_string(),
+            ],
+        )
+    }
+
+    #[test]
+    fn hardened_unit_has_capability_and_seccomp() {
+        let u = unit();
+        assert!(u.contains("User=lenitain"), "unit must run as the user");
+        assert!(u.contains("AmbientCapabilities=CAP_SYS_ADMIN"));
+        assert!(u.contains("CapabilityBoundingSet=CAP_SYS_ADMIN"));
+        assert!(u.contains("NoNewPrivileges=yes"));
+        assert!(
+            u.contains("SystemCallFilter=@system-service fanotify_init fanotify_mark"),
+            "fanotify syscalls must be added explicitly (not in @system-service)"
+        );
+        assert!(!u.contains("PrivateTmp"), "private /tmp must stay off");
+    }
+
+    #[test]
+    fn hardened_unit_writes_only_expected_paths() {
+        let u = unit();
+        assert!(u.contains("ProtectSystem=strict"));
+        assert!(u.contains("ProtectHome=read-only"));
+        assert!(u.contains("ReadWritePaths=/home/lenitain/.local/share/fsmon"));
+        assert!(
+            u.contains("/run/user/1000"),
+            "runtime socket dir must be writable"
+        );
+        assert!(u.contains("WatchdogSec=30"));
+        // HOME is provided by systemd once User= is set.
+        assert!(!u.contains("Environment=HOME="));
+    }
 }

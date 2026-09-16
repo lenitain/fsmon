@@ -32,6 +32,7 @@ pub(crate) type FsGroupKey = slotmap::DefaultKey;
 mod channel;
 mod dir_watcher;
 mod events;
+pub(crate) mod factory;
 mod file_writer;
 mod filtering;
 mod init;
@@ -42,6 +43,7 @@ mod temp_marks;
 
 pub(crate) use channel::{EventReceiver, EventSender};
 pub(crate) use events::PendingEvent;
+use factory::FanotifyFactory;
 pub(crate) use file_writer::FileLogWriter;
 pub(crate) use reader::ReaderState;
 #[cfg(test)]
@@ -143,7 +145,7 @@ impl Default for MonitorConfig {
 
 /// Fanotify state: per-filesystem groups and directory handle cache.
 pub(crate) struct FanotifyState {
-    /// One `FsGroup` per unique filesystem (fan_fd + mount_fd dedup'd).
+    /// One `FsGroup` per unique filesystem (fan_fd dedup'd by `st_dev`).
     /// Uses SlotMap for stable keys — removal doesn't invalidate other keys.
     pub groups: SlotMap<FsGroupKey, FsGroup>,
     /// Maps monitored path → key in groups for fast lookup in remove_path.
@@ -152,6 +154,9 @@ pub(crate) struct FanotifyState {
     pub dir_cache: DirCache,
     /// Clone of dir_cache for spawning reader tasks during live-add.
     pub shared_dir_cache: Option<DirCache>,
+    /// Privileged factory subprocess. `None` until `run()` has forked it;
+    /// also `None` in tests that build groups directly.
+    pub factory: Option<std::sync::Arc<FanotifyFactory>>,
 }
 
 /// Inotify state: watches for pending paths and new subdirectory detection.
@@ -235,6 +240,10 @@ pub struct Monitor {
     pub(crate) metrics: MetricsRegistry,
     /// Watchdog manager for systemd integration.
     pub(crate) watchdog: Option<Watchdog>,
+    /// Whether this process can create a *privileged* fanotify group
+    /// (`CAP_SYS_ADMIN`). Detected once in `run()` with the kernel's own
+    /// check; see [`factory::has_privileged_fanotify`].
+    pub(crate) privileged: bool,
 }
 
 impl std::fmt::Debug for Monitor {
@@ -340,6 +349,7 @@ impl Monitor {
                     Duration::from_secs(cache_config.dir_ttl_secs),
                 ),
                 shared_dir_cache: None,
+                factory: None,
             },
             inotify_state: InotifyState {
                 inotify: None,
@@ -375,6 +385,7 @@ impl Monitor {
             local_time: cfg.local_time,
             metrics: MetricsRegistry::new(cfg.metrics_interval.is_some()),
             watchdog: Some(Watchdog::new(cfg.watchdog_interval)),
+            privileged: false,
         };
         if debug {
             debug_log!(
@@ -400,16 +411,34 @@ impl Monitor {
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        self.check_root()?;
+        // Phase 1: ask the kernel whether we may create a privileged group.
+        // This is authoritative (capget() lies inside user namespaces).
+        self.privileged = factory::has_privileged_fanotify();
+        self.check_privileges()?;
 
         // Initialize process cache and pid tree
         let proc_conn = self.init_process_cache();
 
-        // Initialize fanotify: masks, fs_groups, pending paths, inotify
+        // Phase 3: fork the privileged factory *before* shedding capabilities.
+        // The child inherits CAP_SYS_ADMIN; the parent keeps it only until the
+        // initial marks exist.
+        self.spawn_factory()?;
+
+        // Initialize fanotify through the factory: masks, fs_groups, inotify
         let fan_group_count = self.init_fanotify()?;
 
-        // Initialize logging: log dir, chown, disk check
+        // Initialize logging: log dir, chown, disk check. Runs while the
+        // daemon may still be root so the chown actually applies.
         self.init_logging()?;
+
+        // Phase 1.2: record / re-report the privilege state now that groups
+        // were created through the factory.
+        self.report_privilege_state();
+
+        // Phase 3: the groups exist and FANOTIFY_UNPRIV lives on the group
+        // object, so the main process can drop every capability now and still
+        // receive real pids.
+        self.drop_privileges()?;
 
         // Print startup status and metrics
         self.print_startup_status(fan_group_count);
@@ -513,12 +542,13 @@ impl Monitor {
                 } => {
                     let report = self.collect_metrics(&dir_cache);
                     eprintln!(
-                        "[metrics] uptime={}s rss={:.1}MB caches(d/p/f)={}/{}/{} readers={}/{}/{} subs={} paths={} pending={} disk_buf={}",
+                        "[metrics] uptime={}s rss={:.1}MB caches(d/p/f)={}/{}/{} dirmiss={} readers={}/{}/{} subs={} paths={} pending={} disk_buf={} unpriv={}",
                         report.uptime_secs,
                         report.rss_mb,
                         report.dir_cache_entries,
                         report.proc_store_entries,
                         report.file_size_cache_entries,
+                        report.dir_cache_misses,
                         report.reader_groups_total,
                         report.reader_groups_alive,
                         report.reader_groups_gave_up,
@@ -526,6 +556,7 @@ impl Monitor {
                         report.monitored_paths,
                         report.pending_paths,
                         report.disk_buffer_events,
+                        report.unprivileged,
                     );
                 }
 
@@ -597,6 +628,7 @@ impl Monitor {
             uptime_secs: self.started_at.elapsed().as_secs(),
             rss_mb: get_rss_mb(),
             dir_cache_entries: dir_cache.entry_count(),
+            dir_cache_misses: dir_cache.misses(),
             proc_store_entries: self
                 .proc
                 .tracker
@@ -611,6 +643,20 @@ impl Monitor {
             monitored_paths: self.metrics.monitored_paths() as u64,
             pending_paths: self.metrics.pending_paths() as u64,
             disk_buffer_events: self.metrics.disk_buffer_events() as u64,
+            unprivileged: !self.privileged,
+        }
+    }
+
+    /// Emit the privilege state once at startup (plan §6 阶段 1.2).
+    pub(crate) fn report_privilege_state(&self) {
+        if !self.privileged {
+            eprintln!(
+                "[WARNING] fanotify group is NOT privileged: events caused by other\n\
+                 \x20        processes will report pid=0 (process attribution disabled).\n\
+                 \x20        Paths and event types remain correct."
+            );
+        } else {
+            crate::info_log!("fanotify factory is privileged (CAP_SYS_ADMIN present)");
         }
     }
 
@@ -739,6 +785,7 @@ pub(crate) struct MetricsReport {
     pub uptime_secs: u64,
     pub rss_mb: f64,
     pub dir_cache_entries: u64,
+    pub dir_cache_misses: u64,
     pub proc_store_entries: u64,
     pub file_size_cache_entries: u64,
     pub reader_groups_total: u64,
@@ -748,6 +795,8 @@ pub(crate) struct MetricsReport {
     pub monitored_paths: u64,
     pub pending_paths: u64,
     pub disk_buffer_events: u64,
+    /// True when the daemon lacks CAP_SYS_ADMIN, so pid attribution degrades.
+    pub unprivileged: bool,
 }
 
 /// Read current RSS in MB from /proc/self/statm.

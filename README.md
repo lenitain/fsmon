@@ -28,7 +28,7 @@ Lightweight high-performance file change tracking tool
 Usage: fsmon <COMMAND>
 
 Commands:
-  daemon     Run the fsmon daemon (requires sudo for fanotify) [alias: d]
+  daemon     Run the fsmon daemon (needs CAP_SYS_ADMIN for pid attribution) [alias: d]
   add        Add a path to the monitoring list [alias: a]
   remove     Remove one or more paths from the monitoring list [alias: r]
   monitored  List all monitored paths with their configuration [alias: m]
@@ -58,7 +58,12 @@ Use `fsmon --help` or `man fsmon` for detailed documentation.
 # Install
 cargo install fsmon
 
-# Start daemon (requires root for fanotify)
+# Install the hardened systemd service: runs as your user, grants only
+# CAP_SYS_ADMIN, and filters the syscall surface
+sudo fsmon init --service
+sudo systemctl enable --now fsmon
+
+# Or run it manually for debugging
 sudo fsmon daemon
 
 # In another terminal, add a path to monitor
@@ -67,6 +72,49 @@ fsmon add _global --path /var/www -r
 # Query events
 fsmon query _global | jq 'select(.cmd == "nginx")'
 ```
+
+## Privileges
+
+fsmon needs **`CAP_SYS_ADMIN` for exactly one thing**: creating a *privileged*
+fanotify group. The kernel marks a group created without that capability as
+`FANOTIFY_UNPRIV`, and then blanks `metadata.pid` for every event caused by
+another process (`fs/notify/fanotify/fanotify_user.c`) — process attribution,
+fsmon's entire point, silently becomes `pid: 0`.
+
+Nothing else needs privilege: marking, reading events, FID→path resolution,
+process tracking and logging all work unprivileged.
+
+The daemon is built so that this capability is confined:
+
+- At startup it forks a tiny **fanotify factory** subprocess that inherits
+  `CAP_SYS_ADMIN`. Its whole input is `(dirfd[, fan_fd], flags, mask)` — no
+  path strings, no JSON, no event stream — and it runs under a seccomp
+  whitelist of eight syscalls (`fanotify_init`, `fanotify_mark`, `recvmsg`,
+  `sendmsg`, `read`, `write`, `close`, `exit_group`).
+- The main daemon then drops **all** capabilities (`CapEff=0`,
+  `PR_SET_NO_NEW_PRIVS`). The privileged fanotify groups keep reporting real
+  pids because the kernel stores `FANOTIFY_UNPRIV` on the *group* object.
+- The privilege never exists as a file on disk, so no other local user can
+  obtain it (unlike a `setcap` helper binary).
+
+`fsmon init --service` writes a unit that runs the daemon as your user with
+`AmbientCapabilities=CAP_SYS_ADMIN`, `CapabilityBoundingSet=CAP_SYS_ADMIN`,
+`NoNewPrivileges=yes`, `SystemCallFilter=@system-service fanotify_init
+fanotify_mark`, and write access limited to the store, log and runtime
+directories. Note that `fanotify_init`/`fanotify_mark` are **not** part of
+systemd's `@system-service` set, so they must be listed explicitly.
+
+fsmon deliberately does **not** request `CAP_DAC_READ_SEARCH`. It would only
+serve the `open_by_handle_at` path-resolution fallback, which in practice is
+never reached (directory handles are pre-cached via the unprivileged
+`name_to_handle_at`), and delegating it would create a real file-read oracle.
+Instead the resolver is handed an empty mount-fd slice, so the fallback fails
+with zero syscalls; `fsmon health` exposes the miss count as
+`dir_cache_misses`.
+
+If you start the daemon without `CAP_SYS_ADMIN` it refuses to run rather than
+silently recording `pid: 0`. Set `FSMON_ALLOW_UNPRIVILEGED=1` to accept the
+degraded mode deliberately; `fsmon health` then reports `"unprivileged": true`.
 
 ## Building from Source
 

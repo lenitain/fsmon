@@ -1,8 +1,9 @@
 use crate::common::EventType;
 use crate::common::filters::PathOptions;
+use crate::common::monitor::factory::{FanotifyFactory, MAX_DIRS_PER_MARK};
 use anyhow::{Context, Result};
 use fanotify_fid::consts::{
-    AT_FDCWD, FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE,
+    FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE,
     FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_FS_ERROR, FAN_MARK_ADD, FAN_MODIFY, FAN_MOVE_SELF,
     FAN_MOVED_FROM, FAN_MOVED_TO, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC,
 };
@@ -12,7 +13,7 @@ use libc;
 use std::collections::VecDeque;
 use std::ffi::CString;
 use std::fs;
-use std::os::fd::{AsRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 
 use crate::common::dir_cache::DirCache;
@@ -38,11 +39,15 @@ impl AsRawFd for FanFd {
 // ---- FsGroup: one per unique filesystem ----
 
 /// A group of fds for a single filesystem.
-/// One fanotify fd + one directory fd per filesystem, shared by all paths on it.
+/// One fanotify fd per filesystem, shared by all paths on it.
+///
+/// The key is `st_dev`, the userspace view of the superblock the kernel
+/// actually compares when it decides whether two marks may share a group
+/// (PRIVILEGE-SEPARATION-PLAN.md §5.6.2). Do not replace it with `fsid`:
+/// one fsid can map to two superblocks, which the kernel would reject.
 pub struct FsGroup {
     pub dev_id: u64,
     pub fan_fd: OwnedFd,
-    pub mount_fd: OwnedFd,
     pub ref_count: usize,
 }
 
@@ -239,45 +244,58 @@ pub fn open_dir_safe(path: &Path) -> Result<OwnedFd> {
 ///
 /// Opens the directory with `O_NOFOLLOW` to prevent TOCTOU symlink races,
 /// then marks relative to the directory fd using `Path::new(".")`.
-/// Strips FAN_FS_ERROR (only works with FS marks).
-pub fn mark_directory_at(fan_fd: &OwnedFd, dir_fd: &OwnedFd, mask: u64) -> Result<()> {
+/// Strips `FAN_FS_ERROR` (only works with FS marks).
+///
+/// The actual `fanotify_mark()` call is made by the privileged factory
+/// subprocess; the parent only ever passes a `dirfd`.
+pub(crate) fn mark_directory_at(
+    factory: &FanotifyFactory,
+    fan_fd: &OwnedFd,
+    dir_fd: &OwnedFd,
+    mask: u64,
+) -> Result<()> {
     let safe_mask = mask & !FAN_FS_ERROR;
-    fanotify_mark(
-        fan_fd,
-        FAN_MARK_ADD,
-        safe_mask,
-        dir_fd.as_raw_fd(),
-        Path::new("."),
-    )
-    .context("fanotify_mark (fd-level) failed")
+    factory
+        .mark(fan_fd, &[dir_fd.as_fd()], FAN_MARK_ADD, safe_mask)
+        .context("fanotify factory mark (fd-level) failed")
+}
+
+/// Remove the inode mark on `dir_fd` from `fan_fd`'s group.
+pub(crate) fn unmark_directory_at(
+    factory: &FanotifyFactory,
+    fan_fd: &OwnedFd,
+    dir_fd: &OwnedFd,
+) -> Result<()> {
+    factory
+        .mark(fan_fd, &[dir_fd.as_fd()], FAN_MARK_REMOVE, 0)
+        .context("fanotify factory mark removal failed")
 }
 
 /// Mark a single directory. Strips FAN_FS_ERROR (only works with FS marks).
 ///
-/// For new code, prefer `mark_directory_at()` + `open_dir_safe()` which
-/// avoids TOCTOU races (F-017).
-pub fn mark_directory(fan_fd: &OwnedFd, mask: u64, path: &Path) -> Result<()> {
-    let safe_mask = mask & !FAN_FS_ERROR;
-    fanotify_mark(fan_fd, FAN_MARK_ADD, safe_mask, AT_FDCWD, path)
-        .with_context(|| format!("fanotify_mark failed: {}", path.display()))
+/// Kept for callers that only have a path; opens the directory safely first.
+pub(crate) fn mark_directory(
+    factory: &FanotifyFactory,
+    fan_fd: &OwnedFd,
+    mask: u64,
+    path: &Path,
+) -> Result<()> {
+    let dir_fd = open_dir_safe(path)?;
+    mark_directory_at(factory, fan_fd, &dir_fd, mask)
 }
 
 /// Recursively traverse and mark all subdirectories using iterative BFS (F-021).
 ///
 /// Uses fd-level operations (`open_dir_safe` + `mark_directory_at`) to avoid
-/// TOCTOU races (F-017). Skips symlinks (F-008). Supports optional depth limit.
+/// TOCTOU races (F-017). Skips symlinks (F-008).
 ///
 /// Returns a list of **newly discovered** subdirectories (excluding `dir` itself)
 /// so the caller can generate synthetic CREATE events for them.
-pub fn mark_recursive(fan_fd: &OwnedFd, mask: u64, dir: &Path) -> Vec<PathBuf> {
-    mark_recursive_with_depth(fan_fd, mask & !FAN_FS_ERROR, dir, None)
-}
-
-/// Like `mark_recursive`, but with a configurable depth limit.
 ///
 /// `max_depth = None` means unlimited depth (backward compatible).
 /// `max_depth = Some(0)` means only mark the root directory itself.
-pub fn mark_recursive_with_depth(
+pub(crate) fn mark_recursive_with_depth(
+    factory: &FanotifyFactory,
     fan_fd: &OwnedFd,
     mask: u64,
     dir: &Path,
@@ -285,11 +303,26 @@ pub fn mark_recursive_with_depth(
 ) -> Vec<PathBuf> {
     let safe_mask = mask & !FAN_FS_ERROR;
     let mut discovered = Vec::new();
+    // Directory fds waiting to be marked. One factory round-trip carries up to
+    // MAX_DIRS_PER_MARK of them, so the walk fills batches instead of paying an
+    // IPC round-trip per directory.
+    let mut pending: Vec<OwnedFd> = Vec::with_capacity(MAX_DIRS_PER_MARK);
     // BFS queue: (path, depth)
     let mut queue: VecDeque<(PathBuf, u32)> = VecDeque::new();
     queue.push_back((dir.to_path_buf(), 0));
+    // Depth of the directories currently sitting in `pending`. The queue is in
+    // level order, so reaching a new depth means the previous level is complete
+    // and its marks can go out. Without this a narrow deep tree would hold every
+    // mark until the walk ended, leaving the deepest directories unmarked for
+    // the whole traversal.
+    let mut pending_depth = 0u32;
 
     while let Some((current, depth)) = queue.pop_front() {
+        if depth != pending_depth {
+            flush_pending_marks(factory, fan_fd, safe_mask, &mut pending);
+            pending_depth = depth;
+        }
+
         // Check depth limit
         if let Some(max) = max_depth
             && depth > max
@@ -303,11 +336,13 @@ pub fn mark_recursive_with_depth(
             Err(_) => continue,
         };
 
-        // Mark this directory using fd-level operation
         if depth > 0 {
             // depth=0 is the root dir (already marked by caller)
-            let _ = mark_directory_at(fan_fd, &dir_fd, safe_mask);
+            pending.push(dir_fd);
             discovered.push(current.clone());
+            if pending.len() >= MAX_DIRS_PER_MARK {
+                flush_pending_marks(factory, fan_fd, safe_mask, &mut pending);
+            }
         }
 
         // Read directory entries
@@ -328,7 +363,27 @@ pub fn mark_recursive_with_depth(
             }
         }
     }
+
+    flush_pending_marks(factory, fan_fd, safe_mask, &mut pending);
     discovered
+}
+
+/// Mark every queued directory in a single factory round-trip.
+///
+/// Errors are discarded, matching the previous one-directory-at-a-time
+/// behaviour: an unmarkable directory is skipped rather than aborting the walk.
+fn flush_pending_marks(
+    factory: &FanotifyFactory,
+    fan_fd: &OwnedFd,
+    mask: u64,
+    pending: &mut Vec<OwnedFd>,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    let dir_fds: Vec<BorrowedFd<'_>> = pending.iter().map(|fd| fd.as_fd()).collect();
+    let _ = factory.mark(fan_fd, &dir_fds, FAN_MARK_ADD, mask);
+    pending.clear();
 }
 
 #[cfg(test)]

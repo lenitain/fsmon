@@ -1,0 +1,7 @@
+# Compiled probe binaries. Anchored with a leading slash so they cannot match
+# the .c sources, which ARE tracked (captest2.c, captest4.c, fsidmix.c, ...).
+/verify-fanotify-privsep
+/captest2
+/captest4
+/fsidmix
+/fsidmatrix

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -16,6 +17,11 @@ pub struct DirCache {
     inner: Arc<Mutex<HashMap<HandleKey, (PathBuf, Instant)>>>,
     capacity: u64,
     ttl: Duration,
+    /// Number of lookups that missed. With `mount_fds = &[]` (plan §6 阶段 4)
+    /// every miss means the fanotify-fid tier-3 `open_by_handle_at` fallback
+    /// is a zero-syscall immediate failure, so this counter is the observable
+    /// "path resolution degraded" signal.
+    misses: Arc<AtomicU64>,
 }
 
 /// Adapter so the `DirCache` can plug into
@@ -38,6 +44,7 @@ impl DirCache {
             inner: Arc::new(Mutex::new(HashMap::new())),
             capacity: capacity.max(1),
             ttl,
+            misses: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -47,9 +54,16 @@ impl DirCache {
             Some((path, at)) if at.elapsed() < self.ttl => Some(path.clone()),
             _ => {
                 map.remove(key);
+                drop(map);
+                self.misses.fetch_add(1, Ordering::Relaxed);
                 None
             }
         }
+    }
+
+    /// Number of cache misses observed so far (tier-3 fallback attempts).
+    pub fn misses(&self) -> u64 {
+        self.misses.load(Ordering::Relaxed)
     }
 
     pub fn insert(&self, key: Vec<u8>, path: PathBuf) {

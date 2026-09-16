@@ -1,6 +1,4 @@
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
-use std::path::Path;
-use std::sync::Arc;
 
 use crate::{debug_log, error_log, info_log, warning_log};
 use tokio::io::unix::AsyncFd;
@@ -43,26 +41,15 @@ impl Monitor {
         nix::unistd::dup(fd).map_err(std::io::Error::other)
     }
 
-    /// Open a directory and return an owned fd.
-    /// The returned `OwnedFd` has the directory open and will be
-    /// closed on drop.
-    pub(crate) fn open_dir(path: &Path) -> std::io::Result<OwnedFd> {
-        // Use O_PATH for minimal permissions (F-016)
-        // O_DIRECTORY ensures we open a directory
-        // O_CLOEXEC prevents fd leaks to child processes
-        nix::fcntl::open(
-            path,
-            nix::fcntl::OFlag::O_DIRECTORY
-                | nix::fcntl::OFlag::O_PATH
-                | nix::fcntl::OFlag::O_CLOEXEC,
-            nix::sys::stat::Mode::empty(),
-        )
-        .map_err(std::io::Error::other)
-    }
-
     /// Spawn a tokio reader task for `group_key` in `fs_groups`.
-    /// Both the fanotify fd and mount fd are duplicated so the reader task
-    /// owns independent copies, avoiding double-close with Monitor's OwnedFd.
+    /// The fanotify fd is duplicated so the reader task owns an independent
+    /// copy, avoiding double-close with Monitor's OwnedFd.
+    ///
+    /// No mount fd is passed to the resolver: fsmon deliberately does not
+    /// request `CAP_DAC_READ_SEARCH`, so `open_by_handle_at` could never
+    /// succeed (plan §6 阶段 4). An empty slice makes every tier-3 fallback
+    /// a zero-syscall immediate failure, and the miss counter in `DirCache`
+    /// records how often that happens.
     pub(crate) fn spawn_fd_reader(&mut self, group_key: super::FsGroupKey) {
         let tx = match self.event_tx.as_ref() {
             Some(t) => t.clone(),
@@ -83,7 +70,7 @@ impl Monitor {
         let debug = self.debug;
         let group = &self.fanotify.groups[group_key];
 
-        // Duplicate fds so the reader task owns independent copies
+        // Duplicate the fd so the reader task owns an independent copy
         let owned_fan_fd = match Self::dup_fd(&group.fan_fd) {
             Ok(fd) => fd,
             Err(e) => {
@@ -95,20 +82,7 @@ impl Monitor {
                 return;
             }
         };
-        let owned_mount_fd = match Self::dup_fd(&group.mount_fd) {
-            Ok(fd) => fd,
-            Err(e) => {
-                error_log!(
-                    "Failed to dup mount fd {}: {}",
-                    group.mount_fd.as_raw_fd(),
-                    e
-                );
-                // owned_fan_fd drops here, closing the dup'd fan fd
-                return;
-            }
-        };
         let raw_fd = owned_fan_fd.as_raw_fd();
-        let mfds = Arc::new(vec![owned_mount_fd]);
 
         if debug {
             debug_log!(
@@ -151,7 +125,7 @@ impl Monitor {
                         break;
                     }
                 };
-                let events = read_fid_events_cached(afd.get_ref(), &mfds, &dc, &mut buf);
+                let events = read_fid_events_cached(afd.get_ref(), &[], &dc, &mut buf);
                 if debug {
                     debug_log!(debug, "fd {} reader: got {} event(s)", raw_fd, events.len());
                 }

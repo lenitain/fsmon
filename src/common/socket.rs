@@ -144,6 +144,17 @@ pub struct HealthInfo {
     pub reader_groups: usize,
     /// Index-aligned with fs_groups, one entry per reader task.
     pub readers: Vec<ReaderHealth>,
+    /// True when the daemon could not create a privileged fanotify group, so
+    /// event pid attribution is degraded to 0. See PRIVILEGE-SEPARATION-PLAN §6.
+    #[serde(default)]
+    pub unprivileged: bool,
+    /// Directory-handle cache misses. With no `CAP_DAC_READ_SEARCH` these are
+    /// the tier-3 `open_by_handle_at` fallbacks that failed immediately.
+    #[serde(default)]
+    pub dir_cache_misses: u64,
+    /// Whether the privileged fanotify factory subprocess is still running.
+    #[serde(default)]
+    pub factory_alive: bool,
 }
 
 /// Classifies whether an error is permanent (will persist after daemon restart)
@@ -399,6 +410,9 @@ mod tests {
                     fd: 5,
                 },
             ],
+            unprivileged: false,
+            dir_cache_misses: 7,
+            factory_alive: true,
         };
         let resp = SocketResponse::Health(health);
         let json_str = serde_json::to_string(&resp).unwrap();

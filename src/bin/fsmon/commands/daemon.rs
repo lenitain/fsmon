@@ -233,7 +233,19 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
         }
     }
 
-    monitor.run().await?;
+    if let Err(e) = monitor.run().await {
+        // A PermanentStartupError (e.g. missing CAP_SYS_ADMIN) can never be
+        // fixed by restarting, so exit 2 — the code the generated unit lists
+        // in RestartPreventExitStatus. Exiting 1 would make systemd retry it
+        // StartLimitBurst times before giving up.
+        if e.downcast_ref::<fsmon::common::privileges::PermanentStartupError>()
+            .is_some()
+        {
+            eprintln!("Error: {}", e);
+            std::process::exit(2);
+        }
+        return Err(e);
+    }
     Ok(())
 }
 

@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Privilege separation**: `CAP_SYS_ADMIN` is now confined to a forked, seccomp-filtered **fanotify factory** subprocess instead of living in the whole daemon. The factory's only input is `(dirfd[, fan_fd], flags, mask)` passed over `SCM_RIGHTS`; its syscall whitelist is `fanotify_init, fanotify_mark, recvmsg, sendmsg, read, write, close, exit_group`. The main daemon drops to `CapEff=0` + `PR_SET_NO_NEW_PRIVS` after startup, while privileged groups keep reporting real pids (the kernel stores `FANOTIFY_UNPRIV` on the group object, not the process).
+- **Hardened systemd unit**: `fsmon init --service` now generates a unit with `User=`, `AmbientCapabilities=CAP_SYS_ADMIN`, `CapabilityBoundingSet=CAP_SYS_ADMIN`, `NoNewPrivileges=yes`, `ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths=` limited to store/log/runtime dirs, and `SystemCallFilter=@system-service fanotify_init fanotify_mark` (the two fanotify syscalls are not part of `@system-service`). `PrivateTmp=` is intentionally absent.
+
+### Changed
+
+- **Capability probe replaces `check_root()`**: privilege is detected with the kernel's own `fanotify_init(FAN_UNLIMITED_MARKS)` check (accurate inside user namespaces, unlike `capget()`). Without `CAP_SYS_ADMIN` the daemon now fails loudly instead of silently recording `pid: 0`. Set `FSMON_ALLOW_UNPRIVILEGED=1` to accept the degraded mode.
+- Groups are created with `FAN_UNLIMITED_MARKS` when privileged, lifting the per-uid `max_user_marks` cap.
+
+### Fixed
+
+- **A missing capability now exits 2 instead of 1**: the privilege failure is raised as a `PermanentStartupError`, which `fsmon daemon` maps to exit code 2 — the code the generated unit lists in `RestartPreventExitStatus`. Previously it exited 1, so systemd retried a condition no restart can fix, burning through `StartLimitBurst` before giving up.
+- **The fanotify factory no longer inherits the daemon's descriptors**: it used to hold the event log, the command-socket listener, the proc-connector socket and epoll fds for its whole life. The child now moves its socketpair end to fd 3 and closes everything above it (one `close_range` call, with a bounded `close` loop as fallback) before installing its seccomp filter. A `CAP_SYS_ADMIN` process should hold nothing it never uses.
+- **Recursive marking batches its factory requests**: `mark_recursive_with_depth` used to issue one IPC round-trip per directory. It now fills batches of up to 63 directory fds (`MAX_DIRS_PER_MARK`) and flushes at every BFS depth boundary — so a wide tree costs far fewer round-trips, while a narrow deep tree degrades to one request per level instead of leaving its deepest directories unmarked until the walk ends. Measured on a 5021-directory tree, `fsmon add -r`: 0.386s -> ~0.14s.
+- **Silent path-resolution degradation is observable**: the directory-handle cache counts misses (`dir_cache_misses` in `fsmon health` and the periodic metrics line). `open_by_handle_at` is never attempted — `CAP_DAC_READ_SEARCH` is deliberately not requested, and the resolver is passed an empty mount-fd slice so the fallback fails with zero syscalls.
+
 ## [0.5.4] - 2026-08-03
 
 ### Changed

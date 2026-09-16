@@ -1,0 +1,10 @@
+[package]
+name = "fidtest"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fanotify-fid = { path = "../../../fanotify-fid" }
+
+# Evidence harness for PRIVILEGE-SEPARATION-PLAN.md §5.6b.
+# Depends on the sibling checkout of the fanotify-fid crate.

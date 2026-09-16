@@ -49,6 +49,9 @@ impl Monitor {
             monitored_paths: self.monitored_entries.len(),
             reader_groups: self.fanotify.groups.len(),
             readers,
+            unprivileged: !self.privileged,
+            dir_cache_misses: self.fanotify.dir_cache.misses(),
+            factory_alive: self.fanotify.factory.as_ref().is_some_and(|f| f.is_alive()),
         })
     }
 
