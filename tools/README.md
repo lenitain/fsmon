@@ -13,10 +13,11 @@
 | `verify-fanotify-privsep.c` | §8 **支点假设**：特权随 fd 传递，`CapEff=0` 的读者拿到 root 事件的真实 pid | **是**（一次） |
 | `fidtest/` | §5.6b **`fanotify-fid` 自身的通用缺陷**：RENAME / PIDFD / FS_ERROR 记录被静默丢弃 | 否 |
 
-> `fidtest/` 与其他探针不同：它针对的是**通用库**而非 fsmon，
-> 依赖 `../../../fanotify-fid` 的源码检出。它证明了 `fanotify-fid` **不为 fsmon**
-> 也值得修的缺陷 —— 这正是"通用库不应为单个下游做特化"的具体体现。
-> 这些缺陷**不影响**本方案的实施。
+> `fidtest/` 与其他探针不同：它针对的是**通用库**而非 fsmon。
+> 它依赖 crates.io 上发布的 `fanotify-fid = "0.7.0"`（`Cargo.lock` 已锁版本），
+> 而不是任何本地检出 —— 这样它展示的是**所有人实际拿到的那个版本**的行为，
+> 且克隆本仓库即可复现。它证明了 `fanotify-fid` **不为 fsmon** 也值得修的缺陷，
+> 这正是"通用库不应为单个下游做特化"的具体体现。这些缺陷**不影响**本方案的实施。
 
 ## 跑法
 
@@ -26,7 +27,7 @@ gcc -O2 -o /tmp/captest2   captest2.c   && /tmp/captest2
 gcc -O2 -o /tmp/captest4   captest4.c   && /tmp/captest4
 gcc -O2 -o /tmp/fsidmatrix fsidmatrix.c && /tmp/fsidmatrix   # 最重要的一张表
 
-# fanotify-fid 自身的通用缺陷（需 ../../../fanotify-fid 源码）—— §5.6b
+# fanotify-fid 自身的通用缺陷（拉取 crates.io 上的 0.7.0）—— §5.6b
 (cd fidtest && cargo run --quiet)
 
 # np-tier3.sh 需要一个把 check_root() 改成只告警的构建：

@@ -419,6 +419,8 @@ if (old_sb != fsid->sb) return -EXDEV;   /* 比较的是 superblock */
 
 #### 实测证据（`tools/fidtest/`，用 crate 自己的公开 API）
 
+针对 **crates.io 上发布的 `fanotify-fid` 0.7.0**（`Cargo.lock` 锁定版本，不依赖本地检出）：
+
 ```
 ── CONTROL: create (type 2 DFID_NAME) ──
     mask = 0x100 ["CREATE"]     dfid_name = Some("control.txt")     ← 正常

@@ -2,9 +2,14 @@
 name = "fidtest"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
-fanotify-fid = { path = "../../../fanotify-fid" }
+# The published crate, not a local checkout: the harness demonstrates the
+# behaviour of the version everyone actually gets. Cargo.lock pins the exact
+# release, so the output stays reproducible.
+fanotify-fid = "0.7.0"
 
-# Evidence harness for PRIVILEGE-SEPARATION-PLAN.md §5.6b.
-# Depends on the sibling checkout of the fanotify-fid crate.
+# Evidence harness for PRIVILEGE-SEPARATION-PLAN.md §5.6b: it shows which
+# fanotify info records fanotify-fid silently discards (RENAME, PIDFD,
+# FS_ERROR, and any future type). Needs no root and no live kernel events.
