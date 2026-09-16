@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use fanotify_fid::consts::{
     FAN_ACCESS, FAN_ATTRIB, FAN_CLOSE_NOWRITE, FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE,
     FAN_DELETE_SELF, FAN_EVENT_ON_CHILD, FAN_FS_ERROR, FAN_MARK_ADD, FAN_MODIFY, FAN_MOVE_SELF,
-    FAN_MOVED_FROM, FAN_MOVED_TO, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC,
+    FAN_MOVED_FROM, FAN_MOVED_TO, FAN_ONDIR, FAN_OPEN, FAN_OPEN_EXEC, FAN_RENAME,
 };
 use fanotify_fid::prelude::*;
 use fanotify_fid::types::FidEvent;
@@ -16,7 +16,7 @@ use std::fs;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 
-use crate::common::dir_cache::DirCache;
+use crate::common::dir_cache::{self, DirCache};
 
 // ---- FanFd wrapper for AsyncFd ----
 
@@ -77,6 +77,7 @@ pub fn event_type_to_kernel_flag(t: &EventType) -> u64 {
         EventType::MovedTo => FAN_MOVED_TO,
         EventType::MoveSelf => FAN_MOVE_SELF,
         EventType::FsError => FAN_FS_ERROR,
+        EventType::Rename => FAN_RENAME,
     }
 }
 
@@ -94,7 +95,7 @@ pub fn path_mask_from_options(opts: &PathOptions) -> u64 {
 
 /// Convert a fanotify event mask to fsmon's EventType enum.
 pub fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
-    const BITS: [(u64, EventType); 14] = [
+    const BITS: [(u64, EventType); 15] = [
         (FAN_ACCESS, EventType::Access),
         (FAN_MODIFY, EventType::Modify),
         (FAN_CLOSE_WRITE, EventType::CloseWrite),
@@ -109,6 +110,7 @@ pub fn mask_to_event_types(mask: u64) -> smallvec::SmallVec<[EventType; 8]> {
         (FAN_MOVED_TO, EventType::MovedTo),
         (FAN_MOVE_SELF, EventType::MoveSelf),
         (FAN_FS_ERROR, EventType::FsError),
+        (FAN_RENAME, EventType::Rename),
     ];
     BITS.iter()
         .filter(|(bit, _)| mask & bit != 0)
@@ -182,15 +184,25 @@ pub const DIR_CACHE_TTL_SECS: u64 = 3600;
 
 pub const FILE_SIZE_CACHE_CAP: usize = 10_000;
 
-/// Default mask: 8 core events (FS_ERROR excluded — only works with FS marks).
-/// Use --types all to get all 14 (FS_ERROR included, but only effective on FS marks).
+/// Default mask: the core events (FS_ERROR excluded — only works with FS marks).
+///
+/// `FAN_RENAME` replaces the `FAN_MOVED_FROM | FAN_MOVED_TO` pair: a rename
+/// arrives as **one** event naming both the old and the new location, so the
+/// two halves never have to be correlated and a rename that leaves the watched
+/// subtree is still reported completely.  The kernel requires
+/// `FAN_REPORT_NAME` for this bit, which [`GROUP_INIT_FLAGS`] already sets.
+///
+/// Use `--types all` for every non-rename type (FS_ERROR included, but only
+/// effective on FS marks); `--types rename` selects the fused rename event
+/// explicitly, and it cannot be combined with MOVED_FROM/MOVED_TO.
+///
+/// [`GROUP_INIT_FLAGS`]: crate::common::monitor::factory::GROUP_INIT_FLAGS
 pub const DEFAULT_EVENT_MASK: u64 = FAN_CLOSE_WRITE
     | FAN_ATTRIB
     | FAN_CREATE
     | FAN_DELETE
     | FAN_DELETE_SELF
-    | FAN_MOVED_FROM
-    | FAN_MOVED_TO
+    | FAN_RENAME
     | FAN_MOVE_SELF
     | FAN_EVENT_ON_CHILD
     | FAN_ONDIR;
@@ -300,6 +312,7 @@ pub(crate) fn mark_recursive_with_depth(
     mask: u64,
     dir: &Path,
     max_depth: Option<u32>,
+    cache: Option<&DirCache>,
 ) -> Vec<PathBuf> {
     let safe_mask = mask & !FAN_FS_ERROR;
     let mut discovered = Vec::new();
@@ -335,6 +348,16 @@ pub(crate) fn mark_recursive_with_depth(
             Ok(fd) => fd,
             Err(_) => continue,
         };
+
+        // Cache handle→path here, while the descriptor is open and the path is
+        // known.  This is what makes every marked directory resolvable later:
+        // rename records carry parent-directory handles and nothing else, so a
+        // handle missing from the cache means a rename that cannot be
+        // attributed.  Deriving the handle from the fd we already hold costs one
+        // syscall and avoids re-walking the whole tree by path afterwards.
+        if let Some(cache) = cache {
+            dir_cache::cache_handle_from_fd(cache, &dir_fd, &current);
+        }
 
         if depth > 0 {
             // depth=0 is the root dir (already marked by caller)
@@ -556,8 +579,11 @@ mod tests {
             assert!(DEFAULT_EVENT_MASK & FAN_CREATE != 0);
             assert!(DEFAULT_EVENT_MASK & FAN_DELETE != 0);
             assert!(DEFAULT_EVENT_MASK & FAN_DELETE_SELF != 0);
-            assert!(DEFAULT_EVENT_MASK & FAN_MOVED_FROM != 0);
-            assert!(DEFAULT_EVENT_MASK & FAN_MOVED_TO != 0);
+            // FAN_RENAME replaces the MOVED_FROM/MOVED_TO pair: the kernel
+            // emits one or the other, never both (see EventType::Rename).
+            assert!(DEFAULT_EVENT_MASK & FAN_RENAME != 0);
+            assert!(DEFAULT_EVENT_MASK & FAN_MOVED_FROM == 0);
+            assert!(DEFAULT_EVENT_MASK & FAN_MOVED_TO == 0);
             assert!(DEFAULT_EVENT_MASK & FAN_MOVE_SELF != 0);
             assert!(DEFAULT_EVENT_MASK & FAN_EVENT_ON_CHILD != 0);
             assert!(DEFAULT_EVENT_MASK & FAN_ONDIR != 0);

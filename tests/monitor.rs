@@ -40,6 +40,7 @@ fn event_jsonl_round_trip() {
         ppid: 1,
         tgid: 42,
         chain: Vec::new(),
+        fs_error: None,
     };
     let json = ev.to_jsonl_string();
     let parsed = parse_log_line_jsonl(&json).unwrap();
@@ -65,6 +66,7 @@ fn jsonl_local_time_has_offset_not_z() {
         ppid: 0,
         tgid: 0,
         chain: Vec::new(),
+        fs_error: None,
     };
     let local = ev.to_jsonl_string_local();
     // local time must have + or - offset, not Z
@@ -95,6 +97,7 @@ fn jsonl_normal_uses_utc() {
         ppid: 0,
         tgid: 0,
         chain: Vec::new(),
+        fs_error: None,
     };
     let normal = ev.to_jsonl_string();
     assert!(normal.contains('Z'), "normal time should use UTC Z suffix");
@@ -167,6 +170,7 @@ fn file_event_all_fields_present_in_json() {
         ppid: 7,
         tgid: 99,
         chain: Vec::new(),
+        fs_error: None,
     };
     let json = ev.to_jsonl_string();
     assert!(json.contains("\"time\":\""));

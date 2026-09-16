@@ -182,6 +182,7 @@ mod tests {
             ppid: 0,
             tgid: 0,
             chain: Vec::new(),
+            fs_error: None,
         }
     }
 

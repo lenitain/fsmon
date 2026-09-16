@@ -144,6 +144,14 @@ pub enum EventType {
     MovedTo,
     MoveSelf,
     FsError,
+    /// A rename, reported by the kernel as a **single** event carrying both the
+    /// old and the new location (`FAN_RENAME`).
+    ///
+    /// Mutually exclusive with [`MovedFrom`](Self::MovedFrom) /
+    /// [`MovedTo`](Self::MovedTo): the kernel emits either the fused rename
+    /// event or the two halves, depending on which bit is in the mark mask, so
+    /// this variant is deliberately absent from [`EventType::ALL`].
+    Rename,
 }
 
 impl EventType {
@@ -182,6 +190,7 @@ impl fmt::Display for EventType {
             EventType::MovedTo => "MOVED_TO",
             EventType::MoveSelf => "MOVE_SELF",
             EventType::FsError => "FS_ERROR",
+            EventType::Rename => "RENAME",
         };
         write!(f, "{}", s)
     }
@@ -221,6 +230,7 @@ impl FromStr for EventType {
             "MOVED_TO" => Ok(EventType::MovedTo),
             "MOVE_SELF" => Ok(EventType::MoveSelf),
             "FS_ERROR" => Ok(EventType::FsError),
+            "RENAME" => Ok(EventType::Rename),
             _ => Err(ParseEventTypeError {
                 input: s.to_string(),
             }),
@@ -253,6 +263,7 @@ impl FromStr for EventType {
 ///     ppid: 100,
 ///     tgid: 1234,
 ///     chain: vec![],
+///     fs_error: None,
 /// };
 ///
 /// // 序列化为 JSONL
@@ -277,6 +288,11 @@ pub struct FileEvent {
     pub tgid: u32,
     #[serde(default)]
     pub chain: Vec<ChainLink>,
+    /// FS_ERROR only: `(negative errno, merged error count)`.
+    ///
+    /// Omitted for every other event type, so existing output is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fs_error: Option<(i32, u32)>,
 }
 
 /// One ancestry link of a file event chain (RUN-23 replacement for the 0.5
@@ -370,6 +386,7 @@ mod tests {
             ppid: 100,
             tgid: 1234,
             chain: vec![],
+            fs_error: None,
         };
 
         let normal = ev.to_jsonl_string();

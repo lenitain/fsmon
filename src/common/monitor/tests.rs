@@ -1,5 +1,5 @@
 use super::*;
-use crate::common::fid_parser::mask_to_event_types;
+use crate::common::fid_parser::{event_type_to_kernel_flag, mask_to_event_types};
 use crate::common::filters::PathOptions;
 use crate::common::monitored::PathEntry;
 use crate::common::utils::{SizeFilter, SizeOp};
@@ -60,7 +60,34 @@ fn test_mask_to_event_types_all() {
         | FAN_MOVED_TO
         | FAN_MOVE_SELF;
     let types = mask_to_event_types(mask);
-    assert_eq!(types.len(), 14);
+    assert_eq!(
+        types.len(),
+        14,
+        "FAN_RENAME is deliberately absent from this mask"
+    );
+}
+
+#[test]
+fn test_mask_to_event_types_rename() {
+    // The fused rename event maps to exactly one type and is not spelled
+    // MOVED_FROM/MOVED_TO: the kernel emits one form or the other.
+    let types = mask_to_event_types(fanotify_fid::consts::FAN_RENAME);
+    assert_eq!(types.as_slice(), &[EventType::Rename]);
+}
+
+#[test]
+fn test_rename_parses_and_round_trips() {
+    use std::str::FromStr;
+    assert_eq!(EventType::Rename.to_string(), "RENAME");
+    assert_eq!(EventType::from_str("rename").unwrap(), EventType::Rename);
+    assert_eq!(
+        event_type_to_kernel_flag(&EventType::Rename),
+        fanotify_fid::consts::FAN_RENAME
+    );
+    assert!(
+        !EventType::ALL.contains(&EventType::Rename),
+        "ALL must stay combinable: RENAME conflicts with MOVED_FROM/MOVED_TO"
+    );
 }
 
 #[test]
@@ -362,6 +389,7 @@ fn make_event(path: &str, event_type: EventType, pid: u32, size: u64) -> FileEve
         ppid: 0,
         tgid: 0,
         chain: Vec::new(),
+        fs_error: None,
     }
 }
 
@@ -630,6 +658,7 @@ async fn test_subscriber_task_receives_events() {
                 user: "root".into(),
             },
         ],
+        fs_error: None,
     };
     tx.send(event.clone()).unwrap();
 
@@ -676,6 +705,7 @@ async fn test_subscriber_task_filters_by_type() {
         ppid: 0,
         tgid: 0,
         chain: Vec::new(),
+        fs_error: None,
     };
     assert!(!allowed.contains(&create_event.event_type));
 
@@ -691,6 +721,7 @@ async fn test_subscriber_task_filters_by_type() {
         ppid: 0,
         tgid: 0,
         chain: Vec::new(),
+        fs_error: None,
     };
     assert!(allowed.contains(&delete_event.event_type));
 }
@@ -712,6 +743,7 @@ async fn test_subscriber_task_handles_lagged() {
             ppid: 0,
             tgid: 0,
             chain: Vec::new(),
+            fs_error: None,
         });
     }
 
@@ -747,6 +779,7 @@ fn test_file_event_comm_field() {
         ppid: 100,
         tgid: 1234,
         chain: Vec::new(),
+        fs_error: None,
     };
 
     assert_eq!(event.comm, "touch");
@@ -783,6 +816,7 @@ fn test_file_event_chain_as_vec() {
                 user: "root".into(),
             },
         ],
+        fs_error: None,
     };
 
     assert_eq!(event.chain.len(), 2);
@@ -810,6 +844,7 @@ fn test_file_event_json_serialization() {
             cmd: "touch /tmp/test.txt".into(),
             user: "root".into(),
         }],
+        fs_error: None,
     };
 
     let json = event.to_jsonl_string();
@@ -826,4 +861,228 @@ fn test_file_event_json_serialization() {
     assert_eq!(parsed.cmd, "touch /tmp/test.txt");
     assert_eq!(parsed.chain.len(), 1);
     assert_eq!(parsed.chain[0].comm, "touch");
+}
+
+// ---- FAN_RENAME expansion ----
+
+/// A `FAN_RENAME` must become one MOVED_FROM (old side) and one MOVED_TO (new
+/// side), both placed on real paths.
+///
+/// Before this, the event carried no path — the payload lives in info records
+/// the parser dropped — so path matching found nothing and the rename was
+/// silently discarded.
+#[test]
+fn test_rename_expands_into_moved_from_and_moved_to() {
+    let root = tempfile::tempdir().unwrap();
+    let dir_a = root.path().join("a");
+    let dir_b = root.path().join("b");
+    std::fs::create_dir_all(&dir_a).unwrap();
+    std::fs::create_dir_all(&dir_b).unwrap();
+
+    let mut m = make_monitor(vec![root.path().to_str().unwrap()], None, None, true);
+
+    // The marking walk seeds this cache from the descriptors it opens; here we
+    // seed it the same way, from the directories themselves.
+    let (ha, ka) = (
+        dir_a.clone(),
+        fanotify_fid::handle::name_to_handle_at(&dir_a).expect("handle a"),
+    );
+    let (hb, kb) = (
+        dir_b.clone(),
+        fanotify_fid::handle::name_to_handle_at(&dir_b).expect("handle b"),
+    );
+    m.fanotify.dir_cache.insert(ka, ha);
+    m.fanotify.dir_cache.insert(kb, hb);
+
+    let mut event = FidEvent::new(FAN_RENAME, 4242, PathBuf::new(), None, None, None);
+    event = event.with_rename_source(
+        fanotify_fid::handle::name_to_handle_at(&dir_a).unwrap(),
+        "old.txt".to_string(),
+    );
+    event = event.with_rename_target(
+        fanotify_fid::handle::name_to_handle_at(&dir_b).unwrap(),
+        "new.txt".to_string(),
+    );
+
+    let pending = m.process_event_batch(&[event]);
+    let types: Vec<EventType> = pending.iter().map(|p| p.event.event_type).collect();
+
+    assert!(
+        types.contains(&EventType::MovedFrom),
+        "old side must be reported as MOVED_FROM, got {types:?}"
+    );
+    assert!(
+        types.contains(&EventType::MovedTo),
+        "new side must be reported as MOVED_TO, got {types:?}"
+    );
+
+    let from = pending
+        .iter()
+        .find(|p| p.event.event_type == EventType::MovedFrom)
+        .unwrap();
+    let to = pending
+        .iter()
+        .find(|p| p.event.event_type == EventType::MovedTo)
+        .unwrap();
+
+    assert_eq!(from.event.path, dir_a.join("old.txt"));
+    assert_eq!(to.event.path, dir_b.join("new.txt"));
+    assert_eq!(m.metrics.events_unresolved_rename(), 0);
+}
+
+/// A rename whose parent handles are both unknown must be counted, not dropped
+/// in silence — that is the difference between "no rename" and "rename lost".
+#[test]
+fn test_rename_without_cached_handles_is_counted() {
+    let mut m = make_monitor(vec!["/tmp"], None, None, true);
+
+    let mut event = FidEvent::new(FAN_RENAME, 1, PathBuf::new(), None, None, None);
+    event = event.with_rename_source(vec![0xde, 0xad], "x".to_string());
+    event = event.with_rename_target(vec![0xbe, 0xef], "y".to_string());
+
+    let pending = m.process_event_batch(&[event]);
+
+    assert!(pending.is_empty(), "nothing can be placed without handles");
+    assert_eq!(
+        m.metrics.events_unresolved_rename(),
+        1,
+        "the loss must be observable"
+    );
+}
+
+/// `FAN_FS_ERROR` must carry the filesystem's error code into the record.
+#[test]
+fn test_fs_error_reports_code_and_count() {
+    let mut m = make_monitor(vec!["/tmp"], None, None, true);
+    let event = FidEvent::new(
+        fanotify_fid::consts::FAN_FS_ERROR,
+        1,
+        PathBuf::from("/tmp/whatever"),
+        None,
+        None,
+        None,
+    )
+    .with_fs_error(-5, 3);
+
+    let pending = m.process_event_batch(&[event]);
+    let pe = pending
+        .iter()
+        .find(|p| p.event.event_type == EventType::FsError)
+        .expect("FS_ERROR must be recorded");
+    assert_eq!(pe.event.fs_error, Some((-5, 3)));
+}
+
+/// Non-FS_ERROR records must not grow the field.
+#[test]
+fn test_fs_error_field_absent_for_other_types() {
+    let mut m = make_monitor(vec!["/tmp"], None, None, true);
+    let event = FidEvent::new(
+        fanotify_fid::consts::FAN_CREATE,
+        1,
+        PathBuf::from("/tmp/plain.txt"),
+        None,
+        None,
+        None,
+    );
+    let pending = m.process_event_batch(&[event]);
+    assert!(!pending.is_empty(), "CREATE should still be recorded");
+    assert!(pending.iter().all(|p| p.event.fs_error.is_none()));
+}
+
+/// Info records the library preserved but fsmon cannot read must be counted.
+#[test]
+fn test_unparsed_info_records_are_counted() {
+    let mut m = make_monitor(vec!["/tmp"], None, None, true);
+    let mut event = FidEvent::new(
+        fanotify_fid::consts::FAN_CREATE,
+        1,
+        PathBuf::from("/tmp/x"),
+        None,
+        None,
+        None,
+    );
+    event.push_unknown_info_record(7, vec![0u8; 8]); // MNT
+    event.push_unknown_info_record(6, vec![0u8; 20]); // RANGE
+
+    let _ = m.process_event_batch(&[event]);
+    assert_eq!(m.metrics.unparsed_info_records(), 2);
+}
+
+/// Renaming a monitored canonical root away must trigger the same cleanup as
+/// deleting it.
+///
+/// The cleanup rule keys on `MovedFrom`, and before renames were understood the
+/// event had no path at all — so `matching_path` found nothing and the root
+/// stayed in `monitored_entries` forever, pointing at a path that no longer
+/// exists.
+#[test]
+fn test_rename_of_canonical_root_triggers_cleanup() {
+    let root = tempfile::tempdir().unwrap();
+    let sub = root.path().join("watched");
+    let away = root.path().join("moved-away");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::create_dir_all(&away).unwrap();
+
+    let mut m = make_monitor(vec![sub.to_str().unwrap()], None, None, false);
+    // run() does this: the configured path becomes the canonical root.
+    m.canonical_paths = vec![sub.clone()];
+
+    let handle = fanotify_fid::handle::name_to_handle_at(&away).expect("handle");
+    m.fanotify.dir_cache.insert(handle.clone(), away.clone());
+
+    let mut event = FidEvent::new(FAN_RENAME, 4242, PathBuf::new(), None, None, None);
+    event = event.with_rename_source(handle, "watched".to_string());
+
+    let pending = m.process_event_batch(&[event]);
+    eprintln!("DIAG daemon_pid={} event_pid={}", m.daemon_pid, 4242u32);
+    eprintln!("DIAG canonical={:?}", m.canonical_paths);
+    eprintln!(
+        "DIAG entries={:?}",
+        m.monitored_entries
+            .iter()
+            .map(|(p, _)| p.clone())
+            .collect::<Vec<_>>()
+    );
+
+    // The destination is outside every monitored path, so nothing is logged —
+    // that is the existing scope rule, not a rename bug.  What matters is that
+    // the root left `monitored_entries`: keeping it would leave the daemon
+    // watching a path that no longer exists.
+    assert!(
+        pending.is_empty(),
+        "a destination outside the watched tree must not be logged: {:?}",
+        pending
+            .iter()
+            .map(|p| (p.event.event_type, p.event.path.clone()))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !m.monitored_entries.iter().any(|(p, _)| p == &sub),
+        "the renamed-away root must leave monitored_entries"
+    );
+}
+
+#[test]
+fn test_is_canonical_root_path_shapes() {
+    let root = Path::new("/tmp/abc/watched");
+    // DELETE_SELF: event path is the root itself.
+    assert!(Monitor::is_canonical_root_path(
+        root,
+        Path::new("/tmp/abc/watched")
+    ));
+    // Renamed away: same basename, different parent.
+    assert!(Monitor::is_canonical_root_path(
+        root,
+        Path::new("/tmp/abc/moved-away/watched")
+    ));
+    // A child of the root is not the root.
+    assert!(!Monitor::is_canonical_root_path(
+        root,
+        Path::new("/tmp/abc/watched/child")
+    ));
+    // Unrelated path.
+    assert!(!Monitor::is_canonical_root_path(
+        root,
+        Path::new("/tmp/abc/other")
+    ));
 }

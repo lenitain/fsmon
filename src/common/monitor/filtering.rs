@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::common::FileEvent;
 use crate::common::filters::{self, PathOptions};
@@ -32,12 +32,6 @@ impl Monitor {
     /// Check output filters using a specific PathOptions instead of auto-detecting.
     pub(crate) fn should_output_for_opts(&self, event: &FileEvent, opts: &PathOptions) -> bool {
         filters::should_output(Some(opts), event)
-    }
-
-    /// Find the configured path that matches a given event path.
-    /// Checks configured paths (direct or recursive prefix), then canonical paths.
-    pub(crate) fn matching_path(&self, path: &Path) -> Option<&PathBuf> {
-        filters::matching_path(&self.paths, &self.canonical_paths, path)
     }
 
     #[cfg(test)]

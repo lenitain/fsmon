@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::debug_log;
 use chrono::Utc;
-use fanotify_fid::consts::FAN_Q_OVERFLOW;
+use fanotify_fid::consts::{FAN_MOVED_FROM, FAN_MOVED_TO, FAN_Q_OVERFLOW, FAN_RENAME};
 use fanotify_fid::types::FidEvent;
 
 use crate::common::fid_parser::mask_to_event_types;
@@ -24,6 +24,68 @@ pub(crate) struct PendingEvent {
 }
 
 impl Monitor {
+    /// Return `events` with each `FAN_RENAME` split into its two sides.
+    ///
+    /// The kernel reports a rename as one event whose payload lives in two info
+    /// records: the old parent directory handle + old name, and the new parent
+    /// handle + new name.  Without this step the event has no path at all, so
+    /// path matching finds nothing and the rename is dropped.
+    ///
+    /// Each side is resolved through the directory cache; a side whose parent
+    /// handle is unknown is skipped, and the event is reported as unresolved so
+    /// the caller can tell "no rename" apart from "rename we could not place".
+    /// The cache is normally complete because the marking walk seeds a handle
+    /// for every directory it descends into.
+    ///
+    /// Events that are not renames are moved across unchanged.
+    fn expand_renames(&self, events: &[FidEvent]) -> Vec<FidEvent> {
+        let mut out: Vec<FidEvent> = Vec::with_capacity(events.len());
+        let mut unresolved = 0usize;
+
+        for ev in events {
+            if ev.mask() & FAN_RENAME == 0 {
+                out.push(ev.clone());
+                continue;
+            }
+
+            let mut sides = 0usize;
+            for (side, bit) in [
+                (ev.rename_source(), FAN_MOVED_FROM),
+                (ev.rename_target(), FAN_MOVED_TO),
+            ] {
+                let Some(side) = side else { continue };
+                let Some(dir) = self.fanotify.dir_cache.get(&side.handle) else {
+                    continue;
+                };
+                let path = if side.name.is_empty() {
+                    dir
+                } else {
+                    dir.join(&side.name)
+                };
+
+                let mut split = FidEvent::new(bit, ev.pid(), path, None, None, None);
+                split.set_dfid_name(side.handle.clone(), side.name.clone());
+                out.push(split);
+                sides += 1;
+            }
+
+            if sides == 0 {
+                unresolved += 1;
+            }
+        }
+
+        if unresolved > 0 {
+            debug_log!(
+                self.debug,
+                "{} rename(s) dropped: neither parent directory handle was in the cache",
+                unresolved
+            );
+            self.metrics.inc_events_unresolved_rename(unresolved as u64);
+        }
+
+        out
+    }
+
     /// Process a batch of fanotify events: match paths, filter, build FileEvents.
     /// Events are NOT sent to broadcast here — they are returned as PendingEvents
     /// so the caller can drain proc events and resolve "unknown" fields before
@@ -31,21 +93,62 @@ impl Monitor {
     pub(crate) fn process_event_batch(&mut self, events: &[FidEvent]) -> Vec<PendingEvent> {
         let mut pending: Vec<PendingEvent> = Vec::new();
 
-        for raw in events {
+        // A `FAN_RENAME` carries both locations in one event.  Split it before
+        // the per-event logic below, which is single-path by construction: the
+        // old side becomes MOVED_FROM and the new side MOVED_TO, exactly as if
+        // the kernel had sent the two halves.  That keeps every downstream rule
+        // — new-subdirectory marking, canonical-root cleanup, path matching —
+        // working unchanged.
+        let expanded = self.expand_renames(events);
+
+        for raw in &expanded {
             if raw.mask() & FAN_Q_OVERFLOW != 0 {
                 eprintln!("[WARNING] fanotify queue overflow - some events may have been lost");
                 continue;
             }
 
-            let event_types = mask_to_event_types(raw.mask());
-            let matched_path = self.matching_path(raw.path()).cloned();
+            // The parser preserves info records it has no typed field for
+            // (RANGE, MNT, future kernel additions) instead of dropping them.
+            // fsmon reads none of those, so count them — otherwise the
+            // preservation stays invisible from the outside.
+            let unparsed = raw.unknown_info_records();
+            if !unparsed.is_empty() {
+                let types: Vec<String> = unparsed.iter().map(|(t, _)| t.to_string()).collect();
+                debug_log!(
+                    self.debug,
+                    "event on {} carries {} unparsed info record(s): types [{}]",
+                    raw.path().display(),
+                    unparsed.len(),
+                    types.join(", ")
+                );
+                self.metrics
+                    .inc_unparsed_info_records(unparsed.len() as u64);
+            }
 
-            // Detect canonical root DELETE_SELF — needs cleanup after recording.
+            let event_types = mask_to_event_types(raw.mask());
+
+            // Detect a canonical root that is gone (deleted, or renamed away) —
+            // it needs cleanup after recording.
+            //
+            // This cannot go through `matching_path`: that maps an event path to
+            // the *watched* path enclosing it, and a root renamed out of the
+            // watched tree has no watched path that is its prefix.  So it must
+            // be decided from the event's own path, which is exactly the path
+            // the cleanup removes.
             let is_delete_self = event_types.contains(&EventType::DeleteSelf)
                 || event_types.contains(&EventType::MovedFrom)
                 || event_types.contains(&EventType::Delete);
-            let is_canonical_root =
-                is_delete_self && self.canonical_paths.iter().any(|cp| cp == raw.path());
+            // The *canonical* path, not the event's path: the entry to remove
+            // from `monitored_entries` is the root as configured, while the
+            // event may name the root at a new location.
+            let gone_root: Option<PathBuf> = if is_delete_self {
+                self.canonical_paths
+                    .iter()
+                    .find(|cp| Self::is_canonical_root_path(cp, raw.path()))
+                    .cloned()
+            } else {
+                None
+            };
 
             let event_pid = raw.pid().unsigned_abs();
 
@@ -129,15 +232,43 @@ impl Monitor {
                 }
             }
 
-            // After recording DELETE_SELF events: remove the deleted
-            // monitored directory from active monitoring and move to
-            // pending_paths so it can be re-monitored if recreated.
-            if is_canonical_root && let Some(ref path) = matched_path {
-                self.handle_canonical_root_deleted(path);
+            // After recording: remove the gone canonical root from active
+            // monitoring and move it to pending_paths so it can be re-monitored
+            // if it is recreated.
+            //
+            // The event's own path is the one to remove — for `DELETE_SELF` it is
+            // the root itself, and for a root renamed away it is the root's name
+            // at its new location.  `matched_path` cannot be used here: it is the
+            // *watched* path enclosing the event, which for a root moved out of
+            // the tree does not exist at all, and removing it would delete the
+            // wrong entry.
+            if let Some(ref root) = gone_root {
+                self.handle_canonical_root_deleted(root);
             }
         }
 
         pending
+    }
+
+    /// Does `event_path` denote the canonical root `canonical`?
+    ///
+    /// Two shapes have to be recognised, and they are the only two that mean
+    /// "the root object itself is gone":
+    ///
+    /// * the event path **is** the root — `DELETE_SELF` on the watched directory;
+    /// * the event path is the root's name reached from **elsewhere** — a rename
+    ///   whose source is the root but whose parent is some other directory.  That
+    ///   parent need not be watched at all, which is why this cannot be answered
+    ///   from the watched paths.
+    ///
+    /// Matching is on the final component, because that is what survives a move.
+    /// A same-named path elsewhere (e.g. `/other/watched` for a root `/watched`)
+    /// therefore counts as a match; for a destructive event whose target is
+    /// already gone that is a safe over-approximation, and the alternative —
+    /// never cleaning up a moved-away root — is strictly worse.
+    pub(crate) fn is_canonical_root_path(canonical: &Path, event_path: &Path) -> bool {
+        canonical == event_path
+            || (canonical.file_name().is_some() && canonical.file_name() == event_path.file_name())
     }
 
     /// Check if an event's PID matches the process tree filter for a cmd group.
@@ -292,6 +423,14 @@ impl Monitor {
             _ => Vec::new(),
         };
 
+        // FS_ERROR carries the filesystem's own error code; without it the
+        // record only says "some error happened".  Absent for other types.
+        let error = if event_type == EventType::FsError {
+            raw.fs_error()
+        } else {
+            None
+        };
+
         FileEvent {
             time: Utc::now(),
             event_type,
@@ -304,6 +443,7 @@ impl Monitor {
             ppid: info.ppid,
             tgid: info.tgid,
             chain,
+            fs_error: error,
         }
     }
 
