@@ -5,11 +5,15 @@ edition = "2021"
 publish = false
 
 [dependencies]
-# The published crate, not a local checkout: the harness demonstrates the
-# behaviour of the version everyone actually gets. Cargo.lock pins the exact
-# release, so the output stays reproducible.
-fanotify-fid = "0.7.0"
+# The published crate, not a local checkout — a `path = "/home/<someone>/..."`
+# would only build on one machine, and crates.io is what everyone actually gets.
+# This tracks the version fsmon itself resolves to, so the harness shows the
+# behaviour fsmon really has.
+fanotify-fid = "0.7.1"
 
-# Evidence harness for PRIVILEGE-SEPARATION-PLAN.md §5.6b: it shows which
-# fanotify info records fanotify-fid silently discards (RENAME, PIDFD,
-# FS_ERROR, and any future type). Needs no root and no live kernel events.
+# Evidence harness for PRIVILEGE-SEPARATION-PLAN.md §5.6b: for each fanotify
+# info record kind it prints what the crate's public API exposes. It runs
+# against whichever version is in Cargo.lock — build.rs reads that and compiles
+# the matching code path — so `cargo update -p fanotify-fid --precise 0.7.0`
+# shows the old defect without editing any source. Needs no root and no live
+# kernel events.

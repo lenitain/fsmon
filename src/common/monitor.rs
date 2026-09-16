@@ -542,7 +542,7 @@ impl Monitor {
                 } => {
                     let report = self.collect_metrics(&dir_cache);
                     eprintln!(
-                        "[metrics] uptime={}s rss={:.1}MB caches(d/p/f)={}/{}/{} dirmiss={} readers={}/{}/{} subs={} paths={} pending={} disk_buf={} unpriv={}",
+                        "[metrics] uptime={}s rss={:.1}MB caches(d/p/f)={}/{}/{} dirmiss={} readers={}/{}/{} subs={} paths={} pending={} disk_buf={} lost(rename/unparsed)={}/{} unpriv={}",
                         report.uptime_secs,
                         report.rss_mb,
                         report.dir_cache_entries,
@@ -556,6 +556,8 @@ impl Monitor {
                         report.monitored_paths,
                         report.pending_paths,
                         report.disk_buffer_events,
+                        report.events_unresolved_rename,
+                        report.unparsed_info_records,
                         report.unprivileged,
                     );
                 }
@@ -643,6 +645,8 @@ impl Monitor {
             monitored_paths: self.metrics.monitored_paths() as u64,
             pending_paths: self.metrics.pending_paths() as u64,
             disk_buffer_events: self.metrics.disk_buffer_events() as u64,
+            events_unresolved_rename: self.metrics.events_unresolved_rename(),
+            unparsed_info_records: self.metrics.unparsed_info_records(),
             unprivileged: !self.privileged,
         }
     }
@@ -795,6 +799,10 @@ pub(crate) struct MetricsReport {
     pub monitored_paths: u64,
     pub pending_paths: u64,
     pub disk_buffer_events: u64,
+    /// Rename events that could not be placed on a path (loss).
+    pub events_unresolved_rename: u64,
+    /// Info records with no typed field — preserved by the parser, unread by us.
+    pub unparsed_info_records: u64,
     /// True when the daemon lacks CAP_SYS_ADMIN, so pid attribution degrades.
     pub unprivileged: bool,
 }

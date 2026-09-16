@@ -14,10 +14,22 @@
 | `fidtest/` | §5.6b **`fanotify-fid` 自身的通用缺陷**：RENAME / PIDFD / FS_ERROR 记录被静默丢弃 | 否 |
 
 > `fidtest/` 与其他探针不同：它针对的是**通用库**而非 fsmon。
-> 它依赖 crates.io 上发布的 `fanotify-fid = "0.7.0"`（`Cargo.lock` 已锁版本），
-> 而不是任何本地检出 —— 这样它展示的是**所有人实际拿到的那个版本**的行为，
-> 且克隆本仓库即可复现。它证明了 `fanotify-fid` **不为 fsmon** 也值得修的缺陷，
-> 这正是"通用库不应为单个下游做特化"的具体体现。这些缺陷**不影响**本方案的实施。
+> 它依赖的是 **crates.io 上发布的** `fanotify-fid` —— 不是本地检出，也不是
+> `path = "/home/<某人>/…"`（那样只有一台机器能构建）。`Cargo.lock` 锁定版本，
+> 克隆本仓库即可直接复现，无需先构建 fanotify-fid。
+>
+> 它跟踪的是 **fsmon 自己解析到的那个版本**，所以它展示的就是 fsmon 实际拿到的行为。
+> 要换成别的版本，改 `Cargo.lock` 而不是 `Cargo.toml`：`build.rs` 读的是**解析后的**
+> 版本并据此选择编译哪条分支，所以
+> `cargo update -p fanotify-fid --precise X.Y.Z` 就够了，源码一行不用动。
+>
+> | 锁定版本 | 展示什么 |
+> |---|---|
+> | `0.7.1`（当前） | **修复后**：RENAME / PIDFD / FS_ERROR 记录被解析，可通过访问器读到 |
+> | `0.7.0` | **缺陷基线**：同样的记录被静默丢弃，公开 API 毫无提示 —— §5.6b 当初证明的就是这个 |
+>
+> 这些缺陷**不影响**本方案的实施（见 §5.6.1：fsmon 按构造避开了它们），
+> 所以本目录的结论对本方案依然成立。
 
 ## 跑法
 
@@ -27,8 +39,10 @@ gcc -O2 -o /tmp/captest2   captest2.c   && /tmp/captest2
 gcc -O2 -o /tmp/captest4   captest4.c   && /tmp/captest4
 gcc -O2 -o /tmp/fsidmatrix fsidmatrix.c && /tmp/fsidmatrix   # 最重要的一张表
 
-# fanotify-fid 自身的通用缺陷（拉取 crates.io 上的 0.7.0）—— §5.6b
-(cd fidtest && cargo run --quiet)
+# fanotify-fid 自身的通用缺陷 —— §5.6b
+(cd fidtest && cargo run --quiet)                               # 修复后（0.7.1）
+(cd fidtest && cargo update -p fanotify-fid --precise 0.7.0 \
+             && cargo run --quiet)                              # 缺陷基线
 
 # np-tier3.sh 需要一个把 check_root() 改成只告警的构建：
 #   cp -r ~/.projects/fsmon /tmp/fsmon-np && cd /tmp/fsmon-np

@@ -109,6 +109,7 @@ mod tests {
             ppid: 0,
             tgid: 0,
             chain: Vec::new(),
+            fs_error: None,
         };
         let new_event = FileEvent {
             time: Utc::now(),
@@ -122,6 +123,7 @@ mod tests {
             ppid: 0,
             tgid: 0,
             chain: Vec::new(),
+            fs_error: None,
         };
 
         {
@@ -170,6 +172,7 @@ mod tests {
             ppid: 0,
             tgid: 0,
             chain: Vec::new(),
+            fs_error: None,
         };
 
         {
@@ -231,6 +234,7 @@ mod tests {
                     ppid: 0,
                     tgid: 0,
                     chain: Vec::new(),
+                    fs_error: None,
                 };
                 writeln!(f, "{}", event.to_jsonl_string()).unwrap();
             }
@@ -313,6 +317,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             };
             writeln!(f, "{}", event.to_jsonl_string()).unwrap();
         }
@@ -354,6 +359,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             };
             writeln!(f, "{}", event.to_jsonl_string()).unwrap();
         }
@@ -396,6 +402,7 @@ mod tests {
                     ppid: 0,
                     tgid: 0,
                     chain: Vec::new(),
+                    fs_error: None,
                 };
                 writeln!(f, "{}", event.to_jsonl_string()).unwrap();
             }
@@ -440,6 +447,7 @@ mod tests {
             ppid: 0,
             tgid: 0,
             chain: Vec::new(),
+            fs_error: None,
         };
         let mid_event = FileEvent {
             time: now - chrono::Duration::days(5),
@@ -453,6 +461,7 @@ mod tests {
             ppid: 0,
             tgid: 0,
             chain: Vec::new(),
+            fs_error: None,
         };
         let new_event = FileEvent {
             time: now,
@@ -466,6 +475,7 @@ mod tests {
             ppid: 0,
             tgid: 0,
             chain: Vec::new(),
+            fs_error: None,
         };
         {
             let mut f = fs::File::create(&log_path).unwrap();
@@ -503,6 +513,7 @@ mod tests {
             ppid: 0,
             tgid: 0,
             chain: Vec::new(),
+            fs_error: None,
         };
         let new_event = FileEvent {
             time: now,
@@ -516,6 +527,7 @@ mod tests {
             ppid: 0,
             tgid: 0,
             chain: Vec::new(),
+            fs_error: None,
         };
         {
             let mut f = fs::File::create(&log_path).unwrap();
@@ -552,6 +564,7 @@ mod tests {
             ppid: 0,
             tgid: 0,
             chain: Vec::new(),
+            fs_error: None,
         };
         {
             let mut f = fs::File::create(&log_path).unwrap();
@@ -589,6 +602,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             };
             writeln!(f, "{}", event.to_jsonl_string()).unwrap();
         }
@@ -630,6 +644,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             };
             writeln!(f, "{}", old.to_jsonl_string()).unwrap();
             for i in 0..50 {
@@ -645,6 +660,7 @@ mod tests {
                     ppid: 0,
                     tgid: 0,
                     chain: Vec::new(),
+                    fs_error: None,
                 };
                 writeln!(f, "{}", ev.to_jsonl_string()).unwrap();
             }

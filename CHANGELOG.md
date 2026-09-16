@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.5] - 2026-09-16
 
 ### Added
 
@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The fanotify factory no longer inherits the daemon's descriptors**: it used to hold the event log, the command-socket listener, the proc-connector socket and epoll fds for its whole life. The child now moves its socketpair end to fd 3 and closes everything above it (one `close_range` call, with a bounded `close` loop as fallback) before installing its seccomp filter. A `CAP_SYS_ADMIN` process should hold nothing it never uses.
 - **Recursive marking batches its factory requests**: `mark_recursive_with_depth` used to issue one IPC round-trip per directory. It now fills batches of up to 63 directory fds (`MAX_DIRS_PER_MARK`) and flushes at every BFS depth boundary — so a wide tree costs far fewer round-trips, while a narrow deep tree degrades to one request per level instead of leaving its deepest directories unmarked until the walk ends. Measured on a 5021-directory tree, `fsmon add -r`: 0.386s -> ~0.14s.
 - **Silent path-resolution degradation is observable**: the directory-handle cache counts misses (`dir_cache_misses` in `fsmon health` and the periodic metrics line). `open_by_handle_at` is never attempted — `CAP_DAC_READ_SEARCH` is deliberately not requested, and the resolver is passed an empty mount-fd slice so the fallback fails with zero syscalls.
+- **Rename events are no longer dropped**: `FAN_RENAME` was not handled at all, so a rename arriving with that bit set (from a hand-built mask, or a future default change) carried no path and was discarded by path matching. It is now expanded into a `MOVED_FROM` for the old location and a `MOVED_TO` for the new one, so every downstream rule — new-subdirectory marking, canonical-root cleanup, path matching — works unchanged. Both sides come from the single fused event, so a rename that leaves the watched tree is still attributed in full, which pairing `MOVED_FROM`/`MOVED_TO` cannot do. The default mask now uses `FAN_RENAME` in place of that pair.
+- **Directory handles are cached during the marking walk**: `mark_recursive_with_depth` now stores each directory's handle while it holds the descriptor open (`handle_from_fd`, requiring no privilege) instead of leaving it to a second by-path traversal. Rename records carry parent-directory handles and nothing else, so a handle missing from the cache meant a rename that could not be placed; priming it from the walk removes that cold-start gap and drops one full tree walk per monitored path (`dir_cache::cache_recursive` is gone).
+- **Canonical-root cleanup works on recursive watches**: the check compared the event's own path against the canonical roots while the handler was called with the *watched* path, so for a recursive watch the two never matched. It now keys on the root itself, and a root renamed out of the tree is reachable at all — previously no watched path was a prefix of it, so `matching_path` returned `None` and the daemon kept watching a path that no longer existed.
+- **`check_pending` no longer spins forever**: on `add_path` failure the entry was removed and re-appended, so the loop index never advanced. A failure that cannot change (no fanotify factory, for instance) hung the caller; it is now a single pass per call.
+- **`StartLimitIntervalSec` moved to `[Unit]`**: systemd has ignored it in `[Service]` since v229, so the generated unit silently lost its restart-rate policy. `systemd-analyze verify` is clean on the result.
+- **`FS_ERROR` records carry the error**: `FileEvent.fs_error` is `Option<(i32, u32)>` — negative errno plus the count of errors the kernel merged. Omitted for every other event type, so existing JSONL output is byte-for-byte unchanged. Loss counters for unplaceable renames and unparsed info records appear in the metrics line as `lost(rename/unparsed)=N/M`.
+- **`fanotify-fid` 0.7.1**: the dependency moves to the release that stops dropping info record types 4/5/6/7/10/12 (see `tools/fidtest/`, and `fanotify-fid/KNOWN-ISSUES.md` for the audit). fsmon did not depend on the dropped records by construction, so this is a prerequisite for the rename handling above rather than a behaviour change on its own.
 
 ## [0.5.4] - 2026-08-03
 

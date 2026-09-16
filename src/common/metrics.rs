@@ -176,6 +176,17 @@ pub struct MetricsRegistry {
     reader_groups: IntGauge,
     pending_paths: IntGauge,
     disk_buffer_events: IntGauge,
+    /// Rename events whose parent-directory handles were not in the cache, so
+    /// neither side could be placed on a path.  Non-zero means attribution is
+    /// being lost.
+    ///
+    /// `Arc` because `MetricsRegistry` is `Clone` and `AtomicU64` is not; the
+    /// clone must share the counter, not fork it.
+    unresolved_renames: Arc<AtomicU64>,
+    /// Info records in events that the parser had no typed field for.  These are
+    /// preserved by the library rather than dropped, but fsmon still cannot
+    /// interpret them, so they are counted instead of vanishing.
+    unparsed_info_records: Arc<AtomicU64>,
 }
 
 impl std::fmt::Debug for MetricsRegistry {
@@ -186,6 +197,8 @@ impl std::fmt::Debug for MetricsRegistry {
             .field("reader_groups", &self.reader_groups)
             .field("pending_paths", &self.pending_paths)
             .field("disk_buffer_events", &self.disk_buffer_events)
+            .field("unresolved_renames", &self.unresolved_renames)
+            .field("unparsed_info_records", &self.unparsed_info_records)
             .finish()
     }
 }
@@ -204,6 +217,8 @@ impl MetricsRegistry {
             reader_groups: IntGauge::new(enabled),
             pending_paths: IntGauge::new(enabled),
             disk_buffer_events: IntGauge::new(enabled),
+            unresolved_renames: Arc::new(AtomicU64::new(0)),
+            unparsed_info_records: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -253,6 +268,28 @@ impl MetricsRegistry {
     }
     pub fn disk_buffer_events(&self) -> i64 {
         self.disk_buffer_events.get()
+    }
+
+    // ── Counters ──
+    //
+    // Monotonic and always accumulated, unlike the gauges above: these record
+    // that something was *lost*, and a loss count that silently stops counting
+    // when metrics are disabled would defeat the purpose.
+
+    pub fn inc_events_unresolved_rename(&self, n: u64) {
+        self.unresolved_renames.fetch_add(n, Ordering::Relaxed);
+    }
+
+    pub fn events_unresolved_rename(&self) -> u64 {
+        self.unresolved_renames.load(Ordering::Relaxed)
+    }
+
+    pub fn inc_unparsed_info_records(&self, n: u64) {
+        self.unparsed_info_records.fetch_add(n, Ordering::Relaxed);
+    }
+
+    pub fn unparsed_info_records(&self) -> u64 {
+        self.unparsed_info_records.load(Ordering::Relaxed)
     }
 }
 

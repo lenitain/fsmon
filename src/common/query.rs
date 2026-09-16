@@ -41,6 +41,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
             FileEvent {
                 time: Utc::now(),
@@ -54,6 +55,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
         ];
         let log_path = create_log_file(&dir, &events);
@@ -127,6 +129,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
             FileEvent {
                 time: now - chrono::Duration::minutes(30),
@@ -140,6 +143,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
         ];
         let log_path = create_log_file(&dir, &events);
@@ -179,6 +183,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
             FileEvent {
                 time: now,
@@ -192,6 +197,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
         ];
         let log_path = create_log_file(&dir, &events);
@@ -226,6 +232,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
             FileEvent {
                 time: now,
@@ -239,6 +246,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
         ];
         let log_path = create_log_file(&dir, &events);
@@ -278,6 +286,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
             FileEvent {
                 time: now,
@@ -291,6 +300,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
         ];
         let log_path = create_log_file(&dir, &events);
@@ -326,6 +336,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
             FileEvent {
                 time: now - chrono::Duration::hours(1),
@@ -339,6 +350,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
         ];
         let log_path = create_log_file(&dir, &events);
@@ -376,6 +388,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
             FileEvent {
                 time: now,
@@ -389,6 +402,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
         ];
         let log_path = create_log_file(&dir, &events);
@@ -432,6 +446,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             })
             .collect();
         let log_path = create_log_file(&dir, &events);
@@ -472,6 +487,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
             FileEvent {
                 time: now,
@@ -485,6 +501,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
             FileEvent {
                 time: now - chrono::Duration::minutes(30),
@@ -498,6 +515,7 @@ mod tests {
                 ppid: 0,
                 tgid: 0,
                 chain: Vec::new(),
+                fs_error: None,
             },
         ];
         let log_path = create_log_file(&dir, &events);

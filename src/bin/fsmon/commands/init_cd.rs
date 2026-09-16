@@ -121,6 +121,9 @@ fn service_template(
 Description=fsmon - File System Change Monitor
 Documentation=man:fsmon(1)
 After=local-fs.target
+# Must live in [Unit]: systemd has ignored it in [Service] since v229, which
+# would silently leave the restart-rate policy at its defaults.
+StartLimitIntervalSec=300
 
 [Service]
 Type=notify
@@ -139,7 +142,6 @@ Restart=always
 RestartSec=5
 RestartPreventExitStatus=2
 StartLimitBurst=5
-StartLimitIntervalSec=300
 {watchdog_line}
 # fsmon only writes its own store, its logs and its runtime socket.
 ProtectSystem=strict
@@ -442,6 +444,47 @@ mod tests {
             "runtime socket dir must be writable"
         );
         assert!(u.contains("WatchdogSec=30"));
+
+        // `StartLimitIntervalSec` must live in [Unit]: systemd has silently
+        // ignored it in [Service] since v229, so a unit that puts it there
+        // loses the restart-rate policy without reporting anything.
+        //
+        // Grouped by walking section headers rather than by splitting on the
+        // literal "[Service]" — a comment inside [Unit] may legitimately
+        // mention that section name, and splitting would truncate there.
+        let mut section = String::new();
+        let mut by_section: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for line in u.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                section = trimmed.to_string();
+                continue;
+            }
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            by_section
+                .entry(section.clone())
+                .or_default()
+                .push(trimmed.to_string());
+        }
+
+        let unit_lines = by_section.get("[Unit]").expect("unit has a [Unit] section");
+        let service_lines = by_section
+            .get("[Service]")
+            .expect("unit has a [Service] section");
+        assert!(
+            unit_lines.iter().any(|l| l == "StartLimitIntervalSec=300"),
+            "StartLimitIntervalSec must be in [Unit]"
+        );
+        assert!(
+            !service_lines
+                .iter()
+                .any(|l| l.starts_with("StartLimitIntervalSec")),
+            "StartLimitIntervalSec in [Service] is ignored by systemd"
+        );
+        assert!(service_lines.iter().any(|l| l == "StartLimitBurst=5"));
         // HOME is provided by systemd once User= is set.
         assert!(!u.contains("Environment=HOME="));
     }

@@ -30,9 +30,9 @@ use std::io;
 use std::mem;
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(test)]
 use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result, bail};
 
@@ -1082,7 +1082,9 @@ mod tests {
             let fd_num: i32 = name.parse().expect("fd name is a number");
             highest_fd = highest_fd.max(fd_num);
             if let Ok(target) = std::fs::read_link(entry.path())
-                && target.to_string_lossy().contains("sentinel-must-not-be-inherited")
+                && target
+                    .to_string_lossy()
+                    .contains("sentinel-must-not-be-inherited")
             {
                 leaked_targets.push(format!("{fd_num} -> {}", target.display()));
             }
@@ -1120,14 +1122,14 @@ mod tests {
             .expect("factory creates group");
 
         let before = factory.requests();
-        let discovered =
-            crate::common::fid_parser::mark_recursive_with_depth(
-                &factory,
-                &fan_fd,
-                event_mask(),
-                dir.path(),
-                None,
-            );
+        let discovered = crate::common::fid_parser::mark_recursive_with_depth(
+            &factory,
+            &fan_fd,
+            event_mask(),
+            dir.path(),
+            None,
+            None,
+        );
         let requests = factory.requests() - before;
 
         assert_eq!(discovered.len(), DIRS, "every subdirectory must be marked");
@@ -1184,14 +1186,14 @@ mod tests {
             .expect("factory creates group");
 
         let before = factory.requests();
-        let discovered =
-            crate::common::fid_parser::mark_recursive_with_depth(
-                &factory,
-                &fan_fd,
-                event_mask(),
-                dir.path(),
-                None,
-            );
+        let discovered = crate::common::fid_parser::mark_recursive_with_depth(
+            &factory,
+            &fan_fd,
+            event_mask(),
+            dir.path(),
+            None,
+            None,
+        );
         let requests = factory.requests() - before;
 
         assert_eq!(discovered.len(), LEVELS, "every level must be marked");
