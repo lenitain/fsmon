@@ -273,11 +273,14 @@ impl Monitor {
         if let Some(ref cache) = self.fanotify.shared_dir_cache {
             dir_cache::cache_dir_handle(cache, &canonical);
         }
-        let discovered =
-            mark_recursive_with_depth(&factory, fan_fd, path_mask, &canonical, max_depth);
-        if let Some(ref cache) = self.fanotify.shared_dir_cache {
-            dir_cache::cache_recursive(cache, &canonical);
-        }
+        let discovered = mark_recursive_with_depth(
+            &factory,
+            fan_fd,
+            path_mask,
+            &canonical,
+            max_depth,
+            self.fanotify.shared_dir_cache.as_ref(),
+        );
 
         let ino = self.inotify_state.inotify.as_ref();
         let watches = &mut self.inotify_state.watches;
@@ -308,29 +311,35 @@ impl Monitor {
                 self.inotify_state.pending_paths.len()
             );
         }
-        let mut i = 0;
-        while i < self.inotify_state.pending_paths.len() {
-            if self.inotify_state.pending_paths[i].0.exists() {
-                let entry = self.inotify_state.pending_paths.remove(i);
-                match self.add_path(&entry.1) {
-                    Ok(()) => {
-                        info_log!(
-                            "Path '{}' now exists — monitoring started.",
-                            entry.0.display()
-                        );
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "[WARNING] Path '{}' exists but monitoring setup failed: {e}",
-                            entry.0.display()
-                        );
-                        self.inotify_state.pending_paths.push(entry);
-                    }
+        // One attempt per pending path per call, and no re-queueing here: an
+        // entry that fails is left for the next call, when something may
+        // actually have changed.  Re-pushing it inside the loop removed and
+        // re-appended the same element, so the index never advanced and
+        // `add_path` failing for a reason that cannot change (no fanotify
+        // factory, for instance) spun forever.
+        let mut still_pending = Vec::with_capacity(self.inotify_state.pending_paths.len());
+        for entry in std::mem::take(&mut self.inotify_state.pending_paths) {
+            if !entry.0.exists() {
+                still_pending.push(entry);
+                continue;
+            }
+            match self.add_path(&entry.1) {
+                Ok(()) => {
+                    info_log!(
+                        "Path '{}' now exists — monitoring started.",
+                        entry.0.display()
+                    );
                 }
-            } else {
-                i += 1;
+                Err(e) => {
+                    eprintln!(
+                        "[WARNING] Path '{}' exists but monitoring setup failed: {e}",
+                        entry.0.display()
+                    );
+                    still_pending.push(entry);
+                }
             }
         }
+        self.inotify_state.pending_paths = still_pending;
 
         self.cleanup_temp_parent_marks();
         self.setup_inotify_watches();

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fs;
+use std::os::fd::AsFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -99,17 +99,16 @@ pub fn cache_dir_handle(cache: &DirCache, path: &Path) {
     }
 }
 
-/// Recursively cache directory and all subdirectory handles
-pub fn cache_recursive(cache: &DirCache, dir: &Path) {
-    cache_dir_handle(cache, dir);
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            cache_recursive(cache, &path);
-        }
+/// Cache `fd`'s handle as pointing at `path`, without touching the filesystem
+/// by name.
+///
+/// Prefer this over [`cache_dir_handle`] whenever a descriptor is already open:
+/// it cannot be raced by a concurrent rename, needs no path walk, and needs no
+/// privileges.  A recursive marking walk holds exactly such a descriptor for
+/// every directory it marks, which is what makes the cache complete instead of
+/// best-effort.
+pub fn cache_handle_from_fd(cache: &DirCache, fd: &impl AsFd, path: &Path) {
+    if let Ok(key) = fanotify_fid::handle::handle_from_fd(fd) {
+        cache.insert(key, path.to_path_buf());
     }
 }

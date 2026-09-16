@@ -52,7 +52,7 @@ impl Monitor {
             );
             return Ok(());
         }
-        return Err(crate::common::privileges::PermanentStartupError::new(
+        Err(crate::common::privileges::PermanentStartupError::new(
             "fsmon requires CAP_SYS_ADMIN to create a privileged fanotify group.\n\
              Without it the kernel blanks the pid of events caused by other processes\n\
              (fanotify_user.c: `metadata.pid = 0`), so process attribution silently fails.\n\
@@ -60,7 +60,7 @@ impl Monitor {
              (`AmbientCapabilities=CAP_SYS_ADMIN`, see 'fsmon init --service'),\n\
              or set FSMON_ALLOW_UNPRIVILEGED=1 to accept the degraded mode.",
         )
-        .into());
+        .into())
     }
 
     /// Fork the privileged "fanotify factory" subprocess.
@@ -210,7 +210,12 @@ impl Monitor {
                     if opts.is_some_and(|o| o.recursive) && canonical.is_dir() {
                         let max_depth = opts.and_then(|o| o.max_depth);
                         let _ = mark_recursive_with_depth(
-                            &factory, fan_fd, path_mask, canonical, max_depth,
+                            &factory,
+                            fan_fd,
+                            path_mask,
+                            canonical,
+                            max_depth,
+                            self.fanotify.shared_dir_cache.as_ref(),
                         );
                     }
                 }
@@ -255,8 +260,14 @@ impl Monitor {
                 new_fd.as_raw_fd()
             );
             if recursive {
-                let _ =
-                    mark_recursive_with_depth(&factory, &new_fd, path_mask, canonical, max_depth);
+                let _ = mark_recursive_with_depth(
+                    &factory,
+                    &new_fd,
+                    path_mask,
+                    canonical,
+                    max_depth,
+                    self.fanotify.shared_dir_cache.as_ref(),
+                );
             }
 
             let key = self.fanotify.groups.insert(FsGroup {
@@ -273,16 +284,21 @@ impl Monitor {
         let fan_group_count = self.fanotify.groups.len();
 
         if fan_group_count > 0 {
-            // Pre-cache directory handles (shared across fds)
+            // Directory handles are cached by the marking walk itself, from the
+            // descriptors it opens — see mark_recursive_with_depth().  Only
+            // non-recursive roots need caching here, because the walk starts at
+            // depth 1 and skips depth 0 (the caller already marked that one).
             for (i, canonical) in self.canonical_paths.iter().enumerate() {
-                if canonical.is_dir() {
-                    let opts = self.paths.get(i).and_then(|p| self.first_opt_for_path(p));
-                    let recursive = opts.is_some_and(|o| o.recursive);
-                    if recursive {
-                        dir_cache::cache_recursive(&self.fanotify.dir_cache, canonical);
-                    } else {
-                        dir_cache::cache_dir_handle(&self.fanotify.dir_cache, canonical);
-                    }
+                if !canonical.is_dir() {
+                    continue;
+                }
+                let recursive = self
+                    .paths
+                    .get(i)
+                    .and_then(|p| self.first_opt_for_path(p))
+                    .is_some_and(|o| o.recursive);
+                if !recursive {
+                    dir_cache::cache_dir_handle(&self.fanotify.dir_cache, canonical);
                 }
             }
         } else if self.inotify_state.pending_paths.is_empty() {

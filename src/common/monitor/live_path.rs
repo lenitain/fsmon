@@ -169,6 +169,7 @@ impl Monitor {
                             path_mask,
                             &canonical,
                             opts.max_depth,
+                            self.fanotify.shared_dir_cache.as_ref(),
                         );
                     }
                 }
@@ -201,6 +202,7 @@ impl Monitor {
                     path_mask,
                     &canonical,
                     opts.max_depth,
+                    self.fanotify.shared_dir_cache.as_ref(),
                 );
             }
 
@@ -219,14 +221,13 @@ impl Monitor {
         self.canonical_paths.push(canonical.clone());
         self.monitored_entries.push((path.clone(), opts.clone()));
 
-        if canonical.is_dir()
+        // Recursive paths were cached by the marking walk; only non-recursive
+        // roots still need an explicit entry.
+        if !opts.recursive
+            && canonical.is_dir()
             && let Some(ref cache) = self.fanotify.shared_dir_cache
         {
-            if opts.recursive {
-                dir_cache::cache_recursive(cache, &canonical);
-            } else {
-                dir_cache::cache_dir_handle(cache, &canonical);
-            }
+            dir_cache::cache_dir_handle(cache, &canonical);
         }
 
         self.metrics
