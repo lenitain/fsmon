@@ -109,13 +109,13 @@ impl EventMapper {
     /// jumped (events lost on that CPU).
     pub fn cursor(&mut self, cpu: u32, seq: u32) -> (u64, Option<SourceHealth>) {
         let mut health = None;
-        if let Some(&last) = self.per_cpu_last.get(&cpu) {
-            if seq > last + 1 {
-                health = Some(SourceHealth::Gapped {
-                    from: Some(last as u64 + 1),
-                    to: Some(seq as u64 - 1),
-                });
-            }
+        if let Some(&last) = self.per_cpu_last.get(&cpu)
+            && seq > last + 1
+        {
+            health = Some(SourceHealth::Gapped {
+                from: Some(last as u64 + 1),
+                to: Some(seq as u64 - 1),
+            });
         }
         self.per_cpu_last.insert(cpu, seq);
         (((cpu as u64) << 32) | seq as u64, health)

@@ -1010,10 +1010,10 @@ mod tests {
         let start = Instant::now();
         let mut seen_path = false;
         while start.elapsed() < Duration::from_secs(3) {
-            let events = read_fid_events_cached(&fan_fd, &[], &cache, &mut buf);
+            let events = read_fid_events_cached(&fan_fd, &cache, &mut buf);
             if events
                 .iter()
-                .any(|e| e.path().to_string_lossy().ends_with("hello.txt"))
+                .any(|e| e.path.to_string_lossy().ends_with("hello.txt"))
             {
                 seen_path = true;
                 break;
@@ -1148,12 +1148,18 @@ mod tests {
         let last = dir.path().join(format!("d{:03}", DIRS - 1));
         std::fs::File::create(last.join("probe.txt")).expect("create file in last subdir");
 
+        // Seed the cache for the directory the probe lands in, which is what
+        // `mark_recursive_with_depth` does for every directory it marks in
+        // production — it is why the reader can resolve a path at all.  Without
+        // it the event arrives with a handle and no path, and the reader drops
+        // it, so the assertion below would be measuring the cache, not the marks.
         let cache = DirCache::new(1024, Duration::from_secs(60));
+        cache_dir_handle(&cache, &last);
         let mut buf = vec![0u8; 8192];
         let started = Instant::now();
         let mut delivered = false;
         while started.elapsed() < Duration::from_secs(3) {
-            if !read_fid_events_cached(&fan_fd, &[], &cache, &mut buf).is_empty() {
+            if !read_fid_events_cached(&fan_fd, &cache, &mut buf).is_empty() {
                 delivered = true;
                 break;
             }

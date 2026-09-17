@@ -45,11 +45,11 @@ impl Monitor {
     /// The fanotify fd is duplicated so the reader task owns an independent
     /// copy, avoiding double-close with Monitor's OwnedFd.
     ///
-    /// No mount fd is passed to the resolver: fsmon deliberately does not
-    /// request `CAP_DAC_READ_SEARCH`, so `open_by_handle_at` could never
-    /// succeed. An empty slice makes every tier-3 fallback
-    /// a zero-syscall immediate failure, and the miss counter in `DirCache`
-    /// records how often that happens.
+    /// No mount descriptor is registered and the resolver's syscall fallback is
+    /// off: fsmon deliberately does not request `CAP_DAC_READ_SEARCH`, so
+    /// `open_by_handle_at` could never succeed. Turning the fallback off makes
+    /// that a zero-syscall immediate failure, and the miss counter in
+    /// `DirCache` records how often a path had to be given up on.
     pub(crate) fn spawn_fd_reader(&mut self, group_key: super::FsGroupKey) {
         let tx = match self.event_tx.as_ref() {
             Some(t) => t.clone(),
@@ -125,7 +125,7 @@ impl Monitor {
                         break;
                     }
                 };
-                let events = read_fid_events_cached(afd.get_ref(), &[], &dc, &mut buf);
+                let events = read_fid_events_cached(afd.get_ref(), &dc, &mut buf);
                 if debug {
                     debug_log!(debug, "fd {} reader: got {} event(s)", raw_fd, events.len());
                 }

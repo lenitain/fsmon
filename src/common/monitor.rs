@@ -514,7 +514,7 @@ impl Monitor {
                 Some(events) = event_rx.recv() => {
                     // Drain proc events before and after processing file events
                     self.drain_proc_events(&proc_afd, &mut proc_buf);
-                    let mut pending = self.process_event_batch(&events);
+                    let mut pending = self.process_event_batch(events);
                     self.drain_proc_events(&proc_afd, &mut proc_buf);
                     self.patch_pending_events(&mut pending);
                     self.send_pending_events(&pending);
@@ -714,7 +714,7 @@ impl Monitor {
         while let Ok(events) = event_rx.try_recv() {
             // Drain proc events
             self.drain_proc_events(proc_afd, proc_buf);
-            let mut pending = self.process_event_batch(&events);
+            let mut pending = self.process_event_batch(events);
             self.patch_pending_events(&mut pending);
             self.send_pending_events(&pending);
         }

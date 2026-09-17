@@ -1,15 +1,14 @@
 use super::*;
-use crate::common::fid_parser::{event_type_to_kernel_flag, mask_to_event_types};
+use crate::common::fid_parser::{DecodedEvent, event_type_to_kernel_flag, mask_to_event_types};
 use crate::common::filters::PathOptions;
 use crate::common::monitored::PathEntry;
 use crate::common::utils::{SizeFilter, SizeOp};
 use crate::common::{EventType, FileEvent};
 use fanotify_fid::consts::{
     FAN_CREATE, FAN_DELETE, FAN_EVENT_ON_CHILD, FAN_MARK_ADD, FAN_MARK_FILESYSTEM, FAN_MODIFY,
-    FAN_ONDIR,
+    FAN_ONDIR, FAN_RENAME,
 };
 use fanotify_fid::prelude::*;
-use fanotify_fid::{fanotify_init, fanotify_mark};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -318,8 +317,6 @@ fn test_add_path_and_remove_path() {
 
 #[test]
 fn test_delete_self_canonical_root_is_recorded() {
-    use fanotify_fid::types::FidEvent;
-
     let mut m = Monitor::new(MonitorConfig {
         paths_and_options: vec![(
             std::path::PathBuf::from("/tmp/fsmon_test_delete_self"),
@@ -338,17 +335,18 @@ fn test_delete_self_canonical_root_is_recorded() {
     // simulate what run() does: canonicalize the path
     m.canonical_paths = vec![std::path::PathBuf::from("/tmp/fsmon_test_delete_self")];
 
-    // Synthetic DELETE_SELF FidEvent matching the canonical root
-    let event = FidEvent::new(
-        fanotify_fid::consts::FAN_DELETE_SELF,
-        1234,
-        std::path::PathBuf::from("/tmp/fsmon_test_delete_self"),
-        None,
-        None,
-        None,
-    );
+    // Synthetic decoded DELETE_SELF for the canonical root.  The reader is what
+    // resolves a path; a decoded event always carries one.
+    let event = DecodedEvent {
+        mask: fanotify_fid::consts::FAN_DELETE_SELF,
+        pid: 1234,
+        path: std::path::PathBuf::from("/tmp/fsmon_test_delete_self"),
+        rename: None,
+        fs_error: None,
+        unparsed: 0,
+    };
 
-    let pending = m.process_event_batch(&[event]);
+    let pending = m.process_event_batch(vec![event]);
 
     // DELETE_SELF event should be recorded (not silently dropped)
     assert!(
@@ -398,16 +396,15 @@ fn make_event(path: &str, event_type: EventType, pid: u32, size: u64) -> FileEve
 #[test]
 #[ignore]
 fn test_fanotify_init() {
-    let fd = fanotify_init(
+    let fan = Fanotify::new(
         FAN_CLOEXEC
             | FAN_NONBLOCK
             | FAN_CLASS_NOTIF
             | FAN_REPORT_FID
             | FAN_REPORT_DIR_FID
             | FAN_REPORT_NAME,
-        (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
     );
-    assert!(fd.is_ok(), "fanotify_init should succeed with root");
+    assert!(fan.is_ok(), "fanotify_init should succeed with root");
 }
 
 #[test]
@@ -416,54 +413,54 @@ fn test_fanotify_mark_directory() {
     let test_dir = std::env::temp_dir().join("fsmon_test_mark");
     std::fs::create_dir_all(&test_dir).unwrap();
 
-    let fd = fanotify_init(
+    let fan = Fanotify::new(
         FAN_CLOEXEC
             | FAN_NONBLOCK
             | FAN_CLASS_NOTIF
             | FAN_REPORT_FID
             | FAN_REPORT_DIR_FID
             | FAN_REPORT_NAME,
-        (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
     )
     .unwrap();
 
     let mask = FAN_CREATE | FAN_DELETE | FAN_CLOSE_WRITE;
-    let result = fanotify_mark(
-        &fd,
-        FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
-        mask,
-        AT_FDCWD,
-        &test_dir,
-    );
+    // The path form, anchored at the working directory.
+    let result = fan.mark(FAN_MARK_ADD | FAN_MARK_FILESYSTEM, mask, &test_dir);
     assert!(
         result.is_ok(),
         "fanotify_mark should succeed on existing directory"
     );
 
-    drop(fd);
+    // The descriptor form: the third way to name the object, resolving no path.
+    let dir_fd = std::fs::File::open(&test_dir).unwrap();
+    let result = fan.mark_fd(&dir_fd, FAN_MARK_ADD, mask);
+    assert!(
+        result.is_ok(),
+        "mark_fd should succeed on an open directory"
+    );
+
+    drop(fan);
     let _ = std::fs::remove_dir_all(&test_dir);
 }
 
 #[test]
 #[ignore]
 fn test_fanotify_mark_nonexistent_path() {
-    let fd = fanotify_init(
+    let fan = Fanotify::new(
         FAN_CLOEXEC
             | FAN_NONBLOCK
             | FAN_CLASS_NOTIF
             | FAN_REPORT_FID
             | FAN_REPORT_DIR_FID
             | FAN_REPORT_NAME,
-        (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
     )
     .unwrap();
 
-    let mask = FAN_CREATE;
-    let result = fanotify_mark(
-        &fd,
+    // An inode mark on a path that does not exist: no anchor privilege is
+    // involved, so the failure really is the missing path.
+    let result = fan.mark(
         FAN_MARK_ADD,
-        mask,
-        AT_FDCWD,
+        FAN_CREATE,
         Path::new("/nonexistent_path_12345"),
     );
     assert!(
@@ -471,16 +468,22 @@ fn test_fanotify_mark_nonexistent_path() {
         "fanotify_mark should fail on nonexistent path"
     );
 
-    drop(fd);
+    drop(fan);
 }
 
 #[test]
 fn test_fanotify_mark_null_byte_path_no_root() {
     let mask = FAN_CREATE | FAN_DELETE;
     let bad_path = Path::new("/tmp/ok\0evil");
+    // Any descriptor will do for the *group* here: a path that cannot be a
+    // path is refused before the kernel is asked.  The reader's own
+    // `from_fd`-based adoption is what the reader task exercises.
     let dev_null = std::fs::File::open("/dev/null").expect("/dev/null must exist on Linux");
-    let dummy_fd: std::os::fd::OwnedFd = dev_null.into();
-    let result = fanotify_mark(&dummy_fd, FAN_MARK_ADD, mask, AT_FDCWD, bad_path);
+    let any_fd: std::os::fd::OwnedFd = dev_null.into();
+    // SAFETY: the descriptor is never handed to the kernel — the NUL in the
+    // path is refused first — so its kind does not matter for this test.
+    let fan = unsafe { Fanotify::from_fd(any_fd) };
+    let result = fan.mark(FAN_MARK_ADD, mask, bad_path);
 
     match result {
         Err(FanotifyError::Mark(code)) => {
@@ -511,41 +514,46 @@ fn test_monitor_run_captures_events() {
     let test_dir_clone = test_dir.clone();
 
     let handle = rt.spawn(async move {
-        let fd = fanotify_init(
+        let fan = Fanotify::new(
             FAN_CLOEXEC
                 | FAN_NONBLOCK
                 | FAN_CLASS_NOTIF
                 | FAN_REPORT_FID
                 | FAN_REPORT_DIR_FID
                 | FAN_REPORT_NAME,
-            (libc::O_CLOEXEC | libc::O_RDONLY) as u32,
         )
         .unwrap();
 
         let mask = FAN_CREATE | FAN_CLOSE_WRITE | FAN_EVENT_ON_CHILD | FAN_ONDIR;
-        fanotify_mark(
-            &fd,
-            FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
-            mask,
-            AT_FDCWD,
-            &test_dir_clone,
-        )
-        .unwrap();
+        fan.mark(FAN_MARK_ADD | FAN_MARK_FILESYSTEM, mask, &test_dir_clone)
+            .unwrap();
+
+        // No directory in the cache, so there is nothing to resolve and this
+        // counts what the reader produced, not what it could place.
+        let store = NoCache;
+        let mounts = Mounts::new();
+        let resolver = PathResolver::new(&store, &mounts);
 
         let mut buf = vec![0u8; 4096];
         let start = std::time::Instant::now();
         while start.elapsed() < std::time::Duration::from_millis(200) {
-            if let Ok(events) = fanotify_fid::read::read_fid_events::<
-                fanotify_fid::types::HandleCache,
-            >(&fd, &[], &mut buf, None)
-                && !events.is_empty()
-            {
+            let mut events = match fan.read_events(&mut buf) {
+                Ok(events) => events,
+                // An empty queue is not a failure.
+                Err(err) if err.is_would_block() => {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    continue;
+                }
+                Err(err) => panic!("read_events failed: {err}"),
+            };
+            let _ = resolver.resolve_events(&mut events);
+            if !events.is_empty() {
                 counter_clone.fetch_add(events.len(), Ordering::SeqCst);
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
 
-        drop(fd);
+        drop(fan);
     });
 
     std::thread::sleep(std::time::Duration::from_millis(50));
@@ -881,30 +889,18 @@ fn test_rename_expands_into_moved_from_and_moved_to() {
 
     let mut m = make_monitor(vec![root.path().to_str().unwrap()], None, None, true);
 
-    // The marking walk seeds this cache from the descriptors it opens; here we
-    // seed it the same way, from the directories themselves.
-    let (ha, ka) = (
-        dir_a.clone(),
-        fanotify_fid::handle::name_to_handle_at(&dir_a).expect("handle a"),
-    );
-    let (hb, kb) = (
-        dir_b.clone(),
-        fanotify_fid::handle::name_to_handle_at(&dir_b).expect("handle b"),
-    );
-    m.fanotify.dir_cache.insert(ka, ha);
-    m.fanotify.dir_cache.insert(kb, hb);
+    // Both sides arrive resolved: the reader had the handles and the cache, and
+    // what crosses to the processor is a path per side.
+    let event = DecodedEvent {
+        mask: FAN_RENAME,
+        pid: 4242,
+        path: dir_a.join("old.txt"),
+        rename: Some((Some(dir_a.join("old.txt")), Some(dir_b.join("new.txt")))),
+        fs_error: None,
+        unparsed: 0,
+    };
 
-    let mut event = FidEvent::new(FAN_RENAME, 4242, PathBuf::new(), None, None, None);
-    event = event.with_rename_source(
-        fanotify_fid::handle::name_to_handle_at(&dir_a).unwrap(),
-        "old.txt".to_string(),
-    );
-    event = event.with_rename_target(
-        fanotify_fid::handle::name_to_handle_at(&dir_b).unwrap(),
-        "new.txt".to_string(),
-    );
-
-    let pending = m.process_event_batch(&[event]);
+    let pending = m.process_event_batch(vec![event]);
     let types: Vec<EventType> = pending.iter().map(|p| p.event.event_type).collect();
 
     assert!(
@@ -930,19 +926,34 @@ fn test_rename_expands_into_moved_from_and_moved_to() {
     assert_eq!(m.metrics.events_unresolved_rename(), 0);
 }
 
-/// A rename whose parent handles are both unknown must be counted, not dropped
+/// A rename neither of whose parents the cache knew must be counted, not dropped
 /// in silence — that is the difference between "no rename" and "rename lost".
+///
+/// The reader is what discovers this, and it says so by resolving neither side:
+/// a decoded rename with two `None`s is a rename that happened somewhere fsmon
+/// cannot name.
 #[test]
-fn test_rename_without_cached_handles_is_counted() {
+fn test_rename_with_neither_side_resolved_is_counted() {
     let mut m = make_monitor(vec!["/tmp"], None, None, true);
 
-    let mut event = FidEvent::new(FAN_RENAME, 1, PathBuf::new(), None, None, None);
-    event = event.with_rename_source(vec![0xde, 0xad], "x".to_string());
-    event = event.with_rename_target(vec![0xbe, 0xef], "y".to_string());
+    let event = DecodedEvent {
+        mask: FAN_RENAME,
+        pid: 1,
+        // The reader could not place either half, so it kept what it could of the
+        // event — its own path is still a path — and reported the pair as empty.
+        path: PathBuf::from("/tmp/x"),
+        rename: Some((None, None)),
+        fs_error: None,
+        unparsed: 0,
+    };
 
-    let pending = m.process_event_batch(&[event]);
+    let pending = m.process_event_batch(vec![event]);
 
-    assert!(pending.is_empty(), "nothing can be placed without handles");
+    assert!(
+        pending.is_empty(),
+        "a rename with no placeable half must not become an event: {} record(s)",
+        pending.len(),
+    );
     assert_eq!(
         m.metrics.events_unresolved_rename(),
         1,
@@ -954,17 +965,16 @@ fn test_rename_without_cached_handles_is_counted() {
 #[test]
 fn test_fs_error_reports_code_and_count() {
     let mut m = make_monitor(vec!["/tmp"], None, None, true);
-    let event = FidEvent::new(
-        fanotify_fid::consts::FAN_FS_ERROR,
-        1,
-        PathBuf::from("/tmp/whatever"),
-        None,
-        None,
-        None,
-    )
-    .with_fs_error(-5, 3);
+    let event = DecodedEvent {
+        mask: fanotify_fid::consts::FAN_FS_ERROR,
+        pid: 1,
+        path: PathBuf::from("/tmp/whatever"),
+        rename: None,
+        fs_error: Some((-5, 3)),
+        unparsed: 0,
+    };
 
-    let pending = m.process_event_batch(&[event]);
+    let pending = m.process_event_batch(vec![event]);
     let pe = pending
         .iter()
         .find(|p| p.event.event_type == EventType::FsError)
@@ -976,15 +986,15 @@ fn test_fs_error_reports_code_and_count() {
 #[test]
 fn test_fs_error_field_absent_for_other_types() {
     let mut m = make_monitor(vec!["/tmp"], None, None, true);
-    let event = FidEvent::new(
-        fanotify_fid::consts::FAN_CREATE,
-        1,
-        PathBuf::from("/tmp/plain.txt"),
-        None,
-        None,
-        None,
-    );
-    let pending = m.process_event_batch(&[event]);
+    let event = DecodedEvent {
+        mask: fanotify_fid::consts::FAN_CREATE,
+        pid: 1,
+        path: PathBuf::from("/tmp/plain.txt"),
+        rename: None,
+        fs_error: None,
+        unparsed: 0,
+    };
+    let pending = m.process_event_batch(vec![event]);
     assert!(!pending.is_empty(), "CREATE should still be recorded");
     assert!(pending.iter().all(|p| p.event.fs_error.is_none()));
 }
@@ -993,18 +1003,19 @@ fn test_fs_error_field_absent_for_other_types() {
 #[test]
 fn test_unparsed_info_records_are_counted() {
     let mut m = make_monitor(vec!["/tmp"], None, None, true);
-    let mut event = FidEvent::new(
-        fanotify_fid::consts::FAN_CREATE,
-        1,
-        PathBuf::from("/tmp/x"),
-        None,
-        None,
-        None,
-    );
-    event.push_unknown_info_record(7, vec![0u8; 8]); // MNT
-    event.push_unknown_info_record(6, vec![0u8; 20]); // RANGE
+    // The reader counts what the library preserved and could not interpret — a
+    // MNT and a RANGE record here — because a decoded event has no room for
+    // records fsmon will never read.
+    let event = DecodedEvent {
+        mask: fanotify_fid::consts::FAN_CREATE,
+        pid: 1,
+        path: PathBuf::from("/tmp/x"),
+        rename: None,
+        fs_error: None,
+        unparsed: 2,
+    };
 
-    let _ = m.process_event_batch(&[event]);
+    let _ = m.process_event_batch(vec![event]);
     assert_eq!(m.metrics.unparsed_info_records(), 2);
 }
 
@@ -1027,13 +1038,20 @@ fn test_rename_of_canonical_root_triggers_cleanup() {
     // run() does this: the configured path becomes the canonical root.
     m.canonical_paths = vec![sub.clone()];
 
-    let handle = fanotify_fid::handle::name_to_handle_at(&away).expect("handle");
-    m.fanotify.dir_cache.insert(handle.clone(), away.clone());
+    // The root was renamed away, so the event names two locations: the root as it
+    // was (`sub`) and as it now is.  The reader resolved both from the directory
+    // cache, and the event's own path is the source side — the one that says the
+    // root is gone.
+    let event = DecodedEvent {
+        mask: FAN_RENAME,
+        pid: 4242,
+        path: sub.clone(),
+        rename: Some((Some(sub.clone()), Some(away.join("watched")))),
+        fs_error: None,
+        unparsed: 0,
+    };
 
-    let mut event = FidEvent::new(FAN_RENAME, 4242, PathBuf::new(), None, None, None);
-    event = event.with_rename_source(handle, "watched".to_string());
-
-    let pending = m.process_event_batch(&[event]);
+    let pending = m.process_event_batch(vec![event]);
     eprintln!("DIAG daemon_pid={} event_pid={}", m.daemon_pid, 4242u32);
     eprintln!("DIAG canonical={:?}", m.canonical_paths);
     eprintln!(
@@ -1044,18 +1062,30 @@ fn test_rename_of_canonical_root_triggers_cleanup() {
             .collect::<Vec<_>>()
     );
 
-    // The destination is outside every monitored path, so nothing is logged —
-    // that is the existing scope rule, not a rename bug.  What matters is that
-    // the root left `monitored_entries`: keeping it would leave the daemon
-    // watching a path that no longer exists.
-    assert!(
-        pending.is_empty(),
-        "a destination outside the watched tree must not be logged: {:?}",
+    // What the rename produces is the `MOVED_FROM` for the root: the root's own
+    // entry is removed below, and this event is the last record of it, so it is
+    // built first and survives the cleanup.  (The old watch on `/tmp/.../watched`
+    // produces an inotify `MOVE_SELF`/`DELETE_SELF` from the path itself; this
+    // event is the fanotify side of the same fact, and it carries the pid.)
+    assert_eq!(
         pending
             .iter()
             .map(|p| (p.event.event_type, p.event.path.clone()))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>(),
+        vec![(EventType::MovedFrom, sub.clone())],
+        "the rename must be reported as the root leaving its path"
     );
+    // And the destination is outside every monitored path, so it is **not**
+    // reported as a new location: the scope rule keeps a move out of the tree
+    // from inventing an event about a path nobody watches.
+    assert!(
+        !pending
+            .iter()
+            .any(|p| p.event.event_type == EventType::MovedTo),
+        "a destination outside the watched tree must not be logged"
+    );
+    // What matters most: the root left `monitored_entries`, because keeping it
+    // would leave the daemon watching a path that no longer exists.
     assert!(
         !m.monitored_entries.iter().any(|(p, _)| p == &sub),
         "the renamed-away root must leave monitored_entries"

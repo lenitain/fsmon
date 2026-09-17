@@ -148,8 +148,9 @@ pub struct HealthInfo {
     /// event pid attribution is degraded to 0.
     #[serde(default)]
     pub unprivileged: bool,
-    /// Directory-handle cache misses. With no `CAP_DAC_READ_SEARCH` these are
-    /// the tier-3 `open_by_handle_at` fallbacks that failed immediately.
+    /// Events dropped because their path could not be recovered from the
+    /// directory-handle cache. `open_by_handle_at` is never attempted, so a miss
+    /// is a dropped event rather than a privileged call that failed.
     #[serde(default)]
     pub dir_cache_misses: u64,
     /// Whether the privileged fanotify factory subprocess is still running.

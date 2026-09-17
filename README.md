@@ -108,8 +108,8 @@ fsmon deliberately does **not** request `CAP_DAC_READ_SEARCH`. It would only
 serve the `open_by_handle_at` path-resolution fallback, which in practice is
 never reached (directory handles are pre-cached via the unprivileged
 `name_to_handle_at`), and delegating it would create a real file-read oracle.
-Instead the resolver is handed an empty mount-fd slice, so the fallback fails
-with zero syscalls; `fsmon health` exposes the miss count as
+Instead the resolver runs with its syscall fallback turned off, so the fallback
+fails with zero syscalls; `fsmon health` exposes the miss count as
 `dir_cache_misses`.
 
 If you start the daemon without `CAP_SYS_ADMIN` it refuses to run rather than

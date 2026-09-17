@@ -106,7 +106,7 @@ fanotify_mark`，且只允许写 store、日志与 runtime 目录。注意
 fsmon **故意不申请** `CAP_DAC_READ_SEARCH`。它只对 `open_by_handle_at`
 路径回退有用，而实践中根本不会走到（目录句柄已通过无需特权的
 `name_to_handle_at` 预热），委托它反而会造出一个真正的任意文件读取 oracle。
-因此解析器拿到的是空的 mount-fd 列表，回退是零系统调用的立即失败；
+因此解析器关闭了 syscall 回退，回退是零系统调用的立即失败；
 `fsmon health` 用 `dir_cache_misses` 暴露其发生次数。
 
 如果启动时没有 `CAP_SYS_ADMIN`，守护进程会**拒绝运行**，而不是静默记录

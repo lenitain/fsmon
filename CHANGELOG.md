@@ -5,6 +5,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6] - 2026-09-17
+
+No new features: this release is the adaptation to `fanotify-fid` 0.8.0. No
+command-line flag, configuration key, query or output format changes, and the set
+of reported event types is identical. What changes is what the reader hands
+onward, plus three things a user can observe.
+
+### Changed
+
+- **`fanotify-fid` 0.8.0, and with it the reader's job.** The dependency moves to
+  the release whose store is read through a borrow and whose resolver only borrows,
+  and the migration exposed the architectural half of the same problem: fsmon's
+  reader task read kernel events and shipped them to the processor, so it had to
+  make every event owned — one deep copy of the handle and the name **per event** —
+  purely to satisfy a lifetime. That was the wrong thing to copy: fsmon drops most
+  events, and only a rename ever looks at a handle again.
+  - **The reader decodes; the processor decides.** `read_fid_events_cached` now
+    resolves the batch and returns `Vec<DecodedEvent>` — mask, pid, a resolved path,
+    both resolved paths for a rename, the filesystem error, and a count of records
+    the library preserved but fsmon cannot read. No handle, no name, no `FidEvent`,
+    and no per-event `into_owned`: the reader keeps the bytes while it has them and
+    sends what a decision needs. The channel type changed with it (`DecodedBatch`),
+    and `process_event_batch` takes decoded records.
+  - **An event the cache cannot place is now dropped in the reader instead of
+    forwarded pathless.** It could not match a watched path anyway, and the only
+    thing forwarding it bought was a `path == ""` test in every downstream stage.
+    `DirCache::misses` — the `dir_cache_misses` metric — is the record of it.
+  - **`FAN_RENAME` is resolved where the handles are.** Both sides' parent
+    directories are looked up in the reader, so `expand_renames` splits a fused
+    rename into `MOVED_FROM`/`MOVED_TO` using two paths and touches no handle and no
+    cache. `FAN_RENAME` is removed from each half's mask while splitting: the flag
+    describes the fused event, and leaving it on made every derived half also report
+    itself as `RENAME` — an event type fsmon has no output for, whose path means "the
+    old location" on one half and "the new one" on the other.
+  - **`DirCacheStore` implements the new trait pair.** Reading goes through
+    `PathStore::with_path`, which hands the path to a closure while the entry's lock
+    guard is held — so a hit copies nothing, where the old `PathStore::get` returned
+    an owned `PathBuf` per event; recording is `PathMemo::remember`/`forget`. Both
+    take `&self`, so one `&DirCache` reads and records.
+- **The directory-handle cache is keyed by `(fsid, handle)`.** A handle is issued
+  *by a filesystem*, so two filesystems can report the same bytes for different
+  directories — a cache keyed on the bytes alone can answer a rename with a path
+  from the wrong filesystem, and it does so silently. `DirCache` now keys a nested
+  map by fsid first, which also keeps a hit allocation-free.
+- **MSRV is 1.88** (was 1.85), following `fanotify-fid`.
+
+### Fixed
+
+- **A path-less event is no longer forwarded to every downstream stage.** Before,
+  an event whose path could not be recovered travelled onward carrying an empty
+  path, and each stage had to test for it. It is now dropped where it is decoded,
+  and `dir_cache_misses` is a count of exactly that — events that named something
+  fsmon could not place, and that therefore produced no output. This is why the
+  metric reads higher than it did; it was never a count of work attempted.
+- **`fsmon` no longer requires the dependency to be present as a local path.** It
+  is a normal `fanotify-fid = "0.8.0"` requirement against crates.io.
+
+### Tests
+
+The decode step and the cache the rename path depends on are now tested directly,
+because neither had a test that could see them before:
+
+- `src/common/dir_cache/tests.rs`: the cache semantics the rename path depends on —
+  identical handle bytes on two filesystems stay apart, an unknown fsid is a miss
+  rather than a guess, `forget` is scoped to one filesystem, an expired entry cannot
+  come back, capacity bounds the whole cache rather than one filesystem, and the
+  `PathStore` adapter reads and writes the same entries the cache's own API does.
+- `src/common/fid_parser.rs`: direct tests for the decode step — a cached parent
+  becomes a path and an unknown one is dropped and counted, both halves of a rename
+  are resolved, a rename with one unknown half keeps the half it has, and
+  `FS_ERROR`'s code and the unparsed-record count survive the trip.
+
 ## [0.5.5] - 2026-09-16
 
 ### Added

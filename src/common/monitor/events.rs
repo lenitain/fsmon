@@ -4,9 +4,8 @@ use std::path::{Path, PathBuf};
 use crate::debug_log;
 use chrono::Utc;
 use fanotify_fid::consts::{FAN_MOVED_FROM, FAN_MOVED_TO, FAN_Q_OVERFLOW, FAN_RENAME};
-use fanotify_fid::types::FidEvent;
 
-use crate::common::fid_parser::mask_to_event_types;
+use crate::common::fid_parser::{DecodedEvent, mask_to_event_types};
 #[cfg(test)]
 use crate::common::filters;
 use crate::common::filters::PathOptions;
@@ -23,57 +22,79 @@ pub(crate) struct PendingEvent {
     pub pid: u32,
 }
 
-impl Monitor {
-    /// Return `events` with each `FAN_RENAME` split into its two sides.
-    ///
-    /// The kernel reports a rename as one event whose payload lives in two info
-    /// records: the old parent directory handle + old name, and the new parent
-    /// handle + new name.  Without this step the event has no path at all, so
-    /// path matching finds nothing and the rename is dropped.
-    ///
-    /// Each side is resolved through the directory cache; a side whose parent
-    /// handle is unknown is skipped, and the event is reported as unresolved so
-    /// the caller can tell "no rename" apart from "rename we could not place".
-    /// The cache is normally complete because the marking walk seeds a handle
-    /// for every directory it descends into.
-    ///
-    /// Events that are not renames are moved across unchanged.
-    fn expand_renames(&self, events: &[FidEvent]) -> Vec<FidEvent> {
-        let mut out: Vec<FidEvent> = Vec::with_capacity(events.len());
-        let mut unresolved = 0usize;
+/// Split each `FAN_RENAME` into the two moves it describes.
+///
+/// The kernel reports a rename as one event whose payload lives in two info
+/// records: the old parent directory handle + old name, and the new parent
+/// handle + new name.  Downstream code is single-path by construction, so the
+/// fused event is turned into a `MOVED_FROM` for the old location and a
+/// `MOVED_TO` for the new one — exactly as if the kernel had sent the two halves.
+///
+/// Both paths were resolved by the **reader**, while it still had the handles and
+/// the cache in hand; nothing here touches a handle.  A side whose parent
+/// directory the cache did not know arrives as `None` and is skipped, and an
+/// event with neither side is reported as unresolved so the caller can tell "no
+/// rename" apart from "rename we could not place".
+///
+/// `FAN_RENAME` is **removed** from each half's mask: the flag describes the fused
+/// event, and leaving it on would make every derived half also report itself as
+/// `RENAME` — an event type fsmon has no output for, whose path means "the old
+/// location" on one half and "the new one" on the other.
+fn expand_renames(events: DecodedEventBatch) -> (Vec<DecodedEvent>, usize) {
+    let mut out: Vec<DecodedEvent> = Vec::with_capacity(events.len());
+    let mut unresolved = 0usize;
 
-        for ev in events {
-            if ev.mask() & FAN_RENAME == 0 {
-                out.push(ev.clone());
-                continue;
-            }
+    for ev in events {
+        let Some((source, target)) = ev.rename else {
+            out.push(ev);
+            continue;
+        };
 
-            let mut sides = 0usize;
-            for (side, bit) in [
-                (ev.rename_source(), FAN_MOVED_FROM),
-                (ev.rename_target(), FAN_MOVED_TO),
-            ] {
-                let Some(side) = side else { continue };
-                let Some(dir) = self.fanotify.dir_cache.get(&side.handle) else {
-                    continue;
-                };
-                let path = if side.name.is_empty() {
-                    dir
-                } else {
-                    dir.join(&side.name)
-                };
-
-                let mut split = FidEvent::new(bit, ev.pid(), path, None, None, None);
-                split.set_dfid_name(side.handle.clone(), side.name.clone());
-                out.push(split);
-                sides += 1;
-            }
-
-            if sides == 0 {
-                unresolved += 1;
-            }
+        let mut sides = 0usize;
+        for (path, bit) in [(source, FAN_MOVED_FROM), (target, FAN_MOVED_TO)] {
+            let Some(path) = path else { continue };
+            out.push(DecodedEvent {
+                mask: (ev.mask & !FAN_RENAME) | bit,
+                pid: ev.pid,
+                path,
+                // A half is not a rename: the pair has been spent.
+                rename: None,
+                fs_error: None,
+                unparsed: 0,
+            });
+            sides += 1;
         }
 
+        // Nothing placeable: no half was resolved, so there is no path to match
+        // and no event to report.  The count is the only trace, and it is what
+        // tells "no rename" apart from "rename we could not place".
+        if sides == 0 {
+            unresolved += 1;
+            continue;
+        }
+    }
+
+    (out, unresolved)
+}
+
+/// The batch the reader hands over.
+pub(crate) type DecodedEventBatch = Vec<DecodedEvent>;
+
+impl Monitor {
+    /// Process a batch of fanotify events: match paths, filter, build FileEvents.
+    /// Events are NOT sent to broadcast here — they are returned as PendingEvents
+    /// so the caller can drain proc events and resolve "unknown" fields before
+    /// publishing. Metrics are still incremented immediately.
+    pub(crate) fn process_event_batch(&mut self, events: DecodedEventBatch) -> Vec<PendingEvent> {
+        let mut pending: Vec<PendingEvent> = Vec::new();
+
+        // A `FAN_RENAME` carries both locations in one event.  Split it before
+        // the per-event logic below, which is single-path by construction: the
+        // old side becomes MOVED_FROM and the new side MOVED_TO, exactly as if
+        // the kernel had sent the two halves.  That keeps every downstream rule
+        // — new-subdirectory marking, canonical-root cleanup, path matching —
+        // working unchanged.
+        let (expanded, unresolved) = expand_renames(events);
         if unresolved > 0 {
             debug_log!(
                 self.debug,
@@ -83,49 +104,30 @@ impl Monitor {
             self.metrics.inc_events_unresolved_rename(unresolved as u64);
         }
 
-        out
-    }
-
-    /// Process a batch of fanotify events: match paths, filter, build FileEvents.
-    /// Events are NOT sent to broadcast here — they are returned as PendingEvents
-    /// so the caller can drain proc events and resolve "unknown" fields before
-    /// publishing. Metrics are still incremented immediately.
-    pub(crate) fn process_event_batch(&mut self, events: &[FidEvent]) -> Vec<PendingEvent> {
-        let mut pending: Vec<PendingEvent> = Vec::new();
-
-        // A `FAN_RENAME` carries both locations in one event.  Split it before
-        // the per-event logic below, which is single-path by construction: the
-        // old side becomes MOVED_FROM and the new side MOVED_TO, exactly as if
-        // the kernel had sent the two halves.  That keeps every downstream rule
-        // — new-subdirectory marking, canonical-root cleanup, path matching —
-        // working unchanged.
-        let expanded = self.expand_renames(events);
-
         for raw in &expanded {
-            if raw.mask() & FAN_Q_OVERFLOW != 0 {
+            // The reader resolved it; a decoded event always has one.
+            let event_path: &Path = &raw.path;
+
+            if raw.mask & FAN_Q_OVERFLOW != 0 {
                 eprintln!("[WARNING] fanotify queue overflow - some events may have been lost");
                 continue;
             }
 
-            // The parser preserves info records it has no typed field for
+            // The library preserves info records it has no typed field for
             // (RANGE, MNT, future kernel additions) instead of dropping them.
-            // fsmon reads none of those, so count them — otherwise the
-            // preservation stays invisible from the outside.
-            let unparsed = raw.unknown_info_records();
-            if !unparsed.is_empty() {
-                let types: Vec<String> = unparsed.iter().map(|(t, _)| t.to_string()).collect();
+            // fsmon reads none of those, so the reader counts them and they are
+            // reported here — otherwise the preservation stays invisible.
+            if raw.unparsed > 0 {
                 debug_log!(
                     self.debug,
-                    "event on {} carries {} unparsed info record(s): types [{}]",
-                    raw.path().display(),
-                    unparsed.len(),
-                    types.join(", ")
+                    "event on {} carries {} unparsed info record(s)",
+                    event_path.display(),
+                    raw.unparsed
                 );
-                self.metrics
-                    .inc_unparsed_info_records(unparsed.len() as u64);
+                self.metrics.inc_unparsed_info_records(raw.unparsed as u64);
             }
 
-            let event_types = mask_to_event_types(raw.mask());
+            let event_types = mask_to_event_types(raw.mask);
 
             // Detect a canonical root that is gone (deleted, or renamed away) —
             // it needs cleanup after recording.
@@ -144,13 +146,13 @@ impl Monitor {
             let gone_root: Option<PathBuf> = if is_delete_self {
                 self.canonical_paths
                     .iter()
-                    .find(|cp| Self::is_canonical_root_path(cp, raw.path()))
+                    .find(|cp| Self::is_canonical_root_path(cp, event_path))
                     .cloned()
             } else {
                 None
             };
 
-            let event_pid = raw.pid().unsigned_abs();
+            let event_pid = raw.pid.unsigned_abs();
 
             // Exclude fsmon daemon's own events to prevent self-triggering.
             // This is the safety net that also covers socket files (lock.sock,
@@ -165,15 +167,15 @@ impl Monitor {
 
             // Also filter events from fsmon's log directory to prevent
             // feedback loops when cmd=global is used.
-            if raw.path().starts_with("/var/log/fsmon") {
-                debug_log!(self.debug, "skip fsmon log event: {}", raw.path().display());
+            if event_path.starts_with("/var/log/fsmon") {
+                debug_log!(self.debug, "skip fsmon log event: {}", event_path.display());
                 continue;
             }
 
             // Match event against ALL cmd groups for this path.
             // Computed BEFORE canonical-root cleanup — DELETE_SELF must be
             // recorded before the path is removed from monitored_entries.
-            let matching_entries = self.matching_opts_for_event(raw.path());
+            let matching_entries = self.matching_opts_for_event(event_path);
 
             // Immediately add fanotify marks for newly created subdirectories
             // under recursively-monitored paths.  Waiting for inotify would
@@ -181,10 +183,10 @@ impl Monitor {
             // arrive before the mark is placed.
             let is_new_dir = event_types.contains(&EventType::Create)
                 || event_types.contains(&EventType::MovedTo);
-            if is_new_dir && raw.path().is_dir() {
+            if is_new_dir && event_path.is_dir() {
                 for (monitored, opts) in &matching_entries {
-                    if opts.recursive && raw.path() != *monitored {
-                        self.on_new_subdirectory(raw.path());
+                    if opts.recursive && event_path != *monitored {
+                        self.on_new_subdirectory(event_path);
                         break;
                     }
                 }
@@ -193,7 +195,7 @@ impl Monitor {
                 debug_log!(
                     self.debug,
                     "event on {} (pid={}): no matching entries",
-                    raw.path().display(),
+                    event_path.display(),
                     event_pid
                 );
             }
@@ -396,23 +398,24 @@ impl Monitor {
     /// Like `build_file_event` but uses a specific PathOptions for chain building.
     pub(crate) fn build_file_event_for_opts(
         &mut self,
-        raw: &FidEvent,
+        raw: &DecodedEvent,
         event_type: EventType,
         opts: &PathOptions,
     ) -> FileEvent {
-        let pid = raw.pid().unsigned_abs();
-        let info = get_proc_info(self.proc.tracker.as_ref(), pid, raw.path());
+        let pid = raw.pid.unsigned_abs();
+        let event_path: &Path = &raw.path;
+        let info = get_proc_info(self.proc.tracker.as_ref(), pid, event_path);
 
         let file_size = match event_type {
             EventType::Create | EventType::Modify | EventType::CloseWrite => {
-                let size = fs::metadata(raw.path()).map(|m| m.len()).unwrap_or(0);
-                self.file_size_cache.put(raw.path().to_path_buf(), size);
+                let size = fs::metadata(event_path).map(|m| m.len()).unwrap_or(0);
+                self.file_size_cache.put(event_path.to_path_buf(), size);
                 size
             }
             EventType::Delete | EventType::DeleteSelf | EventType::MovedFrom => {
-                self.file_size_cache.pop(raw.path()).unwrap_or(0)
+                self.file_size_cache.pop(event_path).unwrap_or(0)
             }
-            _ => self.file_size_cache.get(raw.path()).map_or(0, |&s| s),
+            _ => self.file_size_cache.get(event_path).map_or(0, |&s| s),
         };
 
         // Chain building based on the specific opts' cmd (RUN-23): walk the
@@ -426,7 +429,7 @@ impl Monitor {
         // FS_ERROR carries the filesystem's own error code; without it the
         // record only says "some error happened".  Absent for other types.
         let error = if event_type == EventType::FsError {
-            raw.fs_error()
+            raw.fs_error
         } else {
             None
         };
@@ -434,7 +437,7 @@ impl Monitor {
         FileEvent {
             time: Utc::now(),
             event_type,
-            path: raw.path().to_path_buf(),
+            path: event_path.to_path_buf(),
             pid,
             comm: info.comm,
             cmd: info.cmd,
