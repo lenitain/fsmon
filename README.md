@@ -46,6 +46,7 @@ Options:
 ```
 
 Man pages and shell completion scripts (bash, fish, zsh, nushell) can be generated with:
+
 ```
 fsmon init -c
 ```
@@ -75,7 +76,7 @@ fsmon query _global | jq 'select(.cmd == "nginx")'
 
 ## Privileges
 
-fsmon needs **`CAP_SYS_ADMIN` for exactly one thing**: creating a *privileged*
+fsmon needs **`CAP_SYS_ADMIN` for exactly one thing**: creating a _privileged_
 fanotify group. The kernel marks a group created without that capability as
 `FANOTIFY_UNPRIV`, and then blanks `metadata.pid` for every event caused by
 another process (`fs/notify/fanotify/fanotify_user.c`) — process attribution,
@@ -93,7 +94,7 @@ The daemon is built so that this capability is confined:
   `sendmsg`, `read`, `write`, `close`, `exit_group`).
 - The main daemon then drops **all** capabilities (`CapEff=0`,
   `PR_SET_NO_NEW_PRIVS`). The privileged fanotify groups keep reporting real
-  pids because the kernel stores `FANOTIFY_UNPRIV` on the *group* object.
+  pids because the kernel stores `FANOTIFY_UNPRIV` on the _group_ object.
 - The privilege never exists as a file on disk, so no other local user can
   obtain it (unlike a `setcap` helper binary).
 

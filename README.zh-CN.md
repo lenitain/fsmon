@@ -46,6 +46,7 @@ Options:
 ```
 
 可通过以下命令生成 man 手册和 Shell 补全脚本（bash、fish、zsh、nushell）：
+
 ```
 fsmon init -c
 ```

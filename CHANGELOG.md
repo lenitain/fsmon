@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.7] - 2026-11-21
 
 No new features, no new commands, and no change to the event stream: the same
 events, the same JSONL shape, the same log files on disk. What this is, is the rest
@@ -78,7 +78,7 @@ crates side by side.
   is off.
 - **The sibling crates are path dependencies now.** `fanotify-fid`,
   `proc-connector`, `proc-tree`, `sizefilter` and `timefilter` are declared
-  with a version *and* a sibling path, so fsmon builds against the working
+  with a version _and_ a sibling path, so fsmon builds against the working
   copies of the crates it is developed with instead of against whatever
   crates.io last served.
   - **CI materializes them.** `.github/scripts/fetch-path-deps.sh` takes the
@@ -173,7 +173,7 @@ onward, plus three things a user can observe.
     an owned `PathBuf` per event; recording is `PathMemo::remember`/`forget`. Both
     take `&self`, so one `&DirCache` reads and records.
 - **The directory-handle cache is keyed by `(fsid, handle)`.** A handle is issued
-  *by a filesystem*, so two filesystems can report the same bytes for different
+  _by a filesystem_, so two filesystems can report the same bytes for different
   directories — a cache keyed on the bytes alone can answer a rename with a path
   from the wrong filesystem, and it does so silently. `DirCache` now keys a nested
   map by fsid first, which also keeps a hit allocation-free.
@@ -225,7 +225,7 @@ because neither had a test that could see them before:
 - **Silent path-resolution degradation is observable**: the directory-handle cache counts misses (`dir_cache_misses` in `fsmon health` and the periodic metrics line). `open_by_handle_at` is never attempted — `CAP_DAC_READ_SEARCH` is deliberately not requested, and the resolver is passed an empty mount-fd slice so the fallback fails with zero syscalls.
 - **Rename events are no longer dropped**: `FAN_RENAME` was not handled at all, so a rename arriving with that bit set (from a hand-built mask, or a future default change) carried no path and was discarded by path matching. It is now expanded into a `MOVED_FROM` for the old location and a `MOVED_TO` for the new one, so every downstream rule — new-subdirectory marking, canonical-root cleanup, path matching — works unchanged. Both sides come from the single fused event, so a rename that leaves the watched tree is still attributed in full, which pairing `MOVED_FROM`/`MOVED_TO` cannot do. The default mask now uses `FAN_RENAME` in place of that pair.
 - **Directory handles are cached during the marking walk**: `mark_recursive_with_depth` now stores each directory's handle while it holds the descriptor open (`handle_from_fd`, requiring no privilege) instead of leaving it to a second by-path traversal. Rename records carry parent-directory handles and nothing else, so a handle missing from the cache meant a rename that could not be placed; priming it from the walk removes that cold-start gap and drops one full tree walk per monitored path (`dir_cache::cache_recursive` is gone).
-- **Canonical-root cleanup works on recursive watches**: the check compared the event's own path against the canonical roots while the handler was called with the *watched* path, so for a recursive watch the two never matched. It now keys on the root itself, and a root renamed out of the tree is reachable at all — previously no watched path was a prefix of it, so `matching_path` returned `None` and the daemon kept watching a path that no longer existed.
+- **Canonical-root cleanup works on recursive watches**: the check compared the event's own path against the canonical roots while the handler was called with the _watched_ path, so for a recursive watch the two never matched. It now keys on the root itself, and a root renamed out of the tree is reachable at all — previously no watched path was a prefix of it, so `matching_path` returned `None` and the daemon kept watching a path that no longer existed.
 - **`check_pending` no longer spins forever**: on `add_path` failure the entry was removed and re-appended, so the loop index never advanced. A failure that cannot change (no fanotify factory, for instance) hung the caller; it is now a single pass per call.
 - **`StartLimitIntervalSec` moved to `[Unit]`**: systemd has ignored it in `[Service]` since v229, so the generated unit silently lost its restart-rate policy. `systemd-analyze verify` is clean on the result.
 - **`FS_ERROR` records carry the error**: `FileEvent.fs_error` is `Option<(i32, u32)>` — negative errno plus the count of errors the kernel merged. Omitted for every other event type, so existing JSONL output is byte-for-byte unchanged. Loss counters for unplaceable renames and unparsed info records appear in the metrics line as `lost(rename/unparsed)=N/M`.
@@ -374,7 +374,7 @@ because neither had a test that could see them before:
   - Directory monitoring skips symlinks in recursive traversal
   - `fsmon add` displays symlink targets for transparency
 - **Path blacklist enforcement**: `fsmon add` now checks paths against the security
-  blacklist *before* resolution, preventing `/proc/self` from being resolved to
+  blacklist _before_ resolution, preventing `/proc/self` from being resolved to
   `/proc/<PID>` and bypassing the check.
 - **TOCTOU race conditions eliminated**: Replaced path-based operations with fd-based
   operations for:
@@ -910,12 +910,12 @@ because neither had a test that could see them before:
   longer lost during recursive directory removal. Handle propagation across
   event batches resolves paths from sibling subdirectory deletions.
 - **`(deleted)` suffix stripping**: paths resolved via `resolve_file_handle`
-  with trailing ` (deleted)` marker now have the suffix stripped from *all*
+  with trailing ` (deleted)` marker now have the suffix stripped from _all_
   path components, fixing display for deeply nested deleted paths.
 - **Fanotify edge-triggered epoll draining**: reader tasks drain all queued
   events per edge notification using `retain_ready()`, preventing event loss
   when multiple events arrive between epoll wakeups.
-- **`remove_path` PathOptions ordering**: `PathOptions` are now saved *before*
+- **`remove_path` PathOptions ordering**: `PathOptions` are now saved _before_
   the `retain` call in `remove_path`, ensuring correct fanotify mark teardown
   even when the same path has entries across multiple cmd groups.
 - **`fsmon add/remove` path resolution**: relative paths now resolve to
@@ -976,7 +976,7 @@ fanotify → event_stream_tx (broadcast)
 ### Fixed
 
 - **Permissions**: `resolve_uid_gid()` and `resolve_uid()` no longer depend on
-  `SUDO_UID` as the only fallback.  When running as root without `SUDO_UID`
+  `SUDO_UID` as the only fallback. When running as root without `SUDO_UID`
   (e.g. systemd), they now derive the original user from the owner of `$HOME`.
   This means log files and directories are correctly owned by the user
   regardless of how fsmon was started — `sudo`, `systemd`, or any other
