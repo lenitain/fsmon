@@ -16,13 +16,11 @@ fn lock_acquire_and_reacquire() {
     let runtime = tempfile::tempdir().unwrap();
 
     temp_env::with_var("XDG_RUNTIME_DIR", Some(runtime.path()), || {
-        let uid = nix::unistd::geteuid().as_raw();
-
         // Acquire lock
-        let lock = DaemonLock::acquire(uid).unwrap();
+        let lock = DaemonLock::acquire().unwrap();
 
         // Double acquire must fail
-        let result = DaemonLock::acquire(uid);
+        let result = DaemonLock::acquire();
         assert!(result.is_err());
         if let Err(e) = result {
             assert!(
@@ -34,7 +32,7 @@ fn lock_acquire_and_reacquire() {
 
         // Drop and re-acquire succeeds
         drop(lock);
-        let _lock2 = DaemonLock::acquire(uid).unwrap();
+        let _lock2 = DaemonLock::acquire().unwrap();
     });
 }
 

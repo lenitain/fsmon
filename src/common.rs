@@ -45,7 +45,7 @@ use std::path::PathBuf;
 /// use fsmon::common::DaemonLock;
 ///
 /// // Acquire exclusive lock (fails if another daemon is running)
-/// let _lock = DaemonLock::acquire(1000)?;
+/// let _lock = DaemonLock::acquire()?;
 ///
 /// // Lock is automatically released when dropped
 /// // ...
@@ -67,7 +67,7 @@ impl DaemonLock {
     /// Returns an error if:
     /// - Another daemon instance is already running (`EWOULDBLOCK`)
     /// - The lock file cannot be created or opened
-    pub fn acquire(_uid: u32) -> Result<Self> {
+    pub fn acquire() -> Result<Self> {
         let path = crate::common::socket::lock_path();
 
         // Ensure parent directory exists (e.g. /run/user/1000)

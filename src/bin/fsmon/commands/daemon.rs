@@ -30,7 +30,6 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
         watchdog_interval,
         watchdog_multiplier,
     } = opts;
-    let (uid, _gid) = fsmon::common::config::resolve_uid_gid();
 
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
@@ -60,7 +59,7 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
     let watchdog_sec = watchdog_interval.map(|i| i * watchdog_multiplier);
 
     // Acquire singleton lock — only one daemon instance allowed
-    let _lock = DaemonLock::acquire(uid)?;
+    let _lock = DaemonLock::acquire()?;
 
     eprintln!("Config loaded:");
     eprintln!(
