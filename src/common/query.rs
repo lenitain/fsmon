@@ -8,7 +8,7 @@ mod tests {
     use crate::common::query::core::Query;
     use crate::common::utils::{TimeFilter, TimeOp};
     use crate::common::{FileEvent, parse_log_line_jsonl};
-    use chrono::Utc;
+    use jiff::{SignedDuration, Timestamp};
     use std::fs;
     use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
     use std::path::{Path, PathBuf};
@@ -30,7 +30,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let events = vec![
             FileEvent {
-                time: Utc::now(),
+                time: Timestamp::now(),
                 event_type: EventType::Create,
                 path: PathBuf::from("/tmp/test"),
                 pid: 100,
@@ -44,7 +44,7 @@ mod tests {
                 fs_error: None,
             },
             FileEvent {
-                time: Utc::now(),
+                time: Timestamp::now(),
                 event_type: EventType::Modify,
                 path: PathBuf::from("/tmp/test"),
                 pid: 200,
@@ -115,10 +115,10 @@ mod tests {
     fn test_time_filter_gt() {
         let dir = std::env::temp_dir().join("fsmon_query_test_gt");
         fs::create_dir_all(&dir).unwrap();
-        let now = Utc::now();
+        let now = Timestamp::now();
         let events = vec![
             FileEvent {
-                time: now - chrono::Duration::hours(2),
+                time: now - SignedDuration::from_hours(2),
                 event_type: EventType::Create,
                 path: PathBuf::from("/a"),
                 pid: 1,
@@ -132,7 +132,7 @@ mod tests {
                 fs_error: None,
             },
             FileEvent {
-                time: now - chrono::Duration::minutes(30),
+                time: now - SignedDuration::from_mins(30),
                 event_type: EventType::Create,
                 path: PathBuf::from("/b"),
                 pid: 2,
@@ -154,7 +154,7 @@ mod tests {
             None,
             vec![TimeFilter::new(
                 TimeOp::Gt,
-                now - chrono::Duration::hours(1),
+                now - SignedDuration::from_hours(1),
             )],
             false,
         );
@@ -168,8 +168,8 @@ mod tests {
     fn test_time_filter_ge() {
         let dir = std::env::temp_dir().join("fsmon_query_test_ge");
         fs::create_dir_all(&dir).unwrap();
-        let now = Utc::now();
-        let cutoff = now - chrono::Duration::hours(1);
+        let now = Timestamp::now();
+        let cutoff = now - SignedDuration::from_hours(1);
         let events = vec![
             FileEvent {
                 time: cutoff,
@@ -218,10 +218,10 @@ mod tests {
     fn test_time_filter_lt() {
         let dir = std::env::temp_dir().join("fsmon_query_test_lt");
         fs::create_dir_all(&dir).unwrap();
-        let now = Utc::now();
+        let now = Timestamp::now();
         let events = vec![
             FileEvent {
-                time: now - chrono::Duration::hours(2),
+                time: now - SignedDuration::from_hours(2),
                 event_type: EventType::Create,
                 path: PathBuf::from("/a"),
                 pid: 1,
@@ -257,7 +257,7 @@ mod tests {
             None,
             vec![TimeFilter::new(
                 TimeOp::Lt,
-                now - chrono::Duration::hours(1),
+                now - SignedDuration::from_hours(1),
             )],
             false,
         );
@@ -271,8 +271,8 @@ mod tests {
     fn test_time_filter_le() {
         let dir = std::env::temp_dir().join("fsmon_query_test_le");
         fs::create_dir_all(&dir).unwrap();
-        let now = Utc::now();
-        let cutoff = now - chrono::Duration::hours(1);
+        let now = Timestamp::now();
+        let cutoff = now - SignedDuration::from_hours(1);
         let events = vec![
             FileEvent {
                 time: cutoff,
@@ -319,10 +319,10 @@ mod tests {
     }
 
     #[test]
-    fn test_time_filter_eq() {
-        let dir = std::env::temp_dir().join("fsmon_query_test_eq");
+    fn test_time_filter_relative() {
+        let dir = std::env::temp_dir().join("fsmon_query_test_relative");
         fs::create_dir_all(&dir).unwrap();
-        let now = Utc::now();
+        let now = Timestamp::now();
         let events = vec![
             FileEvent {
                 time: now,
@@ -339,7 +339,7 @@ mod tests {
                 fs_error: None,
             },
             FileEvent {
-                time: now - chrono::Duration::hours(1),
+                time: now - SignedDuration::from_hours(1),
                 event_type: EventType::Create,
                 path: PathBuf::from("/b"),
                 pid: 2,
@@ -359,7 +359,7 @@ mod tests {
             log_dir,
             None,
             None,
-            vec![TimeFilter::new(TimeOp::Eq, now)],
+            vec![TimeFilter::newer_than(SignedDuration::from_mins(45))],
             false,
         );
         let result = q.read_events_from(&log_path, None, None).unwrap();
@@ -374,7 +374,7 @@ mod tests {
     fn test_path_filter_prefix() {
         let dir = std::env::temp_dir().join("fsmon_query_test_path_filter");
         fs::create_dir_all(&dir).unwrap();
-        let now = Utc::now();
+        let now = Timestamp::now();
         let events = vec![
             FileEvent {
                 time: now,
@@ -432,10 +432,10 @@ mod tests {
     fn test_binary_search_finds_first_event() {
         let dir = std::env::temp_dir().join("fsmon_query_test_binary_search");
         fs::create_dir_all(&dir).unwrap();
-        let base_time = Utc::now() - chrono::Duration::hours(10);
+        let base_time = Timestamp::now() - SignedDuration::from_hours(10);
         let events: Vec<FileEvent> = (0..100)
             .map(|i| FileEvent {
-                time: base_time + chrono::Duration::minutes(i),
+                time: base_time + SignedDuration::from_mins(i),
                 event_type: EventType::Create,
                 path: PathBuf::from(format!("/file{}", i)),
                 pid: i as u32,
@@ -453,7 +453,7 @@ mod tests {
         let log_dir = log_path.parent().unwrap().to_path_buf();
         let q = Query::new(log_dir, None, None, vec![], false);
         let file_len = fs::metadata(&log_path).unwrap().len();
-        let target_time = base_time + chrono::Duration::minutes(50);
+        let target_time = base_time + SignedDuration::from_mins(50);
         let pos = q
             .find_first_event_after(file_len, &log_path, target_time)
             .unwrap();
@@ -473,10 +473,10 @@ mod tests {
     fn test_execute_changes_dedup() {
         let dir = std::env::temp_dir().join("fsmon_query_test_changes");
         fs::create_dir_all(&dir).unwrap();
-        let now = Utc::now();
+        let now = Timestamp::now();
         let events = vec![
             FileEvent {
-                time: now - chrono::Duration::hours(1),
+                time: now - SignedDuration::from_hours(1),
                 event_type: EventType::Create,
                 path: PathBuf::from("/tmp/test"),
                 pid: 1,
@@ -504,7 +504,7 @@ mod tests {
                 fs_error: None,
             },
             FileEvent {
-                time: now - chrono::Duration::minutes(30),
+                time: now - SignedDuration::from_mins(30),
                 event_type: EventType::Create,
                 path: PathBuf::from("/tmp/other"),
                 pid: 3,

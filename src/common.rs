@@ -20,11 +20,11 @@ pub mod watchdog;
 pub use cli::{AddArgs, ChangesArgs, CleanArgs, QueryArgs};
 pub use utils::{
     SizeFilter, SizeOp, TimeFilter, TimeOp, format_datetime, parse_size, parse_size_filter,
-    parse_time, parse_time_filter,
+    parse_time, parse_time_at, parse_time_filter, parse_time_now,
 };
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -247,12 +247,12 @@ impl FromStr for EventType {
 ///
 /// ```rust,no_run
 /// use fsmon::common::{FileEvent, EventType};
-/// use chrono::Utc;
+/// use jiff::Timestamp;
 /// use std::path::PathBuf;
 ///
 /// # fn main() -> anyhow::Result<()> {
 /// let event = FileEvent {
-///     time: Utc::now(),
+///     time: Timestamp::now(),
 ///     event_type: EventType::Create,
 ///     path: PathBuf::from("/tmp/test.txt"),
 ///     pid: 1234,
@@ -274,7 +274,7 @@ impl FromStr for EventType {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEvent {
-    pub time: DateTime<Utc>,
+    pub time: Timestamp,
     pub event_type: EventType,
     pub path: PathBuf,
     pub pid: u32,
@@ -310,7 +310,7 @@ impl std::fmt::Display for FileEvent {
         write!(
             f,
             "{} {} {} (pid={}, user={})",
-            self.time.format("%Y-%m-%d %H:%M:%S"),
+            self.time.strftime("%Y-%m-%d %H:%M:%S"),
             self.event_type,
             self.path.display(),
             self.pid,
@@ -330,10 +330,11 @@ impl FileEvent {
     /// Preserves the exact field order of the struct (same as to_jsonl_string),
     /// only replaces the time value with local timezone offset (e.g. +08:00).
     pub fn to_jsonl_string_local(&self) -> String {
-        use chrono::TimeZone;
-        let local_time = chrono::Local
-            .from_utc_datetime(&self.time.naive_utc())
-            .to_rfc3339();
+        use jiff::tz::TimeZone;
+        let local_time = self
+            .time
+            .display_with_offset(TimeZone::system().to_offset(self.time))
+            .to_string();
         // Serialize normally to preserve struct field order,
         // then patch only the time value inline.
         let json = serde_json::to_string(self).expect("FileEvent serialization");
@@ -370,12 +371,11 @@ pub fn parse_log_line_jsonl(line: &str) -> Option<FileEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
 
     #[test]
     fn test_to_jsonl_string_field_order() {
         let ev = FileEvent {
-            time: Utc::now(),
+            time: Timestamp::now(),
             event_type: EventType::Create,
             path: std::path::PathBuf::from("/tmp/test.txt"),
             pid: 1234,

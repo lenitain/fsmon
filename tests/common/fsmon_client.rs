@@ -8,16 +8,9 @@ use fsmon::common::FileEvent;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-/// Resolve the path to the `fsmon` binary in the Cargo target directory.
-/// Works for both `cargo test` (debug) and `cargo test --release`.
+/// Resolve the path to the `fsmon` binary built for this test run.
 pub fn fsmon_binary() -> PathBuf {
-    let current_exe = std::env::current_exe().expect("current_exe");
-    // current_exe is roughly target/{debug|release}/deps/test-binary-xxx
-    let target_dir = current_exe
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("target dir");
-    target_dir.join("fsmon")
+    PathBuf::from(env!("CARGO_BIN_EXE_fsmon"))
 }
 
 /// Run `fsmon` with the given arguments and return the full Output.

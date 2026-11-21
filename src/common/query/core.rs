@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -14,6 +14,7 @@ const SCAN_BACK_BYTES: u64 = 4096;
 ///
 /// ```ignore
 /// use fsmon::Query;
+/// use jiff::SignedDuration;
 /// use std::path::PathBuf;
 /// use fsmon::TimeFilter;
 ///
@@ -22,7 +23,7 @@ const SCAN_BACK_BYTES: u64 = 4096;
 ///     PathBuf::from("/var/log/fsmon"),
 ///     Some("bash".to_string()),
 ///     Some(vec![PathBuf::from("/home/user")]),
-///     vec![TimeFilter::since(chrono::Utc::now() - chrono::Duration::hours(1))],
+///     vec![TimeFilter::newer_than(SignedDuration::from_hours(1))],
 ///     false,
 /// );
 ///
@@ -83,14 +84,15 @@ impl Query {
             return Ok(());
         }
 
-        // Build since/until from time filters
-        let since_time = self.extract_since();
-        let until_time = self.extract_until();
+        // Build since/until from time filters at one reference instant.
+        let now = Timestamp::now();
+        let since_time = self.extract_since(now);
+        let until_time = self.extract_until(now);
 
         // Read events from each file
         let mut all_events = Vec::new();
         for log_file in &log_files {
-            let events = self.read_events_from(log_file, since_time, until_time)?;
+            let events = self.read_events_from_at(log_file, since_time, until_time, now)?;
             all_events.extend(events);
         }
 
@@ -106,39 +108,40 @@ impl Query {
     }
 
     /// Extract a lower-bound (since) time from filters with > or >= operators.
-    fn extract_since(&self) -> Option<DateTime<Utc>> {
-        let mut since = None;
-        for f in &self.time_filters {
-            if f.is_lower_bound() {
-                let candidate = f.time();
-                if since.is_none_or(|s| candidate > s) {
-                    since = Some(candidate);
-                }
-            }
-        }
-        since
+    fn extract_since(&self, now: Timestamp) -> Option<Timestamp> {
+        self.time_filters
+            .iter()
+            .filter(|f| f.is_lower_bound())
+            .filter_map(|f| f.resolve(now))
+            .max()
     }
 
     /// Extract an upper-bound (until) time from filters with < or <= operators.
-    fn extract_until(&self) -> Option<DateTime<Utc>> {
-        let mut until = None;
-        for f in &self.time_filters {
-            if f.is_upper_bound() {
-                let candidate = f.time();
-                if until.is_none_or(|u| candidate < u) {
-                    until = Some(candidate);
-                }
-            }
-        }
-        until
+    fn extract_until(&self, now: Timestamp) -> Option<Timestamp> {
+        self.time_filters
+            .iter()
+            .filter(|f| f.is_upper_bound())
+            .filter_map(|f| f.resolve(now))
+            .min()
     }
 
     /// Read events from a single log file within the time range, with binary search.
     pub fn read_events_from(
         &self,
         log_path: &Path,
-        since: Option<DateTime<Utc>>,
-        until: Option<DateTime<Utc>>,
+        since: Option<Timestamp>,
+        until: Option<Timestamp>,
+    ) -> Result<Vec<FileEvent>> {
+        self.read_events_from_at(log_path, since, until, Timestamp::now())
+    }
+
+    /// Read events using one reference instant for relative time filters.
+    fn read_events_from_at(
+        &self,
+        log_path: &Path,
+        since: Option<Timestamp>,
+        until: Option<Timestamp>,
+        now: Timestamp,
     ) -> Result<Vec<FileEvent>> {
         let file = File::open(log_path)
             .with_context(|| format!("Failed to open log file {}", log_path.display()))?;
@@ -171,7 +174,10 @@ impl Query {
                 && let Some(event) = parse_log_line_jsonl(trimmed)
             {
                 // Apply time filters
-                let pass = self.time_filters.iter().all(|f| f.matches(event.time));
+                let pass = self
+                    .time_filters
+                    .iter()
+                    .all(|f| f.matches_at(event.time, now));
                 if pass {
                     // Check until bound before push (event consumed by push)
                     if let Some(u) = until
@@ -193,7 +199,7 @@ impl Query {
         &self,
         file_len: u64,
         log_path: &Path,
-        since: DateTime<Utc>,
+        since: Timestamp,
     ) -> Result<u64> {
         let file = File::open(log_path)
             .with_context(|| format!("Failed to open log file {}", log_path.display()))?;
@@ -257,15 +263,16 @@ impl Query {
             return Ok(());
         }
 
-        let since_time = self.extract_since();
-        let until_time = self.extract_until();
+        let now = Timestamp::now();
+        let since_time = self.extract_since(now);
+        let until_time = self.extract_until(now);
 
         // Read events from each file, dedup by path (keep latest event per path)
         let mut latest_by_path: std::collections::HashMap<PathBuf, FileEvent> =
             std::collections::HashMap::new();
 
         for log_file in &log_files {
-            let events = self.read_events_from(log_file, since_time, until_time)?;
+            let events = self.read_events_from_at(log_file, since_time, until_time, now)?;
             for event in events {
                 // Apply path filters
                 if let Some(ref path_filters) = self.path_filters

@@ -27,9 +27,9 @@ fn parse_whitespace_only_returns_none() {
 
 #[test]
 fn event_jsonl_round_trip() {
-    use chrono::Utc;
+    use jiff::Timestamp;
     let ev = FileEvent {
-        time: Utc::now(),
+        time: Timestamp::now(),
         event_type: EventType::Modify,
         path: std::path::PathBuf::from("/tmp/test"),
         pid: 42,
@@ -53,9 +53,9 @@ fn event_jsonl_round_trip() {
 
 #[test]
 fn jsonl_local_time_has_offset_not_z() {
-    use chrono::Utc;
+    use jiff::Timestamp;
     let ev = FileEvent {
-        time: Utc::now(),
+        time: Timestamp::now(),
         event_type: EventType::Create,
         path: std::path::PathBuf::from("/tmp/x"),
         pid: 1,
@@ -84,9 +84,9 @@ fn jsonl_local_time_has_offset_not_z() {
 
 #[test]
 fn jsonl_normal_uses_utc() {
-    use chrono::Utc;
+    use jiff::Timestamp;
     let ev = FileEvent {
-        time: Utc::now(),
+        time: Timestamp::now(),
         event_type: EventType::Create,
         path: std::path::PathBuf::from("/tmp/x"),
         pid: 1,
@@ -157,9 +157,9 @@ fn event_type_parse_invalid_returns_err() {
 
 #[test]
 fn file_event_all_fields_present_in_json() {
-    use chrono::Utc;
+    use jiff::Timestamp;
     let ev = FileEvent {
-        time: Utc::now(),
+        time: Timestamp::now(),
         event_type: EventType::Create,
         path: std::path::PathBuf::from("/a/b"),
         pid: 99,

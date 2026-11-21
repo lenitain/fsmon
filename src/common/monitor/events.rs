@@ -2,8 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::debug_log;
-use chrono::Utc;
 use fanotify_fid::consts::{FAN_MOVED_FROM, FAN_MOVED_TO, FAN_Q_OVERFLOW, FAN_RENAME};
+use jiff::Timestamp;
 
 use crate::common::fid_parser::{DecodedEvent, mask_to_event_types};
 #[cfg(test)]
@@ -435,7 +435,7 @@ impl Monitor {
         };
 
         FileEvent {
-            time: Utc::now(),
+            time: Timestamp::now(),
             event_type,
             path: event_path.to_path_buf(),
             pid,

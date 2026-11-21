@@ -9,11 +9,7 @@ use std::process::Command;
 
 /// Get path to the fsmon binary.
 fn fsmon_bin() -> String {
-    let mut path = std::env::current_exe().unwrap();
-    path.pop(); // Remove test binary name
-    path.pop(); // Remove deps
-    path.push("fsmon");
-    path.to_string_lossy().to_string()
+    env!("CARGO_BIN_EXE_fsmon").to_string()
 }
 
 /// Helper to run fsmon daemon with args and capture output.

@@ -9,6 +9,7 @@ use fanotify_fid::consts::{
     FAN_ONDIR, FAN_RENAME,
 };
 use fanotify_fid::prelude::*;
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -376,7 +377,7 @@ fn test_delete_self_canonical_root_is_recorded() {
 
 fn make_event(path: &str, event_type: EventType, pid: u32, size: u64) -> FileEvent {
     FileEvent {
-        time: chrono::Utc::now(),
+        time: Timestamp::now(),
         event_type,
         path: PathBuf::from(path),
         pid,
@@ -642,7 +643,7 @@ async fn test_subscriber_task_receives_events() {
     let (tx, mut rx) = tokio::sync::broadcast::channel(64);
     let mut rx2 = tx.subscribe();
     let event = FileEvent {
-        time: chrono::Utc::now(),
+        time: Timestamp::now(),
         event_type: EventType::Create,
         path: PathBuf::from("/tmp/test.txt"),
         pid: 1234,
@@ -702,7 +703,7 @@ async fn test_subscriber_task_filters_by_type() {
     let allowed = [EventType::Delete, EventType::CloseWrite];
 
     let create_event = FileEvent {
-        time: chrono::Utc::now(),
+        time: Timestamp::now(),
         event_type: EventType::Create,
         path: PathBuf::from("/tmp/ignored.txt"),
         pid: 1,
@@ -718,7 +719,7 @@ async fn test_subscriber_task_filters_by_type() {
     assert!(!allowed.contains(&create_event.event_type));
 
     let delete_event = FileEvent {
-        time: chrono::Utc::now(),
+        time: Timestamp::now(),
         event_type: EventType::Delete,
         path: PathBuf::from("/tmp/deleted.txt"),
         pid: 2,
@@ -740,7 +741,7 @@ async fn test_subscriber_task_handles_lagged() {
 
     for i in 0..10 {
         let _ = tx.send(FileEvent {
-            time: chrono::Utc::now(),
+            time: Timestamp::now(),
             event_type: EventType::Create,
             path: PathBuf::from(format!("/tmp/batch_{}.txt", i)),
             pid: 100 + i as u32,
@@ -776,7 +777,7 @@ async fn test_subscriber_task_handles_lagged() {
 #[test]
 fn test_file_event_comm_field() {
     let event = FileEvent {
-        time: chrono::Utc::now(),
+        time: Timestamp::now(),
         event_type: EventType::Create,
         path: PathBuf::from("/tmp/test.txt"),
         pid: 1234,
@@ -800,7 +801,7 @@ fn test_file_event_comm_field() {
 fn test_file_event_chain_as_vec() {
     use crate::common::ChainLink;
     let event = FileEvent {
-        time: chrono::Utc::now(),
+        time: Timestamp::now(),
         event_type: EventType::Create,
         path: PathBuf::from("/tmp/test.txt"),
         pid: 1234,
@@ -836,7 +837,7 @@ fn test_file_event_chain_as_vec() {
 fn test_file_event_json_serialization() {
     use crate::common::ChainLink;
     let event = FileEvent {
-        time: chrono::Utc::now(),
+        time: Timestamp::now(),
         event_type: EventType::Create,
         path: PathBuf::from("/tmp/test.txt"),
         pid: 1234,

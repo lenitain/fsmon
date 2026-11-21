@@ -327,18 +327,18 @@ fn clean_dry_run_preserves_data() {
         let log_dir = cfg.logging.path.unwrap();
         fs::create_dir_all(&log_dir).unwrap();
 
-        use chrono::Utc;
+        use jiff::{SignedDuration, Timestamp};
         use std::io::Write;
         let log_path = log_dir.join("_global_log.jsonl");
         let mut f = fs::File::create(&log_path).unwrap();
-        let ts = Utc::now();
+        let ts = Timestamp::now();
         let old = format!(
             r#"{{"time":"{}","event_type":"CREATE","path":"/old","pid":1,"cmd":"x","user":"r","file_size":0,"ppid":0,"tgid":0,"chain":""}}"#,
-            (ts - chrono::Duration::days(100)).to_rfc3339()
+            (ts - SignedDuration::from_hours(100 * 24))
         );
         let recent = format!(
             r#"{{"time":"{}","event_type":"MODIFY","path":"/recent","pid":2,"cmd":"y","user":"r","file_size":100,"ppid":0,"tgid":0,"chain":""}}"#,
-            ts.to_rfc3339()
+            ts
         );
         writeln!(f, "{}", old).unwrap();
         writeln!(f, "{}", recent).unwrap();

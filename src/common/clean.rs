@@ -7,7 +7,7 @@ mod tests {
     use crate::common::clean::core::{clean_logs, count_lines, find_tail_offset, should_trim};
     use crate::common::utils::TimeOp;
     use crate::common::{EventType, FileEvent, SizeFilter, SizeOp, TimeFilter};
-    use chrono::Utc;
+    use jiff::{SignedDuration, Timestamp};
     use std::fs;
     use std::io::Write;
     use std::path::{Path, PathBuf};
@@ -98,7 +98,7 @@ mod tests {
         let log_path = dir.join("_global_log.jsonl");
 
         let old_event = FileEvent {
-            time: Utc::now() - chrono::Duration::days(60),
+            time: Timestamp::now() - SignedDuration::from_hours(60 * 24),
             event_type: EventType::Create,
             path: PathBuf::from("/tmp/old"),
             pid: 1,
@@ -112,7 +112,7 @@ mod tests {
             fs_error: None,
         };
         let new_event = FileEvent {
-            time: Utc::now(),
+            time: Timestamp::now(),
             event_type: EventType::Create,
             path: PathBuf::from("/tmp/new"),
             pid: 1,
@@ -132,7 +132,7 @@ mod tests {
             writeln!(f, "{}", new_event.to_jsonl_string()).unwrap();
         }
 
-        let cutoff = Utc::now() - chrono::Duration::days(30);
+        let cutoff = Timestamp::now() - SignedDuration::from_hours(30 * 24);
         let time_filter = TimeFilter::new(TimeOp::Gt, cutoff);
         let rt = tokio::runtime::Runtime::new().unwrap();
         let log_dir = log_path.parent().unwrap();
@@ -161,7 +161,7 @@ mod tests {
         let log_path = dir.join("_global_log.jsonl");
 
         let old_event = FileEvent {
-            time: Utc::now() - chrono::Duration::days(60),
+            time: Timestamp::now() - SignedDuration::from_hours(60 * 24),
             event_type: EventType::Create,
             path: PathBuf::from("/tmp/old"),
             pid: 1,
@@ -182,7 +182,7 @@ mod tests {
 
         let original_content = fs::read_to_string(&log_path).unwrap();
 
-        let cutoff = Utc::now() - chrono::Duration::days(30);
+        let cutoff = Timestamp::now() - SignedDuration::from_hours(30 * 24);
         let time_filter = TimeFilter::new(TimeOp::Gt, cutoff);
         let rt = tokio::runtime::Runtime::new().unwrap();
         let log_dir = log_path.parent().unwrap();
@@ -205,7 +205,7 @@ mod tests {
     fn test_clean_logs_nonexistent_file() {
         let path = PathBuf::from("/tmp/fsmon_nonexistent_dir_clean_test");
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let cutoff = Utc::now() - chrono::Duration::days(30);
+        let cutoff = Timestamp::now() - SignedDuration::from_hours(30 * 24);
         let time_filter = TimeFilter::new(TimeOp::Gt, cutoff);
         assert!(
             rt.block_on(clean_logs(&path, "_global", Some(time_filter), None, false))
@@ -223,7 +223,7 @@ mod tests {
             let mut f = fs::File::create(&log_path).unwrap();
             for i in 0..100 {
                 let event = FileEvent {
-                    time: Utc::now(),
+                    time: Timestamp::now(),
                     event_type: EventType::Create,
                     path: PathBuf::from(format!("/tmp/file{}", i)),
                     pid: 1,
@@ -306,7 +306,7 @@ mod tests {
         {
             let mut f = fs::File::create(&log_path).unwrap();
             let event = FileEvent {
-                time: Utc::now(),
+                time: Timestamp::now(),
                 event_type: EventType::Create,
                 path: PathBuf::from("/f"),
                 pid: 1,
@@ -348,7 +348,7 @@ mod tests {
         {
             let mut f = fs::File::create(&log_path).unwrap();
             let event = FileEvent {
-                time: Utc::now(),
+                time: Timestamp::now(),
                 event_type: EventType::Create,
                 path: PathBuf::from("/f"),
                 pid: 1,
@@ -391,7 +391,7 @@ mod tests {
             let mut f = fs::File::create(&log_path).unwrap();
             for i in 0..20 {
                 let event = FileEvent {
-                    time: Utc::now(),
+                    time: Timestamp::now(),
                     event_type: EventType::Create,
                     path: PathBuf::from(format!("/f{}", i)),
                     pid: 1,
@@ -434,9 +434,9 @@ mod tests {
         let dir = std::env::temp_dir().join("fsmon_test_clean_time_ge");
         fs::create_dir_all(&dir).unwrap();
         let log_path = dir.join("_global_log.jsonl");
-        let now = Utc::now();
+        let now = Timestamp::now();
         let old_event = FileEvent {
-            time: now - chrono::Duration::days(10),
+            time: now - SignedDuration::from_hours(10 * 24),
             event_type: EventType::Create,
             path: PathBuf::from("/old"),
             pid: 1,
@@ -450,7 +450,7 @@ mod tests {
             fs_error: None,
         };
         let mid_event = FileEvent {
-            time: now - chrono::Duration::days(5),
+            time: now - SignedDuration::from_hours(5 * 24),
             event_type: EventType::Create,
             path: PathBuf::from("/mid"),
             pid: 1,
@@ -483,7 +483,7 @@ mod tests {
             writeln!(f, "{}", mid_event.to_jsonl_string()).unwrap();
             writeln!(f, "{}", new_event.to_jsonl_string()).unwrap();
         }
-        let cutoff = now - chrono::Duration::days(7);
+        let cutoff = now - SignedDuration::from_hours(7 * 24);
         let tf = TimeFilter::new(TimeOp::Ge, cutoff);
         let log_dir = log_path.parent().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -500,9 +500,9 @@ mod tests {
         let dir = std::env::temp_dir().join("fsmon_test_clean_time_le");
         fs::create_dir_all(&dir).unwrap();
         let log_path = dir.join("_global_log.jsonl");
-        let now = Utc::now();
+        let now = Timestamp::now();
         let old_event = FileEvent {
-            time: now - chrono::Duration::days(10),
+            time: now - SignedDuration::from_hours(10 * 24),
             event_type: EventType::Create,
             path: PathBuf::from("/old"),
             pid: 1,
@@ -534,7 +534,7 @@ mod tests {
             writeln!(f, "{}", old_event.to_jsonl_string()).unwrap();
             writeln!(f, "{}", new_event.to_jsonl_string()).unwrap();
         }
-        let cutoff = now - chrono::Duration::days(7);
+        let cutoff = now - SignedDuration::from_hours(7 * 24);
         let tf = TimeFilter::new(TimeOp::Le, cutoff);
         let log_dir = log_path.parent().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -551,9 +551,9 @@ mod tests {
         let dir = std::env::temp_dir().join("fsmon_test_clean_no_time");
         fs::create_dir_all(&dir).unwrap();
         let log_path = dir.join("_global_log.jsonl");
-        let now = Utc::now();
+        let now = Timestamp::now();
         let old_event = FileEvent {
-            time: now - chrono::Duration::days(100),
+            time: now - SignedDuration::from_hours(100 * 24),
             event_type: EventType::Create,
             path: PathBuf::from("/old"),
             pid: 1,
@@ -591,7 +591,7 @@ mod tests {
         {
             let mut f = fs::File::create(&log_global).unwrap();
             let event = FileEvent {
-                time: Utc::now() - chrono::Duration::days(100),
+                time: Timestamp::now() - SignedDuration::from_hours(100 * 24),
                 event_type: EventType::Create,
                 path: PathBuf::from("/a/x"),
                 pid: 1,
@@ -610,7 +610,7 @@ mod tests {
             let mut f = fs::File::create(&log_oc).unwrap();
             writeln!(f, "keep").unwrap();
         }
-        let cutoff = Utc::now();
+        let cutoff = Timestamp::now();
         let tf = TimeFilter::new(TimeOp::Gt, cutoff);
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(clean_logs(&dir, "_global", Some(tf), None, false))
@@ -629,11 +629,11 @@ mod tests {
         let dir = std::env::temp_dir().join("fsmon_test_clean_both");
         fs::create_dir_all(&dir).unwrap();
         let log_path = dir.join("_global_log.jsonl");
-        let now = Utc::now();
+        let now = Timestamp::now();
         {
             let mut f = fs::File::create(&log_path).unwrap();
             let old = FileEvent {
-                time: now - chrono::Duration::days(60),
+                time: now - SignedDuration::from_hours(60 * 24),
                 event_type: EventType::Create,
                 path: PathBuf::from("/old"),
                 pid: 1,
@@ -665,7 +665,7 @@ mod tests {
                 writeln!(f, "{}", ev.to_jsonl_string()).unwrap();
             }
         }
-        let tf = TimeFilter::new(TimeOp::Gt, now - chrono::Duration::days(7));
+        let tf = TimeFilter::new(TimeOp::Gt, now - SignedDuration::from_hours(7 * 24));
         let sf = SizeFilter::new(SizeOp::Gt, 2000);
         let original_size = fs::metadata(&log_path).unwrap().len();
         let log_dir = log_path.parent().unwrap();

@@ -1,16 +1,15 @@
 use std::path::Path;
 
 pub use sizefilter::{SizeFilter, SizeOp, format_size, parse_size, parse_size_filter};
-pub use timefilter::{TimeFilter, TimeOp, format_datetime, parse_time, parse_time_filter};
+pub use timefilter::{
+    TimeFilter, TimeOp, format_datetime, parse_time, parse_time_at, parse_time_filter,
+    parse_time_now,
+};
 
-use chrono::{DateTime, Utc};
 use proc_tree::{ProcessTracker, Tgid};
 
-/// Extension trait for TimeFilter to provide matching and classification methods.
+/// Extension trait for lower/upper-bound classification of time filters.
 pub trait TimeFilterExt {
-    /// Check if a timestamp matches this filter.
-    fn matches(&self, time: DateTime<Utc>) -> bool;
-
     /// Check if this filter is a lower bound (Gt or Ge).
     fn is_lower_bound(&self) -> bool;
 
@@ -19,16 +18,6 @@ pub trait TimeFilterExt {
 }
 
 impl TimeFilterExt for TimeFilter {
-    fn matches(&self, time: DateTime<Utc>) -> bool {
-        match self.op() {
-            TimeOp::Gt => time > self.time(),
-            TimeOp::Ge => time >= self.time(),
-            TimeOp::Lt => time < self.time(),
-            TimeOp::Le => time <= self.time(),
-            TimeOp::Eq => time == self.time(),
-        }
-    }
-
     fn is_lower_bound(&self) -> bool {
         matches!(self.op(), TimeOp::Gt | TimeOp::Ge)
     }
@@ -183,88 +172,62 @@ pub fn cmd_to_log_name(cmd: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Datelike, TimeZone, Timelike};
-    use chrono::{Duration, Utc};
+    use jiff::{SignedDuration, Timestamp};
 
     #[test]
     fn test_parse_time_relative_hours() {
-        let now = Utc::now();
-        let parsed = parse_time("1h").unwrap();
-        let diff = now - parsed;
-        assert!(diff >= Duration::minutes(59));
-        assert!(diff <= Duration::minutes(61));
+        let now = Timestamp::now();
+        let parsed = parse_time_at("1h", now).unwrap();
+        assert_eq!(now.duration_since(parsed), SignedDuration::from_hours(1));
     }
 
     #[test]
     fn test_parse_time_relative_minutes() {
-        let now = Utc::now();
-        let parsed = parse_time("30m").unwrap();
-        let diff = now - parsed;
-        assert!(diff >= Duration::minutes(29));
-        assert!(diff <= Duration::minutes(31));
+        let now = Timestamp::now();
+        let parsed = parse_time_at("30m", now).unwrap();
+        assert_eq!(now.duration_since(parsed), SignedDuration::from_mins(30));
     }
 
     #[test]
     fn test_parse_time_relative_days() {
-        let now = Utc::now();
-        let parsed = parse_time("7d").unwrap();
-        let diff = now - parsed;
-        assert!(diff >= Duration::hours(167));
-        assert!(diff <= Duration::hours(169));
+        let now = Timestamp::now();
+        let parsed = parse_time_at("7d", now).unwrap();
+        assert_eq!(now.duration_since(parsed), SignedDuration::from_hours(168));
     }
 
     #[test]
     fn test_parse_time_relative_seconds() {
-        let now = Utc::now();
-        let parsed = parse_time("30s").unwrap();
-        let diff = now - parsed;
-        assert!(diff >= Duration::seconds(29));
-        assert!(diff <= Duration::seconds(31));
+        let now = Timestamp::now();
+        let parsed = parse_time_at("30s", now).unwrap();
+        assert_eq!(now.duration_since(parsed), SignedDuration::from_secs(30));
     }
 
     #[test]
     fn test_parse_time_relative_hr_min_suffix() {
-        let now = Utc::now();
-        let parsed = parse_time("2hr").unwrap();
-        let diff = now - parsed;
-        assert!(diff >= Duration::minutes(119));
-        assert!(diff <= Duration::minutes(121));
+        let now = Timestamp::now();
+        let parsed = parse_time_at("2hr", now).unwrap();
+        assert_eq!(now.duration_since(parsed), SignedDuration::from_hours(2));
 
-        let parsed = parse_time("15min").unwrap();
-        let diff = now - parsed;
-        assert!(diff >= Duration::minutes(14));
-        assert!(diff <= Duration::minutes(16));
+        let parsed = parse_time_at("15min", now).unwrap();
+        assert_eq!(now.duration_since(parsed), SignedDuration::from_mins(15));
     }
 
     #[test]
     fn test_parse_time_absolute_datetime() {
         let parsed = parse_time("2024-05-01 10:00").unwrap();
-        assert_eq!(parsed.year(), 2024);
-        assert_eq!(parsed.month(), 5);
-        assert_eq!(parsed.day(), 1);
-        assert_eq!(parsed.hour(), 10);
-        assert_eq!(parsed.minute(), 0);
+        assert_eq!(parsed.to_string(), "2024-05-01T10:00:00Z");
     }
 
     #[test]
     fn test_parse_time_absolute_with_seconds() {
         let parsed = parse_time("2024-12-25 15:30:45").unwrap();
-        assert_eq!(parsed.year(), 2024);
-        assert_eq!(parsed.month(), 12);
-        assert_eq!(parsed.day(), 25);
-        assert_eq!(parsed.hour(), 15);
-        assert_eq!(parsed.minute(), 30);
-        assert_eq!(parsed.second(), 45);
+        assert_eq!(parsed.to_string(), "2024-12-25T15:30:45Z");
     }
 
     #[test]
     fn test_parse_time_absolute_date_only() {
         let parsed = parse_time("2024-01-15").unwrap();
-        assert_eq!(parsed.year(), 2024);
-        assert_eq!(parsed.month(), 1);
-        assert_eq!(parsed.day(), 15);
-        assert_eq!(parsed.hour(), 0);
-        assert_eq!(parsed.minute(), 0);
+        assert_eq!(parsed.to_string(), "2024-01-15T00:00:00Z");
     }
 
     #[test]
@@ -272,6 +235,7 @@ mod tests {
         assert!(parse_time("invalid").is_err());
         assert!(parse_time("2024-13-01 10:00").is_err());
         assert!(parse_time("abc").is_err());
+        assert!(parse_time("2h").is_err());
     }
 
     // ---- parse_time_filter tests ----
@@ -280,43 +244,37 @@ mod tests {
     fn test_parse_time_filter_gt() {
         let f = parse_time_filter(">1h").unwrap();
         assert_eq!(f.op(), TimeOp::Gt);
-        let diff = Utc::now() - f.time();
-        assert!(diff >= chrono::Duration::minutes(59) && diff <= chrono::Duration::minutes(61));
+        assert_eq!(f.span(), Some(SignedDuration::from_hours(1)));
+        assert!(f.is_relative());
     }
 
     #[test]
     fn test_parse_time_filter_ge() {
         let f = parse_time_filter(">=7d").unwrap();
         assert_eq!(f.op(), TimeOp::Ge);
-        let diff = Utc::now() - f.time();
-        assert!(diff >= chrono::Duration::days(6) && diff <= chrono::Duration::days(8));
+        assert_eq!(f.span(), Some(SignedDuration::from_hours(168)));
     }
 
     #[test]
     fn test_parse_time_filter_lt() {
         let f = parse_time_filter("<2026-05-01").unwrap();
         assert_eq!(f.op(), TimeOp::Lt);
-        assert_eq!(f.time().year(), 2026);
-        assert_eq!(f.time().month(), 5);
-        assert_eq!(f.time().day(), 1);
+        assert_eq!(
+            f.time(),
+            Some("2026-05-01T00:00:00Z".parse::<Timestamp>().unwrap())
+        );
     }
 
     #[test]
     fn test_parse_time_filter_le() {
         let f = parse_time_filter("<=30m").unwrap();
         assert_eq!(f.op(), TimeOp::Le);
-        let diff = Utc::now() - f.time();
-        assert!(diff >= chrono::Duration::minutes(29) && diff <= chrono::Duration::minutes(31));
+        assert_eq!(f.span(), Some(SignedDuration::from_mins(30)));
     }
 
     #[test]
-    fn test_parse_time_filter_eq() {
-        let f = parse_time_filter("=2026-05-01 10:00").unwrap();
-        assert_eq!(f.op(), TimeOp::Eq);
-        assert_eq!(f.time().year(), 2026);
-        assert_eq!(f.time().month(), 5);
-        assert_eq!(f.time().day(), 1);
-        assert_eq!(f.time().hour(), 10);
+    fn test_parse_time_filter_eq_unsupported() {
+        assert!(parse_time_filter("=2026-05-01 10:00").is_err());
     }
 
     #[test]
@@ -334,11 +292,8 @@ mod tests {
 
     #[test]
     fn test_format_datetime() {
-        let dt = Utc.with_ymd_and_hms(2024, 5, 1, 10, 30, 45).unwrap();
-        let formatted = format_datetime(&dt);
-        // Output depends on local timezone, just check it's non-empty and contains date parts
-        assert!(!formatted.is_empty());
-        assert!(formatted.contains("2024"));
+        let dt = "2024-05-01T10:30:45Z".parse::<Timestamp>().unwrap();
+        assert_eq!(format_datetime(&dt), "2024-05-01T10:30:45Z");
     }
 
     // -- cross-crate integration tests --
@@ -347,7 +302,7 @@ mod tests {
     fn reexported_parse_size_still_works() {
         // These functions now come from sizefilter crate via re-export
         assert_eq!(parse_size("1GB").unwrap(), 1073741824);
-        assert_eq!(format_size(1024), "1.0KB");
+        assert_eq!(format_size(1024), "1.0KiB");
         let f = parse_size_filter(">=500MB").unwrap();
         assert_eq!(f.op(), SizeOp::Ge);
         assert_eq!(f.bytes(), 524288000);
@@ -360,22 +315,20 @@ mod tests {
             Ok(parse_size("invalid")?)
         }
         let err = returns_anyhow().unwrap_err();
-        assert!(err.to_string().contains("failed to parse number"));
+        assert!(err.to_string().contains("invalid number"));
     }
 
     #[test]
     fn time_filter_now_uses_timeop() {
         // After timefilter integration, TimeFilter uses TimeOp not SizeOp
         fn check_op(op: TimeOp) -> bool {
-            matches!(
-                op,
-                TimeOp::Gt | TimeOp::Ge | TimeOp::Lt | TimeOp::Le | TimeOp::Eq
-            )
+            matches!(op, TimeOp::Gt | TimeOp::Ge | TimeOp::Lt | TimeOp::Le)
         }
         assert!(check_op(TimeOp::Gt));
-        assert!(check_op(TimeOp::Eq));
+        assert!(check_op(TimeOp::Le));
 
         let tf = parse_time_filter(">=1h").unwrap();
+        assert!(tf.is_relative());
         assert!(matches!(tf.op(), TimeOp::Ge));
     }
 

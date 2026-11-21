@@ -3,6 +3,7 @@
 use fsmon::common::{
     SizeOp, TimeOp, format_datetime, parse_size, parse_size_filter, parse_time_filter,
 };
+use jiff::Timestamp;
 
 // ---- parse_size ----
 
@@ -119,7 +120,7 @@ fn time_filter_invalid_returns_err() {
 
 #[test]
 fn format_datetime_basic() {
-    let dt = chrono::Utc::now();
+    let dt = Timestamp::now();
     let formatted = format_datetime(&dt);
     // Should contain date and time separators
     assert!(formatted.contains('-'));

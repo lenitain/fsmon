@@ -5,6 +5,107 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+No new features, no new commands, and no change to the event stream: the same
+events, the same JSONL shape, the same log files on disk. What this is, is the rest
+of the dependency modernization — `fanotify-fid` 0.9.0, the timestamps moved
+from `chrono` to `jiff`, the size and time filters handed to the crates that
+own them — and the packaging change that follows from developing against those
+crates side by side.
+
+### Changed
+
+- **`chrono` is gone; the timestamps are `jiff` now.**
+  [`chrono` is unmaintained](https://rustsec.org/advisories/RUSTSEC-2026-0543),
+  and it was in the tree for one thing: `FileEvent::time`. That field is now a
+  `jiff::Timestamp`, and every duration fsmon builds is a
+  `jiff::SignedDuration`.
+  - **The JSONL still means the same thing.** A timestamp serializes as RFC
+    3339 UTC (`2026-11-21T12:34:56.5Z`), and the local-time variant still
+    carries the offset instead of the `Z` (`2026-11-21T20:34:56.5+08:00`). The
+    one difference is the precision of the fraction: `chrono` printed 0, 3, 6 or
+    9 fractional digits (`…T12:34:56.500Z`), `jiff` prints the shortest exact
+    form (`…T12:34:56.5Z`). A log written by an older fsmon is read without a
+    migration step — RFC 3339 in, RFC 3339 out — and the instants are the
+    same.
+  - **The library type changed with it.** `FileEvent::time` was
+    `chrono::DateTime<Utc>` and is now `jiff::Timestamp`. fsmon does not
+    re-export `jiff`, so a consumer that names that field needs `jiff = "1"`
+    of its own.
+- **The time filters are `timefilter` 0.3.0, and a relative filter is now a
+  relative filter.** `TimeFilter` grew a second shape: `Absolute { op, time }`
+  or `Relative { op, span }`. A relative filter resolves its threshold when it
+  is checked instead of freezing it when it is parsed, so `>1h` means "an hour
+  ago" at the moment of the check rather than at the moment of the parse.
+  - **One query sees one "now".** `fsmon query` and `fsmon changes` resolve
+    every relative filter against a single instant and read the whole log
+    against it, so a filter cannot drift while the scan runs; `fsmon clean`
+    does the same for the entries it keeps.
+  - **`=` is gone.** `TimeOp::Eq` was removed — exact nanosecond equality is
+    not a useful filter — so `fsmon query --time "=2026-05-01"` now fails with
+    `invalid or unsupported comparison operator`. A range says the same thing:
+    `>=2026-05-01` together with `<2026-05-02`.
+  - **`parse_time` parses absolute times only.** `parse_time("2h")` is an error
+    now; `parse_time_now` and `parse_time_at` are the ways to read a relative
+    input, and the latter takes the reference instant, so a caller can be
+    deterministic.
+  - **`format_datetime` returns RFC 3339 UTC** (`2026-11-21T12:34:56Z`) where
+    it used to return the local time as `YYYY-MM-DD HH:MM:SS`. Converting to
+    the process timezone is the application's business, and `jiff`'s time zone
+    types are there for it.
+  - **A filter prints itself canonically.** `fsmon clean` reports
+    `(time filter: >30d)` for a relative filter and
+    `(time filter: <2027-05-01T00:00:00Z)` for an absolute one; it used to
+    report the operator and the local time side by side
+    (`Gt 2026-08-22 12:00:00`).
+- **The size filters are `sizefilter` 0.3.0, and the units are IEC.**
+  `KB`/`MB`/`GB` still parse as the binary units they always were (`1GB` is
+  1073741824 bytes), `KiB`/`MiB`/`GiB` are accepted as well, and what fsmon
+  prints is now the IEC label: a 1024-byte log is `1.0KiB`, not `1.0KB`. The
+  hand-written size comparisons are gone; `SizeFilter::matches_u64` answers
+  them.
+- **`fanotify-fid` 0.9.0.** The default read forms now refuse a stream that
+  stops before its last event ends: a truncated batch is
+  `FanotifyError::MalformedStream` instead of a partial list of events. A
+  kernel `read(2)` returns whole events, so a partial tail is a fault in the
+  stream rather than a short read — and fsmon's reader, which used to process
+  the prefix of such a batch, now logs the fault and drops the batch. The
+  release also fixes the alignment of the buffer the handle syscalls hand the
+  kernel, and adds `Mounts::add_unfiltered` for filesystems whose fsid cannot
+  be compared (`btrfs` reports one per subvolume); fsmon does not need it —
+  resolution goes through the directory-handle cache, and the syscall fallback
+  is off.
+- **The sibling crates are path dependencies now.** `fanotify-fid`,
+  `proc-connector`, `proc-tree`, `sizefilter` and `timefilter` are declared
+  with a version *and* a sibling path, so fsmon builds against the working
+  copies of the crates it is developed with instead of against whatever
+  crates.io last served.
+  - **CI materializes them.** `.github/scripts/fetch-path-deps.sh` takes the
+    published crate from crates.io when the required version is there, and the
+    matching git tag (or `main`) when it is not.
+  - **A checkout no longer builds on its own.** The five repositories have to
+    sit next to the fsmon checkout — or the script has to be run. crates.io is
+    unaffected: `cargo install fsmon` resolves the versions from the registry.
+- **Routine bumps**: `nix` 0.32, `lru` 0.19, `smallvec` 1.16. The dependency
+  tree drops from 114 to 94 packages — `chrono` and its platform-specific tail
+  (`windows-*`, `wasm-bindgen`, `js-sys`, `core-foundation-sys`) go with it,
+  `jiff` and its time zone database come in.
+
+### Documentation
+
+- **The build instructions account for the path dependencies.** Both READMEs now
+  say where the sibling repositories have to sit and point at
+  `.github/scripts/fetch-path-deps.sh`, and the stale `rustc 1.78.0` line is
+  replaced by the MSRV the crate actually declares (1.88).
+
+### Tests
+
+- **The integration tests run the binary Cargo built for them.**
+  `env!("CARGO_BIN_EXE_fsmon")` replaces the path derived from `current_exe()`,
+  so the tests cannot end up talking to a stale binary left in the target
+  directory.
+
 ## [0.5.6] - 2026-09-17
 
 No new features: this release is the adaptation to `fanotify-fid` 0.8.0. No

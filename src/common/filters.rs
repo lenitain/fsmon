@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::common::utils::{SizeFilter, SizeOp};
+use crate::common::utils::SizeFilter;
 use crate::common::{EventType, FileEvent};
 
 // ---- PathOptions ----
@@ -91,17 +91,10 @@ pub fn should_output(opts: Option<&PathOptions>, event: &FileEvent) -> bool {
         return false;
     }
 
-    if let Some(ref filter) = opts.size_filter {
-        let passes = match filter.op() {
-            SizeOp::Gt => event.file_size > filter.bytes() as u64,
-            SizeOp::Ge => event.file_size >= filter.bytes() as u64,
-            SizeOp::Lt => event.file_size < filter.bytes() as u64,
-            SizeOp::Le => event.file_size <= filter.bytes() as u64,
-            SizeOp::Eq => event.file_size == filter.bytes() as u64,
-        };
-        if !passes {
-            return false;
-        }
+    if let Some(ref filter) = opts.size_filter
+        && !filter.matches_u64(event.file_size)
+    {
+        return false;
     }
 
     true
@@ -163,15 +156,16 @@ pub fn is_path_in_scope(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::utils::SizeOp;
     use crate::common::{EventType, FileEvent};
-    use chrono::Utc;
+    use jiff::Timestamp;
     use std::path::{Path, PathBuf};
 
     // ---- should_output ----
 
     fn make_event(path: &str, event_type: EventType, pid: u32, size: u64) -> FileEvent {
         FileEvent {
-            time: Utc::now(),
+            time: Timestamp::now(),
             event_type,
             path: PathBuf::from(path),
             pid,

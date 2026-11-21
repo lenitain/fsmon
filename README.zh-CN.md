@@ -115,13 +115,27 @@ fsmon **故意不申请** `CAP_DAC_READ_SEARCH`。它只对 `open_by_handle_at`
 
 ## 从源码构建
 
-需要 Rust 工具链（已测试 `rustc 1.78.0`）。
+需要 **Rust 1.88** 或更高版本的工具链（该 crate 的 MSRV）。
+
+fsmon 与它依赖的那些 crate 一起开发，`Cargo.toml` 把它们声明为 path 依赖——
+因此这些仓库必须与 fsmon 的 checkout 并排放置：
 
 ```bash
 git clone https://github.com/lenitain/fsmon.git
+cd ..
+git clone https://github.com/lenitain/fanotify-fid.git
+git clone https://github.com/lenitain/proc-connector.git
+git clone https://github.com/lenitain/proc-tree.git
+git clone https://github.com/lenitain/sizefilter.git
+git clone https://github.com/lenitain/timefilter.git
 cd fsmon
 cargo build --release
 ```
+
+`.github/scripts/fetch-path-deps.sh` 为 CI 做同样的事：所需版本已在 crates.io
+发布时取已发布的 crate，否则取对应的 git tag（取不到则取 `main`）。
+
+`cargo install fsmon` 不需要这些——发布的 crate 会自行从 crates.io 解析依赖。
 
 ## 已知限制
 

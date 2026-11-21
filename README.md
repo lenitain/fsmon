@@ -118,13 +118,30 @@ degraded mode deliberately; `fsmon health` then reports `"unprivileged": true`.
 
 ## Building from Source
 
-Requires Rust toolchain (tested with `rustc 1.78.0`).
+Requires a Rust toolchain of **Rust 1.88** or newer (the crate's MSRV).
+
+fsmon is developed against sibling checkouts of the crates it depends on, and
+`Cargo.toml` declares them as path dependencies — so their repositories have to
+sit next to the fsmon checkout:
 
 ```bash
 git clone https://github.com/lenitain/fsmon.git
+cd ..
+git clone https://github.com/lenitain/fanotify-fid.git
+git clone https://github.com/lenitain/proc-connector.git
+git clone https://github.com/lenitain/proc-tree.git
+git clone https://github.com/lenitain/sizefilter.git
+git clone https://github.com/lenitain/timefilter.git
 cd fsmon
 cargo build --release
 ```
+
+`.github/scripts/fetch-path-deps.sh` does the same job for CI: it takes the
+published crate from crates.io when the required version is there, and the
+matching git tag (or `main`) when it is not.
+
+`cargo install fsmon` needs none of this — the published crate resolves its
+dependencies from crates.io.
 
 ## Known Limitations
 

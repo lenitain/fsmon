@@ -1,23 +1,17 @@
 use anyhow::Result;
+use jiff::Timestamp;
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use tempfile::NamedTempFile;
 
 use crate::common::config::chown_to_original_user;
-use crate::common::utils::{self, TimeFilterExt, cmd_to_log_name};
-use crate::common::{SizeFilter, SizeOp, TimeFilter, parse_log_line_jsonl};
+use crate::common::utils::{self, cmd_to_log_name};
+use crate::common::{SizeFilter, TimeFilter, parse_log_line_jsonl};
 
 /// Check if `kept_bytes` exceeds the limit per the filter's operator.
 pub fn should_trim(kept_bytes: usize, filter: &SizeFilter) -> bool {
-    let max = filter.bytes() as usize;
-    match filter.op() {
-        SizeOp::Gt => kept_bytes > max,
-        SizeOp::Ge => kept_bytes >= max,
-        SizeOp::Lt => kept_bytes < max,
-        SizeOp::Le => kept_bytes <= max,
-        SizeOp::Eq => kept_bytes == max,
-    }
+    filter.matches_u64(kept_bytes as u64)
 }
 
 /// Clean a single log file by time and size.
@@ -40,6 +34,7 @@ pub async fn clean_single_log(
     }
 
     let original_size = metadata.len();
+    let now = Timestamp::now();
 
     let temp_file = log_file.with_extension("tmp");
     let mut time_deleted: u64 = 0;
@@ -59,7 +54,9 @@ pub async fn clean_single_log(
             }
 
             let (should_keep, event) = if let Some(event) = parse_log_line_jsonl(trimmed) {
-                let passes_time = time_filter.as_ref().is_none_or(|f| f.matches(event.time));
+                let passes_time = time_filter
+                    .as_ref()
+                    .is_none_or(|f| f.matches_at(event.time, now));
                 (passes_time, Some(event))
             } else {
                 (true, None)
@@ -72,7 +69,7 @@ pub async fn clean_single_log(
                 if let Some(ev) = event {
                     println!(
                         "  [to-delete] {} | {} | {}",
-                        ev.time.format("%Y-%m-%d %H:%M:%S"),
+                        ev.time.strftime("%Y-%m-%d %H:%M:%S"),
                         ev.event_type,
                         ev.path.display()
                     );
@@ -135,9 +132,9 @@ pub async fn clean_single_log(
         }
         chown_to_original_user(log_file);
         println!("Cleaning {}...", log_file.display());
-        let time_desc = time_filter.as_ref().map_or("all time".to_string(), |f| {
-            format!("{} {}", f.op(), utils::format_datetime(&f.time()))
-        });
+        let time_desc = time_filter
+            .as_ref()
+            .map_or("all time".to_string(), |f| f.to_string());
         println!(
             "Deleted {} entries (time filter: {})",
             total_deleted, time_desc

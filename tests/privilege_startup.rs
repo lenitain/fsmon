@@ -15,13 +15,9 @@
 
 use std::process::Command;
 
-/// Path to the compiled fsmon binary next to the test executable.
+/// Path to the compiled fsmon binary built for this test run.
 fn fsmon_bin() -> String {
-    let mut path = std::env::current_exe().unwrap();
-    path.pop(); // test binary name
-    path.pop(); // deps/
-    path.push("fsmon");
-    path.to_string_lossy().to_string()
+    env!("CARGO_BIN_EXE_fsmon").to_string()
 }
 
 /// Run `fsmon daemon` with an isolated HOME/runtime dir so the singleton lock

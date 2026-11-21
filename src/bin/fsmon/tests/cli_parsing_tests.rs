@@ -526,15 +526,15 @@ fn test_integration_clean_and_query_round_trip() {
         let log_path = log_dir.join(fsmon::common::utils::cmd_to_log_name("_global"));
         {
             let mut f = fs::File::create(&log_path).unwrap();
-            use chrono::Utc;
-            let ts = Utc::now();
+            use jiff::{SignedDuration, Timestamp};
+            let ts = Timestamp::now();
             let old = format!(
                 r#"{{"time":"{}","event_type":"CREATE","path":"/old","pid":1,"cmd":"x","user":"r","file_size":0,"ppid":0,"tgid":0,"chain":""}}"#,
-                (ts - chrono::Duration::days(100)).to_rfc3339(),
+                (ts - SignedDuration::from_hours(100 * 24)),
             );
             let recent = format!(
                 r#"{{"time":"{}","event_type":"MODIFY","path":"/recent","pid":2,"cmd":"y","user":"r","file_size":100,"ppid":0,"tgid":0,"chain":""}}"#,
-                ts.to_rfc3339(),
+                ts,
             );
             writeln!(f, "{}", old).unwrap();
             writeln!(f, "{}", recent).unwrap();

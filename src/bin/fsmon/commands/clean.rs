@@ -1,10 +1,10 @@
 use anyhow::Result;
-use chrono::Utc;
 use fsmon::common::clean::clean_logs;
 use fsmon::common::config::Config;
 use fsmon::common::monitored::CMD_GLOBAL;
 use fsmon::common::utils::{SizeFilter, parse_size_filter};
-use fsmon::common::{DEFAULT_KEEP_DAYS, DEFAULT_MAX_SIZE, TimeFilter, TimeOp, parse_time_filter};
+use fsmon::common::{DEFAULT_KEEP_DAYS, DEFAULT_MAX_SIZE, TimeFilter, parse_time_filter};
+use jiff::SignedDuration;
 
 use crate::CleanArgs;
 
@@ -21,12 +21,11 @@ pub async fn cmd_clean(args: CleanArgs) -> Result<()> {
     let time_filter: TimeFilter = if let Some(ref t) = args.time {
         parse_time_filter(t)?
     } else if let Some(days) = cfg.logging.keep_days {
-        TimeFilter::new(TimeOp::Gt, Utc::now() - chrono::Duration::days(days as i64))
+        TimeFilter::gt_span(SignedDuration::from_hours(i64::from(days) * 24))
     } else {
-        TimeFilter::new(
-            TimeOp::Gt,
-            Utc::now() - chrono::Duration::days(DEFAULT_KEEP_DAYS as i64),
-        )
+        TimeFilter::gt_span(SignedDuration::from_hours(
+            i64::from(DEFAULT_KEEP_DAYS) * 24,
+        ))
     };
 
     let max_size_filter: Option<SizeFilter> = args
