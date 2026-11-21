@@ -76,8 +76,9 @@ pub fn cmd_add(args: AddArgs) -> Result<()> {
                 );
             }
         }
-        // NOTE: Socket paths (lock.sock, daemon.sock) under /run/user/<UID>/fsmon/
-        // do NOT need the same guard as the log directory above.  Reasons:
+        // NOTE: Runtime paths (the lock file, daemon.sock) under
+        // /run/user/<UID>/fsmon/ do NOT need the same guard as the log
+        // directory above.  Reasons:
         //   1. Unix domain socket I/O (connect/send/recv) does NOT generate
         //      fanotify filesystem events — only bind() and unlink() do.
         //   2. bind/unlink are one-shot operations at daemon startup/shutdown,

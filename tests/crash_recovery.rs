@@ -11,25 +11,31 @@ use fsmon::common::parse_log_line_jsonl;
 
 #[test]
 fn lock_acquire_and_reacquire() {
-    let uid = nix::unistd::geteuid().as_raw();
+    // The lock lives in the runtime directory, which on a CI runner is not
+    // there and cannot be created — the test brings its own.
+    let runtime = tempfile::tempdir().unwrap();
 
-    // Acquire lock (Unix socket binding)
-    let lock = DaemonLock::acquire(uid).unwrap();
+    temp_env::with_var("XDG_RUNTIME_DIR", Some(runtime.path()), || {
+        let uid = nix::unistd::geteuid().as_raw();
 
-    // Double acquire must fail
-    let result = DaemonLock::acquire(uid);
-    assert!(result.is_err());
-    if let Err(e) = result {
-        assert!(
-            e.to_string().contains("already running"),
-            "expected 'already running', got: {}",
-            e
-        );
-    }
+        // Acquire lock
+        let lock = DaemonLock::acquire(uid).unwrap();
 
-    // Drop and re-acquire succeeds
-    drop(lock);
-    let _lock2 = DaemonLock::acquire(uid).unwrap();
+        // Double acquire must fail
+        let result = DaemonLock::acquire(uid);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(
+                e.to_string().contains("already running"),
+                "expected 'already running', got: {}",
+                e
+            );
+        }
+
+        // Drop and re-acquire succeeds
+        drop(lock);
+        let _lock2 = DaemonLock::acquire(uid).unwrap();
+    });
 }
 
 // ---- 原子写入 ----

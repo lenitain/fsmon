@@ -15,7 +15,7 @@
 ### 套接字路径说明
 
 - **命令套接字**：`/run/user/<UID>/fsmon/daemon.sock`（基于 `$XDG_RUNTIME_DIR`）
-- **单例锁套接字**：`/run/user/<UID>/fsmon/lock.sock`
+- **单例锁文件**：`/run/user/<UID>/fsmon/lock`（基于 `$XDG_RUNTIME_DIR`）
 - 获取当前 UID：`UID=$(id -u)`
 
 ---
@@ -86,8 +86,8 @@ sleep 2
 # 2. 检查命令套接字文件是否存在
 ls -la /run/user/$UID/fsmon/daemon.sock
 
-# 3. 检查锁套接字文件是否存在
-ls -la /run/user/$UID/fsmon/lock.sock
+# 3. 检查锁文件是否存在
+ls -la /run/user/$UID/fsmon/lock
 
 # 4. 检查目录权限
 stat /run/user/$UID/fsmon/

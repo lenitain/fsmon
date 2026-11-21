@@ -37,11 +37,18 @@ impl FsmonDaemon {
         let config_dir = home_dir.join(".config/fsmon");
         std::fs::create_dir_all(&config_dir).expect("create config dir");
 
+        // The runtime directory holds the daemon's singleton lock; give the
+        // daemon its own so it cannot collide with a real daemon — or with
+        // another test — on the shared runtime directory.
+        let runtime_dir = home_dir.join("run");
+        std::fs::create_dir_all(&runtime_dir).expect("create runtime dir");
+
         let child = Command::new(&exe)
             .arg("daemon")
             .env("HOME", home_dir)
             .env("XDG_CONFIG_HOME", config_dir)
             .env("XDG_STATE_HOME", home_dir.join(".local/state"))
+            .env("XDG_RUNTIME_DIR", runtime_dir)
             .spawn()
             .expect("failed to spawn fsmon daemon");
 

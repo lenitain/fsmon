@@ -14,10 +14,23 @@ fn fsmon_bin() -> String {
 
 /// Helper to run fsmon daemon with args and capture output.
 /// Returns (success, stdout, stderr).
+///
+/// Every run gets its own HOME and runtime directory. The daemon takes a
+/// singleton lock in the runtime directory, so without that isolation two
+/// tests running at the same time race for the lock and the loser fails for
+/// a reason that has nothing to do with the watchdog.
 fn run_daemon(args: &[&str]) -> (bool, String, String) {
+    let home = tempfile::tempdir().expect("tempdir");
+    let runtime = tempfile::tempdir().expect("tempdir");
+
     let output = Command::new(fsmon_bin())
         .arg("daemon")
         .args(args)
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path().join(".config"))
+        .env("XDG_STATE_HOME", home.path().join(".local/state"))
+        .env("XDG_RUNTIME_DIR", runtime.path())
+        .env_remove("FSMON_ALLOW_UNPRIVILEGED")
         .output()
         .expect("Failed to execute fsmon");
 

@@ -31,13 +31,18 @@ use std::fmt;
 use std::fs;
 use std::path::PathBuf;
 
-/// Enforces single daemon instance via Unix socket binding.
-/// Lock socket at `/run/user/<UID>/fsmon.lock.sock`.
-/// Released automatically when process exits or crashes.
+/// Enforces single daemon instance via an exclusive `flock(2)` on
+/// `/run/user/<UID>/fsmon/lock`.
+///
+/// The lock is a file lock, not a bound socket: the kernel drops it when the
+/// holder dies, so a crashed daemon leaves no stale lock behind, and two
+/// daemons can never both reclaim one — which a bind/connect/unlink/rebind
+/// sequence cannot promise.
+///
 /// # Examples
 ///
 /// ```ignore
-/// use fsmon::DaemonLock;
+/// use fsmon::common::DaemonLock;
 ///
 /// // Acquire exclusive lock (fails if another daemon is running)
 /// let _lock = DaemonLock::acquire(1000)?;
@@ -48,9 +53,10 @@ use std::path::PathBuf;
 /// ```
 #[derive(Debug)]
 pub struct DaemonLock {
+    /// Holds the exclusive lock for as long as the daemon runs. Dropping it
+    /// releases the lock.
     #[allow(dead_code)]
-    listener: std::os::unix::net::UnixListener,
-    path: PathBuf,
+    flock: nix::fcntl::Flock<std::fs::File>,
 }
 
 impl DaemonLock {
@@ -59,11 +65,10 @@ impl DaemonLock {
     /// # Errors
     ///
     /// Returns an error if:
-    /// - Another daemon instance is already running (`EADDRINUSE`)
-    /// - The lock socket path cannot be created or bound
-    /// - The socket file has incorrect permissions
+    /// - Another daemon instance is already running (`EWOULDBLOCK`)
+    /// - The lock file cannot be created or opened
     pub fn acquire(_uid: u32) -> Result<Self> {
-        let path = crate::common::socket::lock_socket_path();
+        let path = crate::common::socket::lock_path();
 
         // Ensure parent directory exists (e.g. /run/user/1000)
         if let Some(parent) = path.parent() {
@@ -71,41 +76,30 @@ impl DaemonLock {
             crate::common::ensure_daemon_dir_permissions(parent)?;
         }
 
-        // Try to bind — success means no other instance
-        // If EADDRINUSE, another daemon is running
-        let listener = match std::os::unix::net::UnixListener::bind(&path) {
-            Ok(l) => l,
-            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-                // Check if the socket is actually responding (stale vs active)
-                // Try to connect — if connection fails, socket is stale
-                if std::os::unix::net::UnixStream::connect(&path).is_err() {
-                    // Stale socket, remove and retry
-                    let _ = fs::remove_file(&path);
-                    std::os::unix::net::UnixListener::bind(&path).map_err(|e| {
-                        anyhow::anyhow!("Another fsmon daemon is already running: {}", e)
-                    })?
-                } else {
-                    return Err(anyhow::anyhow!("Another fsmon daemon is already running"));
-                }
-            }
-            Err(e) => return Err(anyhow::anyhow!("Failed to bind lock socket: {}", e)),
-        };
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|e| anyhow::anyhow!("Failed to open lock file {}: {}", path.display(), e))?;
 
-        // Set permissions so CLI commands can check lock status
+        let flock = nix::fcntl::Flock::lock(file, nix::fcntl::FlockArg::LockExclusiveNonblock)
+            .map_err(|(_, errno)| match errno {
+                nix::errno::Errno::EWOULDBLOCK => {
+                    anyhow::anyhow!("Another fsmon daemon is already running")
+                }
+                e => anyhow::anyhow!("Failed to lock {}: {}", path.display(), e),
+            })?;
+
+        // The lock file holds no data, but it must stay reachable by the
+        // target user: the daemon may run as root while the lock is left
+        // behind for the user's own daemon to pick up.
         use std::os::unix::fs::PermissionsExt;
         let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o666));
-
-        // Chown to original user when running as root
         crate::common::config::chown_to_original_user(&path);
 
-        Ok(DaemonLock { listener, path })
-    }
-}
-
-impl Drop for DaemonLock {
-    fn drop(&mut self) {
-        // Clean up socket file on exit
-        let _ = fs::remove_file(&self.path);
+        Ok(DaemonLock { flock })
     }
 }
 

@@ -99,12 +99,39 @@ crates side by side.
   `.github/scripts/fetch-path-deps.sh`, and the stale `rustc 1.78.0` line is
   replaced by the MSRV the crate actually declares (1.88).
 
+### Fixed
+
+- **Only one daemon can run at a time.** The singleton lock was a bound Unix
+  socket, and reclaiming a socket left behind by a crashed daemon was a
+  check-then-act sequence: bind, connect, unlink, bind again. Two daemons
+  starting at the same time could both pass it — one of them then failed
+  later with `Failed to bind socket at …`, or worse, both kept running.
+  - **The lock is a file lock now.** The daemon takes an exclusive `flock(2)`
+    on `/run/user/<UID>/fsmon/lock`. The kernel drops the lock when the
+    holder dies, so a crashed daemon leaves no stale lock behind, and two
+    daemons can no longer both decide that the lock is stale.
+  - **The lock file replaces the lock socket.** `fsmon::common::socket::
+    lock_socket_path()` is gone; `lock_path()` returns the path of the lock
+    file. The command socket (`daemon.sock`) is unchanged.
+  - **A rejected configuration leaves nothing behind.** The watchdog
+    multiplier is validated before the daemon takes the lock or creates a
+    socket, and the command socket is removed on the exit paths that unwind
+    nothing.
+
 ### Tests
 
 - **The integration tests run the binary Cargo built for them.**
   `env!("CARGO_BIN_EXE_fsmon")` replaces the path derived from `current_exe()`,
   so the tests cannot end up talking to a stale binary left in the target
   directory.
+- **The tests that start a daemon give it a runtime directory of their own.**
+  The daemon takes its singleton lock in `$XDG_RUNTIME_DIR`, so tests that
+  started daemons against the shared runtime directory raced for the lock —
+  and the loser failed for a reason that had nothing to do with what the test
+  was checking. `tests/watchdog_validation.rs` and
+  `tests/crash_recovery.rs` now use a private runtime directory, which also
+  makes them work on a CI runner, where `/run/user/<UID>` does not exist and
+  cannot be created.
 
 ## [0.5.6] - 2026-09-17
 

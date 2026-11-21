@@ -30,12 +30,37 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
         watchdog_interval,
         watchdog_multiplier,
     } = opts;
-    // Acquire singleton lock first — only one daemon instance allowed
     let (uid, _gid) = fsmon::common::config::resolve_uid_gid();
-    let _lock = DaemonLock::acquire(uid)?;
 
     let mut cfg = Config::load()?;
     cfg.resolve_paths()?;
+
+    // Merge the watchdog settings and validate them before the daemon takes
+    // the singleton lock or creates any socket: an invalid configuration
+    // must not leave runtime state behind.
+    let watchdog_interval = watchdog_interval
+        .or_else(|| cfg.watchdog.as_ref().and_then(|w| w.interval_secs))
+        .filter(|&n| n > 0);
+
+    let watchdog_multiplier = watchdog_multiplier
+        .or_else(|| cfg.watchdog.as_ref().and_then(|w| w.multiplier))
+        .unwrap_or(2);
+
+    // Validate watchdog_multiplier
+    // Exit code 2 = configuration error (systemd will not restart)
+    if watchdog_multiplier <= 1 {
+        eprintln!(
+            "Error: watchdog multiplier must be > 1, got {}.",
+            watchdog_multiplier
+        );
+        std::process::exit(2);
+    }
+
+    // Compute WatchdogSec = interval × multiplier
+    let watchdog_sec = watchdog_interval.map(|i| i * watchdog_multiplier);
+
+    // Acquire singleton lock — only one daemon instance allowed
+    let _lock = DaemonLock::acquire(uid)?;
 
     eprintln!("Config loaded:");
     eprintln!(
@@ -51,7 +76,7 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
     }
     eprintln!(
         "  Singleton lock: {}",
-        fsmon::common::socket::lock_socket_path().display()
+        fsmon::common::socket::lock_path().display()
     );
     eprintln!(
         "  Command socket: {}",
@@ -144,29 +169,6 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
     // Merge disk_min_free: CLI > config > None
     let disk_min_free = disk_min_free.or_else(|| cfg.logging.disk_min_free.clone());
 
-    // Merge watchdog_interval: CLI > config > None (disabled)
-    let watchdog_interval = watchdog_interval
-        .or(cfg.watchdog.as_ref().and_then(|w| w.interval_secs))
-        .filter(|&n| n > 0);
-
-    // Merge watchdog_multiplier: CLI > config > None (default: 2)
-    let watchdog_multiplier = watchdog_multiplier
-        .or(cfg.watchdog.as_ref().and_then(|w| w.multiplier))
-        .unwrap_or(2);
-
-    // Validate watchdog_multiplier
-    // Exit code 2 = configuration error (systemd will not restart)
-    if watchdog_multiplier <= 1 {
-        eprintln!(
-            "Error: watchdog multiplier must be > 1, got {}.",
-            watchdog_multiplier
-        );
-        std::process::exit(2);
-    }
-
-    // Compute WatchdogSec = interval × multiplier
-    let watchdog_sec = watchdog_interval.map(|i| i * watchdog_multiplier);
-
     if debug {
         if let Some(i) = watchdog_interval {
             eprintln!("{}[DEBUG]{}   watchdog_interval:  {}s", YELLOW, RESET, i);
@@ -215,6 +217,7 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
         Err(e) => {
             // Exit code 2 = configuration error (systemd will not restart)
             eprintln!("Error: {}", e);
+            remove_socket(&socket_path);
             std::process::exit(2);
         }
     };
@@ -242,11 +245,21 @@ pub async fn cmd_daemon(opts: DaemonOptions) -> Result<()> {
             .is_some()
         {
             eprintln!("Error: {}", e);
+            remove_socket(&socket_path);
             std::process::exit(2);
         }
         return Err(e);
     }
     Ok(())
+}
+
+/// Remove the command socket.
+///
+/// The daemon leaves through `process::exit` on the configuration-error
+/// paths, which unwinds nothing — the socket has to be cleaned up by hand
+/// or the next daemon finds a socket nobody listens on.
+fn remove_socket(socket_path: &Path) {
+    let _ = fs::remove_file(socket_path);
 }
 
 /// Set socket permissions to 0666 so non-root users can communicate with the daemon.

@@ -22,13 +22,16 @@ pub fn socket_path() -> PathBuf {
     runtime_dir.join("fsmon/daemon.sock")
 }
 
-/// Hardcoded lock socket path: `/run/user/<UID>/fsmon/lock.sock`.
-pub fn lock_socket_path() -> PathBuf {
+/// Hardcoded lock file path: `/run/user/<UID>/fsmon/lock`.
+/// Uses `$XDG_RUNTIME_DIR` if set, falls back to `/run/user/<UID>`.
+///
+/// The file carries no data — it exists only to be locked with `flock(2)`.
+pub fn lock_path() -> PathBuf {
     let uid = crate::common::config::resolve_uid();
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(format!("/run/user/{}", uid)));
-    runtime_dir.join("fsmon/lock.sock")
+    runtime_dir.join("fsmon/lock")
 }
 
 /// Type-safe socket commands.
